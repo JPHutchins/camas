@@ -1,14 +1,63 @@
 [project]
 name = "camas"
 version = "0.1.0"
-description = "Add your description here"
+description = "Generic parallel/sequential task runner with TUI output"
 readme = "README.md"
-authors = [
-    { name = "JP Hutchins", email = "jphutchins@gmail.com" }
-]
+authors = [{ name = "JP Hutchins", email = "jp@intercreate.io" }]
 requires-python = ">=3.14"
 dependencies = []
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+"mypy>=1.19",
+"pyright>=1.1.408",
+"pytest>=9,<10",
+"pytest-cov>=7.0.0",
+"ruff>=0.12.0",
+"cyclopts>=4,<5",
+]
+
+[tool.pytest.ini_options]
+markers = ["slow: visual demo tests with real delays"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+extend-select = ["I"]
+
+[tool.ruff.format]
+indent-style = "tab"
+
+[tool.mypy]
+strict = true
+warn_unused_ignores = true
+
+[tool.pyright]
+typeCheckingMode = "strict"
+include = ["src", "tests"]
+exclude = [".venv*", "**/__pycache__"]
+
+[tool.coverage.run]
+source = ["camas", "tests"]
+branch = true
+omit = ["src/camas/__main__.py", "tests/test_demos.py"]
+
+[tool.coverage.report]
+fail_under = 100
+exclude_lines = [
+"@overload",
+"assert_never",
+"pragma: no cover",
+"if __name__ == .__main__.:",
+"if TYPE_CHECKING",
+':\s*\.\.\.\s*$',
+'^\s*\.\.\.\s*$',
+"raise AssertionError",
+"@pytest.mark.slow",
+"@app.command",
+]
