@@ -1,24 +1,23 @@
 from __future__ import annotations
 
+import asyncio
 import time
 
 import pytest
 
 from camas import Parallel, Sequential, Task, run
 
-# --- Single command ---
-
 
 def test_single_cmd_success() -> None:
-	assert run(Task(("python", "-c", "pass"))) == 0
+	assert asyncio.run(run(Task(("python", "-c", "pass")))).returncode == 0
 
 
 def test_single_cmd_failure() -> None:
-	assert run(Task(("python", "-c", "raise SystemExit(1)"))) == 1
+	assert asyncio.run(run(Task(("python", "-c", "raise SystemExit(1)")))).returncode == 1
 
 
 def test_cmd_string_form() -> None:
-	assert run(Task("python -c pass")) == 0
+	assert asyncio.run(run(Task("python -c pass"))).returncode == 0
 
 
 def test_cmd_env_passed() -> None:
@@ -30,10 +29,7 @@ def test_cmd_env_passed() -> None:
 		),
 		env={"MY_VAR": "42"},
 	)
-	assert run(task) == 0
-
-
-# --- Parallel ---
+	assert asyncio.run(run(task)).returncode == 0
 
 
 @pytest.mark.parametrize(
@@ -51,10 +47,7 @@ def test_parallel_returncodes(returncodes: tuple[int, ...], expected_exit: int) 
 			for i, rc in enumerate(returncodes)
 		)
 	)
-	assert run(task) == expected_exit
-
-
-# --- Sequential ---
+	assert asyncio.run(run(task)).returncode == expected_exit
 
 
 @pytest.mark.parametrize(
@@ -73,10 +66,7 @@ def test_sequential_returncodes(returncodes: tuple[int, ...], expected_exit: int
 			for i, rc in enumerate(returncodes)
 		)
 	)
-	assert run(task) == expected_exit
-
-
-# --- Nesting ---
+	assert asyncio.run(run(task)).returncode == expected_exit
 
 
 def test_nested_parallel_in_sequential() -> None:
@@ -91,7 +81,7 @@ def test_nested_parallel_in_sequential() -> None:
 			Task(("python", "-c", "pass"), name="after"),
 		)
 	)
-	assert run(task) == 0
+	assert asyncio.run(run(task)).returncode == 0
 
 
 def test_nested_sequential_in_parallel() -> None:
@@ -106,7 +96,7 @@ def test_nested_sequential_in_parallel() -> None:
 			Task(("python", "-c", "pass"), name="par"),
 		)
 	)
-	assert run(task) == 0
+	assert asyncio.run(run(task)).returncode == 0
 
 
 def test_deeply_nested() -> None:
@@ -126,10 +116,7 @@ def test_deeply_nested() -> None:
 			Task(("python", "-c", "pass"), name="final"),
 		)
 	)
-	assert run(task) == 0
-
-
-# --- Matrix integration ---
+	assert asyncio.run(run(task)).returncode == 0
 
 
 def test_matrix_env_reaches_subprocess() -> None:
@@ -145,7 +132,7 @@ def test_matrix_env_reaches_subprocess() -> None:
 		),
 		matrix={"X": ("1",)},
 	)
-	assert run(task) == 0
+	assert asyncio.run(run(task)).returncode == 0
 
 
 def test_matrix_substitution_in_cmd() -> None:
@@ -161,10 +148,7 @@ def test_matrix_substitution_in_cmd() -> None:
 		),
 		matrix={"V": ("hello",)},
 	)
-	assert run(task) == 0
-
-
-# --- Timing ---
+	assert asyncio.run(run(task)).returncode == 0
 
 
 def test_parallel_concurrency() -> None:
@@ -176,7 +160,7 @@ def test_parallel_concurrency() -> None:
 		)
 	)
 	start = time.perf_counter()
-	run(task)
+	asyncio.run(run(task))
 	elapsed = time.perf_counter() - start
 	assert elapsed < 1.0
 
@@ -189,6 +173,61 @@ def test_sequential_ordering() -> None:
 		)
 	)
 	start = time.perf_counter()
-	run(task)
+	asyncio.run(run(task))
 	elapsed = time.perf_counter() - start
 	assert elapsed >= 0.2
+
+
+def test_task_with_stdout_output() -> None:
+	task = Task(("python", "-c", "print('hello world')"), name="printer")
+	result = asyncio.run(run(task))
+	assert result.returncode == 0
+	assert any("hello world" in r.output for r in result.results)
+
+
+def test_sequential_skip_nested_group() -> None:
+	task = Sequential(
+		tasks=(
+			Task(("python", "-c", "raise SystemExit(1)"), name="fail"),
+			Parallel(
+				tasks=(
+					Task(("python", "-c", "pass"), name="skipped1"),
+					Task(("python", "-c", "pass"), name="skipped2"),
+				)
+			),
+		)
+	)
+	result = asyncio.run(run(task))
+	assert result.returncode == 1
+
+
+def test_matrix_nested_sequential_in_parallel() -> None:
+	task = Parallel(
+		tasks=(
+			Sequential(
+				tasks=(
+					Task(("python", "-c", "pass"), name="a"),
+					Task(("python", "-c", "pass"), name="b"),
+				)
+			),
+		),
+		matrix={"X": ("1", "2")},
+	)
+	result = asyncio.run(run(task))
+	assert result.returncode == 0
+	assert len(result.results) == 4
+
+
+def test_run_result_has_structured_results() -> None:
+	task = Parallel(
+		tasks=(
+			Task(("python", "-c", "pass"), name="a"),
+			Task(("python", "-c", "raise SystemExit(1)"), name="b"),
+		)
+	)
+	result = asyncio.run(run(task))
+	assert result.returncode == 1
+	assert len(result.results) == 2
+	assert result.elapsed > 0
+	names = {r.name for r in result.results}
+	assert names == {"a", "b"}

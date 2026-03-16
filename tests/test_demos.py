@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 import cyclopts
 import pytest
 
@@ -36,7 +38,7 @@ def test_demo_parallel_5_tasks() -> None:
 			_sleep(1.5, "test"),
 		)
 	)
-	assert run(task) == 0
+	assert asyncio.run(run(task)).returncode == 0
 
 
 @app.command
@@ -51,7 +53,7 @@ def test_demo_parallel_with_failure() -> None:
 			_sleep(1.0, "test"),
 		)
 	)
-	assert run(task) == 1
+	assert asyncio.run(run(task)).returncode == 1
 
 
 @app.command
@@ -64,7 +66,7 @@ def test_demo_sequential_3_steps() -> None:
 			_lorem(0.3, "deploy", "deployed to staging"),
 		)
 	)
-	assert run(task) == 0
+	assert asyncio.run(run(task)).returncode == 0
 
 
 @app.command
@@ -78,7 +80,7 @@ def test_demo_sequential_fail_skips() -> None:
 			_sleep(0.3, "notify"),
 		)
 	)
-	assert run(task) == 1
+	assert asyncio.run(run(task)).returncode == 1
 
 
 @app.command
@@ -101,7 +103,7 @@ def test_demo_nested_parallel_in_sequential() -> None:
 			_sleep(1.0, "test"),
 		)
 	)
-	assert run(task) == 0
+	assert asyncio.run(run(task)).returncode == 0
 
 
 @app.command
@@ -124,7 +126,7 @@ def test_demo_nested_sequential_in_parallel() -> None:
 			_lorem(0.5, "lint", "no issues"),
 		)
 	)
-	assert run(task) == 0
+	assert asyncio.run(run(task)).returncode == 0
 
 
 @app.command
@@ -134,7 +136,7 @@ def test_demo_matrix_python_versions() -> None:
 		tasks=(_sleep(0.8, "test {PY}"),),
 		matrix={"PY": ("3.12", "3.13", "3.14")},
 	)
-	assert run(task) == 0
+	assert asyncio.run(run(task)).returncode == 0
 
 
 @app.command
@@ -144,7 +146,7 @@ def test_demo_matrix_2d() -> None:
 		tasks=(_sleep(0.6, "{DB}/{OPT}"),),
 		matrix={"DB": ("sqlite", "postgres"), "OPT": ("debug", "release")},
 	)
-	assert run(task) == 0
+	assert asyncio.run(run(task)).returncode == 0
 
 
 @app.command
@@ -158,7 +160,7 @@ def test_demo_sequential_matrix_clones() -> None:
 		name="ci",
 		matrix={"PY": ("3.12", "3.13", "3.14")},
 	)
-	assert run(task) == 0
+	assert asyncio.run(run(task)).returncode == 0
 
 
 @app.command
@@ -187,7 +189,39 @@ def test_demo_deeply_nested_with_output() -> None:
 			_lorem(0.2, "package", "artifact created"),
 		)
 	)
-	assert run(task) == 0
+	assert asyncio.run(run(task)).returncode == 0
+
+
+@app.command
+@pytest.mark.slow
+def test_demo_deeply_nested_with_output_named() -> None:
+	task = Sequential(
+		name="My App",
+		tasks=(
+			Parallel(
+				name="Build",
+				tasks=(
+					Sequential(
+						tasks=(
+							_lorem(0.3, "compile", "compiling..."),
+							_lorem(0.4, "link", "linking..."),
+						)
+					),
+					_lorem(0.5, "lint", "checking style..."),
+				),
+			),
+			Parallel(
+				name="Test",
+				tasks=(
+					_lorem(0.6, "unit-tests", "42 tests passed"),
+					_lorem(0.8, "integration", "7 scenarios ok"),
+					_lorem(0.4, "e2e", "3 flows verified"),
+				),
+			),
+			_lorem(0.2, "package", "artifact created"),
+		),
+	)
+	assert asyncio.run(run(task)).returncode == 0
 
 
 @app.command
@@ -208,7 +242,7 @@ def test_demo_matrix_full_ci_pipeline() -> None:
 		name="check",
 		matrix={"PY": ("3.13", "3.14")},
 	)
-	assert run(task) == 0
+	assert asyncio.run(run(task)).returncode == 0
 
 
 @app.command
@@ -227,7 +261,7 @@ def test_demo_matrix_2d_with_nesting() -> None:
 		name="ci",
 		matrix={"DB": ("sqlite", "postgres"), "OPT": ("debug", "release")},
 	)
-	assert run(task) == 0
+	assert asyncio.run(run(task)).returncode == 0
 
 
 if __name__ == "__main__":

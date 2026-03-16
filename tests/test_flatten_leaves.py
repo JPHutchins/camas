@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from camas import Parallel, Sequential, Task, flatten_leaves
+from camas import Parallel, Sequential, Task, flatten_leaves, print_tree
 
 
 def test_single_cmd() -> None:
@@ -61,3 +61,11 @@ def test_deeply_nested() -> None:
 def test_task_display_name(cmd: Task, expected_name: str) -> None:
 	leaves = flatten_leaves(cmd)
 	assert leaves[0].name == expected_name
+
+
+def test_print_tree(capsys: pytest.CaptureFixture[str]) -> None:
+	task = Parallel(tasks=(Task("a", name="alpha"), Task("b", name="beta")))
+	print_tree(task)
+	captured = capsys.readouterr()
+	assert "alpha" in captured.out
+	assert "beta" in captured.out

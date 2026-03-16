@@ -3,9 +3,30 @@ name = "camas"
 version = "0.1.0"
 description = "Generic parallel/sequential task runner with TUI output"
 readme = "README.md"
+license = "MIT"
 authors = [{ name = "JP Hutchins", email = "jp@intercreate.io" }]
-requires-python = ">=3.14"
+requires-python = ">=3.12"
 dependencies = []
+keywords = ["task-runner", "parallel", "sequential", "tui", "async"]
+classifiers = [
+"Development Status :: 3 - Alpha",
+"Intended Audience :: Developers",
+"License :: OSI Approved :: MIT License",
+"Programming Language :: Python :: 3",
+"Programming Language :: Python :: 3.12",
+"Programming Language :: Python :: 3.13",
+"Programming Language :: Python :: 3.14",
+"Topic :: Software Development :: Build Tools",
+"Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://github.com/JPHutchins/camas"
+Repository = "https://github.com/JPHutchins/camas"
+Issues = "https://github.com/JPHutchins/camas/issues"
+
+[project.scripts]
+camas = "camas.__main__:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -19,7 +40,19 @@ dev = [
 "pytest-cov>=7.0.0",
 "ruff>=0.12.0",
 "cyclopts>=4,<5",
+"taskipy>=1",
 ]
+
+[tool.taskipy.tasks]
+format = "ruff format ."
+format-check = "ruff format --check ."
+lint = "ruff check ."
+typecheck = "task _mypy && task _pyright"
+_mypy = "mypy ."
+_pyright = "pyright src tests"
+test = "pytest --doctest-modules -m 'not slow'"
+coverage = "pytest --doctest-modules -m 'not slow' --cov --cov-report=term-missing"
+all = "task format && task lint && task typecheck && task test"
 
 [tool.pytest.ini_options]
 markers = ["slow: visual demo tests with real delays"]
@@ -45,13 +78,22 @@ exclude = [".venv*", "**/__pycache__"]
 [tool.coverage.run]
 source = ["camas", "tests"]
 branch = true
-omit = ["src/camas/__main__.py", "tests/test_demos.py"]
+omit = ["tests/test_demos.py"]
 
 [tool.coverage.report]
 fail_under = 100
+partial_branches = [
+"pragma: no branch",
+"case _LeafCmd",
+"case _Waiting",
+]
+exclude_also = [
+"async for .* in proc\\.stdout",
+]
 exclude_lines = [
 "@overload",
 "assert_never",
+"case _:",
 "pragma: no cover",
 "if __name__ == .__main__.:",
 "if TYPE_CHECKING",

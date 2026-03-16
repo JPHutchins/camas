@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import time
 
 import pytest
@@ -116,7 +117,7 @@ def _s(t: float, name: str) -> Task:
 )
 def test_timing(task: Task | Parallel | Sequential, min_time: float, max_time: float) -> None:
 	start = time.perf_counter()
-	run(task)
+	asyncio.run(run(task))
 	elapsed = time.perf_counter() - start
 	assert elapsed >= min_time, f"too fast: {elapsed:.3f}s < {min_time:.3f}s"
 	assert elapsed <= max_time, f"too slow: {elapsed:.3f}s > {max_time:.3f}s"

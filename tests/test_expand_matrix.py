@@ -92,7 +92,6 @@ def test_env_merge_preserves_existing() -> None:
 	result = expand_matrix(task)
 	match result:
 		case Parallel(tasks=(Task(env=env),)):
-			assert env is not None
 			assert env["EXISTING"] == "val"
 			assert env["PY"] == "3.12"
 		case _:

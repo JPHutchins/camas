@@ -12,21 +12,20 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
+        python: [3.10, 3.11, 3.12, 3.13, 3.14]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: astral-sh/setup-uv@v6
 
-      - run: uv run ruff format --check .
+      - run: uv run task format-check
 
-      - run: uv run ruff check .
+      - run: uv run task lint
 
-      - run: uv run mypy .
+      - run: uv run task typecheck
 
-      - run: uv run pyright src tests
-
-      - run: uv run pytest -v -m "not slow"
+      - run: uv run task test
 
       - run: uv build
 
@@ -44,4 +43,4 @@ jobs:
 
       - uses: astral-sh/setup-uv@v6
 
-      - run: uv run pytest -m "not slow" --cov --cov-report=term-missing
+      - run: uv run task coverage
