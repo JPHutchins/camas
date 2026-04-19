@@ -6,9 +6,9 @@ import itertools
 import os
 import sys
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Iterator, Sequence
+from collections.abc import Awaitable, Callable, Iterator, Sequence
 from subprocess import STDOUT
-from typing import Final, NamedTuple, assert_never
+from typing import Any, Final, NamedTuple, Protocol, assert_never
 
 
 class VarBinding(NamedTuple):
@@ -131,12 +131,7 @@ type TaskEvent = StartedEvent | OutputEvent | CompletedEvent
 
 
 class LeafInfo(NamedTuple):
-	"""Structural information about a leaf Task in its position within a tree.
-
-	`is_last_chain[i]` is whether the node at level `i + 1` (root is level 0) is
-	the last sibling at its level. Length equals `depth`; the final entry
-	corresponds to the leaf itself. Effects reconstitute tree presentation
-	(ASCII prefixes, indentation, hierarchical keys, ...) from these fields.
+	"""A leaf's position in the task tree: depth and last-sibling chain up to it.
 
 	>>> LeafInfo(Task("echo hi"), 0, ())
 	LeafInfo(task=Task(cmd='echo hi', name=None, env={}), depth=0, is_last_chain=())
@@ -193,18 +188,29 @@ class Skipped(NamedTuple):
 type LeafState = Waiting | Running | Done | Skipped
 
 
-type EventSink = Callable[[TaskEvent], Awaitable[None]]
+type EventSink = Callable[[int, TaskEvent], Awaitable[None]]
+"""Per-leaf event dispatcher: await sink(leaf_idx, event)."""
 
 
-type Effect = Callable[[TaskNode, AsyncIterator[TaskEvent]], Coroutine[object, object, None]]
-"""An Effect is an async callable consuming the event stream of a run.
+class Effect[T](Protocol):
+	"""Observer over a run's event stream, with a per-leaf context of type T.
 
-Effects run concurrently inside the runner's TaskGroup alongside task execution;
-the event stream terminates (via StopAsyncIteration) once execution finishes.
+	Each leaf owns an independent chain: setup seeds every leaf's slot,
+	on_event advances the slot for the affected leaf, and teardown receives
+	one final T per leaf in leaf-index order. Different leaves' on_event
+	calls may run concurrently.
+	"""
 
-To configure an effect with options, define a factory that returns an Effect:
-the options are closed over, and the outer factory encodes the shape of the
-configuration as its parameter type."""
+	async def setup(self, task: TaskNode) -> T:
+		"""Return the initial per-leaf context."""
+		...
+
+	async def on_event(self, event: TaskEvent, states: Sequence[LeafState], ctx: T) -> T:
+		"""Return the next context for the leaf identified by event.leaf_index."""
+		...
+
+	async def teardown(self, ctxs: tuple[T, ...]) -> None:
+		"""Receive every leaf's final context, in leaf-index order."""
 
 
 SKIPPED_RETURNCODE: Final = -1
@@ -278,7 +284,7 @@ def substitute_in_tuple(parts: tuple[str, ...], binding: MatrixBinding) -> tuple
 def truncate_middle(text: str, max_width: int) -> str:
 	"""Truncate text in the middle with '...' if it exceeds max_width.
 
-	Always returns a string of length ``min(len(text), max(max_width, 0))``.
+	Always returns a string of length min(len(text), max(max_width, 0)).
 
 	>>> truncate_middle("hello", 10)
 	'hello'
@@ -575,115 +581,132 @@ def next_state(state: LeafState, event: TaskEvent) -> LeafState:
 			assert_never(state)
 
 
-async def run_cmd(task: Task, leaf_index: int, sink: EventSink) -> TaskResult:
-	"""Execute a single leaf command as a subprocess, streaming events to the sink."""
+async def run_cmd(task: Task, leaf_index: int, dispatch: EventSink) -> TaskResult:
+	"""Run one leaf as a subprocess, dispatching Started/Output/Completed events."""
 	start: Final = time.perf_counter()
-	await sink(StartedEvent(leaf_index, start))
+	await dispatch(leaf_index, StartedEvent(leaf_index, start))
 	proc: Final = await asyncio.create_subprocess_exec(
 		*resolve_cmd(task.cmd),
 		stdout=asyncio.subprocess.PIPE,
 		stderr=STDOUT,
 		env=os.environ | task.env,
 	)
-	output: list[bytes] = []
+	output: Final[list[bytes]] = []
 	if proc.stdout is not None:  # pragma: no branch
 		async for line in proc.stdout:
 			output.append(line)
-			await sink(OutputEvent(leaf_index, line, time.perf_counter()))
+			await dispatch(leaf_index, OutputEvent(leaf_index, line, time.perf_counter()))
 	await proc.wait()
 	elapsed: Final = time.perf_counter() - start
 	rc: Final = proc.returncode or 0
-	await sink(CompletedEvent(leaf_index, rc, elapsed, output))
+	await dispatch(leaf_index, CompletedEvent(leaf_index, rc, elapsed, output))
 	return TaskResult(task_display_name(task), rc, elapsed, output)
 
 
 async def execute(
 	node: TaskNode,
-	sink: EventSink,
+	dispatch: EventSink,
 	leaves: tuple[Task, ...],
 	index_map: dict[int, int],
 ) -> tuple[TaskResult, ...]:
-	"""Recursively execute a task tree, respecting Sequential/Parallel semantics."""
+	"""Walk a task subtree, returning one TaskResult per leaf in DFS order."""
 	match node:
 		case Task():
-			idx: Final = index_map[id(node)]
-			return (await run_cmd(node, idx, sink),)
+			return (await run_cmd(node, index_map[id(node)], dispatch),)
 		case Parallel(tasks=children):
-			parallel_results: list[TaskResult] = []
 			async with asyncio.TaskGroup() as tg:
-				futures: Final = [
-					tg.create_task(execute(child, sink, leaves, index_map)) for child in children
-				]
-			for future in futures:
-				parallel_results.extend(future.result())
-			return tuple(parallel_results)
+				futures: Final = tuple(
+					tg.create_task(execute(child, dispatch, leaves, index_map))
+					for child in children
+				)
+			return tuple(r for f in futures for r in f.result())
 		case Sequential(tasks=children):
-			seq_results: list[TaskResult] = []
+			seq_results: tuple[TaskResult, ...] = ()
 			failed = False
 			for child in children:
 				if failed:
 					for skipped_idx in subtree_leaf_indices(child, index_map):
-						leaf = leaves[skipped_idx]
-						await sink(CompletedEvent(skipped_idx, SKIPPED_RETURNCODE, 0.0, ()))
-						seq_results.append(
-							TaskResult(task_display_name(leaf), SKIPPED_RETURNCODE, 0.0, ())
+						await dispatch(
+							skipped_idx, CompletedEvent(skipped_idx, SKIPPED_RETURNCODE, 0.0, ())
+						)
+						seq_results = (
+							*seq_results,
+							TaskResult(
+								task_display_name(leaves[skipped_idx]), SKIPPED_RETURNCODE, 0.0, ()
+							),
 						)
 				else:
-					child_results = await execute(child, sink, leaves, index_map)
-					seq_results.extend(child_results)
+					child_results = await execute(child, dispatch, leaves, index_map)
+					seq_results = (*seq_results, *child_results)
 					if any(r.returncode != 0 for r in child_results):
 						failed = True
-			return tuple(seq_results)
+			return seq_results
 		case _:
 			assert_never(node)
 
 
-async def queue_iter(q: asyncio.Queue[TaskEvent | None]) -> AsyncIterator[TaskEvent]:
-	"""Drain a queue as an async iterator, terminating on the `None` sentinel."""
-	while True:
-		event = await q.get()
-		if event is None:
-			return
-		yield event
+async def run(task: TaskNode, effects: Sequence[Effect[Any]] = ()) -> RunResult:
+	"""Execute a task tree, dispatching events to every effect.
 
-
-async def run(task: TaskNode, effects: Sequence[Effect] = ()) -> RunResult:
-	"""Execute a task tree, fanning events out to each effect in parallel.
-
-	The engine itself is silent — stdout is untouched unless an effect writes.
-	Each effect receives the matrix-expanded tree and an async iterator of
-	`TaskEvent`s in emission order; iteration terminates when execution finishes.
+	>>> import asyncio
+	>>> asyncio.run(run(Task(("python", "-c", "pass")))).returncode
+	0
+	>>> asyncio.run(run(Task(("python", "-c", "raise SystemExit(1)")))).returncode
+	1
 	"""
 	expanded: Final = expand_matrix(task)
 	leaf_infos: Final = flatten_leaves(expanded)
 	leaves: Final = tuple(info.task for info in leaf_infos)
 	index_map: Final = {id(info.task): i for i, info in enumerate(leaf_infos)}
-	queues: Final[tuple[asyncio.Queue[TaskEvent | None], ...]] = tuple(
-		asyncio.Queue() for _ in effects
-	)
-
-	async def sink(event: TaskEvent) -> None:
-		for q in queues:
-			await q.put(event)
 
 	wall_start: Final = time.perf_counter()
-	async with asyncio.TaskGroup() as tg:
-		for effect, q in zip(effects, queues, strict=True):
-			tg.create_task(effect(expanded, queue_iter(q)))
+	setup_results: Final = await asyncio.gather(
+		*(effect.setup(expanded) for effect in effects),
+		return_exceptions=True,
+	)
+	active_effects: Final = tuple(
+		e for e, r in zip(effects, setup_results) if not isinstance(r, BaseException)
+	)
+	setup_errors: Final = tuple(r for r in setup_results if isinstance(r, BaseException))
+	ctx_grid: Final[list[list[Any]]] = [
+		[r for r in setup_results if not isinstance(r, BaseException)] for _ in leaf_infos
+	]
+	states: Final[list[LeafState]] = [Waiting(info.task) for info in leaf_infos]
 
-		async def drive() -> tuple[TaskResult, ...]:
-			try:
-				return await execute(expanded, sink, leaves, index_map)
-			finally:
-				for q in queues:
-					await q.put(None)
+	async def dispatch(leaf_idx: int, event: TaskEvent) -> None:
+		states[leaf_idx] = next_state(states[leaf_idx], event)
+		slot: Final = ctx_grid[leaf_idx]
+		for effect_idx, effect_ctx in enumerate(
+			await asyncio.gather(
+				*(
+					effect.on_event(event, states, ctx)
+					for effect, ctx in zip(active_effects, slot, strict=True)
+				)
+			)
+		):
+			slot[effect_idx] = effect_ctx
 
-		driver: Final = tg.create_task(drive())
-
-	results: Final = driver.result()
-	elapsed: Final = time.perf_counter() - wall_start
+	results: tuple[TaskResult, ...] = ()
+	try:
+		if setup_errors:
+			raise BaseExceptionGroup("setup errors", setup_errors)
+		results = await execute(expanded, dispatch, leaves, index_map)
+	finally:
+		teardown_errors: Final = tuple(
+			r
+			for r in await asyncio.gather(
+				*(
+					effect.teardown(tuple(row[effect_idx] for row in ctx_grid))
+					for effect_idx, effect in enumerate(active_effects)
+				),
+				return_exceptions=True,
+			)
+			if isinstance(r, BaseException)
+		)
+		if teardown_errors:
+			raise BaseExceptionGroup("teardown errors", teardown_errors)
 	return RunResult(
 		returncode=1 if any(r.returncode != 0 for r in results) else 0,
 		results=results,
-		elapsed=elapsed,
+		elapsed=time.perf_counter() - wall_start,
 	)

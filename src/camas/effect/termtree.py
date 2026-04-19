@@ -2,12 +2,12 @@ import asyncio
 import shutil
 import sys
 import time
-from collections.abc import AsyncIterator, Iterator, Sequence
+from collections.abc import Iterator, Sequence
+from dataclasses import dataclass
 from typing import Final, NamedTuple, assert_never
 
 from camas import (
 	Done,
-	Effect,
 	LeafInfo,
 	LeafState,
 	Parallel,
@@ -20,7 +20,6 @@ from camas import (
 	Waiting,
 	expand_matrix,
 	flatten_leaves,
-	next_state,
 	task_display_name,
 	truncate_middle,
 )
@@ -30,12 +29,12 @@ class TermtreeOptions(NamedTuple):
 	"""Configuration for the termtree Effect.
 
 	>>> TermtreeOptions()
-	TermtreeOptions(frame_interval_ms=100)
+	TermtreeOptions(frame_interval_ms=16.667)
 	>>> TermtreeOptions(frame_interval_ms=50).frame_interval_ms
 	50
 	"""
 
-	frame_interval_ms: int = 100
+	frame_interval_ms: float = 16.667
 
 
 class GroupHeader(NamedTuple):
@@ -61,16 +60,16 @@ GREY: Final = "\033[90m"
 RESET: Final = "\033[0m"
 CLEAR_LINE: Final = "\033[K"
 SPINNER: Final = (
-	" ▄    ",
-	"  ▄   ",
-	"   ▄  ",
-	"    ▄ ",
-	"    ▐ ",
-	"    ▀ ",
-	"   ▀  ",
-	"  ▀   ",
-	" ▀    ",
 	" ▌    ",
+	" ▀    ",
+	"  ▀   ",
+	"   ▀  ",
+	"    ▀ ",
+	"    ▐ ",
+	"    ▄ ",
+	"   ▄  ",
+	"  ▄   ",
+	" ▄    ",
 )
 
 STATUS_COL_WIDTH: Final = 18
@@ -188,7 +187,7 @@ def last_line_display(output: Sequence[bytes]) -> str:
 
 def render_lines(
 	rows: tuple[DisplayRow, ...],
-	states: tuple[LeafState, ...],
+	states: Sequence[LeafState],
 	term_width: int,
 	display_width: int,
 	now: float,
@@ -258,7 +257,7 @@ def render_lines(
 
 def render_frame(
 	rows: tuple[DisplayRow, ...],
-	states: tuple[LeafState, ...],
+	states: Sequence[LeafState],
 	term_width: int,
 	display_width: int,
 	now: float,
@@ -275,7 +274,7 @@ def render_frame(
 	return f"\033[{len(lines) - 1}F" + "\n".join(lines)
 
 
-def print_failures(states: tuple[LeafState, ...]) -> None:
+def print_failures(states: Sequence[LeafState]) -> None:
 	"""Print detailed output for each failed task."""
 	for state in states:
 		match state:
@@ -309,84 +308,90 @@ def print_tree(task: TaskNode) -> None:
 				assert_never(row)
 
 
-def termtree(options: TermtreeOptions) -> Effect:
-	"""Build a live terminal Effect that renders each leaf's status and a summary.
+@dataclass
+class TermtreeState:
+	"""Mutable slots of a termtree run: the latest states view and the tick task handle."""
 
-	Returns an Effect configured with the given options; the returned Effect
-	receives the matrix-expanded task tree and an AsyncIterator of TaskEvents.
-	Animation ticks at `options.frame_interval_ms` while execution is in progress.
+	states: Sequence[LeafState]
+	tick_task: asyncio.Task[None] | None = None
+
+
+class TermtreeContext(NamedTuple):
+	"""Immutable context threaded through the termtree Effect's lifecycle."""
+
+	rows: tuple[DisplayRow, ...]
+	term_width: int
+	display_width: int
+	wall_start: float
+	state: TermtreeState
+
+
+class Termtree:
+	"""Live terminal Effect: renders each leaf's status and a summary line.
+
+	The background tick task is the sole renderer during a run, so the
+	effective frame rate is capped at 1 / frame_interval_ms regardless of
+	how fast events arrive.
 	"""
-	frame_interval: Final = options.frame_interval_ms / 1000
 
-	async def effect(task: TaskNode, events: AsyncIterator[TaskEvent]) -> None:
-		rows = flatten_rows(task)
-		leaves = tuple(info.task for info in flatten_leaves(task))
-		term_size = shutil.get_terminal_size()
-		term_width = term_size.columns
-		display_width = term_width - STATUS_COL_WIDTH - 1
-		states: list[LeafState] = [Waiting(leaf) for leaf in leaves]
-		wall_start = time.perf_counter()
-		animate = len(rows) + 1 <= term_size.lines
+	def __init__(self, options: TermtreeOptions) -> None:
+		self.options: Final = options
 
-		if animate:
-			wake = asyncio.Event()
-			done = asyncio.Event()
+	async def setup(self, task: TaskNode) -> TermtreeContext:
+		term_width: Final = shutil.get_terminal_size().columns
+		rows: Final = flatten_rows(task)
+		ctx: Final = TermtreeContext(
+			rows=rows,
+			term_width=term_width,
+			display_width=term_width - STATUS_COL_WIDTH - 1,
+			wall_start=time.perf_counter(),
+			state=TermtreeState(
+				states=tuple(Waiting(info.task) for info in flatten_leaves(task)),
+			),
+		)
+		sys.stdout.write("\n" * len(rows))
+		sys.stdout.flush()
+		draw(ctx)
+		ctx.state.tick_task = asyncio.create_task(
+			tick_loop(ctx, self.options.frame_interval_ms / 1000)
+		)
+		return ctx
 
-			sys.stdout.write("\n" * len(rows))
-			sys.stdout.flush()
+	async def on_event(
+		self, event: TaskEvent, states: Sequence[LeafState], ctx: TermtreeContext
+	) -> TermtreeContext:
+		ctx.state.states = states
+		return ctx
 
-			def draw() -> None:
-				sys.stdout.write(
-					render_frame(
-						rows,
-						tuple(states),
-						term_width,
-						display_width,
-						time.perf_counter(),
-						wall_start,
-					)
-				)
-				sys.stdout.flush()
-
-			async def consume() -> None:
-				async for event in events:
-					states[event.leaf_index] = next_state(states[event.leaf_index], event)
-					wake.set()
-				done.set()
-				wake.set()
-
-			async def render() -> None:
-				while not done.is_set():
-					draw()
-					wake.clear()
-					try:
-						await asyncio.wait_for(wake.wait(), timeout=frame_interval)
-					except TimeoutError:
-						pass
-				draw()
-
-			async with asyncio.TaskGroup() as tg:
-				tg.create_task(consume())
-				tg.create_task(render())
-		else:
-			async for event in events:
-				states[event.leaf_index] = next_state(states[event.leaf_index], event)
-			sys.stdout.write(
-				"\n".join(
-					render_lines(
-						rows,
-						tuple(states),
-						term_width,
-						display_width,
-						time.perf_counter(),
-						wall_start,
-					)
-				)
-			)
-			sys.stdout.flush()
-
+	async def teardown(self, ctxs: tuple[TermtreeContext, ...]) -> None:
+		ctx: Final = ctxs[0]
+		if ctx.state.tick_task is not None:
+			ctx.state.tick_task.cancel()
+			try:
+				await ctx.state.tick_task
+			except asyncio.CancelledError:
+				pass
+		draw(ctx)
 		sys.stdout.write("\n")
 		sys.stdout.flush()
-		print_failures(tuple(states))
+		print_failures(ctx.state.states)
 
-	return effect
+
+def draw(ctx: TermtreeContext) -> None:
+	sys.stdout.write(
+		render_frame(
+			ctx.rows,
+			ctx.state.states,
+			ctx.term_width,
+			ctx.display_width,
+			time.perf_counter(),
+			ctx.wall_start,
+		)
+	)
+	sys.stdout.flush()
+
+
+async def tick_loop(ctx: TermtreeContext, interval: float) -> None:
+	while True:
+		await asyncio.sleep(interval)
+		draw(ctx)

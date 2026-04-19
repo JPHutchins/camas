@@ -6,7 +6,7 @@ import cyclopts
 import pytest
 
 from camas import Parallel, Sequential, Task, run
-from camas.effect.termtree import TermtreeOptions, termtree
+from camas.effect.termtree import Termtree, TermtreeOptions
 
 app = cyclopts.App()
 
@@ -55,7 +55,7 @@ def test_demo_parallel_5_tasks() -> None:
 			sleep_task(1.5, "test"),
 		)
 	)
-	assert asyncio.run(run(task, effects=(termtree(TermtreeOptions()),))).returncode == 0
+	assert asyncio.run(run(task, effects=(Termtree(TermtreeOptions()),))).returncode == 0
 
 
 @app.command
@@ -70,7 +70,7 @@ def test_demo_parallel_with_failure() -> None:
 			sleep_task(1.0, "test"),
 		)
 	)
-	assert asyncio.run(run(task, effects=(termtree(TermtreeOptions()),))).returncode == 1
+	assert asyncio.run(run(task, effects=(Termtree(TermtreeOptions()),))).returncode == 1
 
 
 @app.command
@@ -91,7 +91,7 @@ def test_demo_sequential_3_steps() -> None:
 			),
 		)
 	)
-	assert asyncio.run(run(task, effects=(termtree(TermtreeOptions()),))).returncode == 0
+	assert asyncio.run(run(task, effects=(Termtree(TermtreeOptions()),))).returncode == 0
 
 
 @app.command
@@ -105,7 +105,7 @@ def test_demo_sequential_fail_skips() -> None:
 			sleep_task(0.3, "notify"),
 		)
 	)
-	assert asyncio.run(run(task, effects=(termtree(TermtreeOptions()),))).returncode == 1
+	assert asyncio.run(run(task, effects=(Termtree(TermtreeOptions()),))).returncode == 1
 
 
 @app.command
@@ -128,7 +128,7 @@ def test_demo_nested_parallel_in_sequential() -> None:
 			sleep_task(1.0, "test"),
 		)
 	)
-	assert asyncio.run(run(task, effects=(termtree(TermtreeOptions()),))).returncode == 0
+	assert asyncio.run(run(task, effects=(Termtree(TermtreeOptions()),))).returncode == 0
 
 
 @app.command
@@ -157,7 +157,7 @@ def test_demo_nested_sequential_in_parallel() -> None:
 			lorem_task(0.5, "lint", ("scanning", "checking imports", "no issues")),
 		)
 	)
-	assert asyncio.run(run(task, effects=(termtree(TermtreeOptions()),))).returncode == 0
+	assert asyncio.run(run(task, effects=(Termtree(TermtreeOptions()),))).returncode == 0
 
 
 @app.command
@@ -167,7 +167,7 @@ def test_demo_matrix_python_versions() -> None:
 		tasks=(sleep_task(0.8, "test {PY}"),),
 		matrix={"PY": ("3.12", "3.13", "3.14")},
 	)
-	assert asyncio.run(run(task, effects=(termtree(TermtreeOptions()),))).returncode == 0
+	assert asyncio.run(run(task, effects=(Termtree(TermtreeOptions()),))).returncode == 0
 
 
 @app.command
@@ -177,7 +177,7 @@ def test_demo_matrix_2d() -> None:
 		tasks=(sleep_task(0.6, "{DB}/{OPT}"),),
 		matrix={"DB": ("sqlite", "postgres"), "OPT": ("debug", "release")},
 	)
-	assert asyncio.run(run(task, effects=(termtree(TermtreeOptions()),))).returncode == 0
+	assert asyncio.run(run(task, effects=(Termtree(TermtreeOptions()),))).returncode == 0
 
 
 @app.command
@@ -191,7 +191,7 @@ def test_demo_sequential_matrix_clones() -> None:
 		name="ci",
 		matrix={"PY": ("3.12", "3.13", "3.14")},
 	)
-	assert asyncio.run(run(task, effects=(termtree(TermtreeOptions()),))).returncode == 0
+	assert asyncio.run(run(task, effects=(Termtree(TermtreeOptions()),))).returncode == 0
 
 
 @app.command
@@ -228,7 +228,7 @@ def test_demo_deeply_nested_with_output() -> None:
 			lorem_task(0.2, "package", ("tarring", "artifact created")),
 		)
 	)
-	assert asyncio.run(run(task, effects=(termtree(TermtreeOptions()),))).returncode == 0
+	assert asyncio.run(run(task, effects=(Termtree(TermtreeOptions()),))).returncode == 0
 
 
 @app.command
@@ -268,7 +268,7 @@ def test_demo_deeply_nested_with_output_named() -> None:
 			lorem_task(0.2, "package", ("tarring", "artifact created")),
 		),
 	)
-	assert asyncio.run(run(task, effects=(termtree(TermtreeOptions()),))).returncode == 0
+	assert asyncio.run(run(task, effects=(Termtree(TermtreeOptions()),))).returncode == 0
 
 
 @app.command
@@ -289,7 +289,7 @@ def test_demo_matrix_full_ci_pipeline() -> None:
 		name="check",
 		matrix={"PY": ("3.13", "3.14")},
 	)
-	assert asyncio.run(run(task, effects=(termtree(TermtreeOptions()),))).returncode == 0
+	assert asyncio.run(run(task, effects=(Termtree(TermtreeOptions()),))).returncode == 0
 
 
 @app.command
@@ -310,7 +310,7 @@ def test_demo_matrix_2d_with_nesting() -> None:
 		name="ci",
 		matrix={"DB": ("sqlite", "postgres"), "OPT": ("debug", "release")},
 	)
-	assert asyncio.run(run(task, effects=(termtree(TermtreeOptions()),))).returncode == 0
+	assert asyncio.run(run(task, effects=(Termtree(TermtreeOptions()),))).returncode == 0
 
 
 if __name__ == "__main__":

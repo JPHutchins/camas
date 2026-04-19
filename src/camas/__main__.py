@@ -8,7 +8,7 @@ import sys
 from typing import Final
 
 from camas import Parallel, Sequential, Task, TaskNode, run
-from camas.effect.termtree import TermtreeOptions, print_tree, termtree
+from camas.effect.termtree import Termtree, TermtreeOptions, print_tree
 
 CONSTRUCTORS: Final = {
 	Task.__name__: Task,
@@ -147,7 +147,7 @@ def main() -> None:
 	if args.dry_run:
 		print_tree(task)
 		sys.exit(0)
-	sys.exit(asyncio.run(run(task, effects=(termtree(TermtreeOptions()),))).returncode)
+	sys.exit(asyncio.run(run(task, effects=(Termtree(TermtreeOptions()),))).returncode)
 
 
 if __name__ == "__main__":

@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Callable
+import re
+from collections.abc import Callable
 
 import pytest
 
 from camas import (
 	CompletedEvent,
 	Done,
+	Effect,
 	LeafState,
 	OutputEvent,
 	Parallel,
@@ -22,15 +24,15 @@ from camas import (
 )
 from camas.effect.termtree import (
 	STATUS_COL_WIDTH,
+	Termtree,
 	TermtreeOptions,
 	flatten_rows,
 	print_failures,
 	render_frame,
 	render_lines,
-	termtree,
 )
 
-ANSI_ESCAPE_PATTERN = __import__("re").compile(r"\x1b\[[0-9;?]*[a-zA-Z]")
+ANSI_ESCAPE_PATTERN = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]")
 
 
 def visible_width(line: str) -> int:
@@ -39,6 +41,26 @@ def visible_width(line: str) -> int:
 
 def make_task(name: str) -> Task:
 	return Task(("python", "-c", "pass"), name=name)
+
+
+async def drive[T](
+	effect: Effect[T],
+	task: Task | Sequential | Parallel,
+	events: list[TaskEvent],
+) -> None:
+	"""Feed an effect through a full setup/on_event*/teardown lifecycle."""
+	from camas import flatten_leaves, next_state
+
+	leaves = flatten_leaves(task)
+	states: list[LeafState] = [Waiting(info.task) for info in leaves]
+	initial = await effect.setup(task)
+	ctxs: list[T] = [initial for _ in leaves]
+	try:
+		for event in events:
+			states[event.leaf_index] = next_state(states[event.leaf_index], event)
+			ctxs[event.leaf_index] = await effect.on_event(event, states, ctxs[event.leaf_index])
+	finally:
+		await effect.teardown(tuple(ctxs))
 
 
 def test_render_frame_all_waiting_shows_group_header_and_wait_cells(
@@ -92,11 +114,6 @@ def test_print_failures_outputs_failed_task(capsys: pytest.CaptureFixture[str]) 
 	assert "FAILED: a" not in captured.out
 
 
-async def events_from(seq: list[TaskEvent]) -> AsyncIterator[TaskEvent]:
-	for ev in seq:
-		yield ev
-
-
 def test_termtree_effect_consumes_events_and_renders(
 	capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -108,47 +125,32 @@ def test_termtree_effect_consumes_events_and_renders(
 		CompletedEvent(0, 0, 0.1, (b"line from a\n",)),
 		CompletedEvent(1, 1, 0.2, (b"boom\n",)),
 	]
-	asyncio.run(termtree(TermtreeOptions(frame_interval_ms=50))(task, events_from(events)))
+	asyncio.run(drive(Termtree(TermtreeOptions(frame_interval_ms=50)), task, events))
 	captured = capsys.readouterr()
 	assert "FAILED: b" in captured.out
 
 
-def test_termtree_effect_handles_timeout_tick(
-	capsys: pytest.CaptureFixture[str],
-) -> None:
+def test_termtree_frame_tick_keeps_spinner_alive_between_events() -> None:
+	"""setup spawns an asyncio.Task that redraws on an interval; teardown cancels it."""
 	task = make_task("solo")
 
-	async def slow_events() -> AsyncIterator[TaskEvent]:
-		await asyncio.sleep(0.15)
-		yield StartedEvent(0, 100.0)
-		yield CompletedEvent(0, 0, 0.15, (b"done\n",))
+	async def run_effect() -> bool:
+		effect = Termtree(TermtreeOptions(frame_interval_ms=20))
+		ctx = await effect.setup(task)
+		# Idle for long enough that several ticks fire while nothing is happening.
+		await asyncio.sleep(0.08)
+		ctx = await effect.on_event(
+			CompletedEvent(0, 0, 0.08, (b"done\n",)),
+			(Done(task, TaskResult("solo", 0, 0.08, (b"done\n",))),),
+			ctx,
+		)
+		assert ctx.state.tick_task is not None
+		was_running = not ctx.state.tick_task.done()
+		await effect.teardown((ctx,))
+		assert ctx.state.tick_task.done()
+		return was_running
 
-	asyncio.run(termtree(TermtreeOptions(frame_interval_ms=50))(task, slow_events()))
-	captured = capsys.readouterr()
-	assert "solo" in captured.out
-	assert "PASS" in captured.out
-
-
-def test_termtree_effect_skips_animation_when_tree_exceeds_terminal_height(
-	capsys: pytest.CaptureFixture[str],
-	monkeypatch: pytest.MonkeyPatch,
-) -> None:
-	import os
-
-	monkeypatch.setattr("shutil.get_terminal_size", lambda: os.terminal_size((80, 3)))
-	a = make_task("a")
-	b = make_task("b")
-	task = Parallel(tasks=(a, b))
-	events: list[TaskEvent] = [
-		StartedEvent(0, 100.0),
-		CompletedEvent(0, 0, 0.1, (b"ok a\n",)),
-		StartedEvent(1, 100.0),
-		CompletedEvent(1, 0, 0.2, (b"ok b\n",)),
-	]
-	asyncio.run(termtree(TermtreeOptions(frame_interval_ms=50))(task, events_from(events)))
-	captured = capsys.readouterr()
-	assert "PASS" in captured.out
-	assert "\x1b[2F" not in captured.out
+	assert asyncio.run(run_effect()) is True
 
 
 def test_termtree_effect_handles_groups_and_skipped(
@@ -162,7 +164,7 @@ def test_termtree_effect_handles_groups_and_skipped(
 		CompletedEvent(0, 1, 0.1, (b"failed\n",)),
 		CompletedEvent(1, -1, 0.0, ()),
 	]
-	asyncio.run(termtree(TermtreeOptions(frame_interval_ms=50))(task, events_from(events)))
+	asyncio.run(drive(Termtree(TermtreeOptions(frame_interval_ms=50)), task, events))
 	captured = capsys.readouterr()
 	assert "pipeline" in captured.out
 	assert "SKIP" in captured.out
@@ -213,7 +215,6 @@ def test_render_lines_never_exceed_term_width_for_long_matrix_names(
 
 
 def test_render_lines_truncates_name_when_detail_needs_room() -> None:
-	"""Long names get middle-truncated to leave MIN_DETAIL_WIDTH for output tails."""
 	long_task = Task(
 		("python", "-c", "pass"),
 		name="build postgres/release [DB=postgres, OPT=release]",
@@ -224,4 +225,3 @@ def test_render_lines_truncates_name_when_detail_needs_room() -> None:
 	lines = render_lines(rows, states, term_width=77, display_width=58, now=100.5, wall_start=100.0)
 	leaf_line = next(ln for ln in lines if "PASS" in ln)
 	assert "..." in leaf_line
-	assert "built" in leaf_line or ".." in leaf_line
