@@ -41,6 +41,7 @@ dev = [
 "pyright>=1.1.408",
 "pytest>=9,<10",
 "pytest-cov>=7.0.0",
+"cyclopts>=4,<5",
 "ruff>=0.12.0",
 "ty>=0.0.31,<1",
 "zuban>=0.7,<1",
