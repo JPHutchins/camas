@@ -33,6 +33,7 @@ from camas.effect.termtree import (
 	print_failures,
 	render_frame,
 	render_lines,
+	strip_ansi,
 )
 
 ANSI_ESCAPE_PATTERN = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]")
@@ -215,6 +216,40 @@ def test_render_lines_never_exceed_term_width_for_long_matrix_names(
 		assert visible_width(line) < term_width, (
 			f"line {visible_width(line)} chars exceeds term_width {term_width}: {line!r}"
 		)
+
+
+def test_strip_ansi_removes_color_codes() -> None:
+	assert strip_ansi("\x1b[38;5;214mwarning\x1b[0m") == "warning"
+
+
+def test_strip_ansi_removes_control_chars_and_ansi() -> None:
+	assert strip_ansi("\r\x1b[2Kprogress") == "progress"
+
+
+def test_render_lines_strips_ansi_from_done_tail() -> None:
+	task = make_task("a")
+	rows = flatten_rows(Parallel(tasks=(task,)))
+	states: tuple[LeafState, ...] = (
+		Done(task, TaskResult("a", 0, 0.1, (b"\x1b[38;5;214mcolored\x1b[0m\n",))),
+	)
+	lines = render_lines(
+		rows, states, term_width=120, display_width=100, now=100.5, wall_start=100.0
+	)
+	combined = "".join(lines)
+	assert "\x1b[38;5;214m" not in combined
+	assert "colored" in ANSI_ESCAPE_PATTERN.sub("", combined)
+
+
+def test_render_lines_strips_ansi_from_running_tail() -> None:
+	task = make_task("a")
+	rows = flatten_rows(Parallel(tasks=(task,)))
+	states: tuple[LeafState, ...] = (Running(task, 100.0, b"\x1b[38;5;214mbuilding\x1b[0m"),)
+	lines = render_lines(
+		rows, states, term_width=120, display_width=100, now=100.5, wall_start=100.0
+	)
+	combined = "".join(lines)
+	assert "\x1b[38;5;214m" not in combined
+	assert "building" in ANSI_ESCAPE_PATTERN.sub("", combined)
 
 
 def test_render_lines_truncates_name_when_detail_needs_room() -> None:

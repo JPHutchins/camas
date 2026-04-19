@@ -11,6 +11,22 @@ import pytest
 from camas import Parallel, Sequential, Task, run
 
 
+def test_force_color_injected_in_subprocess(monkeypatch: pytest.MonkeyPatch) -> None:
+	monkeypatch.delenv("NO_COLOR", raising=False)
+	task = Task(
+		("python", "-c", "import os,sys; sys.exit(0 if os.environ.get('FORCE_COLOR')=='1' else 1)")
+	)
+	assert asyncio.run(run(task)).returncode == 0
+
+
+def test_no_color_suppresses_force_color(monkeypatch: pytest.MonkeyPatch) -> None:
+	monkeypatch.setenv("NO_COLOR", "1")
+	task = Task(
+		("python", "-c", "import os,sys; sys.exit(0 if 'FORCE_COLOR' not in os.environ else 1)")
+	)
+	assert asyncio.run(run(task)).returncode == 0
+
+
 def test_single_cmd_success() -> None:
 	assert asyncio.run(run(Task(("python", "-c", "pass")))).returncode == 0
 

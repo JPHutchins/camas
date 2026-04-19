@@ -6,7 +6,7 @@ from __future__ import annotations
 import pytest
 
 from camas import Parallel, Sequential, Task
-from camas.__main__ import parse_expression
+from camas.main import parse_expression
 
 
 @pytest.mark.parametrize(
@@ -137,3 +137,17 @@ def test_parse_rejects_unknown_type() -> None:
 def test_parse_bare_string_not_a_task() -> None:
 	with pytest.raises(SystemExit, match="2"):
 		parse_expression('"just a string"')
+
+
+def test_parse_task_requires_cmd() -> None:
+	with pytest.raises(SystemExit, match="2"):
+		parse_expression("Task()")
+
+
+def test_parse_ref_requires_name() -> None:
+	with pytest.raises(SystemExit, match="2"):
+		parse_expression("Parallel(tasks=(Ref(),))", tasks={})
+
+
+def test_parse_explicit_none_name() -> None:
+	assert parse_expression('Task("hi", name=None)') == Task("hi", name=None)

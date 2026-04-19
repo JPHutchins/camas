@@ -340,6 +340,8 @@ def specialize_task(task: Task, binding: MatrixBinding, suffix: str) -> Task:
 
 	>>> specialize_task(Task("test {PY}"), (VarBinding("PY", "3.14"),), "[PY=3.14]")
 	Task(cmd='test 3.14', name='test 3.14 [PY=3.14]', env={'PY': '3.14'})
+	>>> specialize_task(Task("go", env={"VENV": ".venv-{PY}"}), (VarBinding("PY", "3.14"),), "[PY=3.14]").env
+	{'VENV': '.venv-3.14', 'PY': '3.14'}
 	"""
 	match task.cmd:
 		case str():
@@ -351,7 +353,7 @@ def specialize_task(task: Task, binding: MatrixBinding, suffix: str) -> Task:
 	return Task(
 		cmd=new_cmd,
 		name=f"{substitute_in_str(task.name if task.name is not None else derive_name(task.cmd, AUTO_NAME_MAX_WIDTH), binding)} {suffix}",
-		env=task.env | dict(binding),
+		env={k: substitute_in_str(v, binding) for k, v in task.env.items()} | dict(binding),
 	)
 
 
@@ -584,6 +586,13 @@ def next_state(state: LeafState, event: TaskEvent) -> LeafState:
 			assert_never(state)
 
 
+def _color_env(merged: dict[str, str]) -> dict[str, str]:
+	"""Inject FORCE_COLOR/CLICOLOR_FORCE unless NO_COLOR is set (which also strips them)."""
+	if "NO_COLOR" in merged:
+		return {k: v for k, v in merged.items() if k not in {"FORCE_COLOR", "CLICOLOR_FORCE"}}
+	return merged | {"FORCE_COLOR": "1", "CLICOLOR_FORCE": "1"}
+
+
 async def run_cmd(task: Task, leaf_index: int, dispatch: EventSink) -> TaskResult:
 	"""Run one leaf as a subprocess, dispatching Started/Output/Completed events."""
 	start: Final = time.perf_counter()
@@ -592,7 +601,7 @@ async def run_cmd(task: Task, leaf_index: int, dispatch: EventSink) -> TaskResul
 		*resolve_cmd(task.cmd),
 		stdout=asyncio.subprocess.PIPE,
 		stderr=STDOUT,
-		env=os.environ | task.env,
+		env=_color_env(os.environ | task.env),
 	)
 	output: Final[list[bytes]] = []
 	if proc.stdout is not None:  # pragma: no branch

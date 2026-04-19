@@ -26,7 +26,7 @@ Repository = "https://github.com/JPHutchins/camas"
 Issues = "https://github.com/JPHutchins/camas/issues"
 
 [project.scripts]
-camas = "camas.__main__:main"
+camas = "camas.main:main"
 
 [build-system]
 requires = ["hatchling", "hatch-vcs"]
@@ -42,22 +42,41 @@ dev = [
 "pytest>=9,<10",
 "pytest-cov>=7.0.0",
 "ruff>=0.12.0",
-"cyclopts>=4,<5",
-"taskipy>=1",
+"ty>=0.0.31,<1",
+"zuban>=0.7,<1",
+"pyrefly>=0.61,<1",
 ]
 
-[tool.taskipy.tasks]
-format = "ruff format ."
-format-check = "ruff format --check ."
-lint = "ruff check ."
-typecheck = "task _mypy && task _pyright"
-_mypy = "mypy ."
-_pyright = "pyright src tests"
-test = "pytest --doctest-modules -m 'not slow'"
+[tool.camas.tasks]
+format = "uv run ruff format ."
+lint = "uv run ruff check ."
+mypy = "uv run mypy ."
+ty = "uv run ty check"
+zuban = "uv run zuban check"
+pyrefly = "uv run pyrefly check"
+pyright = "uv run pyright src tests"
+typecheck = "Parallel(tasks=(mypy, pyright, ty, zuban, pyrefly))"
+test = "pytest --doctest-modules -v -m 'not slow'"
 coverage = "pytest --doctest-modules -m 'not slow' --cov --cov-report=term-missing"
-all = "task format && task lint && task typecheck && task test"
+all = '''
+Sequential(tasks=(
+    format,
+    Parallel(tasks=(lint, typecheck, test)),
+))
+'''
+matrix = '''
+Parallel(
+    tasks=(all,),
+    matrix={"UV_PROJECT_ENVIRONMENT": (
+		".venv-3.12",
+		".venv-3.13",
+		".venv-3.14"
+	)},
+)
+'''
 
 [tool.pytest.ini_options]
+testpaths = ["src", "tests"]
 markers = ["slow: visual demo tests with real delays"]
 
 [tool.ruff]
@@ -76,23 +95,16 @@ warn_unused_ignores = true
 [tool.pyright]
 typeCheckingMode = "strict"
 include = ["src", "tests"]
-exclude = [".venv*", "**/__pycache__"]
 
 [tool.coverage.run]
 source = ["camas", "tests"]
 branch = true
-omit = ["tests/test_demos.py"]
+omit = ["tests/test_demos.py", "src/camas/__main__.py"]
 
 [tool.coverage.report]
 fail_under = 100
-partial_branches = [
-"pragma: no branch",
-"case LeafInfo",
-"case Waiting",
-]
-exclude_also = [
-"async for .* in proc\\.stdout",
-]
+partial_branches = ["pragma: no branch", "case LeafInfo", "case Waiting"]
+exclude_also = ["async for .* in proc\\.stdout"]
 exclude_lines = [
 "@overload",
 "assert_never",

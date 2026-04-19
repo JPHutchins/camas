@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
 import asyncio
+import re
 import shutil
 import sys
 import time
@@ -53,6 +54,30 @@ class GroupHeader(NamedTuple):
 
 
 type DisplayRow = LeafInfo | GroupHeader
+
+
+ANSI_ESCAPE: Final = re.compile(
+	r"\x1b(?:"
+	r"\[[0-?]*[ -/]*[@-~]"  # CSI sequences (colors, cursor movement, etc.)
+	r"|\][^\x07]*\x07"  # OSC terminated by BEL (hyperlinks, window title)
+	r"|\][^\x1b]*\x1b\\"  # OSC terminated by ST
+	r"|[@-Z\\-_]"  # two-character Fe sequences (after OSC: ] is in range)
+	r")"
+	r"|[\x00-\x1f\x7f]"  # remaining ASCII control characters (e.g. \r from tools)
+)
+
+
+def strip_ansi(text: str) -> str:
+	"""Remove ANSI escape sequences and ASCII control characters from a string.
+
+	>>> strip_ansi("\x1b[32mgreen\x1b[0m text")
+	'green text'
+	>>> strip_ansi("\x1b]8;;https://example.com\x07link\x1b]8;;\x07 text")
+	'link text'
+	>>> strip_ansi("no escapes")
+	'no escapes'
+	"""
+	return ANSI_ESCAPE.sub("", text)
 
 
 BOLD: Final = "\033[1m"
@@ -219,7 +244,7 @@ def render_lines(
 					case Done(result=result):
 						color = GREEN if result.returncode == 0 else RED
 						status = " PASS " if result.returncode == 0 else " FAIL "
-						tail = last_line_display(result.output)
+						tail = strip_ansi(last_line_display(result.output))
 						detail = f"  {truncate_middle(tail, gap - 2)}" if gap > 2 and tail else ""
 						padding = " " * max(gap - len(detail), 0)
 						lines.append(
@@ -228,7 +253,7 @@ def render_lines(
 					case Running(start_time=start_time, last_line=last_line):
 						elapsed = now - start_time
 						spin = SPINNER[int(elapsed * 10) % len(SPINNER)]
-						tail = decode_line(last_line) if last_line else ""
+						tail = strip_ansi(decode_line(last_line)) if last_line else ""
 						detail = f"  {truncate_middle(tail, gap - 2)}" if gap > 2 and tail else ""
 						padding = " " * max(gap - len(detail), 0)
 						lines.append(
@@ -341,9 +366,11 @@ class Termtree:
 		self.options: Final = options
 
 	async def setup(self, task: TaskNode) -> TermtreeContext:
-		term_width: Final = shutil.get_terminal_size().columns
-		rows: Final = flatten_rows(task)
-		ctx: Final = TermtreeContext(
+		term_width: Final = (  # zuban: ignore[misc] # zuban defies PEP591
+			shutil.get_terminal_size().columns
+		)
+		rows: Final = flatten_rows(task)  # zuban: ignore[misc] # zuban defies PEP591
+		ctx: Final = TermtreeContext(  # zuban: ignore[misc] # zuban defies PEP591
 			rows=rows,
 			term_width=term_width,
 			display_width=term_width - STATUS_COL_WIDTH - 1,
@@ -367,8 +394,8 @@ class Termtree:
 		return ctx
 
 	async def teardown(self, ctxs: tuple[TermtreeContext, ...]) -> None:
-		ctx: Final = ctxs[0]
-		if ctx.state.tick_task is not None:
+		ctx: Final = ctxs[0]  # zuban: ignore[misc] # zuban defies PEP591
+		if ctx.state.tick_task is not None:  # pragma: no branch
 			ctx.state.tick_task.cancel()
 			try:
 				await ctx.state.tick_task

@@ -5,16 +5,18 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
-from camas.__main__ import build_parser, main, parse_expression
+from camas.main import build_parser, main, parse_expression
 
 
-def test_help() -> None:
+def test_help(tmp_path: Path) -> None:
 	result = subprocess.run(
 		[sys.executable, "-m", "camas", "--help"],
+		cwd=tmp_path,
 		capture_output=True,
 		text=True,
 	)
@@ -22,9 +24,10 @@ def test_help() -> None:
 	assert "expression" in result.stdout
 
 
-def test_version() -> None:
+def test_version(tmp_path: Path) -> None:
 	result = subprocess.run(
 		[sys.executable, "-m", "camas", "--version"],
+		cwd=tmp_path,
 		capture_output=True,
 		text=True,
 	)
