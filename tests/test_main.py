@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 import pytest
 
-from camas.main import build_parser, main, parse_expression
+from camas.main import build_parser, main, parse_effects, parse_expression
 
 
 def test_help(tmp_path: Path) -> None:
@@ -39,6 +39,31 @@ def test_no_args() -> None:
 	with pytest.raises(SystemExit, match="2"):
 		with patch("sys.argv", ["camas"]):
 			main()
+
+
+def test_parse_effects_rejects_invalid_syntax() -> None:
+	with pytest.raises(ValueError, match="invalid syntax"):
+		parse_effects("Summary(unbalanced(")
+
+
+def test_parse_effects_rejects_non_tuple() -> None:
+	with pytest.raises(ValueError, match="must be a tuple"):
+		parse_effects("Summary()")
+
+
+def test_parse_effects_rejects_unknown_effect() -> None:
+	with pytest.raises(ValueError, match="expected a no-arg effect call"):
+		parse_effects("(Bogus(),)")
+
+
+def test_dispatch_rejects_bad_effects(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	monkeypatch.chdir(tmp_path)
+	with pytest.raises(SystemExit, match="2"):
+		with patch("sys.argv", ["camas", "--effects=nope(", 'Task("echo hi")']):
+			main()
+	assert "--effects" in capsys.readouterr().err
 
 
 def test_parser_has_expression_arg() -> None:

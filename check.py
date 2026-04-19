@@ -19,6 +19,7 @@ pyright = Task("uv run pyright src tests")
 
 typecheck = Parallel(tasks=(mypy, pyright, ty, zuban, pyrefly))
 test = Task("uv run pytest --doctest-modules -v -m 'not slow'")
+coverage = Task("uv run pytest --doctest-modules -m 'not slow' --cov --cov-report=term-missing")
 
 all = Sequential(
 	tasks=(

@@ -10,12 +10,13 @@ import importlib.metadata
 import re
 import sys
 import tomllib
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, Final, NamedTuple, TypeGuard, assert_never, cast
 
-from camas import Parallel, Sequential, Task, TaskNode, run
-from camas.effect.termtree import Termtree, TermtreeOptions, print_tree
+from camas import Effect, Parallel, Sequential, Task, TaskNode, run
+from camas.effect.summary import Summary
+from camas.effect.termtree import Termtree, print_tree
 
 
 class Ref(NamedTuple):
@@ -378,6 +379,14 @@ def build_parser() -> argparse.ArgumentParser:
 		action="store_true",
 		help="list tasks defined in pyproject.toml and exit",
 	)
+	parser.add_argument(
+		"--effects",
+		default="(Termtree(),)",
+		help=(
+			"tuple expression of Effect instances, e.g. '(Summary(),)' for CI."
+			f" known: {', '.join(EFFECT_CONSTRUCTORS)}. default: '(Termtree(),)'"
+		),
+	)
 	return parser
 
 
@@ -417,6 +426,42 @@ def run_cli(scope: Mapping[str, object]) -> None:
 	)
 
 
+EFFECT_CONSTRUCTORS: Final[Mapping[str, Callable[[], Effect[Any]]]] = {
+	Summary.__name__: Summary,
+	Termtree.__name__: Termtree,
+}
+
+
+def parse_effects(expr: str) -> tuple[Effect[Any], ...]:
+	"""Parse a ``--effects`` expression into a tuple of Effect instances.
+
+	>>> [type(e).__name__ for e in parse_effects("(Summary(),)")]
+	['Summary']
+	>>> [type(e).__name__ for e in parse_effects("(Termtree(), Summary())")]
+	['Termtree', 'Summary']
+	>>> parse_effects("()")
+	()
+	"""
+	try:
+		tree = ast.parse(expr, mode="eval")
+	except SyntaxError as e:
+		raise ValueError(f"invalid syntax: {e}") from e
+	if not isinstance(tree.body, ast.Tuple):
+		raise ValueError(f"--effects must be a tuple, got {type(tree.body).__name__}")
+	return tuple(_eval_effect(elt) for elt in tree.body.elts)
+
+
+def _eval_effect(node: ast.expr) -> Effect[Any]:
+	match node:
+		case ast.Call(func=ast.Name(id=name), args=[], keywords=[]) if name in EFFECT_CONSTRUCTORS:
+			return EFFECT_CONSTRUCTORS[name]()
+		case _:
+			raise ValueError(
+				f"expected a no-arg effect call ({', '.join(EFFECT_CONSTRUCTORS)}),"
+				f" got {ast.dump(node)}"
+			)
+
+
 def dispatch(tasks: Mapping[str, TaskNode]) -> None:
 	"""Parse sys.argv against ``tasks`` and run the dispatched task. Always exits."""
 	parser: Final = build_parser()
@@ -429,11 +474,17 @@ def dispatch(tasks: Mapping[str, TaskNode]) -> None:
 	if args.expression is None:
 		parser.error("expression or --list is required")
 
+	try:
+		effects: Final = parse_effects(args.effects)
+	except ValueError as e:
+		print(f"error: --effects: {e}", file=sys.stderr)
+		sys.exit(2)
+
 	task: Final = dispatch_arg(args.expression, tasks)
 	if args.dry_run:
 		print_tree(task)
 		sys.exit(0)
-	sys.exit(asyncio.run(run(task, effects=(Termtree(TermtreeOptions()),))).returncode)
+	sys.exit(asyncio.run(run(task, effects=effects)).returncode)
 
 
 def main() -> None:

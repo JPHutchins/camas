@@ -8,11 +8,10 @@ on:
   workflow_dispatch:
 
 jobs:
-  lint-and-test:
+  check:
     strategy:
       matrix:
         os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
-        python-version: ["3.12", "3.13", "3.14"]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
@@ -21,19 +20,13 @@ jobs:
 
       - uses: astral-sh/setup-uv@v6
 
-      - run: uv run --python ${{ matrix.python-version }} task format-check
-
-      - run: uv run --python ${{ matrix.python-version }} task lint
-
-      - run: uv run --python ${{ matrix.python-version }} task typecheck
-
-      - run: uv run --python ${{ matrix.python-version }} task test
+      - run: uv run camas matrix --effects='(Summary(),)'
 
       - run: uv build
 
       - uses: actions/upload-artifact@v4
         with:
-          name: dist-${{ matrix.os }}-${{ matrix.python-version }}
+          name: dist-${{ matrix.os }}
           path: |
             dist/*.tar.gz
             dist/*.whl
@@ -47,11 +40,11 @@ jobs:
 
       - uses: astral-sh/setup-uv@v6
 
-      - run: uv run task coverage
+      - run: uv run camas coverage --effects='(Summary(),)'
 
   publish:
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [lint-and-test, coverage]
+    needs: [check, coverage]
     runs-on: ubuntu-latest
     environment:
       name: pypi

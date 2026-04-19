@@ -362,8 +362,8 @@ class Termtree:
 	how fast events arrive.
 	"""
 
-	def __init__(self, options: TermtreeOptions) -> None:
-		self.options: Final = options
+	def __init__(self, options: TermtreeOptions | None = None) -> None:
+		self.options: Final = options if options is not None else TermtreeOptions()
 
 	async def setup(self, task: TaskNode) -> TermtreeContext:
 		term_width: Final = (  # zuban: ignore[misc] # zuban defies PEP591
