@@ -84,8 +84,8 @@ omit = ["tests/test_demos.py"]
 fail_under = 100
 partial_branches = [
 "pragma: no branch",
-"case _LeafCmd",
-"case _Waiting",
+"case LeafInfo",
+"case Waiting",
 ]
 exclude_also = [
 "async for .* in proc\\.stdout",

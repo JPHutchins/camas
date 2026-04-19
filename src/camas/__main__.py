@@ -7,15 +7,16 @@ import importlib.metadata
 import sys
 from typing import Final
 
-from camas import Parallel, Sequential, Task, TaskNode, print_tree, run
+from camas import Parallel, Sequential, Task, TaskNode, run
+from camas.effect.termtree import TermtreeOptions, print_tree, termtree
 
-_CONSTRUCTORS: Final = {
+CONSTRUCTORS: Final = {
 	Task.__name__: Task,
 	Sequential.__name__: Sequential,
 	Parallel.__name__: Parallel,
 }
 
-_EXAMPLES: Final = """\
+EXAMPLES: Final = """\
 examples:
     python -m camas 'Parallel(tasks=(Task("ruff check ."), Task("mypy .")))'
 
@@ -32,46 +33,46 @@ examples:
 """
 
 
-def _eval_node(
+def eval_node(
 	node: ast.expr,
 ) -> str | int | float | bool | None | tuple[object, ...] | dict[str, object] | TaskNode:
 	"""Walk an AST node and construct the corresponding Python value safely (no eval).
 
 	>>> import ast
-	>>> _eval_node(ast.parse('"hello"', mode="eval").body)
+	>>> eval_node(ast.parse('"hello"', mode="eval").body)
 	'hello'
-	>>> _eval_node(ast.parse('(1, 2)', mode="eval").body)
+	>>> eval_node(ast.parse('(1, 2)', mode="eval").body)
 	(1, 2)
 	"""
 	match node:
 		case ast.Constant(value=val) if isinstance(val, str | int | float | bool) or val is None:
 			return val
 		case ast.Tuple(elts=elts):
-			return tuple(_eval_node(e) for e in elts)
+			return tuple(eval_node(e) for e in elts)
 		case ast.Dict(keys=keys, values=values):
 			return {
-				_expect_str(_eval_node(k)): _eval_node(v)
+				expect_str(eval_node(k)): eval_node(v)
 				for k, v in zip(keys, values)
 				if k is not None
 			}
 		case ast.Call(func=ast.Name(id=name), args=args, keywords=keywords):
-			kwargs = {kw.arg: _eval_node(kw.value) for kw in keywords if kw.arg is not None}
-			if name not in _CONSTRUCTORS:
-				raise ValueError(f"unknown type: {name!r} (expected {', '.join(_CONSTRUCTORS)})")
-			constructor = _CONSTRUCTORS[name]
+			kwargs = {kw.arg: eval_node(kw.value) for kw in keywords if kw.arg is not None}
+			if name not in CONSTRUCTORS:
+				raise ValueError(f"unknown type: {name!r} (expected {', '.join(CONSTRUCTORS)})")
+			constructor = CONSTRUCTORS[name]
 			if args:
-				kwargs["cmd"] = _eval_node(args[0])
+				kwargs["cmd"] = eval_node(args[0])
 			return constructor(**kwargs)  # type: ignore[no-any-return]
 		case _:
 			raise ValueError(f"unsupported syntax: {ast.dump(node)}")
 
 
-def _expect_str(val: object) -> str:
+def expect_str(val: object) -> str:
 	"""Validate that a value is a string, raising ValueError otherwise.
 
-	>>> _expect_str("hello")
+	>>> expect_str("hello")
 	'hello'
-	>>> _expect_str(42)
+	>>> expect_str(42)
 	Traceback (most recent call last):
 	    ...
 	ValueError: expected str key, got int
@@ -94,14 +95,14 @@ def parse_expression(expr: str) -> TaskNode:
 		sys.exit(2)
 
 	try:
-		result = _eval_node(tree.body)
+		result = eval_node(tree.body)
 	except (ValueError, TypeError) as e:
 		print(f"error: {e}", file=sys.stderr)
 		sys.exit(2)
 
 	if not isinstance(result, Task | Sequential | Parallel):
 		print(
-			f"error: expression must be {', '.join(_CONSTRUCTORS)}, got {type(result).__name__}",
+			f"error: expression must be {', '.join(CONSTRUCTORS)}, got {type(result).__name__}",
 			file=sys.stderr,
 		)
 		sys.exit(2)
@@ -116,10 +117,10 @@ def build_parser() -> argparse.ArgumentParser:
 	>>> args.expression
 	'Task("echo hi")'
 	"""
-	parser = argparse.ArgumentParser(
+	parser: Final = argparse.ArgumentParser(
 		prog="camas",
 		description="Generic parallel/sequential task runner with TUI output.",
-		epilog=_EXAMPLES,
+		epilog=EXAMPLES,
 		formatter_class=argparse.RawDescriptionHelpFormatter,
 	)
 	parser.add_argument(
@@ -141,12 +142,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
 	"""CLI entry point: parse args, build task tree, and execute or dry-run."""
-	args = build_parser().parse_args()
-	task = parse_expression(args.expression)
+	args: Final = build_parser().parse_args()
+	task: Final = parse_expression(args.expression)
 	if args.dry_run:
 		print_tree(task)
 		sys.exit(0)
-	sys.exit(asyncio.run(run(task)).returncode)
+	sys.exit(asyncio.run(run(task, effects=(termtree(TermtreeOptions()),))).returncode)
 
 
 if __name__ == "__main__":

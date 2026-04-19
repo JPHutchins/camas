@@ -29,3 +29,19 @@ def test_truncates_with_ellipsis(text: str, max_width: int) -> None:
 	result = truncate_middle(text, max_width)
 	assert len(result) == max_width
 	assert "..." in result
+
+
+@pytest.mark.parametrize(
+	("text", "max_width", "expected"),
+	[
+		("built", 3, "..."),
+		("built", 2, ".."),
+		("built", 1, "."),
+		("built", 0, ""),
+		("built", -5, ""),
+	],
+)
+def test_small_max_width_never_exceeds(text: str, max_width: int, expected: str) -> None:
+	result = truncate_middle(text, max_width)
+	assert result == expected
+	assert len(result) <= max(max_width, 0)

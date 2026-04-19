@@ -182,7 +182,7 @@ def test_task_with_stdout_output() -> None:
 	task = Task(("python", "-c", "print('hello world')"), name="printer")
 	result = asyncio.run(run(task))
 	assert result.returncode == 0
-	assert any("hello world" in r.output for r in result.results)
+	assert any(b"hello world" in line for r in result.results for line in r.output)
 
 
 def test_sequential_skip_nested_group() -> None:
