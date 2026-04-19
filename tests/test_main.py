@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 JP Hutchins
+
 from __future__ import annotations
 
 import subprocess
