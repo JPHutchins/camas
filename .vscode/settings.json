@@ -1,0 +1,13 @@
+{
+	"[python]": {
+		"editor.formatOnSave": true,
+		"editor.defaultFormatter": "charliermarsh.ruff",
+		"editor.codeActionsOnSave": {
+			"source.organizeImports": "always"
+		}
+	},
+	"flake8.enabled": false,
+	"ruff.enable": true,
+	"ruff.lint.enable": true,
+	"mypy-type-checker.importStrategy": "fromEnvironment"
+}
