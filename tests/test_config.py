@@ -82,7 +82,7 @@ def test_parse_task_value_matrix_preserved() -> None:
 
 
 def test_parse_task_value_invalid_syntax() -> None:
-	with pytest.raises(ValueError, match="invalid expression"):
+	with pytest.raises(ValueError, match="invalid syntax"):
 		parse_task_value("Task(unbalanced(")
 
 
@@ -239,6 +239,27 @@ def test_load_tasks_rejects_non_string_value(tmp_path: Path) -> None:
 	pyproject.write_text("[tool.camas.tasks]\nbad = 42\n")
 	with pytest.raises(ValueError, match="must be a string"):
 		load_tasks(pyproject)
+
+
+def test_load_tasks_surfaces_syntax_error_with_task_name(tmp_path: Path) -> None:
+	pyproject = tmp_path / "pyproject.toml"
+	pyproject.write_text(
+		"[tool.camas.tasks]\n"
+		"matrix = '''\n"
+		"Parallel(\n"
+		'\ttasks=(Task("t"),),\n'
+		'\tmatrix={"PY"=["3.12"]},\n'
+		")\n"
+		"'''\n"
+	)
+	with pytest.raises(ValueError) as exc:
+		load_tasks(pyproject)
+	msg = str(exc.value)
+	assert "task 'matrix'" in msg
+	assert "invalid syntax (line 3" in msg
+	assert '"PY"=["3.12"]' in msg
+	assert "^" in msg
+	assert "\\n" not in msg
 
 
 def test_load_tasks_surfaces_cycle(tmp_path: Path) -> None:

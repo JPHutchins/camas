@@ -65,6 +65,32 @@ named tasks (pyproject.toml):
 """
 
 
+def _format_syntax_error(source: str, err: SyntaxError) -> str:
+	"""Format a SyntaxError against ``source`` with a caret pointing at the offending column.
+
+	>>> import ast
+	>>> try: ast.parse("Task(", mode="eval")
+	... except SyntaxError as e: print(_format_syntax_error("Task(", e))
+	invalid syntax (line 1, column 5): '(' was never closed
+	    Task(
+	        ^
+	"""
+	lineno = err.lineno or 0
+	offset = err.offset or 0
+	msg = err.msg or "invalid syntax"
+	lines = source.splitlines()
+	if not (1 <= lineno <= len(lines)) or offset < 1:
+		return f"invalid syntax: {msg}"
+	line = lines[lineno - 1]
+	expanded = line.expandtabs(4)
+	caret_col = len(line[: offset - 1].expandtabs(4))
+	return (
+		f"invalid syntax (line {lineno}, column {offset}): {msg}\n"
+		f"    {expanded}\n"
+		f"    {' ' * caret_col}^"
+	)
+
+
 def _eval_str_lit(node: ast.expr) -> str:
 	match node:
 		case ast.Constant(value=str() as s):
@@ -213,7 +239,7 @@ def parse_expression(expr: str, tasks: Mapping[str, TaskNode] | None = None) -> 
 	try:
 		tree = ast.parse(expr, mode="eval")
 	except SyntaxError as e:
-		print(f"error: invalid syntax: {e}", file=sys.stderr)
+		print(f"error: {_format_syntax_error(expr, e)}", file=sys.stderr)
 		sys.exit(2)
 
 	try:
@@ -254,7 +280,7 @@ def parse_task_value(raw: str) -> TaskNode | Ref:
 	try:
 		tree = ast.parse(raw, mode="eval")
 	except SyntaxError as e:
-		raise ValueError(f"invalid expression {raw!r}: {e}") from e
+		raise ValueError(_format_syntax_error(raw, e)) from e
 	return eval_node(tree.body, allow_refs=True)
 
 
@@ -323,7 +349,10 @@ def load_tasks(path: Path) -> dict[str, TaskNode]:
 	for name, value in raw.items():
 		if not isinstance(value, str):
 			raise ValueError(f"task {name!r} must be a string, got {type(value).__name__}")
-		pre[name] = parse_task_value(value)
+		try:
+			pre[name] = parse_task_value(value)
+		except ValueError as e:
+			raise ValueError(f"task {name!r}: {e}") from e
 	return {name: resolve_refs(tree, pre, frozenset({name})) for name, tree in pre.items()}
 
 
@@ -451,7 +480,7 @@ def parse_effects(expr: str) -> tuple[Effect[Any], ...]:
 	try:
 		tree = ast.parse(expr, mode="eval")
 	except SyntaxError as e:
-		raise ValueError(f"invalid syntax: {e}") from e
+		raise ValueError(_format_syntax_error(expr, e)) from e
 	if not isinstance(tree.body, ast.Tuple):
 		raise ValueError(f"--effects must be a tuple, got {type(tree.body).__name__}")
 	return tuple(_expect_effect(_eval_value(elt)) for elt in tree.body.elts)
