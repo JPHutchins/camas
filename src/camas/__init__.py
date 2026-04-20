@@ -18,7 +18,7 @@ if sys.version_info >= (3, 11):
 	from asyncio import TaskGroup
 	from builtins import BaseExceptionGroup
 	from typing import assert_never
-else:
+else:  # pragma: no cover
 	from exceptiongroup import BaseExceptionGroup
 	from taskgroup import TaskGroup
 	from typing_extensions import assert_never

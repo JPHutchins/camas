@@ -17,7 +17,7 @@ if sys.version_info >= (3, 11):
 	from typing import assert_never
 
 	import tomllib
-else:
+else:  # pragma: no cover
 	import tomli as tomllib
 	from typing_extensions import assert_never
 

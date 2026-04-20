@@ -12,7 +12,7 @@ import pytest
 
 if sys.version_info >= (3, 11):
 	from builtins import BaseExceptionGroup
-else:
+else:  # pragma: no cover
 	from exceptiongroup import BaseExceptionGroup
 
 from camas import (

@@ -57,6 +57,12 @@ jobs:
 
       - run: uv run camas coverage --effects='(Summary(),)'
 
+      - uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage.xml
+          flags: unittests
+
   publish:
     if: startsWith(github.ref, 'refs/tags/')
     needs: [check, coverage]
