@@ -84,7 +84,7 @@ def _s(t: float, name: str) -> Task:
 				)
 			),
 			0.3,
-			0.8,
+			1.2,
 		),
 		(
 			Parallel(
