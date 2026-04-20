@@ -21,29 +21,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@v6
 
-      - name: Diagnose zuban-Windows-3.10
-        if: runner.os == 'Windows'
-        shell: pwsh
-        env:
-          UV_PROJECT_ENVIRONMENT: .venv-3.10
-        run: |
-          uv sync --python=3.10
-          Write-Host "=== pyvenv.cfg ==="
-          Get-Content .venv-3.10\pyvenv.cfg
-          Write-Host "=== site-packages top level ==="
-          Get-ChildItem .venv-3.10\Lib\site-packages | Select-Object -First 60 Name
-          Write-Host "=== pytest on disk? ==="
-          if (Test-Path .venv-3.10\Lib\site-packages\pytest) { Write-Host "YES: pytest dir exists" } else { Write-Host "NO: pytest dir missing" }
-          Write-Host "=== import pytest via venv python ==="
-          .venv-3.10\Scripts\python.exe -c "import pytest; print('pytest at', pytest.__file__)"
-          Write-Host "=== zuban check (first 40 lines) ==="
-          uv run zuban check 2>&1 | Select-Object -First 40
-          Write-Host "=== zuban --help (look for verbose flags) ==="
-          uv run zuban --help 2>&1 | Select-Object -First 40
-
       - run: uv run camas matrix --effects='(Summary(SummaryOptions(Fixed(120))),)'
-        env:
-          UV_NO_CACHE: "1"
 
       - run: uv build
 
