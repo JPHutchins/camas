@@ -7,7 +7,7 @@ import asyncio
 import functools
 import itertools
 import os
-import sys
+import shlex
 import time
 from collections.abc import Awaitable, Callable, Iterator, Sequence
 from subprocess import STDOUT
@@ -220,40 +220,21 @@ SKIPPED_RETURNCODE: Final = -1
 AUTO_NAME_MAX_WIDTH: Final = 20
 
 
-if sys.platform == "win32":  # pragma: no cover
+def resolve_cmd(cmd: str | tuple[str, ...]) -> tuple[str, ...]:
+	"""Resolve a command to a tuple of argv tokens, splitting shell strings with shlex.
 
-	def resolve_cmd(cmd: str | tuple[str, ...]) -> tuple[str, ...]:
-		"""Resolve a command to a tuple of strings (Windows: no shell splitting).
-
-		>>> resolve_cmd(("echo", "hi"))
-		('echo', 'hi')
-		"""
-		match cmd:
-			case str():
-				return (cmd,)
-			case tuple():
-				return cmd
-			case _:
-				assert_never(cmd)
-
-else:
-	import shlex
-
-	def resolve_cmd(cmd: str | tuple[str, ...]) -> tuple[str, ...]:
-		"""Resolve a command to a tuple of strings, splitting shell strings with shlex.
-
-		>>> resolve_cmd(("echo", "hi"))
-		('echo', 'hi')
-		>>> resolve_cmd("echo hi")
-		('echo', 'hi')
-		"""
-		match cmd:
-			case str():
-				return tuple(shlex.split(cmd))
-			case tuple():
-				return cmd
-			case _:
-				assert_never(cmd)
+	>>> resolve_cmd(("echo", "hi"))
+	('echo', 'hi')
+	>>> resolve_cmd("echo hi")
+	('echo', 'hi')
+	"""
+	match cmd:
+		case str():
+			return tuple(shlex.split(cmd))
+		case tuple():
+			return cmd
+		case _:
+			assert_never(cmd)
 
 
 def substitute_in_str(text: str, binding: MatrixBinding) -> str:

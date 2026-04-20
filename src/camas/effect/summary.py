@@ -6,10 +6,11 @@ import sys
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Final, NamedTuple
+from typing import Final, NamedTuple, assert_never
 
 from camas import LeafState, TaskEvent, TaskNode, Waiting, flatten_leaves
 from camas.effect.termtree import (
+	CLEAR_LINE,
 	STATUS_COL_WIDTH,
 	DisplayRow,
 	flatten_rows,
@@ -18,12 +19,37 @@ from camas.effect.termtree import (
 )
 
 
+class Auto(NamedTuple):
+	"""Detect terminal width from the environment (``shutil.get_terminal_size``).
+
+	>>> Auto()
+	Auto()
+	"""
+
+
+class Fixed(NamedTuple):
+	"""Fixed terminal width in columns, overriding environment detection.
+
+	>>> Fixed(200)
+	Fixed(columns=200)
+	"""
+
+	columns: int
+
+
+type TermWidth = Auto | Fixed
+
+
 class SummaryOptions(NamedTuple):
 	"""Configuration for the summary Effect.
 
 	>>> SummaryOptions()
-	SummaryOptions()
+	SummaryOptions(term_width=Auto())
+	>>> SummaryOptions(term_width=Fixed(120)).term_width
+	Fixed(columns=120)
 	"""
+
+	term_width: TermWidth = Auto()
 
 
 @dataclass
@@ -55,9 +81,13 @@ class Summary:
 		self.options: Final = options if options is not None else SummaryOptions()
 
 	async def setup(self, task: TaskNode) -> SummaryContext:
-		term_width: Final = (  # zuban: ignore[misc] # zuban defies PEP591
-			shutil.get_terminal_size().columns
-		)
+		match self.options.term_width:
+			case Auto():
+				term_width = shutil.get_terminal_size().columns
+			case Fixed(columns=columns):
+				term_width = columns
+			case _:
+				assert_never(self.options.term_width)
 		return SummaryContext(
 			rows=flatten_rows(task),
 			term_width=term_width,
@@ -84,6 +114,9 @@ class Summary:
 			time.perf_counter(),
 			ctx.wall_start,
 		)
-		sys.stdout.write("\n".join(lines) + "\n")
+		cleaned: Final = tuple(  # zuban: ignore[misc] # zuban defies PEP591
+			line.removeprefix("\r").replace(CLEAR_LINE, "") for line in lines
+		)
+		sys.stdout.buffer.write(("\n".join(cleaned) + "\n").encode("utf-8", errors="replace"))
 		sys.stdout.flush()
 		print_failures(ctx.state.states)

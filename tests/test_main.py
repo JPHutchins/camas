@@ -52,8 +52,13 @@ def test_parse_effects_rejects_non_tuple() -> None:
 
 
 def test_parse_effects_rejects_unknown_effect() -> None:
-	with pytest.raises(ValueError, match="expected a no-arg effect call"):
+	with pytest.raises(ValueError, match="unsupported syntax"):
 		parse_effects("(Bogus(),)")
+
+
+def test_parse_effects_rejects_non_effect_value() -> None:
+	with pytest.raises(ValueError, match="expected an Effect"):
+		parse_effects("(SummaryOptions(),)")
 
 
 def test_dispatch_rejects_bad_effects(

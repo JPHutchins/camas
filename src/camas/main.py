@@ -15,8 +15,8 @@ from pathlib import Path
 from typing import Any, Final, NamedTuple, TypeGuard, assert_never, cast
 
 from camas import Effect, Parallel, Sequential, Task, TaskNode, run
-from camas.effect.summary import Summary
-from camas.effect.termtree import Termtree, print_tree
+from camas.effect.summary import Auto, Fixed, Summary, SummaryOptions
+from camas.effect.termtree import Termtree, TermtreeOptions, print_tree
 
 
 class Ref(NamedTuple):
@@ -426,9 +426,13 @@ def run_cli(scope: Mapping[str, object]) -> None:
 	)
 
 
-EFFECT_CONSTRUCTORS: Final[Mapping[str, Callable[[], Effect[Any]]]] = {
+EFFECT_CONSTRUCTORS: Final[Mapping[str, Callable[..., Any]]] = {
+	Auto.__name__: Auto,
+	Fixed.__name__: Fixed,
 	Summary.__name__: Summary,
+	SummaryOptions.__name__: SummaryOptions,
 	Termtree.__name__: Termtree,
+	TermtreeOptions.__name__: TermtreeOptions,
 }
 
 
@@ -439,6 +443,8 @@ def parse_effects(expr: str) -> tuple[Effect[Any], ...]:
 	['Summary']
 	>>> [type(e).__name__ for e in parse_effects("(Termtree(), Summary())")]
 	['Termtree', 'Summary']
+	>>> parse_effects("(Summary(options=SummaryOptions(term_width=Fixed(80))),)")[0].options.term_width
+	Fixed(columns=80)
 	>>> parse_effects("()")
 	()
 	"""
@@ -448,18 +454,33 @@ def parse_effects(expr: str) -> tuple[Effect[Any], ...]:
 		raise ValueError(f"invalid syntax: {e}") from e
 	if not isinstance(tree.body, ast.Tuple):
 		raise ValueError(f"--effects must be a tuple, got {type(tree.body).__name__}")
-	return tuple(_eval_effect(elt) for elt in tree.body.elts)
+	return tuple(_expect_effect(_eval_value(elt)) for elt in tree.body.elts)
 
 
-def _eval_effect(node: ast.expr) -> Effect[Any]:
+def _eval_value(node: ast.expr) -> Any:
+	"""Evaluate a node in the --effects mini-language. Returns Any since the
+	concrete type depends on the AST shape; ``_expect_effect`` validates at the
+	tuple level."""
 	match node:
-		case ast.Call(func=ast.Name(id=name), args=[], keywords=[]) if name in EFFECT_CONSTRUCTORS:
-			return EFFECT_CONSTRUCTORS[name]()
+		case ast.Constant(value=val):
+			return val
+		case ast.Call(func=ast.Name(id=name), args=args, keywords=keywords) if (
+			name in EFFECT_CONSTRUCTORS
+		):
+			return EFFECT_CONSTRUCTORS[name](
+				*(_eval_value(a) for a in args),
+				**{kw.arg: _eval_value(kw.value) for kw in keywords if kw.arg is not None},
+			)
 		case _:
 			raise ValueError(
-				f"expected a no-arg effect call ({', '.join(EFFECT_CONSTRUCTORS)}),"
-				f" got {ast.dump(node)}"
+				f"unsupported syntax (known: {', '.join(EFFECT_CONSTRUCTORS)}): {ast.dump(node)}"
 			)
+
+
+def _expect_effect(value: Any) -> Effect[Any]:
+	if not isinstance(value, Summary | Termtree):
+		raise ValueError(f"expected an Effect instance, got {type(value).__name__}")
+	return value
 
 
 def dispatch(tasks: Mapping[str, TaskNode]) -> None:

@@ -19,7 +19,7 @@ from camas import (
 	TaskEvent,
 	Waiting,
 )
-from camas.effect.summary import Summary, SummaryOptions
+from camas.effect.summary import Fixed, Summary, SummaryOptions
 
 
 def make_task(name: str) -> Task:
@@ -108,6 +108,15 @@ def test_summary_sequential_skipped(capsys: pytest.CaptureFixture[str]) -> None:
 	assert "pipeline" in out
 	assert "SKIP" in out
 	assert "FAIL" in out
+
+
+def test_summary_fixed_width_overrides_terminal_detection() -> None:
+	async def capture_width() -> int:
+		effect = Summary(SummaryOptions(term_width=Fixed(160)))
+		ctx = await effect.setup(make_task("solo"))
+		return ctx.term_width
+
+	assert asyncio.run(capture_width()) == 160
 
 
 def test_summary_creates_no_background_tasks() -> None:
