@@ -173,15 +173,16 @@ def test_matrix_substitution_in_cmd() -> None:
 def test_parallel_concurrency() -> None:
 	task = Parallel(
 		tasks=(
-			Task(("python", "-c", "import time; time.sleep(0.2)"), name="a"),
-			Task(("python", "-c", "import time; time.sleep(0.2)"), name="b"),
-			Task(("python", "-c", "import time; time.sleep(0.2)"), name="c"),
+			Task(("python", "-c", "import time; time.sleep(1.0)"), name="a"),
+			Task(("python", "-c", "import time; time.sleep(1.0)"), name="b"),
+			Task(("python", "-c", "import time; time.sleep(1.0)"), name="c"),
 		)
 	)
 	start = time.perf_counter()
 	asyncio.run(run(task))
 	elapsed = time.perf_counter() - start
-	assert elapsed < 1.0
+	# Concurrent: ~1.0s + spawn overhead. Sequential would be ≥3.0s.
+	assert elapsed < 2.5
 
 
 def test_sequential_ordering() -> None:

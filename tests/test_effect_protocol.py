@@ -270,7 +270,7 @@ def test_parallel_on_event_runs_concurrently() -> None:
 			self, event: TaskEvent, states: Sequence[LeafState], ctx: SlowCtx
 		) -> SlowCtx:
 			if isinstance(event, CompletedEvent):
-				await asyncio.sleep(0.3)
+				await asyncio.sleep(1.0)
 			return ctx
 
 		async def teardown(self, ctxs: tuple[SlowCtx, ...]) -> None:
@@ -284,5 +284,5 @@ def test_parallel_on_event_runs_concurrently() -> None:
 	)
 	result = asyncio.run(run(task, effects=(Slow(),)))
 	assert result.returncode == 0
-	# Concurrent: ~0.3s + spawn overhead. Sequential would be ≥0.9s on slow CI.
-	assert result.elapsed < 0.8
+	# Concurrent: ~1.0s + spawn overhead. Sequential would add another 1.0s.
+	assert result.elapsed < 2.5
