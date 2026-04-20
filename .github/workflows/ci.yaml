@@ -21,32 +21,9 @@ jobs:
 
       - uses: astral-sh/setup-uv@v6
 
-      - name: Probe 3.10-vs-3.15 on Windows
+      - name: Warm up zuban typeshed (Windows race workaround, zubanls/zuban#240)
         if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          foreach ($ver in @("3.10", "3.15")) {
-            $venv = ".venv-$ver"
-            Write-Host "================ $ver ================"
-            $env:UV_PROJECT_ENVIRONMENT = $venv
-            $env:UV_PYTHON = $ver
-            uv sync --python=$ver
-            Write-Host "--- which python uv picked ---"
-            Get-Content "$venv\pyvenv.cfg"
-            Write-Host "--- sys.executable / sys.prefix / sys.base_prefix ---"
-            & "$venv\Scripts\python.exe" -c "import sys; print('executable=', sys.executable); print('prefix=', sys.prefix); print('base_prefix=', sys.base_prefix); print('base_executable=', getattr(sys, '_base_executable', 'n/a'))"
-            Write-Host "--- sys.path ---"
-            & "$venv\Scripts\python.exe" -c "import sys; [print(' ', p) for p in sys.path]"
-            Write-Host "--- import pytest ---"
-            & "$venv\Scripts\python.exe" -c "import pytest; print('pytest ok at', pytest.__file__)"
-            Write-Host "--- Scripts\python.exe vs target ---"
-            Get-Item "$venv\Scripts\python.exe" | Format-List FullName, LinkType, Target
-            Write-Host "--- zuban check (first 20 lines) ---"
-            $env:UV_NO_SYNC = "1"
-            uv run zuban check 2>&1 | Select-Object -First 20
-            Remove-Item env:UV_NO_SYNC
-            Write-Host ""
-          }
+        run: uv run zuban --version
 
       - run: uv run camas matrix --effects='(Summary(SummaryOptions(Fixed(120))),)'
 

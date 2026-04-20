@@ -87,20 +87,13 @@ Sequential(tasks=(
 matrix = '''
 Sequential(
 	tasks=(
-		Task(
-			"uv sync --python={PY}",
-			env={"UV_PROJECT_ENVIRONMENT": ".venv-{PY}"}
-		),
-		Parallel(
-			tasks=(check,),
-			env={
-				"UV_PROJECT_ENVIRONMENT": ".venv-{PY}",
-				"UV_PYTHON": "{PY}",
-				"UV_NO_SYNC": "1",
-				"VIRTUAL_ENV": ".venv-{PY}",
-			}
-		),
+		Task("uv sync",),
+		Parallel(tasks=(check,)),
 	),
+	env={
+		"UV_PROJECT_ENVIRONMENT": ".venv-{PY}"
+		"UV_PYTHON": "{PY}",
+	},
 	matrix={"PY": ("3.10", "3.11", "3.12", "3.13", "3.14", "3.15")},
 )
 '''
