@@ -62,6 +62,7 @@ dev = [
 
 [tool.camas.tasks]
 format = "uv run ruff format ."
+format_check = "uv run ruff format --check ."
 lint = "uv run ruff check ."
 mypy = "uv run mypy ."
 ty = "uv run ty check"
@@ -77,6 +78,12 @@ Sequential(tasks=(
     Parallel(tasks=(lint, typecheck, test)),
 ))
 '''
+check = '''
+Sequential(tasks=(
+    format_check,
+    Parallel(tasks=(lint, typecheck, test)),
+))
+'''
 matrix = '''
 Sequential(
 	tasks=(
@@ -85,7 +92,7 @@ Sequential(
 			env={"UV_PROJECT_ENVIRONMENT": ".venv-{PY}"}
 		),
 		Parallel(
-			tasks=(all,),
+			tasks=(check,),
 			env={"UV_PROJECT_ENVIRONMENT": ".venv-{PY}"}
 		),
 	),

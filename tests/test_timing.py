@@ -17,6 +17,7 @@ def _s(t: float, name: str) -> Task:
 	return Task(("python", "-c", SLEEP.format(t=t)), name=name)
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize(
 	("task", "min_time", "max_time"),
 	[

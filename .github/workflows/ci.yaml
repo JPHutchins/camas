@@ -44,7 +44,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@v6
 
-      - run: uv run --python=${{ matrix.python }} camas all --effects='(Summary(SummaryOptions(Fixed(120))),)'
+      - run: uv run --python=${{ matrix.python }} camas check --effects='(Summary(SummaryOptions(Fixed(120))),)'
 
   coverage:
     runs-on: ubuntu-latest
