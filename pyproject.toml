@@ -70,7 +70,7 @@ pyrefly = "uv run pyrefly check"
 pyright = "uv run pyright src tests"
 typecheck = "Parallel(tasks=(mypy, pyright, ty, zuban, pyrefly))"
 test = "uv run pytest --doctest-modules -v -m 'not slow'"
-coverage = "uv run pytest --doctest-modules -m 'not slow' --cov --cov-report=term-missing"
+coverage = "uv run pytest --doctest-modules -m 'not slow' --cov --cov-report=term-missing --cov-report=xml"
 all = '''
 Sequential(tasks=(
     format,
