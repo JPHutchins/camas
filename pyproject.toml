@@ -13,6 +13,8 @@ classifiers = [
 "Intended Audience :: Developers",
 "License :: OSI Approved :: MIT License",
 "Programming Language :: Python :: 3",
+"Programming Language :: Python :: 3.10",
+"Programming Language :: Python :: 3.11",
 "Programming Language :: Python :: 3.12",
 "Programming Language :: Python :: 3.13",
 "Programming Language :: Python :: 3.14",
@@ -70,6 +72,8 @@ matrix = '''
 Parallel(
     tasks=(all,),
     matrix={"UV_PROJECT_ENVIRONMENT": (
+		".venv-3.10",
+		".venv-3.11",
 		".venv-3.12",
 		".venv-3.13",
 		".venv-3.14",
