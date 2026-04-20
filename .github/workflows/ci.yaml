@@ -22,6 +22,8 @@ jobs:
       - uses: astral-sh/setup-uv@v6
 
       - run: uv run camas matrix --effects='(Summary(SummaryOptions(Fixed(120))),)'
+        env:
+          UV_NO_CACHE: "1"
 
       - run: uv build
 
