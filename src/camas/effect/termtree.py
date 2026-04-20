@@ -408,16 +408,17 @@ class Termtree:
 
 
 def draw(ctx: TermtreeContext) -> None:
-	sys.stdout.write(
-		render_frame(
-			ctx.rows,
-			ctx.state.states,
-			ctx.term_width,
-			ctx.display_width,
-			time.perf_counter(),
-			ctx.wall_start,
-		)
+	# Write bytes directly: the box-drawing chars can't encode to cp1252 (Windows
+	# default in non-TTY contexts like captured subprocesses / piped CI logs).
+	frame = render_frame(
+		ctx.rows,
+		ctx.state.states,
+		ctx.term_width,
+		ctx.display_width,
+		time.perf_counter(),
+		ctx.wall_start,
 	)
+	sys.stdout.buffer.write(frame.encode("utf-8", errors="replace"))
 	sys.stdout.flush()
 
 

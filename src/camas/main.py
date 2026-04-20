@@ -485,10 +485,6 @@ def _expect_effect(value: Any) -> Effect[Any]:
 
 def dispatch(tasks: Mapping[str, TaskNode]) -> None:
 	"""Parse sys.argv against ``tasks`` and run the dispatched task. Always exits."""
-	# Tree-rendering uses UTF-8 box-drawing chars; Windows defaults stdout to cp1252
-	# in non-TTY contexts (captured subprocesses, piped CI logs), so reconfigure.
-	if hasattr(sys.stdout, "reconfigure") and sys.stdout.encoding.lower() != "utf-8":
-		sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]  # pragma: no cover
 	parser: Final = build_parser()
 	args: Final = parser.parse_args()
 
