@@ -1,13 +1,13 @@
 [project]
 name = "camas"
-description = "Generic parallel/sequential task runner with TUI output"
+description = "Generic parallel/sequential task runner"
 readme = "README.md"
 license = "MIT"
-authors = [{ name = "JP Hutchins", email = "jp@intercreate.io" }]
+authors = [{ name = "JP Hutchins", email = "jphutchins@gmail.com" }]
 requires-python = ">=3.12"
 dependencies = []
 dynamic = ["version"]
-keywords = ["task-runner", "parallel", "sequential", "tui", "async"]
+keywords = ["task-runner", "parallel", "sequential", "async"]
 classifiers = [
 "Development Status :: 3 - Alpha",
 "Intended Audience :: Developers",
@@ -16,6 +16,7 @@ classifiers = [
 "Programming Language :: Python :: 3.12",
 "Programming Language :: Python :: 3.13",
 "Programming Language :: Python :: 3.14",
+"Programming Language :: Python :: 3.15",
 "Topic :: Software Development :: Build Tools",
 "Typing :: Typed",
 ]
@@ -37,12 +38,12 @@ source = "vcs"
 
 [dependency-groups]
 dev = [
-"mypy>=1.19",
-"pyright>=1.1.408",
+"mypy>=1.19,<2",
+"pyright>=1.1.408,<2",
 "pytest>=9,<10",
-"pytest-cov>=7.0.0",
+"pytest-cov>=7,<8",
 "cyclopts>=4,<5",
-"ruff>=0.12.0",
+"ruff>=0.12,<1",
 "ty>=0.0.31,<1",
 "zuban>=0.7,<1",
 "pyrefly>=0.61,<1",
@@ -71,7 +72,8 @@ Parallel(
     matrix={"UV_PROJECT_ENVIRONMENT": (
 		".venv-3.12",
 		".venv-3.13",
-		".venv-3.14"
+		".venv-3.14",
+		".venv-3.15",
 	)},
 )
 '''

@@ -33,12 +33,12 @@ dev = [
 [package.metadata.requires-dev]
 dev = [
     { name = "cyclopts", specifier = ">=4,<5" },
-    { name = "mypy", specifier = ">=1.19" },
+    { name = "mypy", specifier = ">=1.19,<2" },
     { name = "pyrefly", specifier = ">=0.61,<1" },
-    { name = "pyright", specifier = ">=1.1.408" },
+    { name = "pyright", specifier = ">=1.1.408,<2" },
     { name = "pytest", specifier = ">=9,<10" },
-    { name = "pytest-cov", specifier = ">=7.0.0" },
-    { name = "ruff", specifier = ">=0.12.0" },
+    { name = "pytest-cov", specifier = ">=7,<8" },
+    { name = "ruff", specifier = ">=0.12,<1" },
     { name = "ty", specifier = ">=0.0.31,<1" },
     { name = "zuban", specifier = ">=0.7,<1" },
 ]
