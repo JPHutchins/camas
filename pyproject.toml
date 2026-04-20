@@ -72,18 +72,8 @@ pyright = "uv run pyright src tests"
 typecheck = "Parallel(tasks=(mypy, pyright, ty, zuban, pyrefly))"
 test = "uv run pytest --doctest-modules -v -m 'not slow'"
 coverage = "uv run pytest --doctest-modules -m 'not slow' --cov --cov-report=term-missing --cov-report=xml"
-all = '''
-Sequential(tasks=(
-    format,
-    Parallel(tasks=(lint, typecheck, test)),
-))
-'''
-check = '''
-Sequential(tasks=(
-    format_check,
-    Parallel(tasks=(lint, typecheck, test)),
-))
-'''
+all = "Sequential(tasks=(format, Parallel(tasks=(lint, typecheck, test))))"
+check = "Parallel(tasks=(format_check, lint, typecheck, test))"
 matrix = '''
 Sequential(
 	tasks=(
@@ -91,7 +81,7 @@ Sequential(
 		Parallel(tasks=(check,)),
 	),
 	env={
-		"UV_PROJECT_ENVIRONMENT": ".venv-{PY}"
+		"UV_PROJECT_ENVIRONMENT": ".venv-{PY}",
 		"UV_PYTHON": "{PY}",
 	},
 	matrix={"PY": ("3.10", "3.11", "3.12", "3.13", "3.14", "3.15")},
