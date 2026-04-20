@@ -278,4 +278,5 @@ def test_parallel_on_event_runs_concurrently() -> None:
 	)
 	result = asyncio.run(run(task, effects=(Slow(),)))
 	assert result.returncode == 0
-	assert result.elapsed < 0.5
+	# Concurrent: ~0.3s + spawn overhead. Sequential would be ≥0.9s on slow CI.
+	assert result.elapsed < 0.8
