@@ -4,8 +4,13 @@ description = "Generic parallel/sequential task runner"
 readme = "README.md"
 license = "MIT"
 authors = [{ name = "JP Hutchins", email = "jphutchins@gmail.com" }]
-requires-python = ">=3.12"
-dependencies = []
+requires-python = ">=3.10"
+dependencies = [
+"exceptiongroup>=1.2,<2; python_version < '3.11'",
+"taskgroup>=0.2,<1; python_version < '3.11'",
+"tomli>=2,<3; python_version < '3.11'",
+"typing_extensions>=4.12,<5; python_version < '3.11'",
+]
 dynamic = ["version"]
 keywords = ["task-runner", "parallel", "sequential", "async"]
 classifiers = [
@@ -49,6 +54,10 @@ dev = [
 "ty>=0.0.31,<1",
 "zuban>=0.7,<1",
 "pyrefly>=0.61,<1",
+"exceptiongroup>=1.2",
+"taskgroup>=0.2",
+"tomli>=2",
+"typing_extensions>=4.12",
 ]
 
 [tool.camas.tasks]
@@ -60,8 +69,8 @@ zuban = "uv run zuban check"
 pyrefly = "uv run pyrefly check"
 pyright = "uv run pyright src tests"
 typecheck = "Parallel(tasks=(mypy, pyright, ty, zuban, pyrefly))"
-test = "pytest --doctest-modules -v -m 'not slow'"
-coverage = "pytest --doctest-modules -m 'not slow' --cov --cov-report=term-missing"
+test = "uv run pytest --doctest-modules -v -m 'not slow'"
+coverage = "uv run pytest --doctest-modules -m 'not slow' --cov --cov-report=term-missing"
 all = '''
 Sequential(tasks=(
     format,
@@ -69,16 +78,18 @@ Sequential(tasks=(
 ))
 '''
 matrix = '''
-Parallel(
-    tasks=(all,),
-    matrix={"UV_PROJECT_ENVIRONMENT": (
-		".venv-3.10",
-		".venv-3.11",
-		".venv-3.12",
-		".venv-3.13",
-		".venv-3.14",
-		".venv-3.15",
-	)},
+Sequential(
+	tasks=(
+		Task(
+			"uv sync --python={PY}",
+			env={"UV_PROJECT_ENVIRONMENT": ".venv-{PY}"}
+		),
+		Parallel(
+			tasks=(all,),
+			env={"UV_PROJECT_ENVIRONMENT": ".venv-{PY}"}
+		),
+	),
+	matrix={"PY": ("3.10", "3.11", "3.12", "3.13", "3.14", "3.15")},
 )
 '''
 

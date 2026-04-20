@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from typing import TypeVar
 
 import pytest
 
@@ -21,12 +22,14 @@ from camas import (
 )
 from camas.effect.summary import Fixed, Summary, SummaryOptions
 
+T = TypeVar("T")
+
 
 def make_task(name: str) -> Task:
 	return Task(("python", "-c", "pass"), name=name)
 
 
-async def drive[T](
+async def drive(
 	effect: Effect[T],
 	task: Task | Sequential | Parallel,
 	events: list[TaskEvent],

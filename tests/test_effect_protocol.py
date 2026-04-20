@@ -4,10 +4,16 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 from collections.abc import Sequence
 from typing import NamedTuple
 
 import pytest
+
+if sys.version_info >= (3, 11):
+	from builtins import BaseExceptionGroup
+else:
+	from exceptiongroup import BaseExceptionGroup
 
 from camas import (
 	CompletedEvent,

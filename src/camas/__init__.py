@@ -8,10 +8,20 @@ import functools
 import itertools
 import os
 import shlex
+import sys
 import time
 from collections.abc import Awaitable, Callable, Iterator, Sequence
 from subprocess import STDOUT
-from typing import Any, Final, NamedTuple, Protocol, assert_never
+from typing import Any, Final, NamedTuple, Protocol, TypeAlias, TypeVar
+
+if sys.version_info >= (3, 11):
+	from asyncio import TaskGroup
+	from builtins import BaseExceptionGroup
+	from typing import assert_never
+else:
+	from exceptiongroup import BaseExceptionGroup
+	from taskgroup import TaskGroup
+	from typing_extensions import assert_never
 
 
 class VarBinding(NamedTuple):
@@ -25,7 +35,7 @@ class VarBinding(NamedTuple):
 	value: str
 
 
-type MatrixBinding = tuple[VarBinding, ...]
+MatrixBinding: TypeAlias = tuple[VarBinding, ...]
 
 
 class Task(NamedTuple):
@@ -66,7 +76,7 @@ class Parallel(NamedTuple):
 	matrix: dict[str, tuple[str, ...]] | None = None
 
 
-type TaskNode = Task | Sequential | Parallel
+TaskNode: TypeAlias = Task | Sequential | Parallel
 
 
 class TaskResult(NamedTuple):
@@ -130,7 +140,7 @@ class CompletedEvent(NamedTuple):
 	output: Sequence[bytes]
 
 
-type TaskEvent = StartedEvent | OutputEvent | CompletedEvent
+TaskEvent: TypeAlias = StartedEvent | OutputEvent | CompletedEvent
 
 
 class LeafInfo(NamedTuple):
@@ -188,14 +198,17 @@ class Skipped(NamedTuple):
 	task: Task
 
 
-type LeafState = Waiting | Running | Done | Skipped
+LeafState: TypeAlias = Waiting | Running | Done | Skipped
 
 
-type EventSink = Callable[[int, TaskEvent], Awaitable[None]]
+EventSink: TypeAlias = Callable[[int, TaskEvent], Awaitable[None]]
 """Per-leaf event dispatcher: await sink(leaf_idx, event)."""
 
 
-class Effect[T](Protocol):
+T = TypeVar("T")
+
+
+class Effect(Protocol[T]):
 	"""Observer over a run's event stream, with a per-leaf context of type T.
 
 	Each leaf owns an independent chain: setup seeds every leaf's slot,
@@ -607,7 +620,7 @@ async def execute(
 		case Task():
 			return (await run_cmd(node, index_map[id(node)], dispatch),)
 		case Parallel(tasks=children):
-			async with asyncio.TaskGroup() as tg:
+			async with TaskGroup() as tg:
 				futures: Final = tuple(
 					tg.create_task(execute(child, dispatch, leaves, index_map))
 					for child in children

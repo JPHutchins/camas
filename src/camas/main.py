@@ -9,10 +9,17 @@ import asyncio
 import importlib.metadata
 import re
 import sys
-import tomllib
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any, Final, NamedTuple, TypeGuard, assert_never, cast
+from typing import Any, Final, NamedTuple, TypeGuard, cast
+
+if sys.version_info >= (3, 11):
+	from typing import assert_never
+
+	import tomllib
+else:
+	import tomli as tomllib
+	from typing_extensions import assert_never
 
 from camas import Effect, Parallel, Sequential, Task, TaskNode, run
 from camas.effect.summary import Auto, Fixed, Summary, SummaryOptions

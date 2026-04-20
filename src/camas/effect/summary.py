@@ -6,7 +6,12 @@ import sys
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Final, NamedTuple, assert_never
+from typing import Final, NamedTuple, TypeAlias
+
+if sys.version_info >= (3, 11):
+	from typing import assert_never
+else:
+	from typing_extensions import assert_never
 
 from camas import LeafState, TaskEvent, TaskNode, Waiting, flatten_leaves
 from camas.effect.termtree import (
@@ -37,7 +42,7 @@ class Fixed(NamedTuple):
 	columns: int
 
 
-type TermWidth = Auto | Fixed
+TermWidth: TypeAlias = Auto | Fixed
 
 
 class SummaryOptions(NamedTuple):

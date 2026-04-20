@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import re
 from collections.abc import Callable
+from typing import TypeVar
 
 import pytest
 
@@ -43,11 +44,14 @@ def visible_width(line: str) -> int:
 	return len(ANSI_ESCAPE_PATTERN.sub("", line).lstrip("\r"))
 
 
+T = TypeVar("T")
+
+
 def make_task(name: str) -> Task:
 	return Task(("python", "-c", "pass"), name=name)
 
 
-async def drive[T](
+async def drive(
 	effect: Effect[T],
 	task: Task | Sequential | Parallel,
 	events: list[TaskEvent],
