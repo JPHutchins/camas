@@ -93,7 +93,12 @@ Sequential(
 		),
 		Parallel(
 			tasks=(check,),
-			env={"UV_PROJECT_ENVIRONMENT": ".venv-{PY}", "UV_PYTHON": "{PY}", "UV_NO_SYNC": "1"}
+			env={
+				"UV_PROJECT_ENVIRONMENT": ".venv-{PY}",
+				"UV_PYTHON": "{PY}",
+				"UV_NO_SYNC": "1",
+				"VIRTUAL_ENV": ".venv-{PY}",
+			}
 		),
 	),
 	matrix={"PY": ("3.10", "3.11", "3.12", "3.13", "3.14", "3.15")},
