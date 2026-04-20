@@ -87,7 +87,7 @@ Sequential(tasks=(
 matrix = '''
 Sequential(
 	tasks=(
-		Sequential(
+		Task(
 			"uv sync --python={PY}",
 			env={"UV_PROJECT_ENVIRONMENT": ".venv-{PY}"}
 		),

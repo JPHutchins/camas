@@ -10,7 +10,7 @@ import os
 import shlex
 import sys
 import time
-from collections.abc import Awaitable, Callable, Iterator, Sequence
+from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from subprocess import STDOUT
 from typing import Any, Final, NamedTuple, Protocol, TypeAlias, TypeVar
 
@@ -56,24 +56,26 @@ class Sequential(NamedTuple):
 	"""A group of tasks that run one after another, short-circuiting on failure.
 
 	>>> Sequential(tasks=(Task("build"), Task("test")), name="ci")
-	Sequential(tasks=(Task(cmd='build', name=None, env={}), Task(cmd='test', name=None, env={})), name='ci', matrix=None)
+	Sequential(tasks=(Task(cmd='build', name=None, env={}), Task(cmd='test', name=None, env={})), name='ci', matrix=None, env={})
 	"""
 
 	tasks: tuple[TaskNode, ...]
 	name: str | None = None
 	matrix: dict[str, tuple[str, ...]] | None = None
+	env: dict[str, str] = {}
 
 
 class Parallel(NamedTuple):
 	"""A group of tasks that run concurrently.
 
 	>>> Parallel(tasks=(Task("lint"), Task("typecheck")))
-	Parallel(tasks=(Task(cmd='lint', name=None, env={}), Task(cmd='typecheck', name=None, env={})), name=None, matrix=None)
+	Parallel(tasks=(Task(cmd='lint', name=None, env={}), Task(cmd='typecheck', name=None, env={})), name=None, matrix=None, env={})
 	"""
 
 	tasks: tuple[TaskNode, ...]
 	name: str | None = None
 	matrix: dict[str, tuple[str, ...]] | None = None
+	env: dict[str, str] = {}
 
 
 TaskNode: TypeAlias = Task | Sequential | Parallel
@@ -448,28 +450,33 @@ def expand_parallel_matrix(
 	)
 
 
-def expand_matrix(task: TaskNode) -> TaskNode:
-	"""Recursively expand all matrix parameters in a task tree.
+def expand_matrix(task: TaskNode, ancestor_env: Mapping[str, str] | None = None) -> TaskNode:
+	"""Recursively expand all matrix parameters and propagate container env into leaves.
 
 	>>> expand_matrix(Task("echo hi"))
 	Task(cmd='echo hi', name=None, env={})
 	>>> result = expand_matrix(Parallel(tasks=(Task("test"),), matrix={"X": ("1", "2")}))
 	>>> len(result.tasks)  # type: ignore[union-attr]
 	2
+	>>> expand_matrix(Parallel(tasks=(Task("hi"),), env={"K": "v"})).tasks[0].env  # type: ignore[union-attr]
+	{'K': 'v'}
 	"""
+	parent_env: Final = dict(ancestor_env) if ancestor_env else {}
 	match task:
 		case Task():
-			return task
-		case Sequential(tasks=tasks, matrix=matrix):
-			expanded = tuple(expand_matrix(t) for t in tasks)
+			return Task(cmd=task.cmd, name=task.name, env=parent_env | task.env)
+		case Sequential(tasks=tasks, matrix=matrix, env=env):
+			seq_env: Final = parent_env | env
+			seq_expanded: Final = tuple(expand_matrix(t, seq_env) for t in tasks)
 			if matrix is None:
-				return Sequential(tasks=expanded, name=task.name)
-			return expand_sequential_matrix(expanded, matrix, task.name)
-		case Parallel(tasks=tasks, matrix=matrix):
-			expanded = tuple(expand_matrix(t) for t in tasks)
+				return Sequential(tasks=seq_expanded, name=task.name)
+			return expand_sequential_matrix(seq_expanded, matrix, task.name)
+		case Parallel(tasks=tasks, matrix=matrix, env=env):
+			par_env: Final = parent_env | env
+			par_expanded: Final = tuple(expand_matrix(t, par_env) for t in tasks)
 			if matrix is None:
-				return Parallel(tasks=expanded, name=task.name)
-			return expand_parallel_matrix(expanded, matrix, task.name)
+				return Parallel(tasks=par_expanded, name=task.name)
+			return expand_parallel_matrix(par_expanded, matrix, task.name)
 		case _:
 			assert_never(task)
 

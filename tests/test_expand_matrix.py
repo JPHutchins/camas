@@ -141,6 +141,60 @@ def test_nested_group_children() -> None:
 			raise AssertionError(f"unexpected: {result}")
 
 
+def test_container_env_propagates_to_leaves() -> None:
+	task = Parallel(
+		tasks=(Task("a"), Task("b")),
+		env={"K": "v"},
+	)
+	result = expand_matrix(task)
+	match result:
+		case Parallel(tasks=(Task(env=ea), Task(env=eb))):
+			assert ea == {"K": "v"}
+			assert eb == {"K": "v"}
+		case _:
+			raise AssertionError(f"unexpected: {result}")
+
+
+def test_container_env_template_substituted_via_matrix() -> None:
+	task = Sequential(
+		tasks=(Parallel(tasks=(Task("x"),), env={"VENV": ".venv-{PY}"}),),
+		matrix={"PY": ("3.10",)},
+	)
+	result = expand_matrix(task)
+	match result:
+		case Parallel(tasks=(Sequential(tasks=(Parallel(tasks=(Task(env=env),)),)),)):
+			assert env == {"VENV": ".venv-3.10", "PY": "3.10"}
+		case _:
+			raise AssertionError(f"unexpected: {result}")
+
+
+def test_task_env_overrides_container_env() -> None:
+	task = Parallel(
+		tasks=(Task("x", env={"K": "task"}),),
+		env={"K": "container"},
+	)
+	result = expand_matrix(task)
+	match result:
+		case Parallel(tasks=(Task(env=env),)):
+			assert env["K"] == "task"
+		case _:
+			raise AssertionError(f"unexpected: {result}")
+
+
+def test_binding_overrides_both_container_and_task_env() -> None:
+	task = Parallel(
+		tasks=(Task("x", env={"PY": "task"}),),
+		env={"PY": "container"},
+		matrix={"PY": ("3.10",)},
+	)
+	result = expand_matrix(task)
+	match result:
+		case Parallel(tasks=(Task(env=env),)):
+			assert env["PY"] == "3.10"
+		case _:
+			raise AssertionError(f"unexpected: {result}")
+
+
 @pytest.mark.parametrize(
 	"name_suffix",
 	["[PY=3.12]", "[PY=3.13]"],

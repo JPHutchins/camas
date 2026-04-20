@@ -208,11 +208,13 @@ def eval_node(
 							tasks=tasks,
 							name=_eval_opt_str(kw.get("name")),
 							matrix=_eval_matrix(kw.get("matrix")),
+							env=_eval_env(kw.get("env")),
 						)
 					return Parallel(
 						tasks=tasks,
 						name=_eval_opt_str(kw.get("name")),
 						matrix=_eval_matrix(kw.get("matrix")),
+						env=_eval_env(kw.get("env")),
 					)
 				case "Ref":
 					ref_name_node = args[0] if args else kw.get("name")
@@ -241,7 +243,7 @@ def parse_expression(expr: str, tasks: Mapping[str, TaskNode] | None = None) -> 
 	>>> parse_expression('Task("echo hi")')
 	Task(cmd='echo hi', name=None, env={})
 	>>> parse_expression('Parallel(tasks=(a,))', tasks={"a": Task("x")})
-	Parallel(tasks=(Task(cmd='x', name=None, env={}),), name=None, matrix=None)
+	Parallel(tasks=(Task(cmd='x', name=None, env={}),), name=None, matrix=None, env={})
 	"""
 	try:
 		tree = ast.parse(expr, mode="eval")
