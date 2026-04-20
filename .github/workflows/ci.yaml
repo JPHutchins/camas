@@ -21,10 +21,6 @@ jobs:
 
       - uses: astral-sh/setup-uv@v6
 
-      - name: Warm up zuban typeshed (Windows race workaround, zubanls/zuban#240)
-        if: runner.os == 'Windows'
-        run: uv run zuban --version
-
       - run: uv run camas matrix --effects='(Summary(SummaryOptions(Fixed(120))),)'
 
       - run: uv build
