@@ -32,6 +32,7 @@ from camas.effect.termtree import (
 	TermtreeOptions,
 	flatten_rows,
 	print_failures,
+	print_passes,
 	render_frame,
 	render_lines,
 	strip_ansi,
@@ -120,6 +121,57 @@ def test_print_failures_outputs_failed_task(capsys: pytest.CaptureFixture[str]) 
 	assert "FAILED: b" in captured.out
 	assert "error details" in captured.out
 	assert "FAILED: a" not in captured.out
+
+
+def test_print_passes_outputs_passed_task(capsys: pytest.CaptureFixture[str]) -> None:
+	a = make_task("a")
+	b = make_task("b")
+	states: tuple[LeafState, ...] = (
+		Done(a, TaskResult("a", 0, 0.1, (b"clean output\n",))),
+		Done(b, TaskResult("b", 1, 0.2, (b"error details\n",))),
+	)
+	print_passes(states)
+	captured = capsys.readouterr()
+	assert "PASSED: a" in captured.out
+	assert "clean output" in captured.out
+	assert "PASSED: b" not in captured.out
+
+
+def test_termtree_show_passing_prints_passed_output(
+	capsys: pytest.CaptureFixture[str],
+) -> None:
+	task = Parallel(tasks=(make_task("a"), make_task("b")))
+	events: list[TaskEvent] = [
+		StartedEvent(0, 100.0),
+		StartedEvent(1, 100.0),
+		CompletedEvent(0, 0, 0.1, (b"first output\n",)),
+		CompletedEvent(1, 0, 0.2, (b"second output\n",)),
+	]
+	asyncio.run(
+		drive(
+			Termtree(TermtreeOptions(frame_interval_ms=50, show_passing=True)),
+			task,
+			events,
+		)
+	)
+	captured = capsys.readouterr()
+	assert "PASSED: a" in captured.out
+	assert "first output" in captured.out
+	assert "PASSED: b" in captured.out
+	assert "second output" in captured.out
+
+
+def test_termtree_show_passing_defaults_to_false(
+	capsys: pytest.CaptureFixture[str],
+) -> None:
+	task = Parallel(tasks=(make_task("a"),))
+	events: list[TaskEvent] = [
+		StartedEvent(0, 100.0),
+		CompletedEvent(0, 0, 0.1, (b"quiet\n",)),
+	]
+	asyncio.run(drive(Termtree(TermtreeOptions(frame_interval_ms=50)), task, events))
+	captured = capsys.readouterr()
+	assert "PASSED:" not in captured.out
 
 
 def test_termtree_effect_consumes_events_and_renders(

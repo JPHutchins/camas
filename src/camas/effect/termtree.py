@@ -26,6 +26,7 @@ from camas import (
 	Task,
 	TaskEvent,
 	TaskNode,
+	TaskResult,
 	Waiting,
 	expand_matrix,
 	flatten_leaves,
@@ -38,12 +39,15 @@ class TermtreeOptions(NamedTuple):
 	"""Configuration for the termtree Effect.
 
 	>>> TermtreeOptions()
-	TermtreeOptions(frame_interval_ms=16.667)
+	TermtreeOptions(frame_interval_ms=16.667, show_passing=False)
 	>>> TermtreeOptions(frame_interval_ms=50).frame_interval_ms
 	50
+	>>> TermtreeOptions(show_passing=True).show_passing
+	True
 	"""
 
 	frame_interval_ms: float = 16.667
+	show_passing: bool = False
 
 
 class GroupHeader(NamedTuple):
@@ -307,19 +311,33 @@ def render_frame(
 	return f"\033[{len(lines) - 1}F" + "\n".join(lines)
 
 
+def _print_task_output(task: Task, result: TaskResult, label: str, color: str) -> None:
+	sys.stdout.write(f"\n{color}{'=' * 60}{RESET}\n")
+	sys.stdout.write(f"{color}{BOLD} {label}: {task_display_name(task)} {RESET}\n")
+	sys.stdout.write(f"{color}{'=' * 60}{RESET}\n")
+	sys.stdout.flush()
+	for line in result.output:
+		sys.stdout.buffer.write(line)
+	sys.stdout.buffer.flush()
+	sys.stdout.write("\n")
+
+
 def print_failures(states: Sequence[LeafState]) -> None:
 	"""Print detailed output for each failed task."""
 	for state in states:
 		match state:
 			case Done(task=task, result=result) if result.returncode > 0:
-				sys.stdout.write(f"\n{RED}{'=' * 60}{RESET}\n")
-				sys.stdout.write(f"{RED}{BOLD} FAILED: {task_display_name(task)} {RESET}\n")
-				sys.stdout.write(f"{RED}{'=' * 60}{RESET}\n")
-				sys.stdout.flush()
-				for line in result.output:
-					sys.stdout.buffer.write(line)
-				sys.stdout.buffer.flush()
-				sys.stdout.write("\n")
+				_print_task_output(task, result, "FAILED", RED)
+			case _:
+				pass
+
+
+def print_passes(states: Sequence[LeafState]) -> None:
+	"""Print detailed output for each successfully-completed task."""
+	for state in states:
+		match state:
+			case Done(task=task, result=result) if result.returncode == 0:
+				_print_task_output(task, result, "PASSED", GREEN)
 			case _:
 				pass
 
@@ -410,6 +428,8 @@ class Termtree:
 		sys.stdout.write("\n")
 		sys.stdout.flush()
 		print_failures(ctx.state.states)
+		if self.options.show_passing:
+			print_passes(ctx.state.states)
 
 
 def draw(ctx: TermtreeContext) -> None:

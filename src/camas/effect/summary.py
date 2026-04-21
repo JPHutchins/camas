@@ -20,6 +20,7 @@ from camas.effect.termtree import (
 	DisplayRow,
 	flatten_rows,
 	print_failures,
+	print_passes,
 	render_lines,
 )
 
@@ -49,12 +50,15 @@ class SummaryOptions(NamedTuple):
 	"""Configuration for the summary Effect.
 
 	>>> SummaryOptions()
-	SummaryOptions(term_width=Auto())
+	SummaryOptions(term_width=Auto(), show_passing=False)
 	>>> SummaryOptions(term_width=Fixed(120)).term_width
 	Fixed(columns=120)
+	>>> SummaryOptions(show_passing=True).show_passing
+	True
 	"""
 
 	term_width: TermWidth = Auto()
+	show_passing: bool = False
 
 
 @dataclass
@@ -125,3 +129,5 @@ class Summary:
 		sys.stdout.buffer.write(("\n".join(cleaned) + "\n").encode("utf-8", errors="replace"))
 		sys.stdout.flush()
 		print_failures(ctx.state.states)
+		if self.options.show_passing:
+			print_passes(ctx.state.states)

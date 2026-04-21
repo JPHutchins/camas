@@ -122,6 +122,36 @@ def test_summary_fixed_width_overrides_terminal_detection() -> None:
 	assert asyncio.run(capture_width()) == 160
 
 
+def test_summary_show_passing_prints_passed_output(capsys: pytest.CaptureFixture[str]) -> None:
+	a = make_task("alpha")
+	b = make_task("beta")
+	task = Parallel(tasks=(a, b))
+	events: list[TaskEvent] = [
+		StartedEvent(0, 100.0),
+		StartedEvent(1, 100.0),
+		CompletedEvent(0, 0, 0.1, (b"alpha output\n",)),
+		CompletedEvent(1, 1, 0.2, (b"beta error\n",)),
+	]
+	asyncio.run(drive(Summary(SummaryOptions(show_passing=True)), task, events))
+	out = capsys.readouterr().out
+	assert "FAILED: beta" in out
+	assert "beta error" in out
+	assert "PASSED: alpha" in out
+	assert "alpha output" in out
+
+
+def test_summary_show_passing_defaults_to_false(capsys: pytest.CaptureFixture[str]) -> None:
+	a = make_task("alpha")
+	task = Parallel(tasks=(a,))
+	events: list[TaskEvent] = [
+		StartedEvent(0, 100.0),
+		CompletedEvent(0, 0, 0.1, (b"alpha output\n",)),
+	]
+	asyncio.run(drive(Summary(SummaryOptions()), task, events))
+	out = capsys.readouterr().out
+	assert "PASSED:" not in out
+
+
 def test_summary_creates_no_background_tasks() -> None:
 	task = make_task("solo")
 	events: list[TaskEvent] = [
