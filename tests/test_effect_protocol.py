@@ -16,11 +16,12 @@ else:  # pragma: no cover
 	from exceptiongroup import BaseExceptionGroup
 
 from camas import (
+	Completed,
 	CompletedEvent,
-	Done,
 	LeafState,
 	Parallel,
 	Sequential,
+	Skipped,
 	StartedEvent,
 	Task,
 	TaskEvent,
@@ -137,7 +138,7 @@ def test_effect_receives_post_reduction_leaf_state() -> None:
 
 	final_ctxs = captured[0]
 	assert len(final_ctxs) == 1
-	assert isinstance(final_ctxs[0].last_state, Done)
+	assert isinstance(final_ctxs[0].last_state, Completed)
 
 
 def test_sequential_skip_emits_skipped_completed_event() -> None:
@@ -153,10 +154,11 @@ def test_sequential_skip_emits_skipped_completed_event() -> None:
 	assert recorder.final is not None
 	all_events = [e for ctx in recorder.final for e in ctx.events]
 	skip_completions = [
-		e for e in all_events if isinstance(e, CompletedEvent) and e.returncode == -1
+		e for e in all_events if isinstance(e, CompletedEvent) and isinstance(e.completion, Skipped)
 	]
 	assert len(skip_completions) == 1
 	assert skip_completions[0].leaf_index == 1
+	assert skip_completions[0].completion.returncode == 1
 
 
 def test_on_event_exception_surfaces_and_teardown_still_runs() -> None:

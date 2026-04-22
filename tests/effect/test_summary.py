@@ -12,9 +12,11 @@ import pytest
 from camas import (
 	CompletedEvent,
 	Effect,
+	Finished,
 	LeafState,
 	Parallel,
 	Sequential,
+	Skipped,
 	StartedEvent,
 	Task,
 	TaskEvent,
@@ -56,8 +58,8 @@ def test_summary_renders_only_at_teardown(capsys: pytest.CaptureFixture[str]) ->
 	events: list[TaskEvent] = [
 		StartedEvent(0, 100.0),
 		StartedEvent(1, 100.0),
-		CompletedEvent(0, 0, 0.1, (b"clean\n",)),
-		CompletedEvent(1, 0, 0.2, (b"ok\n",)),
+		CompletedEvent(0, Finished(0, 0.1, (b"clean\n",))),
+		CompletedEvent(1, Finished(0, 0.2, (b"ok\n",))),
 	]
 
 	async def run_and_capture() -> tuple[str, str]:
@@ -88,7 +90,7 @@ def test_summary_failure_prints_details(capsys: pytest.CaptureFixture[str]) -> N
 	task = Parallel(tasks=(a,))
 	events: list[TaskEvent] = [
 		StartedEvent(0, 100.0),
-		CompletedEvent(0, 1, 0.1, (b"error details\n",)),
+		CompletedEvent(0, Finished(1, 0.1, (b"error details\n",))),
 	]
 	asyncio.run(drive(Summary(SummaryOptions()), task, events))
 	out = capsys.readouterr().out
@@ -103,8 +105,8 @@ def test_summary_sequential_skipped(capsys: pytest.CaptureFixture[str]) -> None:
 	task = Sequential(tasks=(a, b), name="pipeline")
 	events: list[TaskEvent] = [
 		StartedEvent(0, 100.0),
-		CompletedEvent(0, 1, 0.1, (b"failed\n",)),
-		CompletedEvent(1, -1, 0.0, ()),
+		CompletedEvent(0, Finished(1, 0.1, (b"failed\n",))),
+		CompletedEvent(1, Skipped(1)),
 	]
 	asyncio.run(drive(Summary(SummaryOptions()), task, events))
 	out = capsys.readouterr().out
@@ -129,8 +131,8 @@ def test_summary_show_passing_prints_passed_output(capsys: pytest.CaptureFixture
 	events: list[TaskEvent] = [
 		StartedEvent(0, 100.0),
 		StartedEvent(1, 100.0),
-		CompletedEvent(0, 0, 0.1, (b"alpha output\n",)),
-		CompletedEvent(1, 1, 0.2, (b"beta error\n",)),
+		CompletedEvent(0, Finished(0, 0.1, (b"alpha output\n",))),
+		CompletedEvent(1, Finished(1, 0.2, (b"beta error\n",))),
 	]
 	asyncio.run(drive(Summary(SummaryOptions(show_passing=True)), task, events))
 	out = capsys.readouterr().out
@@ -145,7 +147,7 @@ def test_summary_show_passing_defaults_to_false(capsys: pytest.CaptureFixture[st
 	task = Parallel(tasks=(a,))
 	events: list[TaskEvent] = [
 		StartedEvent(0, 100.0),
-		CompletedEvent(0, 0, 0.1, (b"alpha output\n",)),
+		CompletedEvent(0, Finished(0, 0.1, (b"alpha output\n",))),
 	]
 	asyncio.run(drive(Summary(SummaryOptions()), task, events))
 	out = capsys.readouterr().out
@@ -156,7 +158,7 @@ def test_summary_creates_no_background_tasks() -> None:
 	task = make_task("solo")
 	events: list[TaskEvent] = [
 		StartedEvent(0, 100.0),
-		CompletedEvent(0, 0, 0.05, (b"done\n",)),
+		CompletedEvent(0, Finished(0, 0.05, (b"done\n",))),
 	]
 
 	async def count_tasks_after_teardown() -> int:

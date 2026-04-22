@@ -10,7 +10,7 @@ import os
 import shlex
 import sys
 import time
-from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Iterator, Mapping, Sequence
 from subprocess import STDOUT
 from typing import Any, Final, NamedTuple, Protocol, TypeAlias, TypeVar
 
@@ -81,24 +81,51 @@ class Parallel(NamedTuple):
 TaskNode: TypeAlias = Task | Sequential | Parallel
 
 
-class TaskResult(NamedTuple):
-	"""Result of a single completed task.
+class Finished(NamedTuple):
+	"""Completion outcome: task ran to exit with a returncode.
 
-	>>> TaskResult("lint", 0, 1.234, (b"all clean",))
-	TaskResult(name='lint', returncode=0, elapsed=1.234, output=(b'all clean',))
+	>>> Finished(0, 1.234, (b"all clean",))
+	Finished(returncode=0, elapsed=1.234, output=(b'all clean',))
 	"""
 
-	name: str
 	returncode: int
 	elapsed: float
 	output: Sequence[bytes]
 
 
+class Skipped(NamedTuple):
+	"""Completion outcome: task was skipped due to a prior Sequential failure.
+
+	Carries the returncode of the task that caused the skip — an Either-like
+	propagation so callers that need an rc (e.g. the overall run's exit code)
+	can read it uniformly across completion variants.
+
+	>>> Skipped(1)
+	Skipped(returncode=1)
+	"""
+
+	returncode: int
+
+
+Completion: TypeAlias = Finished | Skipped
+
+
+class TaskResult(NamedTuple):
+	"""Result of a single completed task.
+
+	>>> TaskResult("lint", Finished(0, 1.234, (b"all clean",)))
+	TaskResult(name='lint', completion=Finished(returncode=0, elapsed=1.234, output=(b'all clean',)))
+	"""
+
+	name: str
+	completion: Completion
+
+
 class RunResult(NamedTuple):
 	"""Result of running an entire task tree.
 
-	>>> RunResult(0, (TaskResult("a", 0, 0.1, ()),), 0.1)
-	RunResult(returncode=0, results=(TaskResult(name='a', returncode=0, elapsed=0.1, output=()),), elapsed=0.1)
+	>>> RunResult(0, (TaskResult("a", Finished(0, 0.1, ())),), 0.1)
+	RunResult(returncode=0, results=(TaskResult(name='a', completion=Finished(returncode=0, elapsed=0.1, output=())),), elapsed=0.1)
 	"""
 
 	returncode: int
@@ -130,16 +157,16 @@ class OutputEvent(NamedTuple):
 
 
 class CompletedEvent(NamedTuple):
-	"""Internal event: a task finished execution.
+	"""Internal event: a task finished execution (either ran or was skipped).
 
-	>>> CompletedEvent(0, 0, 1.0, (b"done",))
-	CompletedEvent(leaf_index=0, returncode=0, elapsed=1.0, output=(b'done',))
+	>>> CompletedEvent(0, Finished(0, 1.0, (b"done",)))
+	CompletedEvent(leaf_index=0, completion=Finished(returncode=0, elapsed=1.0, output=(b'done',)))
+	>>> CompletedEvent(0, Skipped(1))
+	CompletedEvent(leaf_index=0, completion=Skipped(returncode=1))
 	"""
 
 	leaf_index: int
-	returncode: int
-	elapsed: float
-	output: Sequence[bytes]
+	completion: Completion
 
 
 TaskEvent: TypeAlias = StartedEvent | OutputEvent | CompletedEvent
@@ -179,28 +206,23 @@ class Running(NamedTuple):
 	last_line: bytes
 
 
-class Done(NamedTuple):
-	"""Leaf state: task completed with a result.
+class Completed(NamedTuple):
+	"""Leaf state: task is done — either ran to exit or was skipped.
 
-	>>> Done(Task("echo hi"), TaskResult("echo hi", 0, 0.5, ()))
-	Done(task=Task(cmd='echo hi', name=None, env={}), result=TaskResult(name='echo hi', returncode=0, elapsed=0.5, output=()))
+	The `completion` payload is a sum type: pattern-match on `Finished(...)`
+	vs `Skipped(...)` to distinguish the two cases.
+
+	>>> Completed(Task("echo hi"), Finished(0, 0.5, ()))
+	Completed(task=Task(cmd='echo hi', name=None, env={}), completion=Finished(returncode=0, elapsed=0.5, output=()))
+	>>> Completed(Task("echo hi"), Skipped(1))
+	Completed(task=Task(cmd='echo hi', name=None, env={}), completion=Skipped(returncode=1))
 	"""
 
 	task: Task
-	result: TaskResult
+	completion: Completion
 
 
-class Skipped(NamedTuple):
-	"""Leaf state: task was skipped due to a prior failure in a Sequential.
-
-	>>> Skipped(Task("echo hi"))
-	Skipped(task=Task(cmd='echo hi', name=None, env={}))
-	"""
-
-	task: Task
-
-
-LeafState: TypeAlias = Waiting | Running | Done | Skipped
+LeafState: TypeAlias = Waiting | Running | Completed
 
 
 EventSink: TypeAlias = Callable[[int, TaskEvent], Awaitable[None]]
@@ -229,9 +251,6 @@ class Effect(Protocol[T]):
 
 	async def teardown(self, ctxs: tuple[T, ...]) -> None:
 		"""Receive every leaf's final context, in leaf-index order."""
-
-
-SKIPPED_RETURNCODE: Final = -1
 
 
 def resolve_cmd(cmd: str | tuple[str, ...]) -> tuple[str, ...]:
@@ -515,10 +534,10 @@ def next_state(state: LeafState, event: TaskEvent) -> LeafState:
 	Running(task=Task(cmd='echo hi', name=None, env={}), start_time=100.0, last_line=b'')
 	>>> next_state(Running(t, 100.0, b""), OutputEvent(0, b"hi", 100.5))
 	Running(task=Task(cmd='echo hi', name=None, env={}), start_time=100.0, last_line=b'hi')
-	>>> next_state(Running(t, 100.0, b""), CompletedEvent(0, 0, 0.5, (b"done",)))
-	Done(task=Task(cmd='echo hi', name=None, env={}), result=TaskResult(name='echo hi', returncode=0, elapsed=0.5, output=(b'done',)))
-	>>> next_state(Waiting(t), CompletedEvent(0, SKIPPED_RETURNCODE, 0.0, ()))
-	Skipped(task=Task(cmd='echo hi', name=None, env={}))
+	>>> next_state(Running(t, 100.0, b""), CompletedEvent(0, Finished(0, 0.5, (b"done",))))
+	Completed(task=Task(cmd='echo hi', name=None, env={}), completion=Finished(returncode=0, elapsed=0.5, output=(b'done',)))
+	>>> next_state(Waiting(t), CompletedEvent(0, Skipped(1)))
+	Completed(task=Task(cmd='echo hi', name=None, env={}), completion=Skipped(returncode=1))
 	"""
 	match state:
 		case Waiting(task=task):
@@ -527,27 +546,21 @@ def next_state(state: LeafState, event: TaskEvent) -> LeafState:
 					return Running(task, ts, b"")
 				case OutputEvent(line=line, timestamp=ts):  # pragma: no cover
 					return Running(task, ts, line)
-				case CompletedEvent(returncode=rc, elapsed=elapsed, output=output):
-					if rc == SKIPPED_RETURNCODE:
-						return Skipped(task)
-					return Done(
-						task, TaskResult(task_label(task), rc, elapsed, output)
-					)  # pragma: no cover
+				case CompletedEvent(completion=completion):
+					return Completed(task, completion)
 				case _:
 					assert_never(event)
 		case Running(task=task, start_time=start):
 			match event:
 				case OutputEvent(line=line):
 					return Running(task, start, line)
-				case CompletedEvent(returncode=rc, elapsed=elapsed, output=output):
-					if rc == SKIPPED_RETURNCODE:  # pragma: no cover
-						return Skipped(task)
-					return Done(task, TaskResult(task_label(task), rc, elapsed, output))
+				case CompletedEvent(completion=completion):
+					return Completed(task, completion)
 				case StartedEvent():  # pragma: no cover
 					return state
 				case _:
 					assert_never(event)
-		case Done() | Skipped():  # pragma: no cover
+		case Completed():  # pragma: no cover
 			return state
 		case _:
 			assert_never(state)
@@ -578,8 +591,37 @@ async def run_cmd(task: Task, leaf_index: int, dispatch: EventSink) -> TaskResul
 	await proc.wait()
 	elapsed: Final = time.perf_counter() - start
 	rc: Final = proc.returncode or 0
-	await dispatch(leaf_index, CompletedEvent(leaf_index, rc, elapsed, output))
-	return TaskResult(task_label(task), rc, elapsed, output)
+	completion: Final = Finished(rc, elapsed, output)
+	await dispatch(leaf_index, CompletedEvent(leaf_index, completion))
+	return TaskResult(task_label(task), completion)
+
+
+async def skip_subtree(
+	child: TaskNode,
+	skip: Skipped,
+	dispatch: EventSink,
+	leaves: tuple[Task, ...],
+	index_map: dict[int, int],
+) -> tuple[TaskResult, ...]:
+	"""Dispatch a Skipped completion for every leaf in a subtree, in DFS order."""
+	results: tuple[TaskResult, ...] = ()
+	for idx in subtree_leaf_indices(child, index_map):
+		await dispatch(idx, CompletedEvent(idx, skip))
+		results = (*results, TaskResult(task_label(leaves[idx]), skip))
+	return results
+
+
+def first_failure_rc(results: Iterable[TaskResult]) -> int | None:
+	"""Return the first non-zero returncode in ``results``, or ``None`` if all are zero.
+
+	>>> first_failure_rc((TaskResult("a", Finished(0, 0.1, ())),))
+	>>> first_failure_rc((TaskResult("a", Finished(0, 0.1, ())), TaskResult("b", Finished(2, 0.1, ()))))
+	2
+	"""
+	return next(
+		(r.completion.returncode for r in results if r.completion.returncode != 0),
+		None,
+	)
 
 
 async def execute(
@@ -601,24 +643,16 @@ async def execute(
 			return tuple(r for f in futures for r in f.result())
 		case Sequential(tasks=children):
 			seq_results: tuple[TaskResult, ...] = ()
-			failed = False
+			failed_rc: int | None = None
 			for child in children:
-				if failed:
-					for skipped_idx in subtree_leaf_indices(child, index_map):
-						await dispatch(
-							skipped_idx, CompletedEvent(skipped_idx, SKIPPED_RETURNCODE, 0.0, ())
-						)
-						seq_results = (
-							*seq_results,
-							TaskResult(
-								task_label(leaves[skipped_idx]), SKIPPED_RETURNCODE, 0.0, ()
-							),
-						)
-				else:
-					child_results = await execute(child, dispatch, leaves, index_map)
-					seq_results = (*seq_results, *child_results)
-					if any(r.returncode != 0 for r in child_results):
-						failed = True
+				child_results = (
+					await skip_subtree(child, Skipped(failed_rc), dispatch, leaves, index_map)
+					if failed_rc is not None
+					else await execute(child, dispatch, leaves, index_map)
+				)
+				seq_results = (*seq_results, *child_results)
+				if failed_rc is None:
+					failed_rc = first_failure_rc(child_results)
 			return seq_results
 		case _:
 			assert_never(node)
@@ -685,7 +719,7 @@ async def run(task: TaskNode, effects: Sequence[Effect[Any]] = ()) -> RunResult:
 		if teardown_errors:
 			raise BaseExceptionGroup("teardown errors", teardown_errors)
 	return RunResult(
-		returncode=1 if any(r.returncode != 0 for r in results) else 0,
+		returncode=1 if any(r.completion.returncode != 0 for r in results) else 0,
 		results=results,
 		elapsed=time.perf_counter() - wall_start,
 	)

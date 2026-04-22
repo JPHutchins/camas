@@ -8,7 +8,7 @@ import time
 
 import pytest
 
-from camas import Parallel, Sequential, Task, run
+from camas import Finished, Parallel, Sequential, Task, run
 
 
 def test_force_color_injected_in_subprocess(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -202,7 +202,12 @@ def test_task_with_stdout_output() -> None:
 	task = Task(("python", "-c", "print('hello world')"), name="printer")
 	result = asyncio.run(run(task))
 	assert result.returncode == 0
-	assert any(b"hello world" in line for r in result.results for line in r.output)
+	assert any(
+		b"hello world" in line
+		for r in result.results
+		if isinstance(r.completion, Finished)
+		for line in r.completion.output
+	)
 
 
 def test_sequential_skip_nested_group() -> None:

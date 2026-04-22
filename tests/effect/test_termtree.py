@@ -11,9 +11,10 @@ from typing import TypeVar
 import pytest
 
 from camas import (
+	Completed,
 	CompletedEvent,
-	Done,
 	Effect,
+	Finished,
 	LeafState,
 	OutputEvent,
 	Parallel,
@@ -23,7 +24,6 @@ from camas import (
 	StartedEvent,
 	Task,
 	TaskEvent,
-	TaskResult,
 	Waiting,
 )
 from camas.effect.termtree import (
@@ -90,9 +90,9 @@ def test_render_frame_mixed_states() -> None:
 	tree = Parallel(tasks=(a, b, c))
 	rows = flatten_rows(tree)
 	states: tuple[LeafState, ...] = (
-		Done(a, TaskResult("a", 0, 0.1, (b"all clean\n",))),
+		Completed(a, Finished(0, 0.1, (b"all clean\n",))),
 		Running(b, 100.0, b"working..."),
-		Skipped(c),
+		Completed(c, Skipped(1)),
 	)
 	frame = render_frame(rows, states, term_width=80, display_width=60, now=100.5, wall_start=100.0)
 	assert "PASS" in frame
@@ -104,7 +104,7 @@ def test_render_frame_failure_summary() -> None:
 	a = make_task("a")
 	tree = Parallel(tasks=(a,))
 	rows = flatten_rows(tree)
-	states: tuple[LeafState, ...] = (Done(a, TaskResult("a", 1, 0.1, (b"boom\n",))),)
+	states: tuple[LeafState, ...] = (Completed(a, Finished(1, 0.1, (b"boom\n",))),)
 	frame = render_frame(rows, states, term_width=80, display_width=60, now=100.5, wall_start=100.0)
 	assert "FAIL" in frame
 
@@ -113,8 +113,8 @@ def test_print_failures_outputs_failed_task(capsys: pytest.CaptureFixture[str]) 
 	a = make_task("a")
 	b = make_task("b")
 	states: tuple[LeafState, ...] = (
-		Done(a, TaskResult("a", 0, 0.1, (b"ok\n",))),
-		Done(b, TaskResult("b", 1, 0.2, (b"error details\n",))),
+		Completed(a, Finished(0, 0.1, (b"ok\n",))),
+		Completed(b, Finished(1, 0.2, (b"error details\n",))),
 	)
 	print_failures(states)
 	captured = capsys.readouterr()
@@ -127,8 +127,8 @@ def test_print_passes_outputs_passed_task(capsys: pytest.CaptureFixture[str]) ->
 	a = make_task("a")
 	b = make_task("b")
 	states: tuple[LeafState, ...] = (
-		Done(a, TaskResult("a", 0, 0.1, (b"clean output\n",))),
-		Done(b, TaskResult("b", 1, 0.2, (b"error details\n",))),
+		Completed(a, Finished(0, 0.1, (b"clean output\n",))),
+		Completed(b, Finished(1, 0.2, (b"error details\n",))),
 	)
 	print_passes(states)
 	captured = capsys.readouterr()
@@ -144,8 +144,8 @@ def test_termtree_show_passing_prints_passed_output(
 	events: list[TaskEvent] = [
 		StartedEvent(0, 100.0),
 		StartedEvent(1, 100.0),
-		CompletedEvent(0, 0, 0.1, (b"first output\n",)),
-		CompletedEvent(1, 0, 0.2, (b"second output\n",)),
+		CompletedEvent(0, Finished(0, 0.1, (b"first output\n",))),
+		CompletedEvent(1, Finished(0, 0.2, (b"second output\n",))),
 	]
 	asyncio.run(
 		drive(
@@ -167,7 +167,7 @@ def test_termtree_show_passing_defaults_to_false(
 	task = Parallel(tasks=(make_task("a"),))
 	events: list[TaskEvent] = [
 		StartedEvent(0, 100.0),
-		CompletedEvent(0, 0, 0.1, (b"quiet\n",)),
+		CompletedEvent(0, Finished(0, 0.1, (b"quiet\n",))),
 	]
 	asyncio.run(drive(Termtree(TermtreeOptions(frame_interval_ms=50)), task, events))
 	captured = capsys.readouterr()
@@ -182,8 +182,8 @@ def test_termtree_effect_consumes_events_and_renders(
 		StartedEvent(0, 100.0),
 		StartedEvent(1, 100.0),
 		OutputEvent(0, b"line from a\n", 100.05),
-		CompletedEvent(0, 0, 0.1, (b"line from a\n",)),
-		CompletedEvent(1, 1, 0.2, (b"boom\n",)),
+		CompletedEvent(0, Finished(0, 0.1, (b"line from a\n",))),
+		CompletedEvent(1, Finished(1, 0.2, (b"boom\n",))),
 	]
 	asyncio.run(drive(Termtree(TermtreeOptions(frame_interval_ms=50)), task, events))
 	captured = capsys.readouterr()
@@ -200,8 +200,8 @@ def test_termtree_frame_tick_keeps_spinner_alive_between_events() -> None:
 		# Idle for long enough that several ticks fire while nothing is happening.
 		await asyncio.sleep(0.08)
 		ctx = await effect.on_event(
-			CompletedEvent(0, 0, 0.08, (b"done\n",)),
-			(Done(task, TaskResult("solo", 0, 0.08, (b"done\n",))),),
+			CompletedEvent(0, Finished(0, 0.08, (b"done\n",))),
+			(Completed(task, Finished(0, 0.08, (b"done\n",))),),
 			ctx,
 		)
 		assert ctx.state.tick_task is not None
@@ -221,8 +221,8 @@ def test_termtree_effect_handles_groups_and_skipped(
 	task = Sequential(tasks=(a, b), name="pipeline")
 	events: list[TaskEvent] = [
 		StartedEvent(0, 100.0),
-		CompletedEvent(0, 1, 0.1, (b"failed\n",)),
-		CompletedEvent(1, -1, 0.0, ()),
+		CompletedEvent(0, Finished(1, 0.1, (b"failed\n",))),
+		CompletedEvent(1, Skipped(1)),
 	]
 	asyncio.run(drive(Termtree(TermtreeOptions(frame_interval_ms=50)), task, events))
 	captured = capsys.readouterr()
@@ -242,11 +242,11 @@ def _running(t: Task) -> LeafState:
 
 
 def _done(t: Task) -> LeafState:
-	return Done(t, TaskResult("x", 0, 0.1, (b"built\n",)))
+	return Completed(t, Finished(0, 0.1, (b"built\n",)))
 
 
 def _skipped(t: Task) -> LeafState:
-	return Skipped(t)
+	return Completed(t, Skipped(1))
 
 
 @pytest.mark.parametrize("term_width", [60, 77, 80, 120])
@@ -286,7 +286,7 @@ def test_render_lines_strips_ansi_from_done_tail() -> None:
 	task = make_task("a")
 	rows = flatten_rows(Parallel(tasks=(task,)))
 	states: tuple[LeafState, ...] = (
-		Done(task, TaskResult("a", 0, 0.1, (b"\x1b[38;5;214mcolored\x1b[0m\n",))),
+		Completed(task, Finished(0, 0.1, (b"\x1b[38;5;214mcolored\x1b[0m\n",))),
 	)
 	lines = render_lines(
 		rows, states, term_width=120, display_width=100, now=100.5, wall_start=100.0
@@ -313,9 +313,7 @@ def test_render_lines_preserves_full_name_when_it_fits() -> None:
 	task = Task(("python", "-c", "pass"), name="uv run ruff check .")
 	tree = Parallel(tasks=(task,))
 	rows = flatten_rows(tree)
-	states: tuple[LeafState, ...] = (
-		Done(task, TaskResult("x", 0, 0.1, (b"All checks passed!\n",))),
-	)
+	states: tuple[LeafState, ...] = (Completed(task, Finished(0, 0.1, (b"All checks passed!\n",))),)
 	lines = render_lines(
 		rows, states, term_width=120, display_width=100, now=100.5, wall_start=100.0
 	)
@@ -334,7 +332,7 @@ def test_render_lines_truncates_name_only_when_it_cannot_fit() -> None:
 	)
 	tree = Parallel(tasks=(long_task,))
 	rows = flatten_rows(tree)
-	states: tuple[LeafState, ...] = (Done(long_task, TaskResult("x", 0, 0.1, (b"built\n",))),)
+	states: tuple[LeafState, ...] = (Completed(long_task, Finished(0, 0.1, (b"built\n",))),)
 	lines = render_lines(rows, states, term_width=60, display_width=41, now=100.5, wall_start=100.0)
 	leaf_line = next(ln for ln in lines if "PASS" in ln)
 	plain = ANSI_ESCAPE_PATTERN.sub("", leaf_line).lstrip("\r")
@@ -346,7 +344,7 @@ def test_render_lines_stream_uses_only_leftover_space() -> None:
 	task = Task(("python", "-c", "pass"), name="x" * 40)
 	tree = Parallel(tasks=(task,))
 	rows = flatten_rows(tree)
-	states: tuple[LeafState, ...] = (Done(task, TaskResult("x", 0, 0.1, (b"shouldnt appear\n",))),)
+	states: tuple[LeafState, ...] = (Completed(task, Finished(0, 0.1, (b"shouldnt appear\n",))),)
 	lines = render_lines(rows, states, term_width=60, display_width=41, now=100.5, wall_start=100.0)
 	leaf_line = next(ln for ln in lines if "PASS" in ln)
 	plain = ANSI_ESCAPE_PATTERN.sub("", leaf_line).lstrip("\r")

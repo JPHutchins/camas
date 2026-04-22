@@ -16,7 +16,8 @@ else:
 	from typing_extensions import assert_never
 
 from camas import (
-	Done,
+	Completed,
+	Finished,
 	LeafInfo,
 	LeafState,
 	Parallel,
@@ -26,7 +27,6 @@ from camas import (
 	Task,
 	TaskEvent,
 	TaskNode,
-	TaskResult,
 	Waiting,
 	expand_matrix,
 	flatten_leaves,
@@ -280,19 +280,26 @@ def render_lines(
 				gap = max(display_width - len(prefix) - len(name), 0)
 				header = f"{GREY}{prefix}{RESET}{BOLD}{name}{RESET}"
 				match state:
-					case Done(result=result):
-						color = GREEN if result.returncode == 0 else RED
-						status = " PASS " if result.returncode == 0 else " FAIL "
-						stream_line = strip_ansi(last_line_display(result.output))
-						stream = (
-							f"  {truncate_middle(stream_line, gap - 2)}"
-							if gap > 2 and stream_line
-							else ""
-						)
-						padding = " " * max(gap - len(stream), 0)
-						lines.append(
-							f"\r{header}{GREY}{stream}{RESET}{padding} [{color}{status}{RESET}] {result.elapsed:7.3f}s{CLEAR_LINE}"
-						)
+					case Completed(completion=completion):
+						match completion:
+							case Finished(returncode=rc, elapsed=elapsed, output=output):
+								color = GREEN if rc == 0 else RED
+								status = " PASS " if rc == 0 else " FAIL "
+								stream_line = strip_ansi(last_line_display(output))
+								stream = (
+									f"  {truncate_middle(stream_line, gap - 2)}"
+									if gap > 2 and stream_line
+									else ""
+								)
+								padding = " " * max(gap - len(stream), 0)
+								lines.append(
+									f"\r{header}{GREY}{stream}{RESET}{padding} [{color}{status}{RESET}] {elapsed:7.3f}s{CLEAR_LINE}"
+								)
+							case Skipped():  # pragma: no branch
+								padding = " " * gap
+								lines.append(
+									f"\r{header}{padding} [{GREY} SKIP {RESET}]{CLEAR_LINE}"
+								)
 					case Running(start_time=start_time, last_line=last_line):
 						elapsed = now - start_time
 						spin = SPINNER[int(elapsed * 10) % len(SPINNER)]
@@ -306,17 +313,19 @@ def render_lines(
 						lines.append(
 							f"\r{header}{GREY}{stream}{RESET}{padding} [{YELLOW}{spin}{RESET}] {elapsed:7.3f}s{CLEAR_LINE}"
 						)
-					case Skipped():
-						padding = " " * gap
-						lines.append(f"\r{header}{padding} [{GREY} SKIP {RESET}]{CLEAR_LINE}")
 					case Waiting():
 						padding = " " * gap
 						lines.append(f"\r{header}{padding} [{GREY} WAIT {RESET}]{CLEAR_LINE}")
 	wall_elapsed: Final = now - wall_start
-	alldone: Final = all(isinstance(s, Done | Skipped) for s in states)
+	alldone: Final = all(isinstance(s, Completed) for s in states)
 	summary_pad: Final = " " * max(display_width - 6, 0)
 	if alldone:
-		failed: Final = any(isinstance(s, Done) and s.result.returncode != 0 for s in states)
+		failed: Final = any(
+			isinstance(s, Completed)
+			and isinstance(s.completion, Finished)
+			and s.completion.returncode != 0
+			for s in states
+		)
 		summary_color: Final = RED if failed else GREEN
 		summary_label: Final = " FAIL " if failed else " PASS "
 		lines.append(
@@ -349,12 +358,12 @@ def render_frame(
 	return f"\033[{len(lines) - 1}F" + "\n".join(lines)
 
 
-def _print_task_output(task: Task, result: TaskResult, label: str, color: str) -> None:
+def _print_task_output(task: Task, output: Sequence[bytes], label: str, color: str) -> None:
 	sys.stdout.write(f"\n{color}{'=' * 60}{RESET}\n")
 	sys.stdout.write(f"{color}{BOLD} {label}: {task_label(task)} {RESET}\n")
 	sys.stdout.write(f"{color}{'=' * 60}{RESET}\n")
 	sys.stdout.flush()
-	for line in result.output:
+	for line in output:
 		sys.stdout.buffer.write(line)
 	sys.stdout.buffer.flush()
 	sys.stdout.write("\n")
@@ -364,8 +373,8 @@ def print_failures(states: Sequence[LeafState]) -> None:
 	"""Print detailed output for each failed task."""
 	for state in states:
 		match state:
-			case Done(task=task, result=result) if result.returncode > 0:
-				_print_task_output(task, result, "FAILED", RED)
+			case Completed(task=task, completion=Finished(returncode=rc, output=output)) if rc > 0:
+				_print_task_output(task, output, "FAILED", RED)
 			case _:
 				pass
 
@@ -374,8 +383,8 @@ def print_passes(states: Sequence[LeafState]) -> None:
 	"""Print detailed output for each successfully-completed task."""
 	for state in states:
 		match state:
-			case Done(task=task, result=result) if result.returncode == 0:
-				_print_task_output(task, result, "PASSED", GREEN)
+			case Completed(task=task, completion=Finished(returncode=0, output=output)):
+				_print_task_output(task, output, "PASSED", GREEN)
 			case _:
 				pass
 
