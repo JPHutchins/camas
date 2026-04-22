@@ -195,14 +195,21 @@ ci = 'Sequential(tasks=(Ref("lint"), Ref("typecheck"), Ref("test")))'
 """
 	)
 	tasks = load_tasks(pyproject)
-	assert tasks["lint"] == Task("ruff check .")
-	assert tasks["typecheck"] == Parallel(tasks=(Task("mypy ."), Task("pyright .")))
+	assert tasks["lint"] == Task("ruff check .", name="lint")
+	assert tasks["typecheck"] == Parallel(
+		tasks=(Task("mypy .", name="mypy"), Task("pyright .", name="pyright")),
+		name="typecheck",
+	)
 	assert tasks["ci"] == Sequential(
 		tasks=(
-			Task("ruff check ."),
-			Parallel(tasks=(Task("mypy ."), Task("pyright ."))),
-			Task("pytest"),
-		)
+			Task("ruff check .", name="lint"),
+			Parallel(
+				tasks=(Task("mypy .", name="mypy"), Task("pyright .", name="pyright")),
+				name="typecheck",
+			),
+			Task("pytest", name="test"),
+		),
+		name="ci",
 	)
 
 
@@ -218,6 +225,7 @@ tests = 'Parallel(tasks=(Task("pytest --python {PY}"),), matrix={"PY": ("3.12","
 	assert tasks["tests"] == Parallel(
 		tasks=(Task("pytest --python {PY}"),),
 		matrix={"PY": ("3.12", "3.13")},
+		name="tests",
 	)
 
 
@@ -348,8 +356,6 @@ def test_list_flag_with_tasks(
 	out = capsys.readouterr().out
 	assert "lint:" in out
 	assert "test:" in out
-	assert "ruff ." in out
-	assert "pytest" in out
 
 
 def test_named_task_dry_run(

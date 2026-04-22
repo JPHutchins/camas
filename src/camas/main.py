@@ -348,6 +348,27 @@ def _dig(data: Any, key: str) -> Any:
 	return data[key] if _is_str_dict(data) and key in data else {}
 
 
+def _assign_key_name(node: TaskNode | Ref, key: str) -> TaskNode | Ref:
+	"""Set the TOML key as the node's name unless the expression already named it.
+
+	>>> _assign_key_name(Task("x"), "foo")
+	Task(cmd='x', name='foo', env={})
+	>>> _assign_key_name(Task("x", name="explicit"), "foo")
+	Task(cmd='x', name='explicit', env={})
+	>>> _assign_key_name(Ref("bar"), "foo")
+	Ref(name='bar')
+	"""
+	match node:
+		case Task(cmd=cmd, name=None, env=env):
+			return Task(cmd=cmd, name=key, env=env)
+		case Sequential(tasks=tasks, name=None, matrix=matrix, env=env):
+			return Sequential(tasks=tasks, name=key, matrix=matrix, env=env)
+		case Parallel(tasks=tasks, name=None, matrix=matrix, env=env):
+			return Parallel(tasks=tasks, name=key, matrix=matrix, env=env)
+		case _:
+			return node
+
+
 def load_tasks(path: Path) -> dict[str, TaskNode]:
 	"""Read [tool.camas.tasks] from a pyproject.toml and resolve all refs."""
 	parsed: dict[str, Any] = tomllib.loads(path.read_text())
@@ -359,7 +380,7 @@ def load_tasks(path: Path) -> dict[str, TaskNode]:
 		if not isinstance(value, str):
 			raise ValueError(f"task {name!r} must be a string, got {type(value).__name__}")
 		try:
-			pre[name] = parse_task_value(value)
+			pre[name] = _assign_key_name(parse_task_value(value), name)
 		except ValueError as e:
 			raise ValueError(f"task {name!r}: {e}") from e
 	return {name: resolve_refs(tree, pre, frozenset({name})) for name, tree in pre.items()}
@@ -440,18 +461,7 @@ def print_tasks(tasks: Mapping[str, TaskNode]) -> None:
 
 
 def run_cli(scope: Mapping[str, object]) -> None:
-	"""Collect Task/Sequential/Parallel from ``scope`` and dispatch CLI args.
-
-	Intended for user-owned ``check.py`` scripts::
-
-	    from camas import Parallel, Task
-	    from camas.main import run_cli
-
-	    lint = Task("ruff check .")
-	    ci = Parallel(tasks=(lint,))
-
-	    if __name__ == "__main__":
-	        run_cli(globals())
+	"""Collect Task/Sequential/Parallel values from ``scope`` and dispatch CLI args.
 
 	Names starting with ``_`` and non-task values are skipped.
 	"""
