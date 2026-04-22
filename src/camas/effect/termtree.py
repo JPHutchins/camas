@@ -30,9 +30,43 @@ from camas import (
 	Waiting,
 	expand_matrix,
 	flatten_leaves,
-	task_display_name,
-	truncate_middle,
+	task_label,
 )
+
+
+def truncate_middle(text: str, max_width: int) -> str:
+	"""Truncate text in the middle with '...' if it exceeds max_width.
+
+	Always returns a string of length min(len(text), max(max_width, 0)).
+
+	>>> truncate_middle("hello", 10)
+	'hello'
+	>>> truncate_middle("hello world!", 9)
+	'hel...ld!'
+	>>> truncate_middle("built", 2)
+	'..'
+	>>> truncate_middle("built", 4)
+	'...t'
+	>>> truncate_middle("built", 0)
+	''
+	"""
+	if len(text) <= max_width:
+		return text
+	if max_width < 3:
+		return "..."[: max(max_width, 0)]
+	side: Final = (max_width - 3) // 2
+	return text[:side] + "..." + text[len(text) - (max_width - 3 - side) :]
+
+
+def fit_label(text: str, max_width: int) -> str:
+	"""Return ``text`` unchanged if it fits; otherwise middle-truncate to ``max_width``.
+
+	>>> fit_label("uv run ruff check .", 40)
+	'uv run ruff check .'
+	>>> fit_label("uv run ruff format --check .", 15)
+	'uv run...heck .'
+	"""
+	return text if len(text) <= max_width else truncate_middle(text, max(max_width, 3))
 
 
 class TermtreeOptions(NamedTuple):
@@ -110,7 +144,6 @@ SPINNER: Final = (
 )
 
 STATUS_COL_WIDTH: Final = 18
-MIN_DETAIL_WIDTH: Final = 10
 
 
 def group_display_name(tasks: tuple[TaskNode, ...], separator: str) -> str:
@@ -125,7 +158,7 @@ def group_display_name(tasks: tuple[TaskNode, ...], separator: str) -> str:
 	for t in tasks:
 		match t:
 			case Task():
-				parts.append(task_display_name(t))
+				parts.append(task_label(t))
 			case Sequential(name=name) | Parallel(name=name):
 				parts.append(
 					name
@@ -241,10 +274,7 @@ def render_lines(
 					f"\r{GREY}{truncate_middle(f'{prefix}{label}', term_width - 1)}{CLEAR_LINE}{RESET}"
 				)
 			case LeafInfo(task=task):
-				name = truncate_middle(
-					task_display_name(task),
-					max(display_width - len(prefix) - MIN_DETAIL_WIDTH, 3),
-				)
+				name = fit_label(task_label(task), max(display_width - len(prefix), 0))
 				state = states[leaf_idx]
 				leaf_idx += 1
 				gap = max(display_width - len(prefix) - len(name), 0)
@@ -253,20 +283,28 @@ def render_lines(
 					case Done(result=result):
 						color = GREEN if result.returncode == 0 else RED
 						status = " PASS " if result.returncode == 0 else " FAIL "
-						tail = strip_ansi(last_line_display(result.output))
-						detail = f"  {truncate_middle(tail, gap - 2)}" if gap > 2 and tail else ""
-						padding = " " * max(gap - len(detail), 0)
+						stream_line = strip_ansi(last_line_display(result.output))
+						stream = (
+							f"  {truncate_middle(stream_line, gap - 2)}"
+							if gap > 2 and stream_line
+							else ""
+						)
+						padding = " " * max(gap - len(stream), 0)
 						lines.append(
-							f"\r{header}{GREY}{detail}{RESET}{padding} [{color}{status}{RESET}] {result.elapsed:7.3f}s{CLEAR_LINE}"
+							f"\r{header}{GREY}{stream}{RESET}{padding} [{color}{status}{RESET}] {result.elapsed:7.3f}s{CLEAR_LINE}"
 						)
 					case Running(start_time=start_time, last_line=last_line):
 						elapsed = now - start_time
 						spin = SPINNER[int(elapsed * 10) % len(SPINNER)]
-						tail = strip_ansi(decode_line(last_line)) if last_line else ""
-						detail = f"  {truncate_middle(tail, gap - 2)}" if gap > 2 and tail else ""
-						padding = " " * max(gap - len(detail), 0)
+						stream_line = strip_ansi(decode_line(last_line)) if last_line else ""
+						stream = (
+							f"  {truncate_middle(stream_line, gap - 2)}"
+							if gap > 2 and stream_line
+							else ""
+						)
+						padding = " " * max(gap - len(stream), 0)
 						lines.append(
-							f"\r{header}{GREY}{detail}{RESET}{padding} [{YELLOW}{spin}{RESET}] {elapsed:7.3f}s{CLEAR_LINE}"
+							f"\r{header}{GREY}{stream}{RESET}{padding} [{YELLOW}{spin}{RESET}] {elapsed:7.3f}s{CLEAR_LINE}"
 						)
 					case Skipped():
 						padding = " " * gap
@@ -313,7 +351,7 @@ def render_frame(
 
 def _print_task_output(task: Task, result: TaskResult, label: str, color: str) -> None:
 	sys.stdout.write(f"\n{color}{'=' * 60}{RESET}\n")
-	sys.stdout.write(f"{color}{BOLD} {label}: {task_display_name(task)} {RESET}\n")
+	sys.stdout.write(f"{color}{BOLD} {label}: {task_label(task)} {RESET}\n")
 	sys.stdout.write(f"{color}{'=' * 60}{RESET}\n")
 	sys.stdout.flush()
 	for line in result.output:
@@ -354,7 +392,7 @@ def print_tree(task: TaskNode) -> None:
 			case GroupHeader(label=label):
 				print(f"{prefix}{label}")
 			case LeafInfo(task=leaf_task):
-				print(f"{prefix}{task_display_name(leaf_task)}")
+				print(f"{prefix}{task_label(leaf_task)}")
 			case _:
 				assert_never(row)
 

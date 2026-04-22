@@ -308,14 +308,47 @@ def test_render_lines_strips_ansi_from_running_tail() -> None:
 	assert "building" in ANSI_ESCAPE_PATTERN.sub("", combined)
 
 
-def test_render_lines_truncates_name_when_detail_needs_room() -> None:
+def test_render_lines_preserves_full_name_when_it_fits() -> None:
+	"""Name expands fully; the live stream fills only the leftover gap."""
+	task = Task(("python", "-c", "pass"), name="uv run ruff check .")
+	tree = Parallel(tasks=(task,))
+	rows = flatten_rows(tree)
+	states: tuple[LeafState, ...] = (
+		Done(task, TaskResult("x", 0, 0.1, (b"All checks passed!\n",))),
+	)
+	lines = render_lines(
+		rows, states, term_width=120, display_width=100, now=100.5, wall_start=100.0
+	)
+	leaf_line = next(ln for ln in lines if "PASS" in ln)
+	plain = ANSI_ESCAPE_PATTERN.sub("", leaf_line).lstrip("\r")
+	assert "uv run ruff check ." in plain
+	assert "uv run ruff ch..." not in plain
+	assert "All checks passed!" in plain
+
+
+def test_render_lines_truncates_name_only_when_it_cannot_fit() -> None:
+	"""Middle-truncation kicks in only when the command itself overflows the leaf column."""
 	long_task = Task(
 		("python", "-c", "pass"),
-		name="build postgres/release [DB=postgres, OPT=release]",
+		name="uv run pytest --doctest-modules -v -m 'not slow' --really-long",
 	)
 	tree = Parallel(tasks=(long_task,))
 	rows = flatten_rows(tree)
 	states: tuple[LeafState, ...] = (Done(long_task, TaskResult("x", 0, 0.1, (b"built\n",))),)
-	lines = render_lines(rows, states, term_width=77, display_width=58, now=100.5, wall_start=100.0)
+	lines = render_lines(rows, states, term_width=60, display_width=41, now=100.5, wall_start=100.0)
 	leaf_line = next(ln for ln in lines if "PASS" in ln)
-	assert "..." in leaf_line
+	plain = ANSI_ESCAPE_PATTERN.sub("", leaf_line).lstrip("\r")
+	assert "..." in plain
+
+
+def test_render_lines_stream_uses_only_leftover_space() -> None:
+	"""When the full command consumes the column, no stream text is rendered."""
+	task = Task(("python", "-c", "pass"), name="x" * 40)
+	tree = Parallel(tasks=(task,))
+	rows = flatten_rows(tree)
+	states: tuple[LeafState, ...] = (Done(task, TaskResult("x", 0, 0.1, (b"shouldnt appear\n",))),)
+	lines = render_lines(rows, states, term_width=60, display_width=41, now=100.5, wall_start=100.0)
+	leaf_line = next(ln for ln in lines if "PASS" in ln)
+	plain = ANSI_ESCAPE_PATTERN.sub("", leaf_line).lstrip("\r")
+	assert "shouldnt appear" not in plain
+	assert "shouldnt" not in plain

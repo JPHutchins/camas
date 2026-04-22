@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import pytest
 
-from camas import truncate_middle
+from camas.effect.termtree import truncate_middle
 
 
 @pytest.mark.parametrize(

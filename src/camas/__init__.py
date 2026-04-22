@@ -232,7 +232,6 @@ class Effect(Protocol[T]):
 
 
 SKIPPED_RETURNCODE: Final = -1
-AUTO_NAME_MAX_WIDTH: Final = 20
 
 
 def resolve_cmd(cmd: str | tuple[str, ...]) -> tuple[str, ...]:
@@ -280,55 +279,22 @@ def substitute_in_tuple(parts: tuple[str, ...], binding: MatrixBinding) -> tuple
 	)
 
 
-def truncate_middle(text: str, max_width: int) -> str:
-	"""Truncate text in the middle with '...' if it exceeds max_width.
+def task_label(task: Task) -> str:
+	"""Return a task's identifying label: the explicit `name` or the full command string.
 
-	Always returns a string of length min(len(text), max(max_width, 0)).
+	This is a data accessor with no concept of display width — callers that render
+	into a column-constrained terminal are responsible for truncation.
 
-	>>> truncate_middle("hello", 10)
-	'hello'
-	>>> truncate_middle("hello world!", 9)
-	'hel...ld!'
-	>>> truncate_middle("built", 2)
-	'..'
-	>>> truncate_middle("built", 4)
-	'...t'
-	>>> truncate_middle("built", 0)
-	''
-	"""
-	if len(text) <= max_width:
-		return text
-	if max_width < 3:
-		return "..."[: max(max_width, 0)]
-	side: Final = (max_width - 3) // 2
-	return text[:side] + "..." + text[len(text) - (max_width - 3 - side) :]
-
-
-def derive_name(cmd: str | tuple[str, ...], width: int) -> str:
-	"""Derive a display name from a command, truncated to `width`.
-
-	>>> derive_name("echo hi", 20)
-	'echo hi'
-	>>> derive_name(("python", "-c", "pass"), 20)
-	'python -c pass'
-	>>> derive_name("a very long command that exceeds twenty characters", 20)
-	'a very l...haracters'
-	"""
-	return truncate_middle(
-		cmd if isinstance(cmd, str) else " ".join(cmd),
-		width,
-	)
-
-
-def task_display_name(task: Task) -> str:
-	"""Return the display name for a Task: explicit `name` or auto-derived.
-
-	>>> task_display_name(Task("echo hi", name="greet"))
+	>>> task_label(Task("echo hi", name="greet"))
 	'greet'
-	>>> task_display_name(Task("echo hi"))
+	>>> task_label(Task("echo hi"))
 	'echo hi'
+	>>> task_label(Task(("python", "-c", "pass")))
+	'python -c pass'
 	"""
-	return task.name if task.name is not None else derive_name(task.cmd, AUTO_NAME_MAX_WIDTH)
+	if task.name is not None:
+		return task.name
+	return task.cmd if isinstance(task.cmd, str) else " ".join(task.cmd)
 
 
 def specialize_task(task: Task, binding: MatrixBinding, suffix: str) -> Task:
@@ -348,7 +314,7 @@ def specialize_task(task: Task, binding: MatrixBinding, suffix: str) -> Task:
 			assert_never(task.cmd)
 	return Task(
 		cmd=new_cmd,
-		name=f"{substitute_in_str(task.name if task.name is not None else derive_name(task.cmd, AUTO_NAME_MAX_WIDTH), binding)} {suffix}",
+		name=f"{substitute_in_str(task_label(task), binding)} {suffix}",
 		env={k: substitute_in_str(v, binding) for k, v in task.env.items()} | dict(binding),
 	)
 
@@ -565,7 +531,7 @@ def next_state(state: LeafState, event: TaskEvent) -> LeafState:
 					if rc == SKIPPED_RETURNCODE:
 						return Skipped(task)
 					return Done(
-						task, TaskResult(task_display_name(task), rc, elapsed, output)
+						task, TaskResult(task_label(task), rc, elapsed, output)
 					)  # pragma: no cover
 				case _:
 					assert_never(event)
@@ -576,7 +542,7 @@ def next_state(state: LeafState, event: TaskEvent) -> LeafState:
 				case CompletedEvent(returncode=rc, elapsed=elapsed, output=output):
 					if rc == SKIPPED_RETURNCODE:  # pragma: no cover
 						return Skipped(task)
-					return Done(task, TaskResult(task_display_name(task), rc, elapsed, output))
+					return Done(task, TaskResult(task_label(task), rc, elapsed, output))
 				case StartedEvent():  # pragma: no cover
 					return state
 				case _:
@@ -613,7 +579,7 @@ async def run_cmd(task: Task, leaf_index: int, dispatch: EventSink) -> TaskResul
 	elapsed: Final = time.perf_counter() - start
 	rc: Final = proc.returncode or 0
 	await dispatch(leaf_index, CompletedEvent(leaf_index, rc, elapsed, output))
-	return TaskResult(task_display_name(task), rc, elapsed, output)
+	return TaskResult(task_label(task), rc, elapsed, output)
 
 
 async def execute(
@@ -645,7 +611,7 @@ async def execute(
 						seq_results = (
 							*seq_results,
 							TaskResult(
-								task_display_name(leaves[skipped_idx]), SKIPPED_RETURNCODE, 0.0, ()
+								task_label(leaves[skipped_idx]), SKIPPED_RETURNCODE, 0.0, ()
 							),
 						)
 				else:
