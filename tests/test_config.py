@@ -14,6 +14,7 @@ import pytest
 from camas import Parallel, Sequential, Task, TaskNode
 from camas.main import (
 	Ref,
+	_assign_key_name,  # pyright: ignore[reportPrivateUsage]
 	dispatch_arg,
 	find_pyproject,
 	find_tasks_py,
@@ -31,16 +32,18 @@ def _par(
 	tasks: tuple[TaskNode | Ref, ...],
 	name: str | None = None,
 	matrix: dict[str, tuple[str, ...]] | None = None,
+	cwd: Path | None = None,
 ) -> Parallel:
-	return Parallel(tasks=cast(tuple[TaskNode, ...], tasks), name=name, matrix=matrix)
+	return Parallel(tasks=cast(tuple[TaskNode, ...], tasks), name=name, matrix=matrix, cwd=cwd)
 
 
 def _seq(
 	tasks: tuple[TaskNode | Ref, ...],
 	name: str | None = None,
 	matrix: dict[str, tuple[str, ...]] | None = None,
+	cwd: Path | None = None,
 ) -> Sequential:
-	return Sequential(tasks=cast(tuple[TaskNode, ...], tasks), name=name, matrix=matrix)
+	return Sequential(tasks=cast(tuple[TaskNode, ...], tasks), name=name, matrix=matrix, cwd=cwd)
 
 
 def test_parse_task_value_bare_string() -> None:
@@ -488,6 +491,39 @@ def test_explicit_py_file_missing(
 		with patch("sys.argv", ["camas", "nope.py", "x"]):
 			main()
 	assert "no such file" in capsys.readouterr().err
+
+
+def test_assign_key_name_preserves_cwd() -> None:
+	assert _assign_key_name(Task("x", cwd=Path("rust")), "lint") == Task(
+		"x", name="lint", cwd=Path("rust")
+	)
+	assert _assign_key_name(Parallel(tasks=(Task("x"),), cwd=Path("rust")), "grp") == Parallel(
+		tasks=(Task("x"),), name="grp", cwd=Path("rust")
+	)
+	assert _assign_key_name(Sequential(tasks=(Task("x"),), cwd=Path("rust")), "grp") == Sequential(
+		tasks=(Task("x"),), name="grp", cwd=Path("rust")
+	)
+
+
+def test_load_tasks_from_py_preserves_cwd(tmp_path: Path) -> None:
+	tasks_py = tmp_path / "tasks.py"
+	tasks_py.write_text(
+		"from pathlib import Path\n"
+		"from camas import Parallel, Task\n"
+		"leaf = Task('cargo test', cwd=Path('src-tauri'))\n"
+		"group = Parallel(tasks=(Task('cargo check'),), cwd=Path('src-tauri'))\n"
+	)
+	tasks = load_tasks_from_py(tasks_py)
+	assert tasks["leaf"].cwd == Path("src-tauri")
+	assert tasks["group"].cwd == Path("src-tauri")
+
+
+def test_resolve_refs_preserves_group_cwd() -> None:
+	defs: dict[str, TaskNode | Ref] = {"a": Task("x")}
+	seq = _seq((Ref("a"),), cwd=Path("work"))
+	par = _par((Ref("a"),), cwd=Path("work"))
+	assert resolve_refs(seq, defs, frozenset()).cwd == Path("work")
+	assert resolve_refs(par, defs, frozenset()).cwd == Path("work")
 
 
 def test_subcommand_help_shows_tree(

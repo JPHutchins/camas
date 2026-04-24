@@ -11,6 +11,7 @@ import shlex
 import sys
 import time
 from collections.abc import Awaitable, Callable, Iterable, Iterator, Mapping, Sequence
+from pathlib import Path
 from subprocess import STDOUT
 from typing import Any, Final, NamedTuple, Protocol, TypeAlias, TypeVar
 
@@ -42,40 +43,45 @@ class Task(NamedTuple):
 	"""A leaf task that executes a shell command.
 
 	>>> Task("echo hi")
-	Task(cmd='echo hi', name=None, env={})
+	Task(cmd='echo hi', name=None, env={}, cwd=None)
 	>>> Task(("ruff", "check", "."), name="lint")
-	Task(cmd=('ruff', 'check', '.'), name='lint', env={})
+	Task(cmd=('ruff', 'check', '.'), name='lint', env={}, cwd=None)
+	>>> Task("cargo test", cwd=Path("src-tauri")).cwd
+	PosixPath('src-tauri')
 	"""
 
 	cmd: str | tuple[str, ...]
 	name: str | None = None
 	env: dict[str, str] = {}
+	cwd: Path | None = None
 
 
 class Sequential(NamedTuple):
 	"""A group of tasks that run one after another, short-circuiting on failure.
 
 	>>> Sequential(tasks=(Task("build"), Task("test")), name="ci")
-	Sequential(tasks=(Task(cmd='build', name=None, env={}), Task(cmd='test', name=None, env={})), name='ci', matrix=None, env={})
+	Sequential(tasks=(Task(cmd='build', name=None, env={}, cwd=None), Task(cmd='test', name=None, env={}, cwd=None)), name='ci', matrix=None, env={}, cwd=None)
 	"""
 
 	tasks: tuple[TaskNode, ...]
 	name: str | None = None
 	matrix: dict[str, tuple[str, ...]] | None = None
 	env: dict[str, str] = {}
+	cwd: Path | None = None
 
 
 class Parallel(NamedTuple):
 	"""A group of tasks that run concurrently.
 
 	>>> Parallel(tasks=(Task("lint"), Task("typecheck")))
-	Parallel(tasks=(Task(cmd='lint', name=None, env={}), Task(cmd='typecheck', name=None, env={})), name=None, matrix=None, env={})
+	Parallel(tasks=(Task(cmd='lint', name=None, env={}, cwd=None), Task(cmd='typecheck', name=None, env={}, cwd=None)), name=None, matrix=None, env={}, cwd=None)
 	"""
 
 	tasks: tuple[TaskNode, ...]
 	name: str | None = None
 	matrix: dict[str, tuple[str, ...]] | None = None
 	env: dict[str, str] = {}
+	cwd: Path | None = None
 
 
 TaskNode: TypeAlias = Task | Sequential | Parallel
@@ -189,7 +195,7 @@ class LeafInfo(NamedTuple):
 	"""A leaf's position in the task tree: depth and chain of ancestor links.
 
 	>>> LeafInfo(Task("echo hi"), 0, ())
-	LeafInfo(task=Task(cmd='echo hi', name=None, env={}), depth=0, is_last_chain=())
+	LeafInfo(task=Task(cmd='echo hi', name=None, env={}, cwd=None), depth=0, is_last_chain=())
 	"""
 
 	task: Task
@@ -201,7 +207,7 @@ class Waiting(NamedTuple):
 	"""Leaf state: task has not started yet.
 
 	>>> Waiting(Task("echo hi"))
-	Waiting(task=Task(cmd='echo hi', name=None, env={}))
+	Waiting(task=Task(cmd='echo hi', name=None, env={}, cwd=None))
 	"""
 
 	task: Task
@@ -211,7 +217,7 @@ class Running(NamedTuple):
 	"""Leaf state: task is currently executing.
 
 	>>> Running(Task("echo hi"), 100.0, b"output")
-	Running(task=Task(cmd='echo hi', name=None, env={}), start_time=100.0, last_line=b'output')
+	Running(task=Task(cmd='echo hi', name=None, env={}, cwd=None), start_time=100.0, last_line=b'output')
 	"""
 
 	task: Task
@@ -226,9 +232,9 @@ class Completed(NamedTuple):
 	vs `Skipped(...)` to distinguish the two cases.
 
 	>>> Completed(Task("echo hi"), Finished(0, 0.5, ()))
-	Completed(task=Task(cmd='echo hi', name=None, env={}), completion=Finished(returncode=0, elapsed=0.5, output=()))
+	Completed(task=Task(cmd='echo hi', name=None, env={}, cwd=None), completion=Finished(returncode=0, elapsed=0.5, output=()))
 	>>> Completed(Task("echo hi"), Skipped(1))
-	Completed(task=Task(cmd='echo hi', name=None, env={}), completion=Skipped(returncode=1))
+	Completed(task=Task(cmd='echo hi', name=None, env={}, cwd=None), completion=Skipped(returncode=1))
 	"""
 
 	task: Task
@@ -329,11 +335,15 @@ def task_label(task: Task) -> str:
 	return task.cmd if isinstance(task.cmd, str) else " ".join(task.cmd)
 
 
+def _substitute_cwd(cwd: Path | None, binding: MatrixBinding) -> Path | None:
+	return Path(substitute_in_str(str(cwd), binding)) if cwd is not None else None
+
+
 def specialize_task(task: Task, binding: MatrixBinding, suffix: str) -> Task:
 	"""Specialize a leaf Task with concrete variable values from a matrix binding.
 
 	>>> specialize_task(Task("test {PY}"), (VarBinding("PY", "3.14"),), "[PY=3.14]")
-	Task(cmd='test 3.14', name='test 3.14 [PY=3.14]', env={'PY': '3.14'})
+	Task(cmd='test 3.14', name='test 3.14 [PY=3.14]', env={'PY': '3.14'}, cwd=None)
 	>>> specialize_task(Task("go", env={"VENV": ".venv-{PY}"}), (VarBinding("PY", "3.14"),), "[PY=3.14]").env
 	{'VENV': '.venv-3.14', 'PY': '3.14'}
 	"""
@@ -348,6 +358,7 @@ def specialize_task(task: Task, binding: MatrixBinding, suffix: str) -> Task:
 		cmd=new_cmd,
 		name=f"{substitute_in_str(task_label(task), binding)} {suffix}",
 		env={k: substitute_in_str(v, binding) for k, v in task.env.items()} | dict(binding),
+		cwd=_substitute_cwd(task.cwd, binding),
 	)
 
 
@@ -355,20 +366,22 @@ def specialize_node(task: TaskNode, binding: MatrixBinding, suffix: str) -> Task
 	"""Recursively specialize an entire task tree with concrete variable values.
 
 	>>> specialize_node(Task("test {X}"), (VarBinding("X", "1"),), "[X=1]")
-	Task(cmd='test 1', name='test 1 [X=1]', env={'X': '1'})
+	Task(cmd='test 1', name='test 1 [X=1]', env={'X': '1'}, cwd=None)
 	"""
 	match task:
 		case Task():
 			return specialize_task(task, binding, suffix)
-		case Sequential(tasks=tasks, name=name):
+		case Sequential(tasks=tasks, name=name, cwd=cwd):
 			return Sequential(
 				tasks=tuple(specialize_node(t, binding, suffix) for t in tasks),
 				name=f"{name} {suffix}" if name is not None else None,
+				cwd=_substitute_cwd(cwd, binding),
 			)
-		case Parallel(tasks=tasks, name=name):
+		case Parallel(tasks=tasks, name=name, cwd=cwd):
 			return Parallel(
 				tasks=tuple(specialize_node(t, binding, suffix) for t in tasks),
 				name=f"{name} {suffix}" if name is not None else None,
+				cwd=_substitute_cwd(cwd, binding),
 			)
 		case _:
 			assert_never(task)
@@ -405,6 +418,7 @@ def expand_sequential_matrix(
 	matrix: dict[str, tuple[str, ...]],
 	name: str | None,
 	container_env: dict[str, str],
+	container_cwd: Path | None,
 ) -> Parallel:
 	"""Expand a Sequential's matrix into a Parallel of cloned Sequentials.
 
@@ -412,7 +426,7 @@ def expand_sequential_matrix(
 	matrix values substituted, plus the binding itself) so the display can show
 	it once at the group header instead of on every leaf.
 
-	>>> result = expand_sequential_matrix((Task("build"), Task("test")), {"X": ("1", "2")}, "ci", {})
+	>>> result = expand_sequential_matrix((Task("build"), Task("test")), {"X": ("1", "2")}, "ci", {}, None)
 	>>> len(result.tasks)
 	2
 	>>> all(isinstance(t, Sequential) for t in result.tasks)
@@ -429,6 +443,7 @@ def expand_sequential_matrix(
 				name=(f"{name} {binding_suffix(binding)}" if name is not None else None),
 				env={k: substitute_in_str(v, binding) for k, v in container_env.items()}
 				| dict(binding),
+				cwd=_substitute_cwd(container_cwd, binding),
 			)
 			for binding in matrix_bindings(matrix)
 		),
@@ -441,6 +456,7 @@ def expand_parallel_matrix(
 	matrix: dict[str, tuple[str, ...]],
 	name: str | None,
 	container_env: dict[str, str],
+	container_cwd: Path | None,
 ) -> Parallel:
 	"""Expand a Parallel's matrix into a flat Parallel of all binding × child products.
 
@@ -448,7 +464,7 @@ def expand_parallel_matrix(
 	same value across every binding; per-binding pieces land on the individual
 	specialized leaves via ``specialize_node``.
 
-	>>> result = expand_parallel_matrix((Task("test"),), {"PY": ("3.12", "3.13")}, None, {})
+	>>> result = expand_parallel_matrix((Task("test"),), {"PY": ("3.12", "3.13")}, None, {}, None)
 	>>> len(result.tasks)
 	2
 	"""
@@ -460,39 +476,54 @@ def expand_parallel_matrix(
 		),
 		name=name,
 		env={k: v for k, v in container_env.items() if "{" not in v},
+		cwd=container_cwd if container_cwd is not None and "{" not in str(container_cwd) else None,
 	)
 
 
-def expand_matrix(task: TaskNode, ancestor_env: Mapping[str, str] | None = None) -> TaskNode:
-	"""Recursively expand all matrix parameters and propagate container env into leaves.
+def expand_matrix(
+	task: TaskNode,
+	ancestor_env: Mapping[str, str] | None = None,
+	ancestor_cwd: Path | None = None,
+) -> TaskNode:
+	"""Recursively expand all matrix parameters and propagate container env/cwd into leaves.
 
-	Container env is also retained on the expanded group nodes (for display
-	purposes); execution still reads the accumulated env from leaves.
+	Container env and cwd are also retained on the expanded group nodes (for display
+	purposes); execution still reads the accumulated values from leaves. A child's
+	``cwd`` takes precedence over an ancestor's.
 
 	>>> expand_matrix(Task("echo hi"))
-	Task(cmd='echo hi', name=None, env={})
+	Task(cmd='echo hi', name=None, env={}, cwd=None)
 	>>> result = expand_matrix(Parallel(tasks=(Task("test"),), matrix={"X": ("1", "2")}))
 	>>> len(result.tasks)  # type: ignore[union-attr]
 	2
 	>>> expand_matrix(Parallel(tasks=(Task("hi"),), env={"K": "v"})).tasks[0].env  # type: ignore[union-attr]
 	{'K': 'v'}
+	>>> expand_matrix(Parallel(tasks=(Task("hi"),), cwd=Path("w"))).tasks[0].cwd  # type: ignore[union-attr]
+	PosixPath('w')
 	"""
 	parent_env: Final = dict(ancestor_env) if ancestor_env else {}
 	match task:
 		case Task():
-			return Task(cmd=task.cmd, name=task.name, env=parent_env | task.env)
-		case Sequential(tasks=tasks, matrix=matrix, env=env):
+			return Task(
+				cmd=task.cmd,
+				name=task.name,
+				env=parent_env | task.env,
+				cwd=task.cwd if task.cwd is not None else ancestor_cwd,
+			)
+		case Sequential(tasks=tasks, matrix=matrix, env=env, cwd=cwd):
 			seq_env: Final = parent_env | env
-			seq_expanded: Final = tuple(expand_matrix(t, seq_env) for t in tasks)
+			seq_cwd: Final = cwd if cwd is not None else ancestor_cwd
+			seq_expanded: Final = tuple(expand_matrix(t, seq_env, seq_cwd) for t in tasks)
 			if matrix is None:
-				return Sequential(tasks=seq_expanded, name=task.name, env=env)
-			return expand_sequential_matrix(seq_expanded, matrix, task.name, env)
-		case Parallel(tasks=tasks, matrix=matrix, env=env):
+				return Sequential(tasks=seq_expanded, name=task.name, env=env, cwd=cwd)
+			return expand_sequential_matrix(seq_expanded, matrix, task.name, env, cwd)
+		case Parallel(tasks=tasks, matrix=matrix, env=env, cwd=cwd):
 			par_env: Final = parent_env | env
-			par_expanded: Final = tuple(expand_matrix(t, par_env) for t in tasks)
+			par_cwd: Final = cwd if cwd is not None else ancestor_cwd
+			par_expanded: Final = tuple(expand_matrix(t, par_env, par_cwd) for t in tasks)
 			if matrix is None:
-				return Parallel(tasks=par_expanded, name=task.name, env=env)
-			return expand_parallel_matrix(par_expanded, matrix, task.name, env)
+				return Parallel(tasks=par_expanded, name=task.name, env=env, cwd=cwd)
+			return expand_parallel_matrix(par_expanded, matrix, task.name, env, cwd)
 		case _:
 			assert_never(task)
 
@@ -564,13 +595,13 @@ def next_state(state: LeafState, event: TaskEvent) -> LeafState:
 
 	>>> t = Task("echo hi")
 	>>> next_state(Waiting(t), StartedEvent(0, 100.0))
-	Running(task=Task(cmd='echo hi', name=None, env={}), start_time=100.0, last_line=b'')
+	Running(task=Task(cmd='echo hi', name=None, env={}, cwd=None), start_time=100.0, last_line=b'')
 	>>> next_state(Running(t, 100.0, b""), OutputEvent(0, b"hi", 100.5))
-	Running(task=Task(cmd='echo hi', name=None, env={}), start_time=100.0, last_line=b'hi')
+	Running(task=Task(cmd='echo hi', name=None, env={}, cwd=None), start_time=100.0, last_line=b'hi')
 	>>> next_state(Running(t, 100.0, b""), CompletedEvent(0, Finished(0, 0.5, (b"done",))))
-	Completed(task=Task(cmd='echo hi', name=None, env={}), completion=Finished(returncode=0, elapsed=0.5, output=(b'done',)))
+	Completed(task=Task(cmd='echo hi', name=None, env={}, cwd=None), completion=Finished(returncode=0, elapsed=0.5, output=(b'done',)))
 	>>> next_state(Waiting(t), CompletedEvent(0, Skipped(1)))
-	Completed(task=Task(cmd='echo hi', name=None, env={}), completion=Skipped(returncode=1))
+	Completed(task=Task(cmd='echo hi', name=None, env={}, cwd=None), completion=Skipped(returncode=1))
 	"""
 	match state:
 		case Waiting(task=task):
@@ -615,6 +646,7 @@ async def run_cmd(task: Task, leaf_index: int, dispatch: EventSink) -> TaskResul
 		stdout=asyncio.subprocess.PIPE,
 		stderr=STDOUT,
 		env=_color_env(os.environ | task.env),
+		cwd=task.cwd,
 	)
 	output: Final[list[bytes]] = []
 	if proc.stdout is not None:  # pragma: no branch

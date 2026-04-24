@@ -9,6 +9,7 @@ import sys
 import time
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Final, NamedTuple, TypeAlias
 
 if sys.version_info >= (3, 11):
@@ -434,61 +435,74 @@ def print_tree(task: TaskNode, show_cmd: bool = False) -> None:
 	greet: echo hi
 	"""
 	color = _color_on()
-	for row, env_new in _walk_with_env(expand_matrix(task)):
+	for row, env_new, cwd_new in _walk_with_context(expand_matrix(task)):
 		prefix = render_tree_prefix(row.depth, row.is_last_chain)
-		env_suffix = (
-			f"  {_c(' '.join(f'{k}={v}' for k, v in env_new.items()), GREY, color)}"
-			if show_cmd and env_new
-			else ""
-		)
+		meta: list[str] = []
+		if show_cmd and cwd_new is not None:
+			meta.append(_c(f"(cwd: {cwd_new})", GREY, color))
+		if show_cmd and env_new:
+			meta.append(_c(" ".join(f"{k}={v}" for k, v in env_new.items()), GREY, color))
+		meta_str = f"  {' '.join(meta)}" if meta else ""
 		match row:
 			case GroupHeader(label=label):
-				print(f"{_c(prefix, GREY, color)}{label}{env_suffix}")
+				print(f"{_c(prefix, GREY, color)}{label}{meta_str}")
 			case LeafInfo(task=leaf_task):
 				print(
-					f"{_c(prefix, GREY, color)}{_leaf_label(leaf_task, show_cmd, color)}{env_suffix}"
+					f"{_c(prefix, GREY, color)}{_leaf_label(leaf_task, show_cmd, color)}{meta_str}"
 				)
 			case _:
 				assert_never(row)
 
 
-def _walk_with_env(
+def _walk_with_context(
 	node: TaskNode,
 	depth: int = 0,
 	is_last_chain: tuple[ChainLink, ...] = (),
 	ancestor_env: Mapping[str, str] = {},
-) -> Iterator[tuple[DisplayRow, dict[str, str]]]:
-	"""Walk the expanded tree yielding (row, env_introduced_here).
+	ancestor_cwd: Path | None = None,
+) -> Iterator[tuple[DisplayRow, dict[str, str], Path | None]]:
+	"""Walk the expanded tree yielding (row, env_introduced_here, cwd_introduced_here).
 
-	``env_introduced_here`` is the node's env minus any entry already set by an
-	ancestor with the same value — so each env entry is reported exactly once,
-	at the deepest ancestor that introduces it.
+	Env entries and cwd are each reported only at the node that introduces or
+	changes them, so they render exactly once in the tree.
 	"""
 	match node:
-		case Task(env=env):
-			yield LeafInfo(node, depth, is_last_chain), _env_diff(env, ancestor_env)
-		case Sequential(tasks=children, name=name, env=env):
-			here = _env_diff(env, ancestor_env)
+		case Task(env=env, cwd=cwd):
+			yield (
+				LeafInfo(node, depth, is_last_chain),
+				_env_diff(env, ancestor_env),
+				cwd if cwd != ancestor_cwd else None,
+			)
+		case Sequential(tasks=children, name=name, env=env, cwd=cwd):
+			here_env = _env_diff(env, ancestor_env)
+			here_cwd = cwd if cwd is not None and cwd != ancestor_cwd else None
 			label = (
 				f"{name}{SEQ_SUFFIX}" if name is not None else group_display_name(children, " → ")
 			)
-			yield GroupHeader(label, depth, is_last_chain), here
+			yield GroupHeader(label, depth, is_last_chain), here_env, here_cwd
 			last_i = len(children) - 1
 			new_env = {**ancestor_env, **env}
+			new_cwd = cwd if cwd is not None else ancestor_cwd
 			for i, child in enumerate(children):
 				link = ChainLink(is_last=i == last_i, parent_is_parallel=False)
-				yield from _walk_with_env(child, depth + 1, (*is_last_chain, link), new_env)
-		case Parallel(tasks=children, name=name, env=env):
-			here = _env_diff(env, ancestor_env)
+				yield from _walk_with_context(
+					child, depth + 1, (*is_last_chain, link), new_env, new_cwd
+				)
+		case Parallel(tasks=children, name=name, env=env, cwd=cwd):
+			here_env = _env_diff(env, ancestor_env)
+			here_cwd = cwd if cwd is not None and cwd != ancestor_cwd else None
 			label = (
 				f"{name}{PAR_SUFFIX}" if name is not None else group_display_name(children, " | ")
 			)
-			yield GroupHeader(label, depth, is_last_chain), here
+			yield GroupHeader(label, depth, is_last_chain), here_env, here_cwd
 			last_i = len(children) - 1
 			new_env = {**ancestor_env, **env}
+			new_cwd = cwd if cwd is not None else ancestor_cwd
 			for i, child in enumerate(children):
 				link = ChainLink(is_last=i == last_i, parent_is_parallel=True)
-				yield from _walk_with_env(child, depth + 1, (*is_last_chain, link), new_env)
+				yield from _walk_with_context(
+					child, depth + 1, (*is_last_chain, link), new_env, new_cwd
+				)
 		case _:
 			assert_never(node)
 

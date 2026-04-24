@@ -104,10 +104,18 @@ indent-style = "tab"
 [tool.mypy]
 strict = true
 warn_unused_ignores = true
+exclude = ["tests/fixtures/"]
 
 [tool.pyright]
 typeCheckingMode = "strict"
 include = ["src", "tests"]
+exclude = ["tests/fixtures/**"]
+
+[tool.ty.src]
+exclude = ["tests/fixtures/"]
+
+[tool.pyrefly]
+project-excludes = ["tests/fixtures/**"]
 
 [tool.coverage.run]
 source = ["camas", "tests"]

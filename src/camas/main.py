@@ -177,7 +177,7 @@ def eval_node(
 
 	>>> import ast
 	>>> eval_node(ast.parse('Task("echo hi")', mode="eval").body)
-	Task(cmd='echo hi', name=None, env={})
+	Task(cmd='echo hi', name=None, env={}, cwd=None)
 	>>> eval_node(ast.parse('lint', mode="eval").body, allow_refs=True)
 	Ref(name='lint')
 	>>> eval_node(ast.parse('Ref("x")', mode="eval").body, allow_refs=True)
@@ -242,9 +242,9 @@ def parse_expression(expr: str, tasks: Mapping[str, TaskNode] | None = None) -> 
 	resolved against ``tasks`` after parsing.
 
 	>>> parse_expression('Task("echo hi")')
-	Task(cmd='echo hi', name=None, env={})
+	Task(cmd='echo hi', name=None, env={}, cwd=None)
 	>>> parse_expression('Parallel(tasks=(a,))', tasks={"a": Task("x")})
-	Parallel(tasks=(Task(cmd='x', name=None, env={}),), name=None, matrix=None, env={})
+	Parallel(tasks=(Task(cmd='x', name=None, env={}, cwd=None),), name=None, matrix=None, env={}, cwd=None)
 	"""
 	try:
 		tree = ast.parse(expr, mode="eval")
@@ -279,9 +279,9 @@ def parse_task_value(raw: str) -> TaskNode | Ref:
 	"""Parse a single pyproject.toml task value. Bare strings become Task(cmd).
 
 	>>> parse_task_value("ruff check .")
-	Task(cmd='ruff check .', name=None, env={})
+	Task(cmd='ruff check .', name=None, env={}, cwd=None)
 	>>> parse_task_value('Task("pytest")')
-	Task(cmd='pytest', name=None, env={})
+	Task(cmd='pytest', name=None, env={}, cwd=None)
 	>>> parse_task_value("Ref(\\"lint\\")")
 	Ref(name='lint')
 	"""
@@ -302,9 +302,9 @@ def resolve_refs(
 	"""Recursively substitute Ref(name) with its defined TaskNode. Detects cycles.
 
 	>>> resolve_refs(Task("x"), {}, frozenset())
-	Task(cmd='x', name=None, env={})
+	Task(cmd='x', name=None, env={}, cwd=None)
 	>>> resolve_refs(Ref("a"), {"a": Task("hi")}, frozenset())
-	Task(cmd='hi', name=None, env={})
+	Task(cmd='hi', name=None, env={}, cwd=None)
 	"""
 	match node:
 		case Ref(name=name):
@@ -317,17 +317,21 @@ def resolve_refs(
 			return resolve_refs(defs[name], defs, visiting | {name})
 		case Task():
 			return node
-		case Sequential(tasks=tasks, name=n, matrix=m):
+		case Sequential(tasks=tasks, name=n, matrix=m, env=e, cwd=c):
 			return Sequential(
 				tasks=tuple(resolve_refs(t, defs, visiting) for t in tasks),
 				name=n,
 				matrix=m,
+				env=e,
+				cwd=c,
 			)
-		case Parallel(tasks=tasks, name=n, matrix=m):
+		case Parallel(tasks=tasks, name=n, matrix=m, env=e, cwd=c):
 			return Parallel(
 				tasks=tuple(resolve_refs(t, defs, visiting) for t in tasks),
 				name=n,
 				matrix=m,
+				env=e,
+				cwd=c,
 			)
 		case _:
 			assert_never(node)
@@ -353,19 +357,19 @@ def _assign_key_name(node: TaskNode | Ref, key: str) -> TaskNode | Ref:
 	"""Set the TOML key as the node's name unless the expression already named it.
 
 	>>> _assign_key_name(Task("x"), "foo")
-	Task(cmd='x', name='foo', env={})
+	Task(cmd='x', name='foo', env={}, cwd=None)
 	>>> _assign_key_name(Task("x", name="explicit"), "foo")
-	Task(cmd='x', name='explicit', env={})
+	Task(cmd='x', name='explicit', env={}, cwd=None)
 	>>> _assign_key_name(Ref("bar"), "foo")
 	Ref(name='bar')
 	"""
 	match node:
-		case Task(cmd=cmd, name=None, env=env):
-			return Task(cmd=cmd, name=key, env=env)
-		case Sequential(tasks=tasks, name=None, matrix=matrix, env=env):
-			return Sequential(tasks=tasks, name=key, matrix=matrix, env=env)
-		case Parallel(tasks=tasks, name=None, matrix=matrix, env=env):
-			return Parallel(tasks=tasks, name=key, matrix=matrix, env=env)
+		case Task(cmd=cmd, name=None, env=env, cwd=cwd):
+			return Task(cmd=cmd, name=key, env=env, cwd=cwd)
+		case Sequential(tasks=tasks, name=None, matrix=matrix, env=env, cwd=cwd):
+			return Sequential(tasks=tasks, name=key, matrix=matrix, env=env, cwd=cwd)
+		case Parallel(tasks=tasks, name=None, matrix=matrix, env=env, cwd=cwd):
+			return Parallel(tasks=tasks, name=key, matrix=matrix, env=env, cwd=cwd)
 		case _:
 			return node
 
@@ -415,12 +419,14 @@ def _name_scope_bindings(scope: Mapping[str, object]) -> dict[str, TaskNode]:
 		match source:
 			case Task():
 				return source
-			case Sequential(tasks=children, name=n, matrix=m, env=e):
+			case Sequential(tasks=children, name=n, matrix=m, env=e, cwd=c):
 				return Sequential(
-					tasks=tuple(promote(c) for c in children), name=n, matrix=m, env=e
+					tasks=tuple(promote(ch) for ch in children), name=n, matrix=m, env=e, cwd=c
 				)
-			case Parallel(tasks=children, name=n, matrix=m, env=e):
-				return Parallel(tasks=tuple(promote(c) for c in children), name=n, matrix=m, env=e)
+			case Parallel(tasks=children, name=n, matrix=m, env=e, cwd=c):
+				return Parallel(
+					tasks=tuple(promote(ch) for ch in children), name=n, matrix=m, env=e, cwd=c
+				)
 			case _:
 				assert_never(source)
 
