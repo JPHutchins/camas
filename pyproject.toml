@@ -36,7 +36,15 @@ Issues = "https://github.com/JPHutchins/camas/issues"
 camas = "camas.main:main"
 
 [build-system]
-requires = ["setuptools>=68", "setuptools-scm>=8", "mypy[mypyc]>=1.19"]
+requires = [
+	"setuptools>=68",
+	"setuptools-scm>=8",
+	"mypy[mypyc]>=1.19",
+	"exceptiongroup>=1.2; python_version < '3.11'",
+	"taskgroup>=0.2; python_version < '3.11'",
+	"tomli>=2; python_version < '3.11'",
+	"typing_extensions>=4.12; python_version < '3.11'",
+]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
