@@ -27,6 +27,10 @@ check = Parallel(tasks=(format_check, lint, typecheck, test))
 
 matrix = Sequential(
 	tasks=(Task("uv sync"), check),
-	env={"UV_PROJECT_ENVIRONMENT": ".venv-{PY}", "UV_PYTHON": "{PY}"},
+	env={
+		"UV_PROJECT_ENVIRONMENT": ".venv-{PY}",
+		"UV_PYTHON": "{PY}",
+		"VIRTUAL_ENV": ".venv-{PY}",
+	},
 	matrix={"PY": ("3.10", "3.11", "3.12", "3.13", "3.14", "3.15")},
 )
