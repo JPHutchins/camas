@@ -109,7 +109,7 @@ indent-style = "tab"
 [tool.mypy]
 strict = true
 warn_unused_ignores = true
-exclude = ["tests/fixtures/", "build/"]
+exclude = ["tests/fixtures/", "build/", "setup.py"]
 
 [tool.pyright]
 typeCheckingMode = "strict"
@@ -120,7 +120,7 @@ exclude = ["tests/fixtures/**"]
 exclude = ["tests/fixtures/", "build/", "setup.py"]
 
 [tool.pyrefly]
-project-excludes = ["tests/fixtures/**", "build/**"]
+project-excludes = ["tests/fixtures/**", "build/**", "setup.py"]
 
 [tool.coverage.run]
 source = ["camas", "tests"]
