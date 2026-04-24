@@ -4,6 +4,8 @@ Generic parallel/sequential task runner with a live tree-style TUI.
 
 [![CI](https://github.com/JPHutchins/camas/actions/workflows/ci.yaml/badge.svg)](https://github.com/JPHutchins/camas/actions/workflows/ci.yaml)
 
+![demo](https://raw.githubusercontent.com/JPHutchins/camas/gh-storage/demos/demo-latest.gif)
+
 ## Install
 
 ```
