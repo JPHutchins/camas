@@ -95,7 +95,8 @@ jobs:
 
       - run: camas check --effects='(Summary(SummaryOptions(Fixed(120))),)'
 
-      - run: camas build --effects='(Summary(SummaryOptions(Fixed(120))),)'
+      # Too slow to be a useful example, but you get the idea
+      # - run: camas build --effects='(Summary(SummaryOptions(Fixed(120))),)'
 
   wheels:
     strategy:
