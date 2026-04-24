@@ -701,7 +701,13 @@ def _resolve_tasks_source(argv: list[str]) -> tuple[dict[str, TaskNode], list[st
 
 
 def main() -> None:
-	"""Console script entry: resolves tasks source and dispatches."""
+	"""Console script entry: resolves tasks source and dispatches.
+
+	Reconfigures stdout/stderr to UTF-8 so Windows consoles (cp1252 by default) can
+	render the box-drawing characters used in the tree output.
+	"""
+	sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+	sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 	tasks, argv = _resolve_tasks_source(sys.argv[1:])
 	dispatch(tasks, argv)
 
