@@ -543,3 +543,44 @@ def test_subcommand_help_shows_tree(
 	assert "runs the 'both' task" in out
 	assert "do-a" in out
 	assert "do-b" in out
+
+
+def test_explicit_py_file_load_error(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	monkeypatch.chdir(tmp_path)
+	broken = tmp_path / "broken.py"
+	broken.write_text("raise RuntimeError('boom from tasks file')\n")
+	with pytest.raises(SystemExit, match="2"):
+		with patch("sys.argv", ["camas", str(broken), "--list"]):
+			main()
+	err = capsys.readouterr().err
+	assert str(broken) in err
+	assert "boom from tasks file" in err
+
+
+def test_autodiscover_tasks_py_load_error(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	monkeypatch.chdir(tmp_path)
+	(tmp_path / "tasks.py").write_text("raise RuntimeError('boom autodiscover')\n")
+	with pytest.raises(SystemExit, match="2"):
+		with patch("sys.argv", ["camas", "--list"]):
+			main()
+	err = capsys.readouterr().err
+	assert "tasks.py" in err
+	assert "boom autodiscover" in err
+
+
+def test_autodiscover_skips_warning_when_pyproject_tasks_invalid(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	monkeypatch.chdir(tmp_path)
+	(tmp_path / "tasks.py").write_text("from camas import Task\nhi = Task('echo hi')\n")
+	(tmp_path / "pyproject.toml").write_text("[tool.camas]\ntasks = 'oops'\n")
+	with pytest.raises(SystemExit, match="0"):
+		with patch("sys.argv", ["camas", "--list"]):
+			main()
+	captured = capsys.readouterr()
+	assert "both define tasks" not in captured.err
+	assert "hi" in captured.out

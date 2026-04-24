@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -17,7 +18,7 @@ def _camas(*args: str) -> subprocess.CompletedProcess[str]:
 		cwd=FIXTURE,
 		capture_output=True,
 		text=True,
-		env={"NO_COLOR": "1", "PATH": __import__("os").environ["PATH"]},
+		env={**os.environ, "NO_COLOR": "1"},
 	)
 
 

@@ -517,19 +517,7 @@ def _expression_metavar(tasks: Mapping[str, TaskNode] | None) -> str:
 	"""
 	if not tasks:
 		return "expression"
-	names = sorted(tasks)
-	summary = "|".join(names)
-	max_len: Final = 60
-	if len(summary) > max_len:
-		kept: list[str] = []
-		length = 0
-		for n in names:
-			if length + len(n) + 1 > max_len:
-				break
-			kept.append(n)
-			length += len(n) + 1
-		summary = "|".join([*kept, "..."])
-	return f"{{{summary}}}"
+	return f"{{{'|'.join(sorted(tasks))}}}"
 
 
 def print_tasks(tasks: Mapping[str, TaskNode]) -> None:

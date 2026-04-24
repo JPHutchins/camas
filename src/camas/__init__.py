@@ -46,8 +46,8 @@ class Task(NamedTuple):
 	Task(cmd='echo hi', name=None, env={}, cwd=None)
 	>>> Task(("ruff", "check", "."), name="lint")
 	Task(cmd=('ruff', 'check', '.'), name='lint', env={}, cwd=None)
-	>>> Task("cargo test", cwd=Path("src-tauri")).cwd
-	PosixPath('src-tauri')
+	>>> Task("cargo test", cwd=Path("src-tauri")).cwd == Path("src-tauri")
+	True
 	"""
 
 	cmd: str | tuple[str, ...]
@@ -498,8 +498,8 @@ def expand_matrix(
 	2
 	>>> expand_matrix(Parallel(tasks=(Task("hi"),), env={"K": "v"})).tasks[0].env  # type: ignore[union-attr]
 	{'K': 'v'}
-	>>> expand_matrix(Parallel(tasks=(Task("hi"),), cwd=Path("w"))).tasks[0].cwd  # type: ignore[union-attr]
-	PosixPath('w')
+	>>> expand_matrix(Parallel(tasks=(Task("hi"),), cwd=Path("w"))).tasks[0].cwd == Path("w")  # type: ignore[union-attr]
+	True
 	"""
 	parent_env: Final = dict(ancestor_env) if ancestor_env else {}
 	match task:

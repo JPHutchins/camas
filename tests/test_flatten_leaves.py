@@ -108,3 +108,33 @@ def test_print_tree_deeply_nested(capsys: pytest.CaptureFixture[str]) -> None:
 	assert "│ ┃ a" in captured.out
 	assert "│ ┃ b" in captured.out
 	assert "└─ c" in captured.out
+
+
+def test_print_tree_parallel_of_sequential_nests_column(capsys: pytest.CaptureFixture[str]) -> None:
+	task = Parallel(
+		tasks=(
+			Sequential(tasks=(Task("a"), Task("b")), name="left"),
+			Sequential(tasks=(Task("c"), Task("d")), name="right"),
+		)
+	)
+	print_tree(task)
+	captured = capsys.readouterr()
+	assert "┃ ├─ a" in captured.out
+	assert "┃ └─ b" in captured.out
+	assert "┃ └─ d" in captured.out
+
+
+def test_print_tree_show_cmd_renders_cwd(capsys: pytest.CaptureFixture[str]) -> None:
+	from pathlib import Path
+
+	print_tree(Task("cargo test", cwd=Path("src-tauri")), show_cmd=True)
+	captured = capsys.readouterr()
+	assert "(cwd: src-tauri)" in captured.out
+
+
+def test_print_tree_show_cmd_skips_cmd_when_matches_name(
+	capsys: pytest.CaptureFixture[str],
+) -> None:
+	print_tree(Task("lint", name="lint"), show_cmd=True)
+	captured = capsys.readouterr()
+	assert captured.out.strip() == "lint"
