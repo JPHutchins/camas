@@ -3,3 +3,8 @@ __pycache__
 coverage.xml
 .venv*
 .demo/
+build
+dist/
+*.egg-info/
+src/**/*.so
+src/**/*.c

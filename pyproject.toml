@@ -16,7 +16,6 @@ keywords = ["task-runner", "parallel", "sequential", "async"]
 classifiers = [
 "Development Status :: 3 - Alpha",
 "Intended Audience :: Developers",
-"License :: OSI Approved :: MIT License",
 "Programming Language :: Python :: 3",
 "Programming Language :: Python :: 3.10",
 "Programming Language :: Python :: 3.11",
@@ -37,11 +36,16 @@ Issues = "https://github.com/JPHutchins/camas/issues"
 camas = "camas.main:main"
 
 [build-system]
-requires = ["hatchling", "hatch-vcs"]
-build-backend = "hatchling.build"
+requires = ["setuptools>=68", "setuptools-scm>=8", "mypy[mypyc]>=1.19"]
+build-backend = "setuptools.build_meta"
 
-[tool.hatch.version]
-source = "vcs"
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+camas = ["py.typed"]
+
+[tool.setuptools_scm]
 
 [dependency-groups]
 dev = [
@@ -54,6 +58,7 @@ dev = [
 "ty>=0.0.31,<1",
 "zuban>=0.7,<1",
 "pyrefly>=0.61,<1",
+"types-setuptools",
 "exceptiongroup>=1.2",
 "taskgroup>=0.2",
 "tomli>=2",
@@ -104,7 +109,7 @@ indent-style = "tab"
 [tool.mypy]
 strict = true
 warn_unused_ignores = true
-exclude = ["tests/fixtures/"]
+exclude = ["tests/fixtures/", "build/"]
 
 [tool.pyright]
 typeCheckingMode = "strict"
@@ -112,10 +117,10 @@ include = ["src", "tests"]
 exclude = ["tests/fixtures/**"]
 
 [tool.ty.src]
-exclude = ["tests/fixtures/"]
+exclude = ["tests/fixtures/", "build/", "setup.py"]
 
 [tool.pyrefly]
-project-excludes = ["tests/fixtures/**"]
+project-excludes = ["tests/fixtures/**", "build/**"]
 
 [tool.coverage.run]
 source = ["camas", "tests"]
