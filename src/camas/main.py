@@ -7,6 +7,7 @@ import argparse
 import ast
 import asyncio
 import importlib.metadata
+import io
 import re
 import runpy
 import sys
@@ -706,8 +707,8 @@ def main() -> None:
 	Reconfigures stdout/stderr to UTF-8 so Windows consoles (cp1252 by default) can
 	render the box-drawing characters used in the tree output.
 	"""
-	sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-	sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+	for stream in (sys.stdout, sys.stderr):
+		cast(io.TextIOWrapper, stream).reconfigure(encoding="utf-8", errors="replace")
 	tasks, argv = _resolve_tasks_source(sys.argv[1:])
 	dispatch(tasks, argv)
 
