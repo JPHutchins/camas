@@ -27,7 +27,8 @@ jobs:
       # zuban non-deterministically fails to find test deps under UV_PROJECT_ENVIRONMENT on
       # Windows in CI (cannot reproduce locally); inline the matrix without zuban there.
       - if: runner.os == 'Windows'
-        run: uv run camas 'Sequential(tasks=(Task("uv sync"), Parallel(tasks=(format_check, lint, Parallel(tasks=(mypy, pyright, ty, pyrefly)), test))), env={"UV_PROJECT_ENVIRONMENT": ".venv-{PY}", "UV_PYTHON": "{PY}"}, matrix={"PY": ("3.10", "3.11", "3.12", "3.13", "3.14", "3.15")})' --effects='(Summary(SummaryOptions(Fixed(120))),)'
+        run: |
+          uv run camas 'Sequential(tasks=(Task("uv sync"), Parallel(tasks=(format_check, lint, Parallel(tasks=(mypy, pyright, ty, pyrefly)), test))), env={"UV_PROJECT_ENVIRONMENT": ".venv-{PY}", "UV_PYTHON": "{PY}"}, matrix={"PY": ("3.10", "3.11", "3.12", "3.13", "3.14", "3.15")})' --effects='(Summary(SummaryOptions(Fixed(120))),)'
 
   check:
     strategy:
