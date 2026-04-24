@@ -16,7 +16,9 @@ from camas.main import (
 	Ref,
 	dispatch_arg,
 	find_pyproject,
+	find_tasks_py,
 	load_tasks,
+	load_tasks_from_py,
 	main,
 	parse_expression,
 	parse_task_value,
@@ -173,11 +175,12 @@ def test_run_cli_collects_tasks_from_scope(capsys: pytest.CaptureFixture[str]) -
 		"other": 42,
 	}
 	with pytest.raises(SystemExit, match="0"):
-		with patch("sys.argv", ["check.py", "--list"]):
+		with patch("sys.argv", ["tasks.py", "--list"]):
 			run_cli(scope)
 	out = capsys.readouterr().out
-	assert "lint" in out
+	assert "lint: ruff ." in out
 	assert "_private" not in out
+	assert "secret" not in out
 	assert "other" not in out
 
 
@@ -354,8 +357,8 @@ def test_list_flag_with_tasks(
 		with patch("sys.argv", ["camas", "--list"]):
 			main()
 	out = capsys.readouterr().out
-	assert "lint:" in out
-	assert "test:" in out
+	assert "lint: ruff ." in out
+	assert "test: pytest" in out
 
 
 def test_named_task_dry_run(
@@ -413,3 +416,94 @@ def test_named_task_end_to_end(tmp_path: Path) -> None:
 		capture_output=True,
 	)
 	assert result.returncode == 0
+
+
+def test_find_tasks_py_in_cwd(tmp_path: Path) -> None:
+	(tmp_path / "tasks.py").write_text("")
+	assert find_tasks_py(tmp_path) == tmp_path / "tasks.py"
+
+
+def test_find_tasks_py_walks_up(tmp_path: Path) -> None:
+	(tmp_path / "tasks.py").write_text("")
+	sub = tmp_path / "a" / "b"
+	sub.mkdir(parents=True)
+	assert find_tasks_py(sub) == tmp_path / "tasks.py"
+
+
+def test_find_tasks_py_none(tmp_path: Path) -> None:
+	assert find_tasks_py(tmp_path) is None
+
+
+def test_load_tasks_from_py_propagates_names(tmp_path: Path) -> None:
+	tasks_py = tmp_path / "tasks.py"
+	tasks_py.write_text(
+		"from camas import Parallel, Task\n"
+		"mypy = Task('mypy .')\n"
+		"pyright = Task('pyright .')\n"
+		"typecheck = Parallel(tasks=(mypy, pyright))\n"
+		"_private = Task('nope')\n"
+	)
+	tasks = load_tasks_from_py(tasks_py)
+	assert tasks["mypy"] == Task("mypy .", name="mypy")
+	assert tasks["typecheck"] == Parallel(
+		tasks=(Task("mypy .", name="mypy"), Task("pyright .", name="pyright")),
+		name="typecheck",
+	)
+	assert "_private" not in tasks
+
+
+def test_tasks_py_preferred_over_pyproject(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	monkeypatch.chdir(tmp_path)
+	(tmp_path / "tasks.py").write_text(
+		"from camas import Task\nhi = Task(('python', '-c', 'pass'))\n"
+	)
+	(tmp_path / "pyproject.toml").write_text('[tool.camas.tasks]\nhi = "python -c \\"fail\\""\n')
+	with pytest.raises(SystemExit, match="0"):
+		with patch("sys.argv", ["camas", "--dry-run", "hi"]):
+			main()
+	captured = capsys.readouterr()
+	assert "both define tasks" in captured.err
+	assert "python -c pass" in captured.out
+
+
+def test_explicit_py_file_arg(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	monkeypatch.chdir(tmp_path)
+	other = tmp_path / "other_tasks.py"
+	other.write_text("from camas import Task\ngreet = Task('echo other')\n")
+	with pytest.raises(SystemExit, match="0"):
+		with patch("sys.argv", ["camas", str(other), "--dry-run", "greet"]):
+			main()
+	assert "echo other" in capsys.readouterr().out
+
+
+def test_explicit_py_file_missing(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	monkeypatch.chdir(tmp_path)
+	with pytest.raises(SystemExit, match="2"):
+		with patch("sys.argv", ["camas", "nope.py", "x"]):
+			main()
+	assert "no such file" in capsys.readouterr().err
+
+
+def test_subcommand_help_shows_tree(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	monkeypatch.chdir(tmp_path)
+	(tmp_path / "tasks.py").write_text(
+		"from camas import Parallel, Task\n"
+		"a = Task('do-a')\n"
+		"b = Task('do-b')\n"
+		"both = Parallel(tasks=(a, b))\n"
+	)
+	with pytest.raises(SystemExit, match="0"):
+		with patch("sys.argv", ["camas", "both", "--help"]):
+			main()
+	out = capsys.readouterr().out
+	assert "runs the 'both' task" in out
+	assert "do-a" in out
+	assert "do-b" in out

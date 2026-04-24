@@ -172,8 +172,21 @@ class CompletedEvent(NamedTuple):
 TaskEvent: TypeAlias = StartedEvent | OutputEvent | CompletedEvent
 
 
+class ChainLink(NamedTuple):
+	"""One ancestor's position in a tree-walk chain.
+
+	>>> ChainLink(True, False)
+	ChainLink(is_last=True, parent_is_parallel=False)
+	"""
+
+	is_last: bool
+	"""Whether the current node is the last child in its sibling group. Used for display formatting."""
+	parent_is_parallel: bool
+	"""Whether the containing group is a ``Parallel``. Used for display formatting."""
+
+
 class LeafInfo(NamedTuple):
-	"""A leaf's position in the task tree: depth and last-sibling chain up to it.
+	"""A leaf's position in the task tree: depth and chain of ancestor links.
 
 	>>> LeafInfo(Task("echo hi"), 0, ())
 	LeafInfo(task=Task(cmd='echo hi', name=None, env={}), depth=0, is_last_chain=())
@@ -181,7 +194,7 @@ class LeafInfo(NamedTuple):
 
 	task: Task
 	depth: int
-	is_last_chain: tuple[bool, ...]
+	is_last_chain: tuple[ChainLink, ...]
 
 
 class Waiting(NamedTuple):
@@ -391,14 +404,21 @@ def expand_sequential_matrix(
 	children: tuple[TaskNode, ...],
 	matrix: dict[str, tuple[str, ...]],
 	name: str | None,
+	container_env: dict[str, str],
 ) -> Parallel:
 	"""Expand a Sequential's matrix into a Parallel of cloned Sequentials.
 
-	>>> result = expand_sequential_matrix((Task("build"), Task("test")), {"X": ("1", "2")}, "ci")
+	Each per-binding Sequential carries the binding-scope env (container env with
+	matrix values substituted, plus the binding itself) so the display can show
+	it once at the group header instead of on every leaf.
+
+	>>> result = expand_sequential_matrix((Task("build"), Task("test")), {"X": ("1", "2")}, "ci", {})
 	>>> len(result.tasks)
 	2
 	>>> all(isinstance(t, Sequential) for t in result.tasks)
 	True
+	>>> result.tasks[0].env  # type: ignore[union-attr]
+	{'X': '1'}
 	"""
 	return Parallel(
 		tasks=tuple(
@@ -407,6 +427,8 @@ def expand_sequential_matrix(
 					specialize_node(child, binding, binding_suffix(binding)) for child in children
 				),
 				name=(f"{name} {binding_suffix(binding)}" if name is not None else None),
+				env={k: substitute_in_str(v, binding) for k, v in container_env.items()}
+				| dict(binding),
 			)
 			for binding in matrix_bindings(matrix)
 		),
@@ -418,10 +440,15 @@ def expand_parallel_matrix(
 	children: tuple[TaskNode, ...],
 	matrix: dict[str, tuple[str, ...]],
 	name: str | None,
+	container_env: dict[str, str],
 ) -> Parallel:
 	"""Expand a Parallel's matrix into a flat Parallel of all binding × child products.
 
-	>>> result = expand_parallel_matrix((Task("test"),), {"PY": ("3.12", "3.13")}, None)
+	The shared ``container_env`` is kept on the outer Parallel only when it has the
+	same value across every binding; per-binding pieces land on the individual
+	specialized leaves via ``specialize_node``.
+
+	>>> result = expand_parallel_matrix((Task("test"),), {"PY": ("3.12", "3.13")}, None, {})
 	>>> len(result.tasks)
 	2
 	"""
@@ -432,11 +459,15 @@ def expand_parallel_matrix(
 			for child in children
 		),
 		name=name,
+		env={k: v for k, v in container_env.items() if "{" not in v},
 	)
 
 
 def expand_matrix(task: TaskNode, ancestor_env: Mapping[str, str] | None = None) -> TaskNode:
 	"""Recursively expand all matrix parameters and propagate container env into leaves.
+
+	Container env is also retained on the expanded group nodes (for display
+	purposes); execution still reads the accumulated env from leaves.
 
 	>>> expand_matrix(Task("echo hi"))
 	Task(cmd='echo hi', name=None, env={})
@@ -454,14 +485,14 @@ def expand_matrix(task: TaskNode, ancestor_env: Mapping[str, str] | None = None)
 			seq_env: Final = parent_env | env
 			seq_expanded: Final = tuple(expand_matrix(t, seq_env) for t in tasks)
 			if matrix is None:
-				return Sequential(tasks=seq_expanded, name=task.name)
-			return expand_sequential_matrix(seq_expanded, matrix, task.name)
+				return Sequential(tasks=seq_expanded, name=task.name, env=env)
+			return expand_sequential_matrix(seq_expanded, matrix, task.name, env)
 		case Parallel(tasks=tasks, matrix=matrix, env=env):
 			par_env: Final = parent_env | env
 			par_expanded: Final = tuple(expand_matrix(t, par_env) for t in tasks)
 			if matrix is None:
-				return Parallel(tasks=par_expanded, name=task.name)
-			return expand_parallel_matrix(par_expanded, matrix, task.name)
+				return Parallel(tasks=par_expanded, name=task.name, env=env)
+			return expand_parallel_matrix(par_expanded, matrix, task.name, env)
 		case _:
 			assert_never(task)
 
@@ -469,16 +500,18 @@ def expand_matrix(task: TaskNode, ancestor_env: Mapping[str, str] | None = None)
 def iter_leaves(
 	node: TaskNode,
 	depth: int,
-	is_last_chain: tuple[bool, ...],
+	is_last_chain: tuple[ChainLink, ...],
 ) -> Iterator[LeafInfo]:
 	"""Walk a task tree depth-first, yielding LeafInfo for each leaf."""
 	match node:
 		case Task():
 			yield LeafInfo(node, depth, is_last_chain)
 		case Sequential(tasks=children) | Parallel(tasks=children):
+			parent_is_par: Final = isinstance(node, Parallel)
 			last_i: Final = len(children) - 1
 			for i, child in enumerate(children):
-				yield from iter_leaves(child, depth + 1, (*is_last_chain, i == last_i))
+				link = ChainLink(is_last=i == last_i, parent_is_parallel=parent_is_par)
+				yield from iter_leaves(child, depth + 1, (*is_last_chain, link))
 		case _:
 			assert_never(node)
 
@@ -491,9 +524,9 @@ def flatten_leaves(task: TaskNode) -> tuple[LeafInfo, ...]:
 	>>> flatten_leaves(Task("echo hi"))[0].depth
 	0
 	>>> flatten_leaves(Parallel(tasks=(Task("a"), Task("b"))))[0].is_last_chain
-	(False,)
+	(ChainLink(is_last=False, parent_is_parallel=True),)
 	>>> flatten_leaves(Parallel(tasks=(Task("a"), Task("b"))))[1].is_last_chain
-	(True,)
+	(ChainLink(is_last=True, parent_is_parallel=True),)
 	"""
 	return tuple(iter_leaves(task, depth=0, is_last_chain=()))
 

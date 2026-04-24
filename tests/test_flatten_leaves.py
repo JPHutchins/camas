@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import pytest
 
-from camas import Parallel, Sequential, Task, flatten_leaves
+from camas import ChainLink, Parallel, Sequential, Task, flatten_leaves
 from camas.effect.termtree import print_tree
 
 
@@ -22,14 +22,21 @@ def test_parallel() -> None:
 	leaves = flatten_leaves(task)
 	assert [leaf.task.cmd for leaf in leaves] == ["a", "b", "c"]
 	assert [leaf.depth for leaf in leaves] == [1, 1, 1]
-	assert [leaf.is_last_chain for leaf in leaves] == [(False,), (False,), (True,)]
+	assert [leaf.is_last_chain for leaf in leaves] == [
+		(ChainLink(False, True),),
+		(ChainLink(False, True),),
+		(ChainLink(True, True),),
+	]
 
 
 def test_sequential() -> None:
 	task = Sequential(tasks=(Task("a"), Task("b")))
 	leaves = flatten_leaves(task)
 	assert [leaf.task.cmd for leaf in leaves] == ["a", "b"]
-	assert [leaf.is_last_chain for leaf in leaves] == [(False,), (True,)]
+	assert [leaf.is_last_chain for leaf in leaves] == [
+		(ChainLink(False, False),),
+		(ChainLink(True, False),),
+	]
 
 
 def test_nested_parallel_in_sequential() -> None:
@@ -43,9 +50,9 @@ def test_nested_parallel_in_sequential() -> None:
 	assert [leaf.task.cmd for leaf in leaves] == ["a", "b", "c"]
 	assert [leaf.depth for leaf in leaves] == [2, 2, 1]
 	assert [leaf.is_last_chain for leaf in leaves] == [
-		(False, False),
-		(False, True),
-		(True,),
+		(ChainLink(False, False), ChainLink(False, True)),
+		(ChainLink(False, False), ChainLink(True, True)),
+		(ChainLink(True, False),),
 	]
 
 
@@ -85,8 +92,8 @@ def test_print_tree(capsys: pytest.CaptureFixture[str]) -> None:
 	captured = capsys.readouterr()
 	assert "alpha" in captured.out
 	assert "beta" in captured.out
-	assert "├─ alpha" in captured.out
-	assert "└─ beta" in captured.out
+	assert "┃ alpha" in captured.out
+	assert "┃ beta" in captured.out
 
 
 def test_print_tree_deeply_nested(capsys: pytest.CaptureFixture[str]) -> None:
@@ -98,6 +105,6 @@ def test_print_tree_deeply_nested(capsys: pytest.CaptureFixture[str]) -> None:
 	)
 	print_tree(task)
 	captured = capsys.readouterr()
-	assert "│ ├─ a" in captured.out
-	assert "│ └─ b" in captured.out
+	assert "│ ┃ a" in captured.out
+	assert "│ ┃ b" in captured.out
 	assert "└─ c" in captured.out

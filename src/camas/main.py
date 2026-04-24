@@ -8,6 +8,7 @@ import ast
 import asyncio
 import importlib.metadata
 import re
+import runpy
 import sys
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -386,6 +387,51 @@ def load_tasks(path: Path) -> dict[str, TaskNode]:
 	return {name: resolve_refs(tree, pre, frozenset({name})) for name, tree in pre.items()}
 
 
+def find_tasks_py(start: Path) -> Path | None:
+	"""Walk upward from ``start`` looking for a ``tasks.py``."""
+	for candidate in (start, *start.parents):
+		if (tasks_py := candidate / "tasks.py").is_file():
+			return tasks_py
+	return None
+
+
+def _name_scope_bindings(scope: Mapping[str, object]) -> dict[str, TaskNode]:
+	"""Collect public TaskNode bindings from a mapping of globals and propagate names.
+
+	Each public (non-underscore) ``Task``/``Sequential``/``Parallel`` becomes a named
+	task; nested references by identity (e.g. ``Parallel(tasks=(mypy,))`` where
+	``mypy`` is itself a top-level binding) inherit the binding's name, matching the
+	naming behavior of ``[tool.camas.tasks]`` in pyproject.toml.
+	"""
+	bindings: Final = {
+		name: val
+		for name, val in scope.items()
+		if not name.startswith("_") and isinstance(val, Task | Sequential | Parallel)
+	}
+	named_by_id: Final = {id(val): _assign_key_name(val, name) for name, val in bindings.items()}
+
+	def promote(node: TaskNode) -> TaskNode:
+		source = cast(TaskNode, named_by_id.get(id(node), node))
+		match source:
+			case Task():
+				return source
+			case Sequential(tasks=children, name=n, matrix=m, env=e):
+				return Sequential(
+					tasks=tuple(promote(c) for c in children), name=n, matrix=m, env=e
+				)
+			case Parallel(tasks=children, name=n, matrix=m, env=e):
+				return Parallel(tasks=tuple(promote(c) for c in children), name=n, matrix=m, env=e)
+			case _:
+				assert_never(source)
+
+	return {name: promote(val) for name, val in bindings.items()}
+
+
+def load_tasks_from_py(path: Path) -> dict[str, TaskNode]:
+	"""Execute a Python task-definition file and collect module-level TaskNode bindings."""
+	return _name_scope_bindings(runpy.run_path(str(path)))
+
+
 def dispatch_arg(arg: str, tasks: Mapping[str, TaskNode]) -> TaskNode:
 	"""Interpret a CLI arg: task name (possibly hyphenated) ⇒ lookup, else inline expression."""
 	if arg in tasks:
@@ -402,14 +448,19 @@ def dispatch_arg(arg: str, tasks: Mapping[str, TaskNode]) -> TaskNode:
 	return parse_expression(arg, tasks=tasks)
 
 
-def build_parser() -> argparse.ArgumentParser:
+def build_parser(tasks: Mapping[str, TaskNode] | None = None) -> argparse.ArgumentParser:
 	"""Build the CLI argument parser.
+
+	When ``tasks`` is provided, known task names appear in the positional
+	metavar so the usage line reads like a list of subcommands.
 
 	>>> parser = build_parser()
 	>>> args = parser.parse_args(['Task("echo hi")'])
 	>>> args.expression
 	'Task("echo hi")'
 	>>> parser.parse_args(["--list"]).list
+	True
+	>>> "all|check" in build_parser({"all": Task("x"), "check": Task("y")}).format_usage()
 	True
 	"""
 	parser: Final = argparse.ArgumentParser(
@@ -421,7 +472,8 @@ def build_parser() -> argparse.ArgumentParser:
 	parser.add_argument(
 		"expression",
 		nargs="?",
-		help="typed Python expression, or the name of a task defined in pyproject.toml",
+		metavar=_expression_metavar(tasks),
+		help="name of a defined task, or a typed Python expression",
 	)
 	parser.add_argument(
 		"--version",
@@ -436,7 +488,7 @@ def build_parser() -> argparse.ArgumentParser:
 	parser.add_argument(
 		"--list",
 		action="store_true",
-		help="list tasks defined in pyproject.toml and exit",
+		help="list all defined tasks and exit",
 	)
 	parser.add_argument(
 		"--effects",
@@ -449,29 +501,57 @@ def build_parser() -> argparse.ArgumentParser:
 	return parser
 
 
+def _expression_metavar(tasks: Mapping[str, TaskNode] | None) -> str:
+	"""Build the positional metavar, summarising known task names when present.
+
+	>>> _expression_metavar(None)
+	'expression'
+	>>> _expression_metavar({"all": Task("x"), "check": Task("y"), "lint": Task("z")})
+	'{all|check|lint}'
+	"""
+	if not tasks:
+		return "expression"
+	names = sorted(tasks)
+	summary = "|".join(names)
+	max_len: Final = 60
+	if len(summary) > max_len:
+		kept: list[str] = []
+		length = 0
+		for n in names:
+			if length + len(n) + 1 > max_len:
+				break
+			kept.append(n)
+			length += len(n) + 1
+		summary = "|".join([*kept, "..."])
+	return f"{{{summary}}}"
+
+
 def print_tasks(tasks: Mapping[str, TaskNode]) -> None:
-	"""Print each named task and its tree."""
+	"""Print each named task's tree with commands expanded."""
 	if not tasks:
 		print("(no tasks defined)")
 		return
-	for name, task in sorted(tasks.items()):
-		print(f"{name}:")
-		print_tree(task)
+	for _, task in sorted(tasks.items()):
+		print_tree(task, show_cmd=True)
 		print()
+
+
+def print_task_help(name: str, task: TaskNode) -> None:
+	"""Print subcommand help for a single task: its expanded tree."""
+	print(f"usage: camas {name} [-h] [--dry-run] [--effects EFFECTS]")
+	print()
+	print(f"runs the {name!r} task:")
+	print_tree(task, show_cmd=True)
 
 
 def run_cli(scope: Mapping[str, object]) -> None:
 	"""Collect Task/Sequential/Parallel values from ``scope`` and dispatch CLI args.
 
-	Names starting with ``_`` and non-task values are skipped.
+	Names starting with ``_`` and non-task values are skipped. Public bindings
+	are named by their binding identifier, and nested references inherit those
+	names (consistent with ``[tool.camas.tasks]`` in pyproject.toml).
 	"""
-	dispatch(
-		{
-			name: val
-			for name, val in scope.items()
-			if not name.startswith("_") and isinstance(val, Task | Sequential | Parallel)
-		}
-	)
+	dispatch(_name_scope_bindings(scope))
 
 
 EFFECT_CONSTRUCTORS: Final[Mapping[str, Callable[..., Any]]] = {
@@ -531,10 +611,16 @@ def _expect_effect(value: Any) -> Effect[Any]:
 	return value
 
 
-def dispatch(tasks: Mapping[str, TaskNode]) -> None:
-	"""Parse sys.argv against ``tasks`` and run the dispatched task. Always exits."""
-	parser: Final = build_parser()
-	args: Final = parser.parse_args()
+def dispatch(tasks: Mapping[str, TaskNode], argv: list[str] | None = None) -> None:
+	"""Parse ``argv`` (defaulting to sys.argv) against ``tasks`` and run the dispatched task."""
+	raw: Final = sys.argv[1:] if argv is None else argv
+
+	if len(raw) >= 2 and raw[0] in tasks and any(a in ("-h", "--help") for a in raw[1:]):
+		print_task_help(raw[0], tasks[raw[0]])
+		sys.exit(0)
+
+	parser: Final = build_parser(tasks)
+	args: Final = parser.parse_args(raw)
 
 	if args.list:
 		print_tasks(tasks)
@@ -551,21 +637,79 @@ def dispatch(tasks: Mapping[str, TaskNode]) -> None:
 
 	task: Final = dispatch_arg(args.expression, tasks)
 	if args.dry_run:
-		print_tree(task)
+		print_tree(task, show_cmd=True)
 		sys.exit(0)
 	sys.exit(asyncio.run(run(task, effects=effects)).returncode)
 
 
-def main() -> None:
-	"""Console script entry: loads pyproject.toml tasks and dispatches."""
-	tasks: dict[str, TaskNode] = {}
-	if (pyproject := find_pyproject(Path.cwd())) is not None:
+def _looks_like_py_file(arg: str) -> bool:
+	"""A CLI arg refers to a tasks file when it ends in ``.py`` — expressions always end in ``)``.
+
+	>>> _looks_like_py_file("tasks.py")
+	True
+	>>> _looks_like_py_file("./sub/my_tasks.py")
+	True
+	>>> _looks_like_py_file('Task("pytest x.py")')
+	False
+	>>> _looks_like_py_file("lint")
+	False
+	"""
+	return arg.endswith(".py")
+
+
+def _resolve_tasks_source(argv: list[str]) -> tuple[dict[str, TaskNode], list[str]]:
+	"""Locate the tasks source and return (tasks, remaining_argv).
+
+	If ``argv[0]`` ends in ``.py`` it is consumed as an explicit file path.
+	Otherwise auto-discovers ``tasks.py`` and/or ``pyproject.toml``; if both
+	define tasks, ``tasks.py`` wins and a warning is printed.
+	"""
+	if argv and _looks_like_py_file(argv[0]):
+		path = Path(argv[0])
+		if not path.is_file():
+			print(f"error: {path}: no such file", file=sys.stderr)
+			sys.exit(2)
 		try:
-			tasks = load_tasks(pyproject)
+			return load_tasks_from_py(path), argv[1:]
+		except Exception as e:
+			print(f"error: {path}: {e}", file=sys.stderr)
+			sys.exit(2)
+
+	tasks_py: Final = find_tasks_py(Path.cwd())
+	pyproject: Final = find_pyproject(Path.cwd())
+
+	if tasks_py is not None:
+		if pyproject is not None:
+			try:
+				pyproject_tasks = load_tasks(pyproject)
+			except ValueError:
+				pyproject_tasks = {}
+			if pyproject_tasks:
+				print(
+					f"warning: {tasks_py} and [tool.camas.tasks] in {pyproject} both define tasks;"
+					f" using {tasks_py.name}",
+					file=sys.stderr,
+				)
+		try:
+			return load_tasks_from_py(tasks_py), argv
+		except Exception as e:
+			print(f"error: {tasks_py}: {e}", file=sys.stderr)
+			sys.exit(2)
+
+	if pyproject is not None:
+		try:
+			return load_tasks(pyproject), argv
 		except ValueError as e:
 			print(f"error: {pyproject}: {e}", file=sys.stderr)
 			sys.exit(2)
-	dispatch(tasks)
+
+	return {}, argv
+
+
+def main() -> None:
+	"""Console script entry: resolves tasks source and dispatches."""
+	tasks, argv = _resolve_tasks_source(sys.argv[1:])
+	dispatch(tasks, argv)
 
 
 if __name__ == "__main__":
