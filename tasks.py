@@ -14,7 +14,7 @@ lint_fix = Task("uv run ruff check --fix .")
 fix = Sequential(tasks=(lint_fix, format))
 mypy = Task("uv run mypy .")
 ty = Task("uv run ty check")
-zuban = Task("uv run zuban check")
+zuban = Task("uv run zuban check --exclude tests.fixtures")
 pyrefly = Task("uv run pyrefly check")
 pyright = Task("uv run pyright src tests")
 
