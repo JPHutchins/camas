@@ -354,7 +354,7 @@ def iter_rows(
 def flatten_rows(task: TaskNode) -> tuple[DisplayRow, ...]:
 	"""Flatten a task tree into display rows (GroupHeaders + LeafInfos) in DFS order.
 
-	>>> rows = flatten_rows(Parallel(tasks=(Task("a"), Task("b"))))
+	>>> rows = flatten_rows(Parallel(Task("a"), Task("b")))
 	>>> len(rows)
 	3
 	>>> isinstance(rows[0], GroupHeader)

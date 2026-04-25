@@ -34,7 +34,7 @@ def _par(
 	matrix: dict[str, tuple[str, ...]] | None = None,
 	cwd: Path | None = None,
 ) -> Parallel:
-	return Parallel(tasks=cast(tuple[TaskNode, ...], tasks), name=name, matrix=matrix, cwd=cwd)
+	return Parallel(*cast(tuple[TaskNode, ...], tasks), name=name, matrix=matrix, cwd=cwd)
 
 
 def _seq(
@@ -43,7 +43,7 @@ def _seq(
 	matrix: dict[str, tuple[str, ...]] | None = None,
 	cwd: Path | None = None,
 ) -> Sequential:
-	return Sequential(tasks=cast(tuple[TaskNode, ...], tasks), name=name, matrix=matrix, cwd=cwd)
+	return Sequential(*cast(tuple[TaskNode, ...], tasks), name=name, matrix=matrix, cwd=cwd)
 
 
 def test_parse_task_value_bare_string() -> None:
@@ -59,31 +59,27 @@ def test_parse_task_value_explicit_task() -> None:
 
 
 def test_parse_task_value_parallel() -> None:
-	assert parse_task_value('Parallel(tasks=(Task("a"), Task("b")))') == Parallel(
-		tasks=(Task("a"), Task("b"))
-	)
+	assert parse_task_value('Parallel(Task("a"),Task("b"))') == Parallel(Task("a"), Task("b"))
 
 
 def test_parse_task_value_sequential() -> None:
-	assert parse_task_value('Sequential(tasks=(Task("a"), Task("b")))') == Sequential(
-		tasks=(Task("a"), Task("b"))
-	)
+	assert parse_task_value('Sequential(Task("a"),Task("b"))') == Sequential(Task("a"), Task("b"))
 
 
 def test_parse_task_value_bare_ref_inside_expr() -> None:
-	assert parse_task_value("Parallel(tasks=(a, b))") == _par((Ref("a"), Ref("b")))
+	assert parse_task_value("Parallel(a,b)") == _par((Ref("a"), Ref("b")))
 
 
 def test_parse_task_value_explicit_ref() -> None:
-	assert parse_task_value('Sequential(tasks=(Ref("lint"), Ref("test")))') == _seq(
+	assert parse_task_value('Sequential(Ref("lint"),Ref("test"))') == _seq(
 		(Ref("lint"), Ref("test"))
 	)
 
 
 def test_parse_task_value_matrix_preserved() -> None:
-	assert parse_task_value(
-		'Parallel(tasks=(Task("t {PY}"),), matrix={"PY": ("3.12", "3.13")})'
-	) == Parallel(tasks=(Task("t {PY}"),), matrix={"PY": ("3.12", "3.13")})
+	assert parse_task_value('Parallel(Task("t {PY}"),matrix={"PY": ("3.12", "3.13")})') == Parallel(
+		Task("t {PY}"), matrix={"PY": ("3.12", "3.13")}
+	)
 
 
 def test_parse_task_value_invalid_syntax() -> None:
@@ -91,9 +87,21 @@ def test_parse_task_value_invalid_syntax() -> None:
 		parse_task_value("Task(unbalanced(")
 
 
-def test_parse_task_value_rejects_tuple_top_level() -> None:
-	with pytest.raises(ValueError, match="expected Task"):
-		parse_task_value('Task("a"), Task("b")')
+def test_parse_task_value_top_level_tuple_coerces_to_sequential() -> None:
+	assert parse_task_value('Task("a"), Task("b")') == Sequential(Task("a"), Task("b"))
+
+
+def test_parse_task_value_top_level_set_coerces_to_parallel() -> None:
+	result = parse_task_value('{Task("a"), Task("b")}')
+	assert isinstance(result, Parallel)
+
+
+def test_parse_task_value_top_level_paren_tuple_coerces_to_sequential() -> None:
+	assert parse_task_value('(Task("a"), Task("b"))') == Sequential(Task("a"), Task("b"))
+
+
+def test_parse_task_value_fluent_with_refs() -> None:
+	assert parse_task_value("(lint, test)") == _seq((Ref("lint"), Ref("test")))
 
 
 def test_resolve_refs_passthrough_task() -> None:
@@ -111,14 +119,14 @@ def test_resolve_refs_nested_in_parallel() -> None:
 		"test": Task("pytest"),
 	}
 	tree = _par((Ref("lint"), Ref("test")))
-	assert resolve_refs(tree, pre, frozenset()) == Parallel(tasks=(Task("ruff ."), Task("pytest")))
+	assert resolve_refs(tree, pre, frozenset()) == Parallel(Task("ruff ."), Task("pytest"))
 
 
 def test_resolve_refs_nested_in_sequential_preserves_matrix() -> None:
 	pre: dict[str, TaskNode | Ref] = {"build": Task("make")}
 	tree = _seq((Ref("build"),), matrix={"X": ("1", "2")})
 	result = resolve_refs(tree, pre, frozenset())
-	assert result == Sequential(tasks=(Task("make"),), matrix={"X": ("1", "2")})
+	assert result == Sequential(Task("make"), matrix={"X": ("1", "2")})
 
 
 def test_resolve_refs_unknown() -> None:
@@ -195,26 +203,20 @@ def test_load_tasks_full(tmp_path: Path) -> None:
 lint = "ruff check ."
 mypy = "mypy ."
 pyright = "pyright ."
-typecheck = "Parallel(tasks=(mypy, pyright))"
+typecheck = "Parallel(mypy, pyright)"
 test = "pytest"
-ci = 'Sequential(tasks=(Ref("lint"), Ref("typecheck"), Ref("test")))'
+ci = 'Sequential(Ref("lint"), Ref("typecheck"), Ref("test"))'
 """
 	)
 	tasks = load_tasks(pyproject)
 	assert tasks["lint"] == Task("ruff check .", name="lint")
 	assert tasks["typecheck"] == Parallel(
-		tasks=(Task("mypy .", name="mypy"), Task("pyright .", name="pyright")),
-		name="typecheck",
+		Task("mypy .", name="mypy"), Task("pyright .", name="pyright"), name="typecheck"
 	)
 	assert tasks["ci"] == Sequential(
-		tasks=(
-			Task("ruff check .", name="lint"),
-			Parallel(
-				tasks=(Task("mypy .", name="mypy"), Task("pyright .", name="pyright")),
-				name="typecheck",
-			),
-			Task("pytest", name="test"),
-		),
+		Task("ruff check .", name="lint"),
+		Parallel(Task("mypy .", name="mypy"), Task("pyright .", name="pyright"), name="typecheck"),
+		Task("pytest", name="test"),
 		name="ci",
 	)
 
@@ -224,14 +226,12 @@ def test_load_tasks_matrix(tmp_path: Path) -> None:
 	pyproject.write_text(
 		"""
 [tool.camas.tasks]
-tests = 'Parallel(tasks=(Task("pytest --python {PY}"),), matrix={"PY": ("3.12","3.13")})'
+tests = 'Parallel(Task("pytest --python {PY}"), matrix={"PY": ("3.12","3.13")})'
 """
 	)
 	tasks = load_tasks(pyproject)
 	assert tasks["tests"] == Parallel(
-		tasks=(Task("pytest --python {PY}"),),
-		matrix={"PY": ("3.12", "3.13")},
-		name="tests",
+		Task("pytest --python {PY}"), matrix={"PY": ("3.12", "3.13")}, name="tests"
 	)
 
 
@@ -261,7 +261,7 @@ def test_load_tasks_surfaces_syntax_error_with_task_name(tmp_path: Path) -> None
 		"[tool.camas.tasks]\n"
 		"matrix = '''\n"
 		"Parallel(\n"
-		'\ttasks=(Task("t"),),\n'
+		'\tTask("t"),\n'
 		'\tmatrix={"PY"=["3.12"]},\n'
 		")\n"
 		"'''\n"
@@ -310,7 +310,7 @@ def test_dispatch_arg_inline_expression() -> None:
 
 def test_dispatch_arg_inline_with_refs() -> None:
 	tasks = {"lint": Task("ruff .")}
-	assert dispatch_arg("Parallel(tasks=(lint,))", tasks) == Parallel(tasks=(Task("ruff ."),))
+	assert dispatch_arg("Parallel(lint)", tasks) == Parallel(Task("ruff ."))
 
 
 def test_dispatch_arg_inline_invalid_syntax() -> None:
@@ -318,14 +318,13 @@ def test_dispatch_arg_inline_invalid_syntax() -> None:
 		dispatch_arg("not valid +++", {})
 
 
-def test_parse_expression_non_task_with_tasks() -> None:
-	with pytest.raises(SystemExit, match="2"):
-		parse_expression('"just a string"', tasks={})
+def test_parse_expression_bare_string_coerces_to_task() -> None:
+	assert parse_expression('"just a string"', tasks={}) == Task("just a string")
 
 
 def test_parse_expression_with_undefined_ref() -> None:
 	with pytest.raises(SystemExit, match="2"):
-		parse_expression("Parallel(tasks=(undefined,))", tasks={})
+		parse_expression("Parallel(undefined)", tasks={})
 
 
 def test_parse_expression_top_level_ref_without_tasks() -> None:
@@ -333,9 +332,34 @@ def test_parse_expression_top_level_ref_without_tasks() -> None:
 		parse_expression('Ref("x")')
 
 
-def test_parse_expression_rejects_positional_on_parallel() -> None:
-	with pytest.raises(SystemExit, match="2"):
-		parse_expression('Parallel((Task("a"),))')
+def test_parse_expression_top_level_tuple_coerces_to_sequential() -> None:
+	assert parse_expression('(Task("a"), Task("b"))') == Sequential(Task("a"), Task("b"))
+
+
+def test_parse_expression_top_level_set_coerces_to_parallel() -> None:
+	result = parse_expression('{Task("a"), Task("b")}')
+	assert isinstance(result, Parallel)
+	assert {t.cmd for t in result.tasks if isinstance(t, Task)} == {"a", "b"}
+
+
+def test_parse_expression_nested_tuple_coerces_to_sequential() -> None:
+	# Inside Parallel, a tuple literal becomes a nested Sequential.
+	assert parse_expression('Parallel((Task("a"), Task("b")))') == Parallel(
+		Sequential(Task("a"), Task("b"))
+	)
+
+
+def test_parse_expression_nested_set_coerces_to_parallel() -> None:
+	# Inside Sequential, a set literal becomes a nested Parallel.
+	result = parse_expression('Sequential({Task("a"), Task("b")})')
+	assert isinstance(result, Sequential)
+	assert len(result.tasks) == 1
+	inner = result.tasks[0]
+	assert isinstance(inner, Parallel)
+
+
+def test_parse_expression_bare_string_in_sequential() -> None:
+	assert parse_expression('Sequential("a", "b")') == Sequential(Task("a"), Task("b"))
 
 
 def test_list_flag_no_tasks(
@@ -369,7 +393,7 @@ def test_named_task_dry_run(
 ) -> None:
 	monkeypatch.chdir(tmp_path)
 	(tmp_path / "pyproject.toml").write_text(
-		'[tool.camas.tasks]\nci = \'Parallel(tasks=(Task("echo a"), Task("echo b")))\'\n'
+		'[tool.camas.tasks]\nci = \'Parallel(Task("echo a"), Task("echo b"))\'\n'
 	)
 	with pytest.raises(SystemExit, match="0"):
 		with patch("sys.argv", ["camas", "--dry-run", "ci"]):
@@ -443,14 +467,13 @@ def test_load_tasks_from_py_propagates_names(tmp_path: Path) -> None:
 		"from camas import Parallel, Task\n"
 		"mypy = Task('mypy .')\n"
 		"pyright = Task('pyright .')\n"
-		"typecheck = Parallel(tasks=(mypy, pyright))\n"
+		"typecheck = Parallel(mypy, pyright)\n"
 		"_private = Task('nope')\n"
 	)
 	tasks = load_tasks_from_py(tasks_py)
 	assert tasks["mypy"] == Task("mypy .", name="mypy")
 	assert tasks["typecheck"] == Parallel(
-		tasks=(Task("mypy .", name="mypy"), Task("pyright .", name="pyright")),
-		name="typecheck",
+		Task("mypy .", name="mypy"), Task("pyright .", name="pyright"), name="typecheck"
 	)
 	assert "_private" not in tasks
 
@@ -497,11 +520,11 @@ def test_assign_key_name_preserves_cwd() -> None:
 	assert _assign_key_name(Task("x", cwd=Path("rust")), "lint") == Task(
 		"x", name="lint", cwd=Path("rust")
 	)
-	assert _assign_key_name(Parallel(tasks=(Task("x"),), cwd=Path("rust")), "grp") == Parallel(
-		tasks=(Task("x"),), name="grp", cwd=Path("rust")
+	assert _assign_key_name(Parallel(Task("x"), cwd=Path("rust")), "grp") == Parallel(
+		Task("x"), name="grp", cwd=Path("rust")
 	)
-	assert _assign_key_name(Sequential(tasks=(Task("x"),), cwd=Path("rust")), "grp") == Sequential(
-		tasks=(Task("x"),), name="grp", cwd=Path("rust")
+	assert _assign_key_name(Sequential(Task("x"), cwd=Path("rust")), "grp") == Sequential(
+		Task("x"), name="grp", cwd=Path("rust")
 	)
 
 
@@ -511,7 +534,7 @@ def test_load_tasks_from_py_preserves_cwd(tmp_path: Path) -> None:
 		"from pathlib import Path\n"
 		"from camas import Parallel, Task\n"
 		"leaf = Task('cargo test', cwd=Path('src-tauri'))\n"
-		"group = Parallel(tasks=(Task('cargo check'),), cwd=Path('src-tauri'))\n"
+		"group = Parallel(Task('cargo check'), cwd=Path('src-tauri'))\n"
 	)
 	tasks = load_tasks_from_py(tasks_py)
 	assert tasks["leaf"].cwd == Path("src-tauri")
@@ -534,7 +557,7 @@ def test_subcommand_help_shows_tree(
 		"from camas import Parallel, Task\n"
 		"a = Task('do-a')\n"
 		"b = Task('do-b')\n"
-		"both = Parallel(tasks=(a, b))\n"
+		"both = Parallel(a, b)\n"
 	)
 	with pytest.raises(SystemExit, match="0"):
 		with patch("sys.argv", ["camas", "both", "--help"]):

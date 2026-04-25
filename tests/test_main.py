@@ -88,7 +88,7 @@ def test_dry_run_prints_tree(capsys: pytest.CaptureFixture[str]) -> None:
 	with pytest.raises(SystemExit, match="0"):
 		with patch(
 			"sys.argv",
-			["camas", "--dry-run", 'Parallel(tasks=(Task("echo a"), Task("echo b")))'],
+			["camas", "--dry-run", 'Parallel(Task("echo a"),Task("echo b"))'],
 		):
 			main()
 	captured = capsys.readouterr()
@@ -103,7 +103,7 @@ def test_dry_run_matrix(capsys: pytest.CaptureFixture[str]) -> None:
 			[
 				"camas",
 				"--dry-run",
-				'Parallel(tasks=(Task("test {PY}"),), matrix={"PY": ("3.12", "3.13")})',
+				'Parallel(Task("test {PY}"),matrix={"PY": ("3.12", "3.13")})',
 			],
 		):
 			main()
@@ -136,9 +136,10 @@ def test_unknown_type() -> None:
 		parse_expression('Foo(tasks=(Task("a"),))')
 
 
-def test_bare_string() -> None:
-	with pytest.raises(SystemExit, match="2"):
-		parse_expression('"just a string"')
+def test_bare_string_coerces_to_task() -> None:
+	from camas import Task
+
+	assert parse_expression('"just a string"') == Task("just a string")
 
 
 @pytest.mark.parametrize(

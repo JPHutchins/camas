@@ -46,28 +46,28 @@ CONSTRUCTORS: Final = {
 
 CONFIG_CONSTRUCTORS: Final = CONSTRUCTORS | {Ref.__name__: Ref}
 
-EXPRESSION_PATTERN: Final = re.compile(r"^\s*(Task|Sequential|Parallel|Ref)\s*\(")
+EXPRESSION_PATTERN: Final = re.compile(r"^\s*(?:(?:Task|Sequential|Parallel|Ref)\s*\(|[(\{])")
 
 EXAMPLES: Final = """\
 examples:
-    camas 'Parallel(tasks=(Task("ruff check ."), Task("mypy .")))'
+    camas 'Parallel("ruff check .", "mypy .")'
 
-    camas 'Sequential(tasks=(
-        Task("ruff format . --check"),
-        Parallel(tasks=(Task("mypy ."), Task("pyright ."))),
-        Task("pytest"),
-    ))'
-
-    camas 'Parallel(
-        tasks=(Task("pytest --python {PY}"),),
-        matrix={"PY": ("3.12", "3.13", "3.14")},
+    camas 'Sequential(
+        "ruff format . --check",
+        Parallel("mypy .", "pyright ."),
+        "pytest",
     )'
+
+    camas 'Parallel("pytest --python {PY}", matrix={"PY": ("3.12", "3.13", "3.14")})'
+
+    # bare tuples become Sequentials, bare sets become Parallels:
+    camas '("ruff format . --check", {"mypy .", "pyright ."}, "pytest")'
 
 named tasks (pyproject.toml):
     [tool.camas.tasks]
     lint = "ruff check ."
     test = "pytest"
-    ci   = 'Sequential(tasks=(Ref("lint"), Ref("test")))'
+    ci   = 'Sequential(Ref("lint"), Ref("test"))'
 
     camas ci            # run a named task
     camas --list        # show all defined tasks
@@ -162,12 +162,36 @@ def _eval_matrix(node: ast.expr | None) -> dict[str, tuple[str, ...]] | None:
 			raise ValueError(f"matrix must be a dict of str→tuple[str,...], got {ast.dump(node)}")
 
 
-def _eval_tasks(node: ast.expr, allow_refs: bool) -> tuple[TaskNode | Ref, ...]:
+def children(elts: list[ast.expr], allow_refs: bool) -> tuple[TaskNode, ...]:
+	"""Evaluate task-position children. ``Ref``s pass through here at the type level
+	via ``cast`` — they're resolved later by ``resolve_refs``."""
+	return cast(tuple[TaskNode, ...], tuple(eval_task_pos(e, allow_refs) for e in elts))
+
+
+def eval_task_pos(node: ast.expr, allow_refs: bool) -> TaskNode | Ref:
+	"""Evaluate an AST node at a *task position* — inside ``Sequential``/``Parallel`` args
+	or as a top-level expression — coercing literals to nodes.
+
+	Coercion: ``str`` → ``Task(cmd=str)``; tuple literal → ``Sequential``;
+	set literal → ``Parallel``. Other forms delegate to ``eval_node``.
+
+	>>> import ast
+	>>> eval_task_pos(ast.parse('"echo hi"', mode="eval").body, allow_refs=False)
+	Task(cmd='echo hi', name=None, env={}, cwd=None)
+	>>> eval_task_pos(ast.parse('(Task("a"), Task("b"))', mode="eval").body, allow_refs=False).tasks  # type: ignore[union-attr]
+	(Task(cmd='a', name=None, env={}, cwd=None), Task(cmd='b', name=None, env={}, cwd=None))
+	>>> isinstance(eval_task_pos(ast.parse('{"a", "b"}', mode="eval").body, allow_refs=False), Parallel)
+	True
+	"""
 	match node:
+		case ast.Constant(value=str() as s):
+			return Task(cmd=s)
 		case ast.Tuple(elts=elts):
-			return tuple(eval_node(e, allow_refs) for e in elts)
+			return Sequential(*children(elts, allow_refs))
+		case ast.Set(elts=elts):
+			return Parallel(*children(elts, allow_refs))
 		case _:
-			raise ValueError(f"tasks must be a tuple, got {ast.dump(node)}")
+			return eval_node(node, allow_refs)
 
 
 def eval_node(
@@ -183,6 +207,8 @@ def eval_node(
 	Ref(name='lint')
 	>>> eval_node(ast.parse('Ref("x")', mode="eval").body, allow_refs=True)
 	Ref(name='x')
+	>>> eval_node(ast.parse('Sequential(Task("a"), "b")', mode="eval").body).tasks  # type: ignore[union-attr]
+	(Task(cmd='a', name=None, env={}, cwd=None), Task(cmd='b', name=None, env={}, cwd=None))
 	"""
 	match node:
 		case ast.Call(func=ast.Name(id=name), args=args, keywords=keywords):
@@ -201,19 +227,9 @@ def eval_node(
 						env=_eval_env(kw.get("env")),
 					)
 				case "Sequential" | "Parallel":
-					tasks_node = kw.get("tasks")
-					if tasks_node is None:
-						raise ValueError(f"{name} requires 'tasks'")
-					tasks = cast(tuple[TaskNode, ...], _eval_tasks(tasks_node, allow_refs))
-					if name == "Sequential":
-						return Sequential(
-							tasks=tasks,
-							name=_eval_opt_str(kw.get("name")),
-							matrix=_eval_matrix(kw.get("matrix")),
-							env=_eval_env(kw.get("env")),
-						)
-					return Parallel(
-						tasks=tasks,
+					ctor = Sequential if name == "Sequential" else Parallel
+					return ctor(
+						*children(args, allow_refs),
 						name=_eval_opt_str(kw.get("name")),
 						matrix=_eval_matrix(kw.get("matrix")),
 						env=_eval_env(kw.get("env")),
@@ -227,11 +243,6 @@ def eval_node(
 					raise ValueError(f"unknown type: {name!r}")
 		case ast.Name(id=name) if allow_refs:
 			return Ref(name)
-		case ast.Tuple():
-			raise ValueError(
-				"expected Task/Sequential/Parallel/Ref, got bare tuple"
-				" — did you mean Parallel(tasks=(...)) or Sequential(tasks=(...))?",
-			)
 		case _:
 			raise ValueError(f"unsupported syntax: {ast.dump(node)}")
 
@@ -240,12 +251,17 @@ def parse_expression(expr: str, tasks: Mapping[str, TaskNode] | None = None) -> 
 	"""Parse a typed Python expression string into a TaskNode tree using AST (no eval).
 
 	When ``tasks`` is provided, bare identifiers in the expression become Refs that are
-	resolved against ``tasks`` after parsing.
+	resolved against ``tasks`` after parsing. Bare strings, tuple literals, and set
+	literals are coerced into ``Task`` / ``Sequential`` / ``Parallel`` respectively.
 
 	>>> parse_expression('Task("echo hi")')
 	Task(cmd='echo hi', name=None, env={}, cwd=None)
-	>>> parse_expression('Parallel(tasks=(a,))', tasks={"a": Task("x")})
+	>>> parse_expression('Parallel(a)', tasks={"a": Task("x")})
 	Parallel(tasks=(Task(cmd='x', name=None, env={}, cwd=None),), name=None, matrix=None, env={}, cwd=None)
+	>>> parse_expression('"echo hi"')
+	Task(cmd='echo hi', name=None, env={}, cwd=None)
+	>>> parse_expression('("a", "b")').tasks  # type: ignore[union-attr]
+	(Task(cmd='a', name=None, env={}, cwd=None), Task(cmd='b', name=None, env={}, cwd=None))
 	"""
 	try:
 		tree = ast.parse(expr, mode="eval")
@@ -254,7 +270,7 @@ def parse_expression(expr: str, tasks: Mapping[str, TaskNode] | None = None) -> 
 		sys.exit(2)
 
 	try:
-		result = eval_node(tree.body, allow_refs=tasks is not None)
+		result = eval_task_pos(tree.body, allow_refs=tasks is not None)
 	except (ValueError, TypeError) as e:
 		print(f"error: {e}", file=sys.stderr)
 		sys.exit(2)
@@ -279,12 +295,20 @@ def parse_expression(expr: str, tasks: Mapping[str, TaskNode] | None = None) -> 
 def parse_task_value(raw: str) -> TaskNode | Ref:
 	"""Parse a single pyproject.toml task value. Bare strings become Task(cmd).
 
+	A leading ``Task``/``Sequential``/``Parallel``/``Ref`` call, ``(``, or ``{`` triggers
+	AST-based parsing — letting users use the fluent ``(a, b)`` (Sequential) and
+	``{a, b}`` (Parallel) literals as well as explicit constructor calls.
+
 	>>> parse_task_value("ruff check .")
 	Task(cmd='ruff check .', name=None, env={}, cwd=None)
 	>>> parse_task_value('Task("pytest")')
 	Task(cmd='pytest', name=None, env={}, cwd=None)
 	>>> parse_task_value("Ref(\\"lint\\")")
 	Ref(name='lint')
+	>>> parse_task_value("(a, b)")
+	Sequential(tasks=(Ref(name='a'), Ref(name='b')), name=None, matrix=None, env={}, cwd=None)
+	>>> isinstance(parse_task_value("{a, b}"), Parallel)
+	True
 	"""
 	if not EXPRESSION_PATTERN.match(raw):
 		return Task(cmd=raw)
@@ -292,7 +316,7 @@ def parse_task_value(raw: str) -> TaskNode | Ref:
 		tree = ast.parse(raw, mode="eval")
 	except SyntaxError as e:
 		raise ValueError(_format_syntax_error(raw, e)) from e
-	return eval_node(tree.body, allow_refs=True)
+	return eval_task_pos(tree.body, allow_refs=True)
 
 
 def resolve_refs(
@@ -320,7 +344,7 @@ def resolve_refs(
 			return node
 		case Sequential(tasks=tasks, name=n, matrix=m, env=e, cwd=c):
 			return Sequential(
-				tasks=tuple(resolve_refs(t, defs, visiting) for t in tasks),
+				*(resolve_refs(t, defs, visiting) for t in tasks),
 				name=n,
 				matrix=m,
 				env=e,
@@ -328,7 +352,7 @@ def resolve_refs(
 			)
 		case Parallel(tasks=tasks, name=n, matrix=m, env=e, cwd=c):
 			return Parallel(
-				tasks=tuple(resolve_refs(t, defs, visiting) for t in tasks),
+				*(resolve_refs(t, defs, visiting) for t in tasks),
 				name=n,
 				matrix=m,
 				env=e,
@@ -368,9 +392,9 @@ def _assign_key_name(node: TaskNode | Ref, key: str) -> TaskNode | Ref:
 		case Task(cmd=cmd, name=None, env=env, cwd=cwd):
 			return Task(cmd=cmd, name=key, env=env, cwd=cwd)
 		case Sequential(tasks=tasks, name=None, matrix=matrix, env=env, cwd=cwd):
-			return Sequential(tasks=tasks, name=key, matrix=matrix, env=env, cwd=cwd)
+			return Sequential(*tasks, name=key, matrix=matrix, env=env, cwd=cwd)
 		case Parallel(tasks=tasks, name=None, matrix=matrix, env=env, cwd=cwd):
-			return Parallel(tasks=tasks, name=key, matrix=matrix, env=env, cwd=cwd)
+			return Parallel(*tasks, name=key, matrix=matrix, env=env, cwd=cwd)
 		case _:
 			return node
 
@@ -401,12 +425,10 @@ def find_tasks_py(start: Path) -> Path | None:
 
 
 def _name_scope_bindings(scope: Mapping[str, object]) -> dict[str, TaskNode]:
-	"""Collect public TaskNode bindings from a mapping of globals and propagate names.
-
-	Each public (non-underscore) ``Task``/``Sequential``/``Parallel`` becomes a named
-	task; nested references by identity (e.g. ``Parallel(tasks=(mypy,))`` where
-	``mypy`` is itself a top-level binding) inherit the binding's name, matching the
-	naming behavior of ``[tool.camas.tasks]`` in pyproject.toml.
+	"""Collect public ``Task``/``Sequential``/``Parallel`` bindings from a module's
+	globals and propagate each top-level binding's name (by id) into nested
+	references — ``Parallel(mypy)`` where ``mypy`` is itself a top-level binding
+	inherits ``mypy``'s name, matching ``[tool.camas.tasks]`` naming.
 	"""
 	bindings: Final = {
 		name: val
@@ -416,18 +438,14 @@ def _name_scope_bindings(scope: Mapping[str, object]) -> dict[str, TaskNode]:
 	named_by_id: Final = {id(val): _assign_key_name(val, name) for name, val in bindings.items()}
 
 	def promote(node: TaskNode) -> TaskNode:
-		source = cast(TaskNode, named_by_id.get(id(node), node))
+		source = cast("TaskNode", named_by_id.get(id(node), node))
 		match source:
 			case Task():
 				return source
 			case Sequential(tasks=children, name=n, matrix=m, env=e, cwd=c):
-				return Sequential(
-					tasks=tuple(promote(ch) for ch in children), name=n, matrix=m, env=e, cwd=c
-				)
+				return Sequential(*(promote(ch) for ch in children), name=n, matrix=m, env=e, cwd=c)
 			case Parallel(tasks=children, name=n, matrix=m, env=e, cwd=c):
-				return Parallel(
-					tasks=tuple(promote(ch) for ch in children), name=n, matrix=m, env=e, cwd=c
-				)
+				return Parallel(*(promote(ch) for ch in children), name=n, matrix=m, env=e, cwd=c)
 			case _:
 				assert_never(source)
 

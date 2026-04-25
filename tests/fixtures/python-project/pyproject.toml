@@ -8,6 +8,9 @@ requires-python = ">=3.10"
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
+[dependency-groups]
+dev = ["mypy", "pyright", "pytest", "ruff"]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
@@ -23,14 +26,20 @@ format_check = "ruff format --check ."
 lint = "ruff check ."
 lint_fix = "ruff check --fix ."
 mypy = "mypy src tests"
+pyright = "pyright src tests"
 test = "pytest"
-typecheck = "Parallel(tasks=(mypy,))"
-check = "Parallel(tasks=(format_check, lint, typecheck, test))"
-fix = "Sequential(tasks=(lint_fix, format))"
-all = "Sequential(tasks=(fix, Parallel(tasks=(typecheck, test))))"
+# Fluent syntax: a set literal becomes a Parallel.
+typecheck = "{mypy, pyright}"
+# Fluent syntax: a tuple literal becomes a Sequential.
+fix = "(lint_fix, format)"
+# Explicit Parallel/Sequential calls also work.
+check = "Parallel(format_check, lint, typecheck, test)"
+# Mixed: tuple-of-(tuple, set) → Sequential of (Sequential, Parallel).
+all = "(fix, {typecheck, test})"
+# Fluent with bare-string leaves (no name bindings) — strings inside fluent
+# literals coerce to anonymous Task(cmd=...).
+quick = "('ruff check .', {'mypy src tests', 'pytest'})"
 build = '''
 Parallel(
-	tasks=(Task("python -m build {FLAG}"),),
-	matrix={"FLAG": ("--sdist", "--wheel")},
-)
+	Task("python -m build {FLAG}"),matrix={"FLAG": ("--sdist", "--wheel")})
 '''

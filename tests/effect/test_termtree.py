@@ -75,7 +75,7 @@ async def drive(
 def test_render_frame_all_waiting_shows_group_header_and_wait_cells(
 	capsys: pytest.CaptureFixture[str],
 ) -> None:
-	tree = Parallel(tasks=(make_task("a"), make_task("b")), name="root")
+	tree = Parallel(make_task("a"), make_task("b"), name="root")
 	rows = flatten_rows(tree)
 	states: tuple[LeafState, ...] = (Waiting(make_task("a")), Waiting(make_task("b")))
 	frame = render_frame(rows, states, term_width=80, display_width=60, now=100.0, wall_start=100.0)
@@ -87,7 +87,7 @@ def test_render_frame_mixed_states() -> None:
 	a = make_task("a")
 	b = make_task("b")
 	c = make_task("c")
-	tree = Parallel(tasks=(a, b, c))
+	tree = Parallel(a, b, c)
 	rows = flatten_rows(tree)
 	states: tuple[LeafState, ...] = (
 		Completed(a, Finished(0, 0.1, (b"all clean\n",))),
@@ -102,7 +102,7 @@ def test_render_frame_mixed_states() -> None:
 
 def test_render_frame_failure_summary() -> None:
 	a = make_task("a")
-	tree = Parallel(tasks=(a,))
+	tree = Parallel(a)
 	rows = flatten_rows(tree)
 	states: tuple[LeafState, ...] = (Completed(a, Finished(1, 0.1, (b"boom\n",))),)
 	frame = render_frame(rows, states, term_width=80, display_width=60, now=100.5, wall_start=100.0)
@@ -140,7 +140,7 @@ def test_print_passes_outputs_passed_task(capsys: pytest.CaptureFixture[str]) ->
 def test_termtree_show_passing_prints_passed_output(
 	capsys: pytest.CaptureFixture[str],
 ) -> None:
-	task = Parallel(tasks=(make_task("a"), make_task("b")))
+	task = Parallel(make_task("a"), make_task("b"))
 	events: list[TaskEvent] = [
 		StartedEvent(0, 100.0),
 		StartedEvent(1, 100.0),
@@ -164,7 +164,7 @@ def test_termtree_show_passing_prints_passed_output(
 def test_termtree_show_passing_defaults_to_false(
 	capsys: pytest.CaptureFixture[str],
 ) -> None:
-	task = Parallel(tasks=(make_task("a"),))
+	task = Parallel(make_task("a"))
 	events: list[TaskEvent] = [
 		StartedEvent(0, 100.0),
 		CompletedEvent(0, Finished(0, 0.1, (b"quiet\n",))),
@@ -177,7 +177,7 @@ def test_termtree_show_passing_defaults_to_false(
 def test_termtree_effect_consumes_events_and_renders(
 	capsys: pytest.CaptureFixture[str],
 ) -> None:
-	task = Parallel(tasks=(make_task("a"), make_task("b")))
+	task = Parallel(make_task("a"), make_task("b"))
 	events: list[TaskEvent] = [
 		StartedEvent(0, 100.0),
 		StartedEvent(1, 100.0),
@@ -218,7 +218,7 @@ def test_termtree_effect_handles_groups_and_skipped(
 ) -> None:
 	a = make_task("a")
 	b = make_task("b")
-	task = Sequential(tasks=(a, b), name="pipeline")
+	task = Sequential(a, b, name="pipeline")
 	events: list[TaskEvent] = [
 		StartedEvent(0, 100.0),
 		CompletedEvent(0, Finished(1, 0.1, (b"failed\n",))),
@@ -263,7 +263,7 @@ def test_render_lines_never_exceed_term_width_for_long_matrix_names(
 		("python", "-c", "pass"),
 		name="build postgres/release [DB=postgres, OPT=release]",
 	)
-	tree = Sequential(tasks=(long_task,), name="ci [DB=postgres, OPT=release]")
+	tree = Sequential(long_task, name="ci [DB=postgres, OPT=release]")
 	rows = flatten_rows(tree)
 	display_width = term_width - STATUS_COL_WIDTH - 1
 	states: tuple[LeafState, ...] = (state_factory(long_task),)
@@ -284,7 +284,7 @@ def test_strip_ansi_removes_control_chars_and_ansi() -> None:
 
 def test_render_lines_strips_ansi_from_done_tail() -> None:
 	task = make_task("a")
-	rows = flatten_rows(Parallel(tasks=(task,)))
+	rows = flatten_rows(Parallel(task))
 	states: tuple[LeafState, ...] = (
 		Completed(task, Finished(0, 0.1, (b"\x1b[38;5;214mcolored\x1b[0m\n",))),
 	)
@@ -298,7 +298,7 @@ def test_render_lines_strips_ansi_from_done_tail() -> None:
 
 def test_render_lines_strips_ansi_from_running_tail() -> None:
 	task = make_task("a")
-	rows = flatten_rows(Parallel(tasks=(task,)))
+	rows = flatten_rows(Parallel(task))
 	states: tuple[LeafState, ...] = (Running(task, 100.0, b"\x1b[38;5;214mbuilding\x1b[0m"),)
 	lines = render_lines(
 		rows, states, term_width=120, display_width=100, now=100.5, wall_start=100.0
@@ -311,7 +311,7 @@ def test_render_lines_strips_ansi_from_running_tail() -> None:
 def test_render_lines_preserves_full_name_when_it_fits() -> None:
 	"""Name expands fully; the live stream fills only the leftover gap."""
 	task = Task(("python", "-c", "pass"), name="uv run ruff check .")
-	tree = Parallel(tasks=(task,))
+	tree = Parallel(task)
 	rows = flatten_rows(tree)
 	states: tuple[LeafState, ...] = (Completed(task, Finished(0, 0.1, (b"All checks passed!\n",))),)
 	lines = render_lines(
@@ -330,7 +330,7 @@ def test_render_lines_truncates_name_only_when_it_cannot_fit() -> None:
 		("python", "-c", "pass"),
 		name="uv run pytest --doctest-modules -v -m 'not slow' --really-long",
 	)
-	tree = Parallel(tasks=(long_task,))
+	tree = Parallel(long_task)
 	rows = flatten_rows(tree)
 	states: tuple[LeafState, ...] = (Completed(long_task, Finished(0, 0.1, (b"built\n",))),)
 	lines = render_lines(rows, states, term_width=60, display_width=41, now=100.5, wall_start=100.0)
@@ -342,7 +342,7 @@ def test_render_lines_truncates_name_only_when_it_cannot_fit() -> None:
 def test_render_lines_stream_uses_only_leftover_space() -> None:
 	"""When the full command consumes the column, no stream text is rendered."""
 	task = Task(("python", "-c", "pass"), name="x" * 40)
-	tree = Parallel(tasks=(task,))
+	tree = Parallel(task)
 	rows = flatten_rows(tree)
 	states: tuple[LeafState, ...] = (Completed(task, Finished(0, 0.1, (b"shouldnt appear\n",))),)
 	lines = render_lines(rows, states, term_width=60, display_width=41, now=100.5, wall_start=100.0)

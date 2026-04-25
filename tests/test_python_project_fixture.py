@@ -43,6 +43,50 @@ def test_build_matrix_expands_sdist_and_wheel() -> None:
 	assert "[FLAG=--wheel]" in r.stdout
 
 
+def test_typecheck_set_literal_resolves_to_parallel() -> None:
+	"""'{mypy, pyright}' in pyproject.toml should expand into a Parallel of two refs."""
+	r = _camas("--dry-run", "typecheck")
+	assert r.returncode == 0
+	assert "mypy src tests" in r.stdout, r.stdout
+	assert "pyright src tests" in r.stdout, r.stdout
+
+
+def test_fix_tuple_literal_resolves_to_sequential() -> None:
+	"""'(lint_fix, format)' in pyproject.toml should expand into a Sequential of two refs."""
+	r = _camas("--dry-run", "fix")
+	assert r.returncode == 0
+	assert "ruff check --fix ." in r.stdout, r.stdout
+	assert "ruff format ." in r.stdout, r.stdout
+
+
+def test_all_mixed_tuple_and_set_literal() -> None:
+	"""'(fix, {typecheck, test})' should expand to a Sequential containing a Parallel."""
+	r = _camas("--dry-run", "all")
+	assert r.returncode == 0
+	for cmd in (
+		"ruff check --fix .",
+		"ruff format .",
+		"mypy src tests",
+		"pyright src tests",
+		"pytest",
+	):
+		assert cmd in r.stdout, r.stdout
+
+
+def test_quick_fluent_with_bare_strings() -> None:
+	"""Fluent literals with bare-string leaves: strings inside ``(...)``/``{...}``
+	coerce to anonymous ``Task(cmd=...)`` in pyproject.toml just like in CLI
+	expressions."""
+	r = _camas("--dry-run", "quick")
+	assert r.returncode == 0
+	# Outer tuple → Sequential header (" →"), inner set → Parallel header (" ∥")
+	assert "quick →" in r.stdout, r.stdout
+	# Both leaves rendered:
+	assert "ruff check ." in r.stdout
+	assert "mypy src tests" in r.stdout
+	assert "pytest" in r.stdout
+
+
 def test_missing_task_fails() -> None:
 	r = _camas("nonexistent_task_xyz")
 	assert r.returncode == 2

@@ -61,7 +61,7 @@ def test_cmd_env_passed() -> None:
 )
 def test_parallel_returncodes(returncodes: tuple[int, ...], expected_exit: int) -> None:
 	task = Parallel(
-		tasks=tuple(
+		*(
 			Task(("python", "-c", f"raise SystemExit({rc})"), name=f"t{i}")
 			for i, rc in enumerate(returncodes)
 		)
@@ -80,7 +80,7 @@ def test_parallel_returncodes(returncodes: tuple[int, ...], expected_exit: int) 
 )
 def test_sequential_returncodes(returncodes: tuple[int, ...], expected_exit: int) -> None:
 	task = Sequential(
-		tasks=tuple(
+		*(
 			Task(("python", "-c", f"raise SystemExit({rc})"), name=f"t{i}")
 			for i, rc in enumerate(returncodes)
 		)
@@ -90,63 +90,45 @@ def test_sequential_returncodes(returncodes: tuple[int, ...], expected_exit: int
 
 def test_nested_parallel_in_sequential() -> None:
 	task = Sequential(
-		tasks=(
-			Parallel(
-				tasks=(
-					Task(("python", "-c", "pass"), name="p1"),
-					Task(("python", "-c", "pass"), name="p2"),
-				)
-			),
-			Task(("python", "-c", "pass"), name="after"),
-		)
+		Parallel(
+			Task(("python", "-c", "pass"), name="p1"), Task(("python", "-c", "pass"), name="p2")
+		),
+		Task(("python", "-c", "pass"), name="after"),
 	)
 	assert asyncio.run(run(task)).returncode == 0
 
 
 def test_nested_sequential_in_parallel() -> None:
 	task = Parallel(
-		tasks=(
-			Sequential(
-				tasks=(
-					Task(("python", "-c", "pass"), name="s1"),
-					Task(("python", "-c", "pass"), name="s2"),
-				)
-			),
-			Task(("python", "-c", "pass"), name="par"),
-		)
+		Sequential(
+			Task(("python", "-c", "pass"), name="s1"), Task(("python", "-c", "pass"), name="s2")
+		),
+		Task(("python", "-c", "pass"), name="par"),
 	)
 	assert asyncio.run(run(task)).returncode == 0
 
 
 def test_deeply_nested() -> None:
 	task = Sequential(
-		tasks=(
-			Parallel(
-				tasks=(
-					Sequential(
-						tasks=(
-							Task(("python", "-c", "pass"), name="deep1"),
-							Task(("python", "-c", "pass"), name="deep2"),
-						)
-					),
-					Task(("python", "-c", "pass"), name="shallow"),
-				)
+		Parallel(
+			Sequential(
+				Task(("python", "-c", "pass"), name="deep1"),
+				Task(("python", "-c", "pass"), name="deep2"),
 			),
-			Task(("python", "-c", "pass"), name="final"),
-		)
+			Task(("python", "-c", "pass"), name="shallow"),
+		),
+		Task(("python", "-c", "pass"), name="final"),
 	)
 	assert asyncio.run(run(task)).returncode == 0
 
 
 def test_matrix_env_reaches_subprocess() -> None:
 	task = Parallel(
-		tasks=(
-			Task(
-				(
-					"python",
-					"-c",
-					"import os; raise SystemExit(0 if os.environ.get('X')=='1' else 1)",
-				),
+		Task(
+			(
+				"python",
+				"-c",
+				"import os; raise SystemExit(0 if os.environ.get('X')=='1' else 1)",
 			),
 		),
 		matrix={"X": ("1",)},
@@ -156,13 +138,11 @@ def test_matrix_env_reaches_subprocess() -> None:
 
 def test_matrix_substitution_in_cmd() -> None:
 	task = Parallel(
-		tasks=(
-			Task(
-				(
-					"python",
-					"-c",
-					"import sys; raise SystemExit(0 if '{V}' == 'hello' else 1)",
-				),
+		Task(
+			(
+				"python",
+				"-c",
+				"import sys; raise SystemExit(0 if '{V}' == 'hello' else 1)",
 			),
 		),
 		matrix={"V": ("hello",)},
@@ -172,11 +152,9 @@ def test_matrix_substitution_in_cmd() -> None:
 
 def test_parallel_concurrency() -> None:
 	task = Parallel(
-		tasks=(
-			Task(("python", "-c", "import time; time.sleep(1.0)"), name="a"),
-			Task(("python", "-c", "import time; time.sleep(1.0)"), name="b"),
-			Task(("python", "-c", "import time; time.sleep(1.0)"), name="c"),
-		)
+		Task(("python", "-c", "import time; time.sleep(1.0)"), name="a"),
+		Task(("python", "-c", "import time; time.sleep(1.0)"), name="b"),
+		Task(("python", "-c", "import time; time.sleep(1.0)"), name="c"),
 	)
 	start = time.perf_counter()
 	asyncio.run(run(task))
@@ -187,10 +165,8 @@ def test_parallel_concurrency() -> None:
 
 def test_sequential_ordering() -> None:
 	task = Sequential(
-		tasks=(
-			Task(("python", "-c", "import time; time.sleep(0.1)"), name="a"),
-			Task(("python", "-c", "import time; time.sleep(0.1)"), name="b"),
-		)
+		Task(("python", "-c", "import time; time.sleep(0.1)"), name="a"),
+		Task(("python", "-c", "import time; time.sleep(0.1)"), name="b"),
 	)
 	start = time.perf_counter()
 	asyncio.run(run(task))
@@ -212,15 +188,11 @@ def test_task_with_stdout_output() -> None:
 
 def test_sequential_skip_nested_group() -> None:
 	task = Sequential(
-		tasks=(
-			Task(("python", "-c", "raise SystemExit(1)"), name="fail"),
-			Parallel(
-				tasks=(
-					Task(("python", "-c", "pass"), name="skipped1"),
-					Task(("python", "-c", "pass"), name="skipped2"),
-				)
-			),
-		)
+		Task(("python", "-c", "raise SystemExit(1)"), name="fail"),
+		Parallel(
+			Task(("python", "-c", "pass"), name="skipped1"),
+			Task(("python", "-c", "pass"), name="skipped2"),
+		),
 	)
 	result = asyncio.run(run(task))
 	assert result.returncode == 1
@@ -228,13 +200,8 @@ def test_sequential_skip_nested_group() -> None:
 
 def test_matrix_nested_sequential_in_parallel() -> None:
 	task = Parallel(
-		tasks=(
-			Sequential(
-				tasks=(
-					Task(("python", "-c", "pass"), name="a"),
-					Task(("python", "-c", "pass"), name="b"),
-				)
-			),
+		Sequential(
+			Task(("python", "-c", "pass"), name="a"), Task(("python", "-c", "pass"), name="b")
 		),
 		matrix={"X": ("1", "2")},
 	)
@@ -245,10 +212,8 @@ def test_matrix_nested_sequential_in_parallel() -> None:
 
 def test_run_result_has_structured_results() -> None:
 	task = Parallel(
-		tasks=(
-			Task(("python", "-c", "pass"), name="a"),
-			Task(("python", "-c", "raise SystemExit(1)"), name="b"),
-		)
+		Task(("python", "-c", "pass"), name="a"),
+		Task(("python", "-c", "raise SystemExit(1)"), name="b"),
 	)
 	result = asyncio.run(run(task))
 	assert result.returncode == 1

@@ -18,7 +18,7 @@ def test_single_cmd() -> None:
 
 
 def test_parallel() -> None:
-	task = Parallel(tasks=(Task("a"), Task("b"), Task("c")))
+	task = Parallel(Task("a"), Task("b"), Task("c"))
 	leaves = flatten_leaves(task)
 	assert [leaf.task.cmd for leaf in leaves] == ["a", "b", "c"]
 	assert [leaf.depth for leaf in leaves] == [1, 1, 1]
@@ -30,7 +30,7 @@ def test_parallel() -> None:
 
 
 def test_sequential() -> None:
-	task = Sequential(tasks=(Task("a"), Task("b")))
+	task = Sequential(Task("a"), Task("b"))
 	leaves = flatten_leaves(task)
 	assert [leaf.task.cmd for leaf in leaves] == ["a", "b"]
 	assert [leaf.is_last_chain for leaf in leaves] == [
@@ -40,12 +40,7 @@ def test_sequential() -> None:
 
 
 def test_nested_parallel_in_sequential() -> None:
-	task = Sequential(
-		tasks=(
-			Parallel(tasks=(Task("a"), Task("b"))),
-			Task("c"),
-		)
-	)
+	task = Sequential(Parallel(Task("a"), Task("b")), Task("c"))
 	leaves = flatten_leaves(task)
 	assert [leaf.task.cmd for leaf in leaves] == ["a", "b", "c"]
 	assert [leaf.depth for leaf in leaves] == [2, 2, 1]
@@ -57,17 +52,7 @@ def test_nested_parallel_in_sequential() -> None:
 
 
 def test_deeply_nested() -> None:
-	task = Parallel(
-		tasks=(
-			Sequential(
-				tasks=(
-					Parallel(tasks=(Task("a"), Task("b"))),
-					Task("c"),
-				)
-			),
-			Task("d"),
-		)
-	)
+	task = Parallel(Sequential(Parallel(Task("a"), Task("b")), Task("c")), Task("d"))
 	leaves = flatten_leaves(task)
 	assert [leaf.task.cmd for leaf in leaves] == ["a", "b", "c", "d"]
 	assert [leaf.depth for leaf in leaves] == [3, 3, 2, 1]
@@ -87,7 +72,7 @@ def test_leaf_task_reference(cmd: Task, expected_cmd: str | tuple[str, ...]) -> 
 
 
 def test_print_tree(capsys: pytest.CaptureFixture[str]) -> None:
-	task = Parallel(tasks=(Task("a", name="alpha"), Task("b", name="beta")))
+	task = Parallel(Task("a", name="alpha"), Task("b", name="beta"))
 	print_tree(task)
 	captured = capsys.readouterr()
 	assert "alpha" in captured.out
@@ -97,12 +82,7 @@ def test_print_tree(capsys: pytest.CaptureFixture[str]) -> None:
 
 
 def test_print_tree_deeply_nested(capsys: pytest.CaptureFixture[str]) -> None:
-	task = Sequential(
-		tasks=(
-			Parallel(tasks=(Task("a"), Task("b"))),
-			Task("c"),
-		)
-	)
+	task = Sequential(Parallel(Task("a"), Task("b")), Task("c"))
 	print_tree(task)
 	captured = capsys.readouterr()
 	assert "│ ┃ a" in captured.out
@@ -112,10 +92,8 @@ def test_print_tree_deeply_nested(capsys: pytest.CaptureFixture[str]) -> None:
 
 def test_print_tree_parallel_of_sequential_nests_column(capsys: pytest.CaptureFixture[str]) -> None:
 	task = Parallel(
-		tasks=(
-			Sequential(tasks=(Task("a"), Task("b")), name="left"),
-			Sequential(tasks=(Task("c"), Task("d")), name="right"),
-		)
+		Sequential(Task("a"), Task("b"), name="left"),
+		Sequential(Task("c"), Task("d"), name="right"),
 	)
 	print_tree(task)
 	captured = capsys.readouterr()

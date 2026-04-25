@@ -17,40 +17,24 @@ from camas.main import parse_expression
 		('Task(("echo", "hi"))', Task(("echo", "hi"))),
 		('Task("test", env={"X": "1"})', Task("test", env={"X": "1"})),
 		(
-			'Parallel(tasks=(Task("a"), Task("b")))',
-			Parallel(tasks=(Task("a"), Task("b"))),
+			'Parallel(Task("a"),Task("b"))',
+			Parallel(Task("a"), Task("b")),
 		),
 		(
-			'Sequential(tasks=(Task("a"), Task("b")))',
-			Sequential(tasks=(Task("a"), Task("b"))),
+			'Sequential(Task("a"),Task("b"))',
+			Sequential(Task("a"), Task("b")),
 		),
 		(
-			'Sequential(tasks=(Parallel(tasks=(Task("a"), Task("b"))), Task("c")))',
-			Sequential(tasks=(Parallel(tasks=(Task("a"), Task("b"))), Task("c"))),
+			'Sequential(Parallel(Task("a"),Task("b")),Task("c"))',
+			Sequential(Parallel(Task("a"), Task("b")), Task("c")),
 		),
 		(
-			'Parallel(tasks=(Sequential(tasks=(Task("a"), Task("b"))), Task("c")))',
-			Parallel(tasks=(Sequential(tasks=(Task("a"), Task("b"))), Task("c"))),
+			'Parallel(Sequential(Task("a"),Task("b")),Task("c"))',
+			Parallel(Sequential(Task("a"), Task("b")), Task("c")),
 		),
 		(
-			"""Sequential(tasks=(
-				Parallel(tasks=(
-					Sequential(tasks=(Task("a"), Task("b"))),
-					Task("c"),
-				)),
-				Task("d"),
-			))""",
-			Sequential(
-				tasks=(
-					Parallel(
-						tasks=(
-							Sequential(tasks=(Task("a"), Task("b"))),
-							Task("c"),
-						)
-					),
-					Task("d"),
-				)
-			),
+			"""Sequential(Parallel(Sequential(Task("a"),Task("b")),Task("c")),Task("d"))""",
+			Sequential(Parallel(Sequential(Task("a"), Task("b")), Task("c")), Task("d")),
 		),
 	],
 )
@@ -62,40 +46,30 @@ def test_parse_expression(expr: str, expected: Task | Parallel | Sequential) -> 
 	("expr", "expected"),
 	[
 		(
-			'Parallel(tasks=(Task("test"),), matrix={"PY": ("3.12", "3.13")})',
-			Parallel(tasks=(Task("test"),), matrix={"PY": ("3.12", "3.13")}),
+			'Parallel(Task("test"),matrix={"PY": ("3.12", "3.13")})',
+			Parallel(Task("test"), matrix={"PY": ("3.12", "3.13")}),
 		),
 		(
-			'Parallel(tasks=(Task("build"),), matrix={"OS": ("linux", "mac"), "PY": ("3.12", "3.13", "3.14")})',
+			'Parallel(Task("build"),matrix={"OS": ("linux", "mac"), "PY": ("3.12", "3.13", "3.14")})',
 			Parallel(
-				tasks=(Task("build"),),
-				matrix={"OS": ("linux", "mac"), "PY": ("3.12", "3.13", "3.14")},
+				Task("build"), matrix={"OS": ("linux", "mac"), "PY": ("3.12", "3.13", "3.14")}
 			),
 		),
 		(
-			'Sequential(tasks=(Task("a"),), matrix={"X": ("1",)})',
-			Sequential(tasks=(Task("a"),), matrix={"X": ("1",)}),
+			'Sequential(Task("a"),matrix={"X": ("1",)})',
+			Sequential(Task("a"), matrix={"X": ("1",)}),
 		),
 		(
-			'Parallel(tasks=(Task("pytest --python {PY}"),), matrix={"PY": ("3.12", "3.13", "3.14")})',
-			Parallel(
-				tasks=(Task("pytest --python {PY}"),),
-				matrix={"PY": ("3.12", "3.13", "3.14")},
-			),
+			'Parallel(Task("pytest --python {PY}"),matrix={"PY": ("3.12", "3.13", "3.14")})',
+			Parallel(Task("pytest --python {PY}"), matrix={"PY": ("3.12", "3.13", "3.14")}),
 		),
 		(
-			'Sequential(tasks=(Task("build {OS}"), Task("test {OS}")), matrix={"OS": ("linux", "mac")})',
-			Sequential(
-				tasks=(Task("build {OS}"), Task("test {OS}")),
-				matrix={"OS": ("linux", "mac")},
-			),
+			'Sequential(Task("build {OS}"),Task("test {OS}"),matrix={"OS": ("linux", "mac")})',
+			Sequential(Task("build {OS}"), Task("test {OS}"), matrix={"OS": ("linux", "mac")}),
 		),
 		(
-			'Parallel(tasks=(Task(("uv", "run", "--python", "{PY}", "pytest")),), matrix={"PY": ("3.12",)})',
-			Parallel(
-				tasks=(Task(("uv", "run", "--python", "{PY}", "pytest")),),
-				matrix={"PY": ("3.12",)},
-			),
+			'Parallel(Task(("uv", "run", "--python", "{PY}", "pytest")),matrix={"PY": ("3.12",)})',
+			Parallel(Task(("uv", "run", "--python", "{PY}", "pytest")), matrix={"PY": ("3.12",)}),
 		),
 	],
 )
@@ -134,9 +108,8 @@ def test_parse_rejects_unknown_type() -> None:
 		parse_expression('Foo(tasks=(Task("a"),))')
 
 
-def test_parse_bare_string_not_a_task() -> None:
-	with pytest.raises(SystemExit, match="2"):
-		parse_expression('"just a string"')
+def test_parse_bare_string_coerces_to_task() -> None:
+	assert parse_expression('"just a string"') == Task("just a string")
 
 
 def test_parse_task_requires_cmd() -> None:
@@ -146,8 +119,54 @@ def test_parse_task_requires_cmd() -> None:
 
 def test_parse_ref_requires_name() -> None:
 	with pytest.raises(SystemExit, match="2"):
-		parse_expression("Parallel(tasks=(Ref(),))", tasks={})
+		parse_expression("Parallel(Ref())", tasks={})
 
 
 def test_parse_explicit_none_name() -> None:
 	assert parse_expression('Task("hi", name=None)') == Task("hi", name=None)
+
+
+# Parser-side fluent syntax: strings inside literals and the README one-liner.
+
+
+def test_parse_top_level_tuple_with_bare_strings() -> None:
+	assert parse_expression('("a", "b", "c")') == Sequential(Task("a"), Task("b"), Task("c"))
+
+
+def test_parse_top_level_set_with_bare_strings() -> None:
+	result = parse_expression('{"a", "b", "c"}')
+	assert isinstance(result, Parallel)
+	assert {t.cmd for t in result.tasks if isinstance(t, Task)} == {"a", "b", "c"}
+
+
+def test_parse_readme_oneliner_mixed_str_tuple_set() -> None:
+	"""The exact CLI example from README/EXAMPLES — outer tuple, inner set, bare strings."""
+	result = parse_expression('("ruff format . --check", {"mypy .", "pyright ."}, "pytest")')
+	assert isinstance(result, Sequential)
+	assert result.tasks[0] == Task("ruff format . --check")
+	assert isinstance(result.tasks[1], Parallel)
+	assert {t.cmd for t in result.tasks[1].tasks if isinstance(t, Task)} == {
+		"mypy .",
+		"pyright .",
+	}
+	assert result.tasks[2] == Task("pytest")
+
+
+def test_parse_deeply_nested_fluent() -> None:
+	"""Tuple containing a set containing a tuple."""
+	result = parse_expression('("a", {("b", "c"), "d"})')
+	assert isinstance(result, Sequential)
+	assert result.tasks[0] == Task("a")
+	assert isinstance(result.tasks[1], Parallel)
+
+
+def test_parse_bare_string_in_explicit_call() -> None:
+	"""Inside a Sequential/Parallel call, a bare string still coerces to Task."""
+	assert parse_expression('Sequential("a", "b")') == Sequential(Task("a"), Task("b"))
+
+
+def test_parse_fluent_with_explicit_constructors_mixed() -> None:
+	"""Mixing fluent and explicit forms is fine."""
+	result = parse_expression('Sequential(Task("setup"), {"x", "y"})')
+	assert isinstance(result, Sequential)
+	assert isinstance(result.tasks[1], Parallel)

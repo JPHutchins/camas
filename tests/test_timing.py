@@ -22,87 +22,53 @@ def _s(t: float, name: str) -> Task:
 	("task", "min_time", "max_time"),
 	[
 		(
-			Parallel(tasks=(_s(0.3, "a"), _s(0.3, "b"), _s(0.3, "c"))),
+			Parallel(_s(0.3, "a"), _s(0.3, "b"), _s(0.3, "c")),
 			0.3,
 			0.8,
 		),
 		(
-			Sequential(tasks=(_s(0.15, "a"), _s(0.15, "b"))),
+			Sequential(_s(0.15, "a"), _s(0.15, "b")),
 			0.3,
 			0.8,
 		),
 		(
-			Sequential(
-				tasks=(
-					Parallel(tasks=(_s(0.2, "p1"), _s(0.2, "p2"))),
-					_s(0.2, "after"),
-				)
-			),
+			Sequential(Parallel(_s(0.2, "p1"), _s(0.2, "p2")), _s(0.2, "after")),
 			0.4,
 			1.0,
 		),
 		(
-			Parallel(
-				tasks=(
-					Sequential(tasks=(_s(0.15, "s1"), _s(0.15, "s2"))),
-					_s(0.15, "par"),
-				)
-			),
+			Parallel(Sequential(_s(0.15, "s1"), _s(0.15, "s2")), _s(0.15, "par")),
 			0.3,
 			0.8,
 		),
 		(
 			Sequential(
-				tasks=(
-					Parallel(tasks=(_s(0.15, "a"), _s(0.15, "b"))),
-					Parallel(tasks=(_s(0.15, "c"), _s(0.15, "d"))),
-				)
+				Parallel(_s(0.15, "a"), _s(0.15, "b")), Parallel(_s(0.15, "c"), _s(0.15, "d"))
 			),
 			0.3,
 			0.8,
 		),
 		(
 			Parallel(
-				tasks=(
-					Sequential(tasks=(_s(0.1, "s1a"), _s(0.1, "s1b"))),
-					Sequential(tasks=(_s(0.1, "s2a"), _s(0.1, "s2b"))),
-					Sequential(tasks=(_s(0.1, "s3a"), _s(0.1, "s3b"))),
-				)
+				Sequential(_s(0.1, "s1a"), _s(0.1, "s1b")),
+				Sequential(_s(0.1, "s2a"), _s(0.1, "s2b")),
+				Sequential(_s(0.1, "s3a"), _s(0.1, "s3b")),
 			),
 			0.2,
 			0.7,
 		),
 		(
 			Sequential(
-				tasks=(
-					Parallel(
-						tasks=(
-							Sequential(tasks=(_s(0.1, "deep1"), _s(0.1, "deep2"))),
-							_s(0.1, "shallow"),
-						)
-					),
-					_s(0.1, "final"),
-				)
+				Parallel(Sequential(_s(0.1, "deep1"), _s(0.1, "deep2")), _s(0.1, "shallow")),
+				_s(0.1, "final"),
 			),
 			0.3,
 			1.2,
 		),
 		(
 			Parallel(
-				tasks=(
-					Sequential(
-						tasks=(
-							Parallel(tasks=(_s(0.1, "a"), _s(0.1, "b"))),
-							_s(0.1, "c"),
-						)
-					),
-					Sequential(
-						tasks=(
-							_s(0.1, "d"),
-							Parallel(tasks=(_s(0.1, "e"), _s(0.1, "f"))),
-						)
-					),
-				)
+				Sequential(Parallel(_s(0.1, "a"), _s(0.1, "b")), _s(0.1, "c")),
+				Sequential(_s(0.1, "d"), Parallel(_s(0.1, "e"), _s(0.1, "f"))),
 			),
 			0.2,
 			0.7,

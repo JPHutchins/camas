@@ -9,7 +9,7 @@ from camas import Parallel, Sequential, Task, expand_matrix
 
 
 def test_no_matrix_passthrough() -> None:
-	task = Parallel(tasks=(Task("echo hi"),))
+	task = Parallel(Task("echo hi"))
 	result = expand_matrix(task)
 	match result:
 		case Parallel(tasks=(Task(cmd="echo hi"),)):
@@ -26,7 +26,7 @@ def test_no_matrix_passthrough() -> None:
 	],
 )
 def test_single_dim_parallel(matrix: dict[str, tuple[str, ...]], expected_count: int) -> None:
-	task = Parallel(tasks=(Task("test"),), matrix=matrix)
+	task = Parallel(Task("test"), matrix=matrix)
 	result = expand_matrix(task)
 	match result:
 		case Parallel(tasks=children):
@@ -46,7 +46,7 @@ def test_single_dim_parallel(matrix: dict[str, tuple[str, ...]], expected_count:
 def test_multi_dim_cartesian_product(
 	matrix: dict[str, tuple[str, ...]], expected_count: int
 ) -> None:
-	task = Parallel(tasks=(Task("build"),), matrix=matrix)
+	task = Parallel(Task("build"), matrix=matrix)
 	result = expand_matrix(task)
 	match result:
 		case Parallel(tasks=children):
@@ -56,10 +56,7 @@ def test_multi_dim_cartesian_product(
 
 
 def test_substitution_in_str_cmd() -> None:
-	task = Parallel(
-		tasks=(Task("test --python {PY}"),),
-		matrix={"PY": ("3.12", "3.13")},
-	)
+	task = Parallel(Task("test --python {PY}"), matrix={"PY": ("3.12", "3.13")})
 	result = expand_matrix(task)
 	match result:
 		case Parallel(tasks=(Task(cmd=cmd1), Task(cmd=cmd2))):
@@ -74,10 +71,7 @@ def test_substitution_in_str_cmd() -> None:
 
 
 def test_substitution_in_tuple_cmd() -> None:
-	task = Parallel(
-		tasks=(Task(("test", "--python", "{PY}")),),
-		matrix={"PY": ("3.12",)},
-	)
+	task = Parallel(Task(("test", "--python", "{PY}")), matrix={"PY": ("3.12",)})
 	result = expand_matrix(task)
 	match result:
 		case Parallel(tasks=(Task(cmd=cmd),)):
@@ -88,10 +82,7 @@ def test_substitution_in_tuple_cmd() -> None:
 
 
 def test_env_merge_preserves_existing() -> None:
-	task = Parallel(
-		tasks=(Task("test", env={"EXISTING": "val"}),),
-		matrix={"PY": ("3.12",)},
-	)
+	task = Parallel(Task("test", env={"EXISTING": "val"}), matrix={"PY": ("3.12",)})
 	result = expand_matrix(task)
 	match result:
 		case Parallel(tasks=(Task(env=env),)):
@@ -102,11 +93,7 @@ def test_env_merge_preserves_existing() -> None:
 
 
 def test_sequential_clones_to_parallel_of_sequentials() -> None:
-	task = Sequential(
-		tasks=(Task("build"), Task("test")),
-		name="ci",
-		matrix={"PY": ("3.12", "3.13")},
-	)
+	task = Sequential(Task("build"), Task("test"), name="ci", matrix={"PY": ("3.12", "3.13")})
 	result = expand_matrix(task)
 	match result:
 		case Parallel(tasks=children):
@@ -122,11 +109,8 @@ def test_sequential_clones_to_parallel_of_sequentials() -> None:
 
 
 def test_nested_group_children() -> None:
-	inner = Parallel(tasks=(Task("lint"), Task("test")))
-	task = Parallel(
-		tasks=(inner,),
-		matrix={"PY": ("3.12", "3.13")},
-	)
+	inner = Parallel(Task("lint"), Task("test"))
+	task = Parallel(inner, matrix={"PY": ("3.12", "3.13")})
 	result = expand_matrix(task)
 	match result:
 		case Parallel(tasks=children):
@@ -142,10 +126,7 @@ def test_nested_group_children() -> None:
 
 
 def test_container_env_propagates_to_leaves() -> None:
-	task = Parallel(
-		tasks=(Task("a"), Task("b")),
-		env={"K": "v"},
-	)
+	task = Parallel(Task("a"), Task("b"), env={"K": "v"})
 	result = expand_matrix(task)
 	match result:
 		case Parallel(tasks=(Task(env=ea), Task(env=eb))):
@@ -156,10 +137,7 @@ def test_container_env_propagates_to_leaves() -> None:
 
 
 def test_container_env_template_substituted_via_matrix() -> None:
-	task = Sequential(
-		tasks=(Parallel(tasks=(Task("x"),), env={"VENV": ".venv-{PY}"}),),
-		matrix={"PY": ("3.10",)},
-	)
+	task = Sequential(Parallel(Task("x"), env={"VENV": ".venv-{PY}"}), matrix={"PY": ("3.10",)})
 	result = expand_matrix(task)
 	match result:
 		case Parallel(tasks=(Sequential(tasks=(Parallel(tasks=(Task(env=env),)),)),)):
@@ -169,10 +147,7 @@ def test_container_env_template_substituted_via_matrix() -> None:
 
 
 def test_task_env_overrides_container_env() -> None:
-	task = Parallel(
-		tasks=(Task("x", env={"K": "task"}),),
-		env={"K": "container"},
-	)
+	task = Parallel(Task("x", env={"K": "task"}), env={"K": "container"})
 	result = expand_matrix(task)
 	match result:
 		case Parallel(tasks=(Task(env=env),)):
@@ -183,9 +158,7 @@ def test_task_env_overrides_container_env() -> None:
 
 def test_binding_overrides_both_container_and_task_env() -> None:
 	task = Parallel(
-		tasks=(Task("x", env={"PY": "task"}),),
-		env={"PY": "container"},
-		matrix={"PY": ("3.10",)},
+		Task("x", env={"PY": "task"}), env={"PY": "container"}, matrix={"PY": ("3.10",)}
 	)
 	result = expand_matrix(task)
 	match result:
@@ -200,10 +173,7 @@ def test_binding_overrides_both_container_and_task_env() -> None:
 	["[PY=3.12]", "[PY=3.13]"],
 )
 def test_name_suffix_applied(name_suffix: str) -> None:
-	task = Parallel(
-		tasks=(Task("test"),),
-		matrix={"PY": ("3.12", "3.13")},
-	)
+	task = Parallel(Task("test"), matrix={"PY": ("3.12", "3.13")})
 	result = expand_matrix(task)
 	match result:
 		case Parallel(tasks=children):

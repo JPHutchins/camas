@@ -11,6 +11,7 @@ import shlex
 import sys
 import time
 from collections.abc import Awaitable, Callable, Iterable, Iterator, Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from subprocess import STDOUT
 from typing import Any, Final, NamedTuple, Protocol, TypeAlias, TypeVar
@@ -42,11 +43,18 @@ MatrixBinding: TypeAlias = tuple[VarBinding, ...]
 class Task(NamedTuple):
 	"""A leaf task that executes a shell command.
 
+	Hashable: ``env`` is a ``dict`` for ergonomic input/iteration, but ``__hash__``
+	uses a sorted-pairs view so ``Task`` can live in sets and dict keys.
+
 	>>> Task("echo hi")
 	Task(cmd='echo hi', name=None, env={}, cwd=None)
 	>>> Task(("ruff", "check", "."), name="lint")
 	Task(cmd=('ruff', 'check', '.'), name='lint', env={}, cwd=None)
 	>>> Task("cargo test", cwd=Path("src-tauri")).cwd == Path("src-tauri")
+	True
+	>>> hash(Task("a")) == hash(Task("a"))
+	True
+	>>> {Task("a", env={"K": "v"}), Task("a", env={"K": "v"})} == {Task("a", env={"K": "v"})}
 	True
 	"""
 
@@ -55,33 +63,75 @@ class Task(NamedTuple):
 	env: dict[str, str] = {}
 	cwd: Path | None = None
 
+	def __hash__(self) -> int:
+		return hash((self.cmd, self.name, tuple(sorted(self.env.items())), self.cwd))
 
-class Sequential(NamedTuple):
+
+@dataclass(frozen=True, slots=True, init=False)
+class Group:
+	"""Shared base for ``Sequential`` and ``Parallel``: variadic ``*tasks`` (with
+	``str`` → ``Task`` coercion), identical kwargs, hashable. Use
+	``isinstance(x, Group)`` to test for "either kind of grouping node";
+	pattern-match on the concrete subclass to discriminate.
+
+	>>> isinstance(Sequential("a"), Group) and isinstance(Parallel("a"), Group)
+	True
+	>>> hash(Sequential("a")) == hash(Sequential("a"))
+	True
+	"""
+
+	tasks: tuple[TaskNode, ...]
+	name: str | None
+	matrix: dict[str, tuple[str, ...]] | None
+	env: dict[str, str]
+	cwd: Path | None
+
+	def __init__(
+		self,
+		*tasks: TaskNode | str,
+		name: str | None = None,
+		matrix: dict[str, tuple[str, ...]] | None = None,
+		env: dict[str, str] | None = None,
+		cwd: Path | None = None,
+	) -> None:
+		put = object.__setattr__
+		put(self, "tasks", tuple(Task(cmd=t) if isinstance(t, str) else t for t in tasks))
+		put(self, "name", name)
+		put(self, "matrix", matrix)
+		put(self, "env", env if env is not None else {})
+		put(self, "cwd", cwd)
+
+	def __hash__(self) -> int:
+		matrix_key = None if self.matrix is None else tuple(sorted(self.matrix.items()))
+		return hash(
+			(
+				self.tasks,
+				self.name,
+				matrix_key,
+				tuple(sorted(self.env.items())),
+				self.cwd,
+			)
+		)
+
+
+class Sequential(Group):  # pyrefly: ignore[bad-class-definition]
 	"""A group of tasks that run one after another, short-circuiting on failure.
 
-	>>> Sequential(tasks=(Task("build"), Task("test")), name="ci")
-	Sequential(tasks=(Task(cmd='build', name=None, env={}, cwd=None), Task(cmd='test', name=None, env={}, cwd=None)), name='ci', matrix=None, env={}, cwd=None)
+	>>> Sequential("build", "test", name="ci").tasks
+	(Task(cmd='build', name=None, env={}, cwd=None), Task(cmd='test', name=None, env={}, cwd=None))
 	"""
 
-	tasks: tuple[TaskNode, ...]
-	name: str | None = None
-	matrix: dict[str, tuple[str, ...]] | None = None
-	env: dict[str, str] = {}
-	cwd: Path | None = None
+	__slots__ = ()
 
 
-class Parallel(NamedTuple):
+class Parallel(Group):  # pyrefly: ignore[bad-class-definition]
 	"""A group of tasks that run concurrently.
 
-	>>> Parallel(tasks=(Task("lint"), Task("typecheck")))
-	Parallel(tasks=(Task(cmd='lint', name=None, env={}, cwd=None), Task(cmd='typecheck', name=None, env={}, cwd=None)), name=None, matrix=None, env={}, cwd=None)
+	>>> Parallel("lint", "typecheck").tasks
+	(Task(cmd='lint', name=None, env={}, cwd=None), Task(cmd='typecheck', name=None, env={}, cwd=None))
 	"""
 
-	tasks: tuple[TaskNode, ...]
-	name: str | None = None
-	matrix: dict[str, tuple[str, ...]] | None = None
-	env: dict[str, str] = {}
-	cwd: Path | None = None
+	__slots__ = ()
 
 
 TaskNode: TypeAlias = Task | Sequential | Parallel
@@ -373,13 +423,13 @@ def specialize_node(task: TaskNode, binding: MatrixBinding, suffix: str) -> Task
 			return specialize_task(task, binding, suffix)
 		case Sequential(tasks=tasks, name=name, cwd=cwd):
 			return Sequential(
-				tasks=tuple(specialize_node(t, binding, suffix) for t in tasks),
+				*(specialize_node(t, binding, suffix) for t in tasks),
 				name=f"{name} {suffix}" if name is not None else None,
 				cwd=_substitute_cwd(cwd, binding),
 			)
 		case Parallel(tasks=tasks, name=name, cwd=cwd):
 			return Parallel(
-				tasks=tuple(specialize_node(t, binding, suffix) for t in tasks),
+				*(specialize_node(t, binding, suffix) for t in tasks),
 				name=f"{name} {suffix}" if name is not None else None,
 				cwd=_substitute_cwd(cwd, binding),
 			)
@@ -435,11 +485,9 @@ def expand_sequential_matrix(
 	{'X': '1'}
 	"""
 	return Parallel(
-		tasks=tuple(
+		*(
 			Sequential(
-				tasks=tuple(
-					specialize_node(child, binding, binding_suffix(binding)) for child in children
-				),
+				*(specialize_node(child, binding, binding_suffix(binding)) for child in children),
 				name=(f"{name} {binding_suffix(binding)}" if name is not None else None),
 				env={k: substitute_in_str(v, binding) for k, v in container_env.items()}
 				| dict(binding),
@@ -469,7 +517,7 @@ def expand_parallel_matrix(
 	2
 	"""
 	return Parallel(
-		tasks=tuple(
+		*(
 			specialize_node(child, binding, binding_suffix(binding))
 			for binding in matrix_bindings(matrix)
 			for child in children
@@ -493,12 +541,12 @@ def expand_matrix(
 
 	>>> expand_matrix(Task("echo hi"))
 	Task(cmd='echo hi', name=None, env={}, cwd=None)
-	>>> result = expand_matrix(Parallel(tasks=(Task("test"),), matrix={"X": ("1", "2")}))
+	>>> result = expand_matrix(Parallel(Task("test"), matrix={"X": ("1", "2")}))
 	>>> len(result.tasks)  # type: ignore[union-attr]
 	2
-	>>> expand_matrix(Parallel(tasks=(Task("hi"),), env={"K": "v"})).tasks[0].env  # type: ignore[union-attr]
+	>>> expand_matrix(Parallel(Task("hi"), env={"K": "v"})).tasks[0].env  # type: ignore[union-attr]
 	{'K': 'v'}
-	>>> expand_matrix(Parallel(tasks=(Task("hi"),), cwd=Path("w"))).tasks[0].cwd == Path("w")  # type: ignore[union-attr]
+	>>> expand_matrix(Parallel(Task("hi"), cwd=Path("w"))).tasks[0].cwd == Path("w")  # type: ignore[union-attr]
 	True
 	"""
 	parent_env: Final = dict(ancestor_env) if ancestor_env else {}
@@ -515,14 +563,14 @@ def expand_matrix(
 			seq_cwd: Final = cwd if cwd is not None else ancestor_cwd
 			seq_expanded: Final = tuple(expand_matrix(t, seq_env, seq_cwd) for t in tasks)
 			if matrix is None:
-				return Sequential(tasks=seq_expanded, name=task.name, env=env, cwd=cwd)
+				return Sequential(*seq_expanded, name=task.name, env=env, cwd=cwd)
 			return expand_sequential_matrix(seq_expanded, matrix, task.name, env, cwd)
 		case Parallel(tasks=tasks, matrix=matrix, env=env, cwd=cwd):
 			par_env: Final = parent_env | env
 			par_cwd: Final = cwd if cwd is not None else ancestor_cwd
 			par_expanded: Final = tuple(expand_matrix(t, par_env, par_cwd) for t in tasks)
 			if matrix is None:
-				return Parallel(tasks=par_expanded, name=task.name, env=env, cwd=cwd)
+				return Parallel(*par_expanded, name=task.name, env=env, cwd=cwd)
 			return expand_parallel_matrix(par_expanded, matrix, task.name, env, cwd)
 		case _:
 			assert_never(task)
@@ -550,13 +598,13 @@ def iter_leaves(
 def flatten_leaves(task: TaskNode) -> tuple[LeafInfo, ...]:
 	"""Flatten a task tree into a tuple of LeafInfo in depth-first order.
 
-	>>> [info.task.cmd for info in flatten_leaves(Parallel(tasks=(Task("a"), Task("b"))))]
+	>>> [info.task.cmd for info in flatten_leaves(Parallel(Task("a"), Task("b")))]
 	['a', 'b']
 	>>> flatten_leaves(Task("echo hi"))[0].depth
 	0
-	>>> flatten_leaves(Parallel(tasks=(Task("a"), Task("b"))))[0].is_last_chain
+	>>> flatten_leaves(Parallel(Task("a"), Task("b")))[0].is_last_chain
 	(ChainLink(is_last=False, parent_is_parallel=True),)
-	>>> flatten_leaves(Parallel(tasks=(Task("a"), Task("b"))))[1].is_last_chain
+	>>> flatten_leaves(Parallel(Task("a"), Task("b")))[1].is_last_chain
 	(ChainLink(is_last=True, parent_is_parallel=True),)
 	"""
 	return tuple(iter_leaves(task, depth=0, is_last_chain=()))
@@ -566,7 +614,7 @@ def build_leaf_index_map(task: TaskNode) -> dict[int, int]:
 	"""Map `id(Task)` to leaf index (depth-first position) for the whole tree.
 
 	>>> t1, t2 = Task("a"), Task("b")
-	>>> m = build_leaf_index_map(Parallel(tasks=(t1, t2)))
+	>>> m = build_leaf_index_map(Parallel(t1, t2))
 	>>> m[id(t1)], m[id(t2)]
 	(0, 1)
 	"""
@@ -577,7 +625,7 @@ def subtree_leaf_indices(task: TaskNode, index_map: dict[int, int]) -> tuple[int
 	"""Collect all leaf indices within a subtree.
 
 	>>> t1, t2 = Task("a"), Task("b")
-	>>> tree = Parallel(tasks=(t1, t2))
+	>>> tree = Parallel(t1, t2)
 	>>> subtree_leaf_indices(tree, build_leaf_index_map(tree))
 	(0, 1)
 	"""

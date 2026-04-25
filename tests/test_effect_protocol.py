@@ -62,10 +62,7 @@ def test_silent_run_returns_results() -> None:
 def test_effect_lifecycle_threads_context_through() -> None:
 	recorder = Recorder()
 	task = Parallel(
-		tasks=(
-			Task(("python", "-c", "pass"), name="a"),
-			Task(("python", "-c", "pass"), name="b"),
-		)
+		Task(("python", "-c", "pass"), name="a"), Task(("python", "-c", "pass"), name="b")
 	)
 	asyncio.run(run(task, effects=(recorder,)))
 
@@ -82,10 +79,7 @@ def test_effect_lifecycle_threads_context_through() -> None:
 def test_each_leaf_sees_only_its_own_events() -> None:
 	recorder = Recorder()
 	task = Parallel(
-		tasks=(
-			Task(("python", "-c", "pass"), name="a"),
-			Task(("python", "-c", "pass"), name="b"),
-		)
+		Task(("python", "-c", "pass"), name="a"), Task(("python", "-c", "pass"), name="b")
 	)
 	asyncio.run(run(task, effects=(recorder,)))
 
@@ -101,10 +95,8 @@ def test_multi_effect_receives_identical_streams() -> None:
 	asyncio.run(
 		run(
 			Sequential(
-				tasks=(
-					Task(("python", "-c", "pass"), name="one"),
-					Task(("python", "-c", "pass"), name="two"),
-				)
+				Task(("python", "-c", "pass"), name="one"),
+				Task(("python", "-c", "pass"), name="two"),
 			),
 			effects=(a, b),
 		)
@@ -144,10 +136,8 @@ def test_effect_receives_post_reduction_leaf_state() -> None:
 def test_sequential_skip_emits_skipped_completed_event() -> None:
 	recorder = Recorder()
 	task = Sequential(
-		tasks=(
-			Task(("python", "-c", "raise SystemExit(1)"), name="fail"),
-			Task(("python", "-c", "pass"), name="skipped"),
-		)
+		Task(("python", "-c", "raise SystemExit(1)"), name="fail"),
+		Task(("python", "-c", "pass"), name="skipped"),
 	)
 	asyncio.run(run(task, effects=(recorder,)))
 
@@ -279,10 +269,7 @@ def test_parallel_on_event_runs_concurrently() -> None:
 			pass
 
 	task = Parallel(
-		tasks=(
-			Task(("python", "-c", "pass"), name="a"),
-			Task(("python", "-c", "pass"), name="b"),
-		)
+		Task(("python", "-c", "pass"), name="a"), Task(("python", "-c", "pass"), name="b")
 	)
 	result = asyncio.run(run(task, effects=(Slow(),)))
 	assert result.returncode == 0

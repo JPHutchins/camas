@@ -54,7 +54,7 @@ async def drive(
 def test_summary_renders_only_at_teardown(capsys: pytest.CaptureFixture[str]) -> None:
 	a = make_task("alpha")
 	b = make_task("beta")
-	task = Parallel(tasks=(a, b))
+	task = Parallel(a, b)
 	events: list[TaskEvent] = [
 		StartedEvent(0, 100.0),
 		StartedEvent(1, 100.0),
@@ -87,7 +87,7 @@ def test_summary_renders_only_at_teardown(capsys: pytest.CaptureFixture[str]) ->
 
 def test_summary_failure_prints_details(capsys: pytest.CaptureFixture[str]) -> None:
 	a = make_task("boom")
-	task = Parallel(tasks=(a,))
+	task = Parallel(a)
 	events: list[TaskEvent] = [
 		StartedEvent(0, 100.0),
 		CompletedEvent(0, Finished(1, 0.1, (b"error details\n",))),
@@ -102,7 +102,7 @@ def test_summary_failure_prints_details(capsys: pytest.CaptureFixture[str]) -> N
 def test_summary_sequential_skipped(capsys: pytest.CaptureFixture[str]) -> None:
 	a = make_task("first")
 	b = make_task("second")
-	task = Sequential(tasks=(a, b), name="pipeline")
+	task = Sequential(a, b, name="pipeline")
 	events: list[TaskEvent] = [
 		StartedEvent(0, 100.0),
 		CompletedEvent(0, Finished(1, 0.1, (b"failed\n",))),
@@ -127,7 +127,7 @@ def test_summary_fixed_width_overrides_terminal_detection() -> None:
 def test_summary_show_passing_prints_passed_output(capsys: pytest.CaptureFixture[str]) -> None:
 	a = make_task("alpha")
 	b = make_task("beta")
-	task = Parallel(tasks=(a, b))
+	task = Parallel(a, b)
 	events: list[TaskEvent] = [
 		StartedEvent(0, 100.0),
 		StartedEvent(1, 100.0),
@@ -144,7 +144,7 @@ def test_summary_show_passing_prints_passed_output(capsys: pytest.CaptureFixture
 
 def test_summary_show_passing_defaults_to_false(capsys: pytest.CaptureFixture[str]) -> None:
 	a = make_task("alpha")
-	task = Parallel(tasks=(a,))
+	task = Parallel(a)
 	events: list[TaskEvent] = [
 		StartedEvent(0, 100.0),
 		CompletedEvent(0, Finished(0, 0.1, (b"alpha output\n",))),
