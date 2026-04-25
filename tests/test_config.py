@@ -467,8 +467,8 @@ def test_tasks_py_preferred_over_pyproject(
 		with patch("sys.argv", ["camas", "--dry-run", "hi"]):
 			main()
 	captured = capsys.readouterr()
-	assert "both define tasks" in captured.err
 	assert "python -c pass" in captured.out
+	assert 'python -c "fail"' not in captured.out
 
 
 def test_explicit_py_file_arg(
@@ -570,6 +570,38 @@ def test_autodiscover_tasks_py_load_error(
 	err = capsys.readouterr().err
 	assert "tasks.py" in err
 	assert "boom autodiscover" in err
+
+
+def test_nearer_pyproject_wins_over_farther_tasks_py(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	(tmp_path / "tasks.py").write_text("from camas import Task\nhi = Task('from-far-tasks-py')\n")
+	sub = tmp_path / "sub"
+	sub.mkdir()
+	(sub / "pyproject.toml").write_text('[tool.camas.tasks]\nhi = "from-near-pyproject"\n')
+	monkeypatch.chdir(sub)
+	with pytest.raises(SystemExit, match="0"):
+		with patch("sys.argv", ["camas", "--dry-run", "hi"]):
+			main()
+	out = capsys.readouterr().out
+	assert "from-near-pyproject" in out
+	assert "from-far-tasks-py" not in out
+
+
+def test_walk_skips_pyproject_without_camas_tasks(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	(tmp_path / "tasks.py").write_text(
+		"from camas import Task\nhi = Task('from-ancestor-tasks-py')\n"
+	)
+	sub = tmp_path / "sub"
+	sub.mkdir()
+	(sub / "pyproject.toml").write_text('[project]\nname = "x"\nversion = "0"\n')
+	monkeypatch.chdir(sub)
+	with pytest.raises(SystemExit, match="0"):
+		with patch("sys.argv", ["camas", "--dry-run", "hi"]):
+			main()
+	assert "from-ancestor-tasks-py" in capsys.readouterr().out
 
 
 def test_autodiscover_skips_warning_when_pyproject_tasks_invalid(

@@ -37,13 +37,13 @@ camas = "camas.main:main"
 
 [build-system]
 requires = [
-	"setuptools>=68",
-	"setuptools-scm>=8",
-	"mypy[mypyc]>=1.19",
-	"exceptiongroup>=1.2; python_version < '3.11'",
-	"taskgroup>=0.2; python_version < '3.11'",
-	"tomli>=2; python_version < '3.11'",
-	"typing_extensions>=4.12; python_version < '3.11'",
+"setuptools>=68",
+"setuptools-scm>=8",
+"mypy[mypyc]>=1.19",
+"exceptiongroup>=1.2; python_version < '3.11'",
+"taskgroup>=0.2; python_version < '3.11'",
+"tomli>=2; python_version < '3.11'",
+"typing_extensions>=4.12; python_version < '3.11'",
 ]
 build-backend = "setuptools.build_meta"
 
@@ -73,40 +73,14 @@ dev = [
 "typing_extensions>=4.12",
 ]
 
-[tool.camas.tasks]
-format = "uv run ruff format ."
-format_check = "uv run ruff format --check ."
-lint = "uv run ruff check ."
-mypy = "uv run mypy ."
-ty = "uv run ty check"
-zuban = "uv run zuban check"
-pyrefly = "uv run pyrefly check"
-pyright = "uv run pyright src tests"
-typecheck = "Parallel(tasks=(mypy, pyright, ty, zuban, pyrefly))"
-test = "uv run pytest --doctest-modules -v -m 'not slow'"
-coverage = "uv run pytest --doctest-modules -m 'not slow' --cov --cov-report=term-missing --cov-report=xml"
-all = "Sequential(tasks=(format, Parallel(tasks=(lint, typecheck, test))))"
-check = "Parallel(tasks=(format_check, lint, typecheck, test))"
-matrix = '''
-Sequential(
-	tasks=(
-		Task("uv sync",),
-		check,
-	),
-	env={
-		"UV_PROJECT_ENVIRONMENT": ".venv-{PY}",
-		"UV_PYTHON": "{PY}",
-	},
-	matrix={"PY": ("3.10", "3.11", "3.12", "3.13", "3.14", "3.15")},
-)
-'''
-
 [tool.pytest.ini_options]
 testpaths = ["src", "tests"]
+norecursedirs = ["fixtures"]
 markers = ["slow: visual demo tests with real delays"]
 
 [tool.ruff]
 line-length = 100
+exclude = ["tests/fixtures/"]
 
 [tool.ruff.lint]
 extend-select = ["I"]

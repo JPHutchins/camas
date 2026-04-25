@@ -10,6 +10,8 @@ from camas import Parallel, Sequential, Task
 format = Task("uv run ruff format .")
 format_check = Task("uv run ruff format --check .")
 lint = Task("uv run ruff check .")
+lint_fix = Task("uv run ruff check --fix .")
+fix = Sequential(tasks=(lint_fix, format))
 mypy = Task("uv run mypy .")
 ty = Task("uv run ty check")
 zuban = Task("uv run zuban check")
@@ -22,7 +24,7 @@ coverage = Task(
 	"uv run pytest --doctest-modules -m 'not slow' --cov --cov-report=term-missing --cov-report=xml"
 )
 
-all = Sequential(tasks=(format, Parallel(tasks=(lint, typecheck, test))))
+all = Sequential(tasks=(fix, Parallel(tasks=(typecheck, test))))
 check = Parallel(tasks=(format_check, lint, typecheck, test))
 
 matrix = Sequential(

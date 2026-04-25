@@ -1,0 +1,36 @@
+[project]
+name = "mypkg"
+version = "0.1.0"
+description = "Fixture project demonstrating camas tasks defined in pyproject.toml."
+requires-python = ">=3.10"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.mypy]
+strict = true
+
+[tool.camas.tasks]
+format = "ruff format ."
+format_check = "ruff format --check ."
+lint = "ruff check ."
+lint_fix = "ruff check --fix ."
+mypy = "mypy src tests"
+test = "pytest"
+typecheck = "Parallel(tasks=(mypy,))"
+check = "Parallel(tasks=(format_check, lint, typecheck, test))"
+fix = "Sequential(tasks=(lint_fix, format))"
+all = "Sequential(tasks=(fix, Parallel(tasks=(typecheck, test))))"
+build = '''
+Parallel(
+	tasks=(Task("python -m build {FLAG}"),),
+	matrix={"FLAG": ("--sdist", "--wheel")},
+)
+'''

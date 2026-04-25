@@ -656,8 +656,10 @@ def _resolve_tasks_source(argv: list[str]) -> tuple[dict[str, TaskNode], list[st
 	"""Locate the tasks source and return (tasks, remaining_argv).
 
 	If ``argv[0]`` ends in ``.py`` it is consumed as an explicit file path.
-	Otherwise auto-discovers ``tasks.py`` and/or ``pyproject.toml``; if both
-	define tasks, ``tasks.py`` wins and a warning is printed.
+	Otherwise walks upward from cwd and returns tasks from the nearest directory
+	that defines any; ``tasks.py`` wins over ``pyproject.toml`` at the same level.
+	A ``pyproject.toml`` without ``[tool.camas.tasks]`` is not a match — the walk
+	continues upward.
 	"""
 	if argv and _looks_like_py_file(argv[0]):
 		path = Path(argv[0])
@@ -670,33 +672,24 @@ def _resolve_tasks_source(argv: list[str]) -> tuple[dict[str, TaskNode], list[st
 			print(f"error: {path}: {e}", file=sys.stderr)
 			sys.exit(2)
 
-	tasks_py: Final = find_tasks_py(Path.cwd())
-	pyproject: Final = find_pyproject(Path.cwd())
-
-	if tasks_py is not None:
-		if pyproject is not None:
+	start: Final = Path.cwd()
+	for candidate in (start, *start.parents):
+		tasks_py = candidate / "tasks.py"
+		if tasks_py.is_file():
 			try:
-				pyproject_tasks = load_tasks(pyproject)
-			except ValueError:
-				pyproject_tasks = {}
-			if pyproject_tasks:
-				print(
-					f"warning: {tasks_py} and [tool.camas.tasks] in {pyproject} both define tasks;"
-					f" using {tasks_py.name}",
-					file=sys.stderr,
-				)
-		try:
-			return load_tasks_from_py(tasks_py), argv
-		except Exception as e:
-			print(f"error: {tasks_py}: {e}", file=sys.stderr)
-			sys.exit(2)
-
-	if pyproject is not None:
-		try:
-			return load_tasks(pyproject), argv
-		except ValueError as e:
-			print(f"error: {pyproject}: {e}", file=sys.stderr)
-			sys.exit(2)
+				return load_tasks_from_py(tasks_py), argv
+			except Exception as e:
+				print(f"error: {tasks_py}: {e}", file=sys.stderr)
+				sys.exit(2)
+		pyproject = candidate / "pyproject.toml"
+		if pyproject.is_file():
+			try:
+				tasks = load_tasks(pyproject)
+			except ValueError as e:
+				print(f"error: {pyproject}: {e}", file=sys.stderr)
+				sys.exit(2)
+			if tasks:
+				return tasks, argv
 
 	return {}, argv
 
