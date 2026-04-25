@@ -5,30 +5,63 @@ from pathlib import Path
 from camas import Parallel, Sequential, Task
 
 src_tauri = Path("src-tauri")
-bin = Path("node_modules/.bin")
+python_sdk = Path("python-sdk")
+node = Path("node_modules/.bin")
 
-check = Parallel(
-	tasks=(
-		Task(f"{bin}/prettier --check ."),
-		Task(f"{bin}/tsc --noEmit"),
-		Task(f"{bin}/eslint src/"),
-		Task(f"{bin}/vitest run"),
-		Task("cargo fmt --all -- --check", cwd=src_tauri),
-		Task("cargo clippy --all-targets --locked -- -D warnings", cwd=src_tauri),
-		Task("cargo test --all-targets --locked", cwd=src_tauri),
+ts = Sequential(
+	(
+		Task(f"{node}/prettier --write ."),
+		Parallel(
+			(
+				Task(f"{node}/eslint src/"),
+				Task(f"{node}/tsc --noEmit"),
+				Task(f"{node}/vitest run"),
+			),
+		),
 	),
 )
 
-format = Parallel(
-	tasks=(
-		Task(f"{bin}/prettier --write ."),
+rust = Sequential(
+	(
 		Task("cargo fmt --all", cwd=src_tauri),
+		Parallel(
+			(
+				Task("cargo clippy --all-targets --locked -- -D warnings", cwd=src_tauri),
+				Task("cargo test --all-targets --locked", cwd=src_tauri),
+			),
+		),
 	),
 )
 
-all = Sequential(tasks=(format, check))
+python = Sequential(
+	(
+		Task("uv run ruff check --fix .", cwd=python_sdk),
+		Task("uv run ruff format .", cwd=python_sdk),
+		Parallel(
+			(
+				Task("uv run mypy .", cwd=python_sdk),
+				Task("uv run pytest", cwd=python_sdk),
+			),
+		),
+	),
+)
+
+all = Parallel((ts, rust, python))
+
+fix = Parallel(
+	(
+		Task(f"{node}/prettier --write ."),
+		Task("cargo fmt --all", cwd=src_tauri),
+		Sequential(
+			(
+				Task("uv run ruff check --fix .", cwd=python_sdk),
+				Task("uv run ruff format .", cwd=python_sdk),
+			),
+		),
+	),
+)
 
 build = Parallel(
-	tasks=(Task("npm run tauri build {FLAG}"),),
+	(Task("npm run tauri build {FLAG}"),),
 	matrix={"FLAG": ("-- --debug", "")},
 )

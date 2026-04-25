@@ -12,6 +12,14 @@ dist
 dist-ssr
 *.local
 
+.venv
+__pycache__
+*.egg-info
+.mypy_cache
+.pytest_cache
+.ruff_cache
+uv.lock
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

@@ -1,0 +1,32 @@
+[project]
+name = "tauri-app-sdk"
+version = "0.1.0"
+description = "Python client SDK for tauri-app."
+requires-python = ">=3.10"
+dependencies = []
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+extend-select = ["I"]
+
+[tool.mypy]
+strict = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.12,<1",
+    "mypy>=1.19,<2",
+    "pytest>=9,<10",
+]

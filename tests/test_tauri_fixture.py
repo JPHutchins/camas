@@ -25,23 +25,39 @@ def _camas(*args: str) -> subprocess.CompletedProcess[str]:
 def test_list_shows_top_level_tasks() -> None:
 	r = _camas("--list")
 	assert r.returncode == 0
-	for name in ("all", "check", "format", "build"):
+	for name in ("all", "fix", "build"):
 		assert name in r.stdout, r.stdout
 
 
-def test_check_dry_run_includes_all_tools() -> None:
-	r = _camas("--dry-run", "check")
+def test_all_dry_run_includes_all_tools() -> None:
+	r = _camas("--dry-run", "all")
 	assert r.returncode == 0
 	for cmd in (
-		"prettier --check .",
+		"prettier --write .",
 		"tsc --noEmit",
 		"eslint src/",
 		"vitest run",
-		"cargo fmt --all -- --check",
+		"cargo fmt --all",
 		"cargo clippy",
 		"cargo test",
+		"uv run ruff check --fix .",
+		"uv run ruff format .",
+		"uv run mypy .",
+		"uv run pytest",
 	):
 		assert cmd in r.stdout, r.stdout
+
+
+def test_python_sdk_tasks_have_sdk_cwd() -> None:
+	r = _camas("--dry-run", "all")
+	assert r.returncode == 0
+	assert "(cwd: python-sdk)" in r.stdout
+
+
+def test_cargo_tasks_have_src_tauri_cwd() -> None:
+	r = _camas("--dry-run", "all")
+	assert r.returncode == 0
+	assert "(cwd: src-tauri)" in r.stdout
 
 
 def test_tauri_build_matrix_expands_debug_and_release() -> None:
@@ -49,12 +65,6 @@ def test_tauri_build_matrix_expands_debug_and_release() -> None:
 	assert r.returncode == 0
 	assert "[FLAG=-- --debug]" in r.stdout
 	assert "[FLAG=]" in r.stdout
-
-
-def test_cargo_tasks_have_src_tauri_cwd() -> None:
-	r = _camas("--dry-run", "check")
-	assert r.returncode == 0
-	assert "(cwd: src-tauri)" in r.stdout
 
 
 def test_missing_task_fails() -> None:
