@@ -224,6 +224,10 @@ def render_progress_bar(states: Sequence[LeafState], width: int) -> str:
 	...     [Completed(t, Finished(0, 0.1, ())), Completed(t, Finished(1, 0.1, ()))], 12
 	... )
 	True
+	>>> render_progress_bar([Waiting(t)], 3)
+	'   '
+	>>> strip_ansi(render_progress_bar([Running(t, 0.0, b"")] * 10, 10))
+	'  ┄┄┄┄┄┄  '
 	"""
 	if width <= 0 or len(states) == 0:
 		return " " * max(width, 0)
