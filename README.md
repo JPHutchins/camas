@@ -1,21 +1,63 @@
 # Camas
 
-Generic parallel/sequential task runner with a live tree-style TUI.
-
-[![CI](https://github.com/JPHutchins/camas/actions/workflows/ci.yaml/badge.svg)](https://github.com/JPHutchins/camas/actions/workflows/ci.yaml)
+Parallel and sequential task-tree runner. [![CI](https://github.com/JPHutchins/camas/actions/workflows/ci.yaml/badge.svg)](https://github.com/JPHutchins/camas/actions/workflows/ci.yaml)
 
 ![demo](https://raw.githubusercontent.com/JPHutchins/camas/gh-storage/demos/demo-latest.gif)
+
+That demo can be defined in a strongly typed Python* file as:
+
+```python
+from pathlib import Path
+from camas import Parallel, Sequential, Task
+
+src_tauri = Path("src-tauri")
+python_sdk = Path("python-sdk")
+node = Path("node_modules/.bin")
+
+frontend = Sequential((
+  Task(f"{node}/prettier --write ."),
+  Parallel((
+    Task(f"{node}/eslint src/"),
+    Task(f"{node}/tsc --noEmit"),
+    Task(f"{node}/vitest run"),
+),),),)
+
+backend = Sequential((
+  Task("cargo fmt --all", cwd=src_tauri),
+  Parallel((
+    Task("cargo clippy --all-targets --locked -- -D warnings", cwd=src_tauri),
+    Task("cargo test --all-targets --locked", cwd=src_tauri),
+),),),)
+
+sdk = Sequential((
+  Task("uv run ruff check --fix .", cwd=python_sdk),
+  Task("uv run ruff format .", cwd=python_sdk),
+  Parallel((
+    Task("uv run mypy .", cwd=python_sdk),
+    Task("uv run pytest", cwd=python_sdk),
+),),),)
+
+all = Parallel((frontend, backend, sdk))
+```
+
+> *formatted tightly for browser readability
+
+It can be defined in `pyproject.toml` or provided as a command-line argument.
 
 ## Install
 
 ```
-uv add camas
+pipx install camas
 ```
 
-or
+Or use it as a development dependency in your Python project:
 
-```
-pip install camas
+```toml
+[dependency-groups]
+dev = [
+# ... other dependencies
+"camas",
+]
 ```
 
 ## Quick start
