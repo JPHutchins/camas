@@ -65,6 +65,8 @@ jobs:
 
   tauri-fixture:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     defaults:
       run:
         working-directory: tests/fixtures/tauri-app
@@ -91,10 +93,74 @@ jobs:
 
       - run: npm ci
 
-      - run: camas check --effects='(Summary(SummaryOptions(Fixed(120))),)'
+      # First run: verify pipeline + warm caches (cargo, uv, node_modules).
+      - run: camas all --effects='(Summary(SummaryOptions(Fixed(120))),)'
 
       # Too slow to be a useful example, but you get the idea
       # - run: camas build --effects='(Summary(SummaryOptions(Fixed(120))),)'
+
+      - run: shellcheck .github/scripts/*.sh
+        working-directory: .
+
+      - name: Install shfmt
+        working-directory: .
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL --retry 3 -o "$HOME/.local/bin/shfmt" \
+            https://github.com/mvdan/sh/releases/download/v3.13.1/shfmt_v3.13.1_linux_amd64
+          chmod +x "$HOME/.local/bin/shfmt"
+
+      - run: $HOME/.local/bin/shfmt -d .github/scripts/*.sh
+        working-directory: .
+
+      - name: Install demo recording tools
+        working-directory: .
+        run: bash .github/scripts/ci-setup.sh
+
+      # Second run: record demo on warm caches.
+      - name: Record demo
+        working-directory: .
+        run: bash .github/scripts/record-demo.sh
+
+      - run: test -s .demo/demo.gif
+        working-directory: .
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: demo
+          path: .demo/
+
+      - name: Publish demo to gh-storage branch
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        working-directory: .
+        run: |
+          SHORT_SHA="${GITHUB_SHA::7}"
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if git ls-remote --exit-code origin gh-storage >/dev/null; then
+            git fetch origin gh-storage
+            git worktree add storage gh-storage
+          else
+            git worktree add --orphan -b gh-storage storage
+            (cd storage && git rm -rf . >/dev/null 2>&1 || true)
+          fi
+
+          mkdir -p storage/demos/archive
+          cp .demo/demo.gif storage/demos/demo-latest.gif
+          cp .demo/demo.gif "storage/demos/archive/demo-${SHORT_SHA}.gif"
+          cp .demo/demo.cast storage/demos/demo-latest.cast
+          cp .demo/demo.cast "storage/demos/archive/demo-${SHORT_SHA}.cast"
+
+          cd storage
+          git add demos
+          if git diff --cached --quiet; then
+            echo "No changes to publish"
+          else
+            git commit -m "Render demo for ${SHORT_SHA}"
+            git push origin gh-storage
+          fi
 
   wheels:
     strategy:

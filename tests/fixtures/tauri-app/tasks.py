@@ -8,7 +8,7 @@ src_tauri = Path("src-tauri")
 python_sdk = Path("python-sdk")
 node = Path("node_modules/.bin")
 
-ts = Sequential(
+frontend = Sequential(
 	(
 		Task(f"{node}/prettier --write ."),
 		Parallel(
@@ -21,7 +21,7 @@ ts = Sequential(
 	),
 )
 
-rust = Sequential(
+backend = Sequential(
 	(
 		Task("cargo fmt --all", cwd=src_tauri),
 		Parallel(
@@ -33,7 +33,7 @@ rust = Sequential(
 	),
 )
 
-python = Sequential(
+sdk = Sequential(
 	(
 		Task("uv run ruff check --fix .", cwd=python_sdk),
 		Task("uv run ruff format .", cwd=python_sdk),
@@ -46,7 +46,7 @@ python = Sequential(
 	),
 )
 
-all = Parallel((ts, rust, python))
+all = Parallel((frontend, backend, sdk))
 
 fix = Parallel(
 	(
