@@ -149,6 +149,105 @@ SPINNER: Final = (
 
 STATUS_COL_WIDTH: Final = 18
 
+PROG_WAITING: Final = " "
+PROG_RUNNING: Final = "┄"
+PROG_DONE: Final = "─"
+PROG_MAX_CELL_WIDTH: Final = 6
+PROG_MIN_MARGIN: Final = 2
+
+
+def _bucket_glyph_color(states: Sequence[LeafState]) -> tuple[str, str]:
+	"""Reduce a bucket of leaf states to (glyph, ANSI color) for a progress cell.
+
+	Worst-progress wins so the bar never overstates progress: any waiting →
+	blank; else any running → dashed line; else a solid line. Color
+	distinguishes the active state (cyan running) from the settled outcome
+	(red on any failure, grey if all skipped, otherwise green).
+
+	>>> from camas import Completed, Finished, Running, Skipped, Task, Waiting
+	>>> t = Task("x")
+	>>> _bucket_glyph_color([Waiting(t)]) == (' ', GREY)
+	True
+	>>> _bucket_glyph_color([Running(t, 0.0, b"")]) == ('┄', CYAN)
+	True
+	>>> _bucket_glyph_color([Completed(t, Finished(0, 0.1, ()))]) == ('─', GREEN)
+	True
+	>>> _bucket_glyph_color([Completed(t, Finished(1, 0.1, ()))]) == ('─', RED)
+	True
+	>>> _bucket_glyph_color([Completed(t, Skipped(1))]) == ('─', GREY)
+	True
+	>>> _bucket_glyph_color([Waiting(t), Running(t, 0.0, b"")]) == (' ', GREY)
+	True
+	"""
+	if any(isinstance(s, Waiting) for s in states):
+		return PROG_WAITING, GREY
+	if any(isinstance(s, Running) for s in states):
+		return PROG_RUNNING, CYAN
+	if any(
+		isinstance(s, Completed)
+		and isinstance(s.completion, Finished)
+		and s.completion.returncode != 0
+		for s in states
+	):
+		return PROG_DONE, RED
+	all_skipped: Final = all(
+		isinstance(s, Completed) and isinstance(s.completion, Skipped) for s in states
+	)
+	return PROG_DONE, GREY if all_skipped else GREEN
+
+
+def render_progress_bar(states: Sequence[LeafState], width: int) -> str:
+	"""Render a fragmented progress bar for the result-line summary slot.
+
+	Cells are equal width (capped at ``PROG_MAX_CELL_WIDTH``) and centered in
+	``width`` visible columns. When ``len(states)`` exceeds ``width``, leaves
+	are bucketed across exactly ``width`` 1-column cells. Returned string
+	always has visible width ``width``.
+
+	>>> from camas import Completed, Finished, Running, Task, Waiting
+	>>> t = Task("x")
+	>>> bar = render_progress_bar([Waiting(t), Waiting(t)], 10)
+	>>> len(strip_ansi(bar))
+	10
+	>>> strip_ansi(bar)
+	'          '
+	>>> bar = render_progress_bar([Running(t, 0.0, b"")], 10)
+	>>> strip_ansi(bar)
+	'  ┄┄┄┄┄┄  '
+	>>> render_progress_bar([], 5)
+	'     '
+	>>> render_progress_bar([Waiting(t)], 0)
+	''
+	>>> '─' in render_progress_bar([Completed(t, Finished(0, 0.1, ()))], 8)
+	True
+	>>> '─' in render_progress_bar(
+	...     [Completed(t, Finished(0, 0.1, ())), Completed(t, Finished(1, 0.1, ()))], 12
+	... )
+	True
+	"""
+	if width <= 0 or len(states) == 0:
+		return " " * max(width, 0)
+	usable: Final = max(width - 2 * PROG_MIN_MARGIN, 0)
+	if usable == 0:
+		return " " * width
+	if len(states) <= usable:
+		cell_width = min(PROG_MAX_CELL_WIDTH, usable // len(states))
+		buckets: tuple[Sequence[LeafState], ...] = tuple((s,) for s in states)
+	else:
+		cell_width = 1
+		buckets = tuple(
+			tuple(states[i * len(states) // usable : (i + 1) * len(states) // usable])
+			for i in range(usable)
+		)
+	pad: Final = width - len(buckets) * cell_width
+	pad_left: Final = pad // 2
+	pad_right: Final = pad - pad_left
+	cells: Final = "".join(
+		f"{color}{glyph * cell_width}{RESET}"
+		for glyph, color in (_bucket_glyph_color(b) for b in buckets)
+	)
+	return f"{' ' * pad_left}{cells}{' ' * pad_right}"
+
 
 def group_display_name(tasks: tuple[TaskNode, ...], separator: str) -> str:
 	"""Derive a display label for a group by joining children's names.
@@ -343,14 +442,14 @@ def render_lines(
 						)
 						padding = " " * max(gap - len(stream), 0)
 						lines.append(
-							f"\r{header}{GREY}{stream}{RESET}{padding} [{YELLOW}{spin}{RESET}] {elapsed:7.3f}s{CLEAR_LINE}"
+							f"\r{header}{GREY}{stream}{RESET}{padding} [{CYAN}{spin}{RESET}] {elapsed:7.3f}s{CLEAR_LINE}"
 						)
 					case Waiting():
 						padding = " " * gap
 						lines.append(f"\r{header}{padding} [{GREY} WAIT {RESET}]{CLEAR_LINE}")
 	wall_elapsed: Final = now - wall_start
 	alldone: Final = all(isinstance(s, Completed) for s in states)
-	summary_pad: Final = " " * max(display_width - 6, 0)
+	summary_pad: Final = render_progress_bar(states, max(display_width - 6, 0))
 	if alldone:
 		failed: Final = any(
 			isinstance(s, Completed)
@@ -366,7 +465,7 @@ def render_lines(
 	else:
 		running_spin: Final = SPINNER[int(wall_elapsed * 10) % len(SPINNER)]
 		lines.append(
-			f"\r{BOLD}result{RESET}{summary_pad} [{YELLOW}{running_spin}{RESET}] {wall_elapsed:7.3f}s{CLEAR_LINE}"
+			f"\r{BOLD}result{RESET}{summary_pad} [{CYAN}{running_spin}{RESET}] {wall_elapsed:7.3f}s{CLEAR_LINE}"
 		)
 	return lines
 
