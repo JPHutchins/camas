@@ -605,6 +605,7 @@ def test_isinstance_effect_branch_in_discovery(monkeypatch: pytest.MonkeyPatch) 
 	from collections.abc import Iterator
 	from pkgutil import ModuleInfo
 
+	import camas.effect as effect_pkg
 	from camas.effect.summary import Summary
 	from camas.main import discover_effects as _discover
 
@@ -614,7 +615,7 @@ def test_isinstance_effect_branch_in_discovery(monkeypatch: pytest.MonkeyPatch) 
 
 	real_iter = _pkgutil.iter_modules
 
-	finders = [info.module_finder for info in real_iter(["src/camas/effect"])]
+	finders = [info.module_finder for info in real_iter(list(effect_pkg.__path__))]
 
 	def fake_iter(path: list[str]) -> Iterator[ModuleInfo]:
 		yield from real_iter(path)
@@ -654,6 +655,280 @@ def test_build_parser_format_help_no_tasks_no_effects(monkeypatch: pytest.Monkey
 	assert "Available tasks" not in out
 	assert "Available Effects" not in out
 	assert "Try:" in out
+
+
+def test_signature_fields_from_source_namedtuple() -> None:
+	from camas.effect.summary import SummaryOptions
+	from camas.main import signature_fields_from_source
+
+	out = signature_fields_from_source(SummaryOptions)
+	assert out is not None
+	names = [n for n, _, _, _ in out]
+	assert names == ["term_width", "show_passing"]
+
+
+def test_signature_fields_from_source_regular_class() -> None:
+	from camas.effect.summary import Summary, SummaryOptions
+	from camas.main import signature_fields_from_source
+
+	out = signature_fields_from_source(Summary)
+	assert out is not None
+	assert len(out) == 1
+	name, _kind, annot, default = out[0]
+	assert name == "options"
+	# Resolved against module namespace, so the union resolves to a real type.
+	assert "SummaryOptions" in str(annot)
+	assert SummaryOptions.__name__ in str(annot)
+	assert default is None
+
+
+def test_signature_fields_from_source_module_not_loaded() -> None:
+	from camas.main import signature_fields_from_source
+
+	class Stranded: ...
+
+	Stranded.__module__ = "no_such_module_xyz"
+	assert signature_fields_from_source(Stranded) is None
+
+
+def test_signature_fields_from_source_no_file(monkeypatch: pytest.MonkeyPatch) -> None:
+	import sys as _sys
+	import types
+
+	from camas.main import signature_fields_from_source
+
+	mod = types.ModuleType("fake_no_file")
+	# No __file__ attribute set on the module
+	monkeypatch.setitem(_sys.modules, "fake_no_file", mod)
+
+	class C: ...
+
+	C.__module__ = "fake_no_file"
+	assert signature_fields_from_source(C) is None
+
+
+def test_signature_fields_from_source_missing_py(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	import sys as _sys
+	import types
+
+	from camas.main import signature_fields_from_source
+
+	# Module __file__ points at a fake .so; the sibling .py doesn't exist.
+	fake_so = tmp_path / "ghost.cpython-314-x86_64-linux-gnu.so"
+	fake_so.write_bytes(b"")
+	mod = types.ModuleType("ghost")
+	mod.__file__ = str(fake_so)
+	monkeypatch.setitem(_sys.modules, "ghost", mod)
+
+	class C: ...
+
+	C.__module__ = "ghost"
+	assert signature_fields_from_source(C) is None
+
+
+def test_signature_fields_from_source_class_not_in_file(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	import sys as _sys
+	import types
+
+	from camas.main import signature_fields_from_source
+
+	source = tmp_path / "tinymod.py"
+	source.write_text("class Other: pass\n")
+	mod = types.ModuleType("tinymod")
+	mod.__file__ = str(source)
+	monkeypatch.setitem(_sys.modules, "tinymod", mod)
+
+	class Missing: ...
+
+	Missing.__module__ = "tinymod"
+	assert signature_fields_from_source(Missing) is None
+
+
+def test_signature_fields_from_source_no_init(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	import sys as _sys
+	import types
+
+	from camas.main import signature_fields_from_source
+
+	source = tmp_path / "noinit.py"
+	source.write_text("class C:\n    pass\n")
+	mod = types.ModuleType("noinit")
+	mod.__file__ = str(source)
+	monkeypatch.setitem(_sys.modules, "noinit", mod)
+
+	class C: ...
+
+	C.__module__ = "noinit"
+	assert signature_fields_from_source(C) is None
+
+
+def test_signature_fields_from_source_parse_error(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	import sys as _sys
+	import types
+
+	from camas.main import signature_fields_from_source
+
+	source = tmp_path / "broken.py"
+	source.write_text("def x(:\n")  # syntax error
+	mod = types.ModuleType("broken")
+	mod.__file__ = str(source)
+	monkeypatch.setitem(_sys.modules, "broken", mod)
+
+	class C: ...
+
+	C.__module__ = "broken"
+	assert signature_fields_from_source(C) is None
+
+
+def test_signature_fields_from_source_with_required_arg(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	"""Required (non-defaulted) ``__init__`` params return ``MISSING``."""
+	import sys as _sys
+	import types
+
+	from camas.main import MISSING as _MISSING_LOCAL
+	from camas.main import signature_fields_from_source
+
+	source = tmp_path / "required.py"
+	source.write_text(
+		"class C:\n"
+		"    def __init__(self, must_have: int, optional: str = 'x') -> None:\n"
+		"        ...\n"
+	)
+	mod = types.ModuleType("required")
+	mod.__file__ = str(source)
+	monkeypatch.setitem(_sys.modules, "required", mod)
+
+	class C: ...
+
+	C.__module__ = "required"
+	out = signature_fields_from_source(C)
+	assert out is not None
+	(must_have, optional) = out
+	assert must_have[0] == "must_have" and must_have[3] is _MISSING_LOCAL
+	assert optional[0] == "optional" and optional[3] == "x"
+
+
+def test_signature_fields_falls_back_for_compiled_namedtuple(
+	monkeypatch: pytest.MonkeyPatch,
+) -> None:
+	"""When ``get_type_hints`` returns an ``Any``/``type`` annotation (the mypyc
+	fingerprint for NamedTuples), ``signature_fields`` falls through to the
+	source-parse path."""
+	import typing as _typing
+
+	from camas.effect.summary import SummaryOptions
+	from camas.main import signature_fields
+
+	def fake_hints(_obj: object) -> dict[str, object]:
+		# Mimic mypyc's mangled output: union annotations become bare ``type``.
+		return {"term_width": type, "show_passing": bool}
+
+	monkeypatch.setattr(_typing, "get_type_hints", fake_hints)
+	out = signature_fields(SummaryOptions)
+	# Source-parse should kick in and return the real annotations.
+	annot_term = next(annot for n, _, annot, _ in out if n == "term_width")
+	assert "Auto" in str(annot_term) or "Fixed" in str(annot_term)
+
+
+def test_signature_fields_falls_back_for_compiled_class(
+	monkeypatch: pytest.MonkeyPatch,
+) -> None:
+	"""When ``inspect.signature`` returns all-``Any`` annotations (the mypyc
+	fingerprint for regular classes), ``signature_fields`` falls through to
+	source-parse."""
+	import inspect as _inspect
+
+	from camas.effect.summary import Summary
+	from camas.main import signature_fields
+
+	def fake_signature(_obj: object) -> _inspect.Signature:
+		# Single param with no annotation, default None — what mypyc surfaces.
+		return _inspect.Signature(
+			parameters=[
+				_inspect.Parameter(
+					"options", _inspect.Parameter.POSITIONAL_OR_KEYWORD, default=None
+				)
+			]
+		)
+
+	monkeypatch.setattr(_inspect, "signature", fake_signature)
+	out = signature_fields(Summary)
+	annot = next(annot for n, _, annot, _ in out if n == "options")
+	assert "SummaryOptions" in str(annot)
+
+
+def test_signature_fields_namedtuple_fallback_returns_none(
+	monkeypatch: pytest.MonkeyPatch,
+) -> None:
+	"""When the NamedTuple inspect path returns ``Any``/``type`` and the
+	source-parse fallback also fails (class not loaded as module), keep the
+	original inspected fields rather than crashing."""
+	import typing as _typing
+	from typing import NamedTuple as _NT
+
+	from camas.main import signature_fields
+
+	class Stranded(_NT):
+		x: int = 1
+
+	def fake_hints(_obj: object) -> dict[str, object]:
+		return {"x": type}
+
+	# Force the Any-fingerprint and force source-parse to give up.
+	monkeypatch.setattr(_typing, "get_type_hints", fake_hints)
+	Stranded.__module__ = "no_such_module_xyz"
+	out = signature_fields(Stranded)
+	assert [n for n, _, _, _ in out] == ["x"]
+
+
+def test_signature_fields_class_fallback_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
+	"""Same defensive path for ordinary classes."""
+	import inspect as _inspect
+
+	from camas.main import signature_fields
+
+	class Stranded:
+		def __init__(self, x: int = 1) -> None: ...
+
+	def fake_signature(_o: object) -> _inspect.Signature:
+		return _inspect.Signature(
+			parameters=[
+				_inspect.Parameter("x", _inspect.Parameter.POSITIONAL_OR_KEYWORD, default=1)
+			]
+		)
+
+	monkeypatch.setattr(_inspect, "signature", fake_signature)
+	Stranded.__module__ = "no_such_module_xyz"
+	out = signature_fields(Stranded)
+	assert [n for n, _, _, _ in out] == ["x"]
+
+
+def test_resolve_in_namespace_evaluates() -> None:
+	import ast as _ast
+
+	from camas.main import resolve_in_namespace
+
+	node = _ast.parse("1 + 2", mode="eval").body
+	assert resolve_in_namespace(node, {}) == 3
+
+
+def test_resolve_in_namespace_falls_back_to_string() -> None:
+	import ast as _ast
+
+	from camas.main import resolve_in_namespace
+
+	node = _ast.parse("undefined_name_xyz", mode="eval").body
+	assert resolve_in_namespace(node, {}) == "undefined_name_xyz"
 
 
 def test_signature_fields_namedtuple_unresolvable_hints(
