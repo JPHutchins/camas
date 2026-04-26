@@ -50,27 +50,18 @@ EXPRESSION_PATTERN: Final = re.compile(r"^\s*(?:(?:Task|Sequential|Parallel|Ref)
 
 EXAMPLES: Final = """\
 examples:
+    camas                            # list defined tasks
+    camas <task>                     # run a defined task
+    camas '<expression>'             # run an inline expression
+
     camas 'Parallel("ruff check .", "mypy .")'
+    camas '("ruff format --check .", {"mypy .", "pyright ."}, "pytest")'
+    camas 'Parallel("pytest --python {PY}", matrix={"PY": ("3.12", "3.13")})'
 
-    camas 'Sequential(
-        "ruff format . --check",
-        Parallel("mypy .", "pyright ."),
-        "pytest",
-    )'
-
-    camas 'Parallel("pytest --python {PY}", matrix={"PY": ("3.12", "3.13", "3.14")})'
-
-    # bare tuples become Sequentials, bare sets become Parallels:
-    camas '("ruff format . --check", {"mypy .", "pyright ."}, "pytest")'
-
-named tasks (pyproject.toml):
-    [tool.camas.tasks]
+named tasks (tasks.py or [tool.camas.tasks] in pyproject.toml):
     lint = "ruff check ."
     test = "pytest"
-    ci   = 'Sequential(Ref("lint"), Ref("test"))'
-
-    camas ci            # run a named task
-    camas --list        # show all defined tasks
+    ci   = '(lint, test)'           # tuple → Sequential, set → Parallel
 """
 
 
@@ -485,7 +476,7 @@ def build_parser(tasks: Mapping[str, TaskNode] | None = None) -> argparse.Argume
 	'Task("echo hi")'
 	>>> parser.parse_args(["--list"]).list
 	True
-	>>> "all|check" in build_parser({"all": Task("x"), "check": Task("y")}).format_usage()
+	>>> "task | expression" in build_parser({"all": Task("x")}).format_usage()
 	True
 	"""
 	parser: Final = argparse.ArgumentParser(
@@ -513,7 +504,12 @@ def build_parser(tasks: Mapping[str, TaskNode] | None = None) -> argparse.Argume
 	parser.add_argument(
 		"--list",
 		action="store_true",
-		help="list all defined tasks and exit",
+		help="list all defined tasks and exit (also the default with no args)",
+	)
+	parser.add_argument(
+		"--tree",
+		action="store_true",
+		help="print every defined task's expanded tree and exit",
 	)
 	parser.add_argument(
 		"--effects",
@@ -527,23 +523,100 @@ def build_parser(tasks: Mapping[str, TaskNode] | None = None) -> argparse.Argume
 
 
 def _expression_metavar(tasks: Mapping[str, TaskNode] | None) -> str:
-	"""Build the positional metavar, summarising known task names when present.
+	"""Build the positional metavar.
 
 	>>> _expression_metavar(None)
 	'expression'
-	>>> _expression_metavar({"all": Task("x"), "check": Task("y"), "lint": Task("z")})
-	'{all|check|lint}'
+	>>> _expression_metavar({"all": Task("x")})
+	'task | expression'
 	"""
-	if not tasks:
-		return "expression"
-	return f"{{{'|'.join(sorted(tasks))}}}"
+	return "task | expression" if tasks else "expression"
 
 
-def print_tasks(tasks: Mapping[str, TaskNode]) -> None:
-	"""Print each named task's tree with commands expanded."""
+def _is_named_ref(node: TaskNode, names: frozenset[str]) -> bool:
+	return node.name is not None and node.name in names
+
+
+def _par_child_summary(node: TaskNode, names: frozenset[str]) -> str:
+	"""Render a Parallel child, parenthesising an anonymous Sequential because
+	``,`` binds looser than ``|``."""
+	rendered = task_summary(node, names, is_root=False)
+	if isinstance(node, Sequential) and not _is_named_ref(node, names) and len(node.tasks) > 1:
+		return f"({rendered})"
+	return rendered
+
+
+def task_summary(node: TaskNode, names: frozenset[str], is_root: bool = True) -> str:
+	"""One-line representation of a task tree using ``,`` for Sequential and
+	``|`` for Parallel. Children whose name appears in ``names`` render as a
+	bare reference. Precedence: ``|`` binds tighter than ``,``.
+
+	>>> task_summary(Task("echo hi"), frozenset())
+	'echo hi'
+	>>> task_summary(Task(("python", "-c", "pass")), frozenset())
+	'python -c pass'
+	>>> task_summary(Sequential(Task("a"), Task("b")), frozenset())
+	'a, b'
+	>>> task_summary(Parallel(Task("a"), Task("b")), frozenset())
+	'a | b'
+	>>> task_summary(Sequential(Task("a"), Parallel(Task("b"), Task("c"))), frozenset())
+	'a, b | c'
+	>>> task_summary(Parallel(Sequential(Task("a"), Task("b")), Task("c")), frozenset())
+	'(a, b) | c'
+	>>> task_summary(Sequential(Task("a", name="lint"), Task("b")), frozenset({"lint"}))
+	'lint, b'
+	"""
+	if not is_root and _is_named_ref(node, names):
+		assert node.name is not None
+		return node.name
+	match node:
+		case Task(cmd=cmd):
+			return cmd if isinstance(cmd, str) else " ".join(cmd)
+		case Sequential(tasks=tasks):
+			return ", ".join(task_summary(t, names, is_root=False) for t in tasks)
+		case Parallel(tasks=tasks):
+			return " | ".join(_par_child_summary(t, names) for t in tasks)
+		case _:
+			assert_never(node)
+
+
+def _summary_annotation(node: TaskNode) -> str:
+	"""Annotate a top-level entry with its matrix axes — important context that
+	doesn't appear in the body otherwise."""
+	if isinstance(node, Task) or node.matrix is None:
+		return ""
+	axes = ", ".join(node.matrix)
+	return f"  [matrix: {axes}]"
+
+
+def print_task_summary_listing(tasks: Mapping[str, TaskNode], source: Path | None) -> None:
+	"""Print the ``Tasks from <source>`` listing — one compact line per task."""
 	if not tasks:
-		print("(no tasks defined)")
+		if source is not None:
+			print(f"No tasks defined in {source}.")
+		else:
+			print("No tasks file found in this directory or any parent.")
+			print("Define tasks in tasks.py or [tool.camas.tasks] in pyproject.toml,")
+			print('or pass an expression directly: camas \'Parallel("ruff check .", "mypy .")\'')
 		return
+	names = frozenset(tasks)
+	items = sorted(tasks.items())
+	width = max(len(n) for n, _ in items)
+	header = f"Available tasks from {source}:" if source is not None else "Tasks:"
+	print(header)
+	for name, node in items:
+		body = task_summary(node, names)
+		print(f"  {(name).ljust(width + 1)} {body}{_summary_annotation(node)}")
+
+
+def print_task_trees(tasks: Mapping[str, TaskNode], source: Path | None) -> None:
+	"""Print every defined task's tree with commands expanded — verbose ``--tree`` output."""
+	if not tasks:
+		print_task_summary_listing(tasks, source)
+		return
+	header = f"Available tasks from {source}:" if source is not None else "Tasks:"
+	print(header)
+	print()
 	for _, task in sorted(tasks.items()):
 		print_tree(task, show_cmd=True)
 		print()
@@ -624,8 +697,17 @@ def _expect_effect(value: Any) -> Effect[Any]:
 	return value
 
 
-def dispatch(tasks: Mapping[str, TaskNode], argv: list[str] | None = None) -> None:
-	"""Parse ``argv`` (defaulting to sys.argv) against ``tasks`` and run the dispatched task."""
+def dispatch(
+	tasks: Mapping[str, TaskNode],
+	argv: list[str] | None = None,
+	source: Path | None = None,
+) -> None:
+	"""Parse ``argv`` (defaulting to sys.argv) against ``tasks`` and run the dispatched task.
+
+	When invoked with no expression and tasks are defined, prints a compact listing
+	of available tasks and exits 0 — the ``camas`` (no-args) ergonomic default,
+	mirroring ``just`` and ``task``.
+	"""
 	raw: Final = sys.argv[1:] if argv is None else argv
 
 	if len(raw) >= 2 and raw[0] in tasks and any(a in ("-h", "--help") for a in raw[1:]):
@@ -636,11 +718,28 @@ def dispatch(tasks: Mapping[str, TaskNode], argv: list[str] | None = None) -> No
 	args: Final = parser.parse_args(raw)
 
 	if args.list:
-		print_tasks(tasks)
+		print_task_summary_listing(tasks, source)
+		sys.exit(0)
+
+	if args.tree:
+		print_task_trees(tasks, source)
 		sys.exit(0)
 
 	if args.expression is None:
-		parser.error("expression or --list is required")
+		if tasks:
+			print(parser.format_usage().rstrip())
+			print()
+			print_task_summary_listing(tasks, source)
+			print()
+			print("Try running a sequence of tasks using ( ):")
+			print('  camas \'("echo Hello", "echo world!")\'')
+			print("or parallel tasks using { }:")
+			print('  camas \'{"echo Hello", "echo world!"}\'')
+			print()
+			sys.stdout.flush()
+			print(f"{parser.prog}: error: task or expression is required", file=sys.stderr)
+			sys.exit(2)
+		parser.error("task or expression is required (no tasks defined)")
 
 	try:
 		effects: Final = parse_effects(args.effects)
@@ -670,14 +769,17 @@ def _looks_like_py_file(arg: str) -> bool:
 	return arg.endswith(".py")
 
 
-def _resolve_tasks_source(argv: list[str]) -> tuple[dict[str, TaskNode], list[str]]:
-	"""Locate the tasks source and return (tasks, remaining_argv).
+def _resolve_tasks_source(
+	argv: list[str],
+) -> tuple[dict[str, TaskNode], list[str], Path | None]:
+	"""Locate the tasks source and return (tasks, remaining_argv, source_path).
 
 	If ``argv[0]`` ends in ``.py`` it is consumed as an explicit file path.
 	Otherwise walks upward from cwd and returns tasks from the nearest directory
 	that defines any; ``tasks.py`` wins over ``pyproject.toml`` at the same level.
 	A ``pyproject.toml`` without ``[tool.camas.tasks]`` is not a match — the walk
-	continues upward.
+	continues upward. ``source_path`` is the file the tasks were loaded from, or
+	``None`` when no tasks file was found.
 	"""
 	if argv and _looks_like_py_file(argv[0]):
 		path = Path(argv[0])
@@ -685,7 +787,7 @@ def _resolve_tasks_source(argv: list[str]) -> tuple[dict[str, TaskNode], list[st
 			print(f"error: {path}: no such file", file=sys.stderr)
 			sys.exit(2)
 		try:
-			return load_tasks_from_py(path), argv[1:]
+			return load_tasks_from_py(path), argv[1:], path
 		except Exception as e:
 			print(f"error: {path}: {e}", file=sys.stderr)
 			sys.exit(2)
@@ -695,7 +797,7 @@ def _resolve_tasks_source(argv: list[str]) -> tuple[dict[str, TaskNode], list[st
 		tasks_py = candidate / "tasks.py"
 		if tasks_py.is_file():
 			try:
-				return load_tasks_from_py(tasks_py), argv
+				return load_tasks_from_py(tasks_py), argv, tasks_py
 			except Exception as e:
 				print(f"error: {tasks_py}: {e}", file=sys.stderr)
 				sys.exit(2)
@@ -707,9 +809,9 @@ def _resolve_tasks_source(argv: list[str]) -> tuple[dict[str, TaskNode], list[st
 				print(f"error: {pyproject}: {e}", file=sys.stderr)
 				sys.exit(2)
 			if tasks:
-				return tasks, argv
+				return tasks, argv, pyproject
 
-	return {}, argv
+	return {}, argv, None
 
 
 def main() -> None:
@@ -720,8 +822,8 @@ def main() -> None:
 	"""
 	for stream in (sys.stdout, sys.stderr):
 		cast(io.TextIOWrapper, stream).reconfigure(encoding="utf-8", errors="replace")
-	tasks, argv = _resolve_tasks_source(sys.argv[1:])
-	dispatch(tasks, argv)
+	tasks, argv, source = _resolve_tasks_source(sys.argv[1:])
+	dispatch(tasks, argv, source)
 
 
 if __name__ == "__main__":

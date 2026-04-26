@@ -189,7 +189,8 @@ def test_run_cli_collects_tasks_from_scope(capsys: pytest.CaptureFixture[str]) -
 		with patch("sys.argv", ["tasks.py", "--list"]):
 			run_cli(scope)
 	out = capsys.readouterr().out
-	assert "lint: ruff ." in out
+	assert "lint" in out
+	assert "ruff ." in out
 	assert "_private" not in out
 	assert "secret" not in out
 	assert "other" not in out
@@ -370,7 +371,7 @@ def test_list_flag_no_tasks(
 	with pytest.raises(SystemExit, match="0"):
 		with patch("sys.argv", ["camas", "--list"]):
 			main()
-	assert "(no tasks defined)" in capsys.readouterr().out
+	assert "No tasks file found" in capsys.readouterr().out
 
 
 def test_list_flag_with_tasks(
@@ -384,8 +385,10 @@ def test_list_flag_with_tasks(
 		with patch("sys.argv", ["camas", "--list"]):
 			main()
 	out = capsys.readouterr().out
-	assert "lint: ruff ." in out
-	assert "test: pytest" in out
+	assert "lint" in out
+	assert "ruff ." in out
+	assert "test" in out
+	assert "pytest" in out
 
 
 def test_named_task_dry_run(
