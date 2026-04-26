@@ -494,13 +494,19 @@ def render_frame(
 
 
 def _print_task_output(
-	task: Task, output: Sequence[bytes], label: str, color: str, returncode: int
+	task: Task,
+	output: Sequence[bytes],
+	label: str,
+	color: str,
+	returncode: int,
+	term_width: int,
 ) -> None:
-	sys.stdout.write(f"\n{color}{'=' * 60}{RESET}\n")
+	rule: Final = "=" * term_width
+	sys.stdout.write(f"\n{color}{rule}{RESET}\n")
 	sys.stdout.write(f"{color}{BOLD} {label}: {task_label(task)} {RESET}\n")
 	sys.stdout.write(f" {task.cmd if isinstance(task.cmd, str) else ' '.join(task.cmd)}\n")
 	sys.stdout.write(f" exit code: {returncode}\n")
-	sys.stdout.write(f"{color}{'=' * 60}{RESET}\n")
+	sys.stdout.write(f"{color}{rule}{RESET}\n")
 	sys.stdout.flush()
 	for line in output:
 		sys.stdout.buffer.write(line)
@@ -508,22 +514,22 @@ def _print_task_output(
 	sys.stdout.write("\n")
 
 
-def print_failures(states: Sequence[LeafState]) -> None:
+def print_failures(states: Sequence[LeafState], term_width: int) -> None:
 	"""Print detailed output for each failed task."""
 	for state in states:
 		match state:
 			case Completed(task=task, completion=Finished(returncode=rc, output=output)) if rc > 0:
-				_print_task_output(task, output, "FAILED", RED, rc)
+				_print_task_output(task, output, "FAILED", RED, rc, term_width)
 			case _:
 				pass
 
 
-def print_passes(states: Sequence[LeafState]) -> None:
+def print_passes(states: Sequence[LeafState], term_width: int) -> None:
 	"""Print detailed output for each successfully-completed task."""
 	for state in states:
 		match state:
 			case Completed(task=task, completion=Finished(returncode=0, output=output)):
-				_print_task_output(task, output, "PASSED", GREEN, 0)
+				_print_task_output(task, output, "PASSED", GREEN, 0, term_width)
 			case _:
 				pass
 
@@ -704,9 +710,9 @@ class Termtree:
 		draw(ctx)
 		sys.stdout.write("\n")
 		sys.stdout.flush()
-		print_failures(ctx.state.states)
+		print_failures(ctx.state.states, ctx.term_width)
 		if self.options.show_passing:
-			print_passes(ctx.state.states)
+			print_passes(ctx.state.states, ctx.term_width)
 
 
 def draw(ctx: TermtreeContext) -> None:

@@ -116,7 +116,7 @@ def test_print_failures_outputs_failed_task(capsys: pytest.CaptureFixture[str]) 
 		Completed(a, Finished(0, 0.1, (b"ok\n",))),
 		Completed(b, Finished(1, 0.2, (b"error details\n",))),
 	)
-	print_failures(states)
+	print_failures(states, term_width=80)
 	captured = capsys.readouterr()
 	assert "FAILED: b" in captured.out
 	assert "error details" in captured.out
@@ -130,7 +130,7 @@ def test_print_passes_outputs_passed_task(capsys: pytest.CaptureFixture[str]) ->
 		Completed(a, Finished(0, 0.1, (b"clean output\n",))),
 		Completed(b, Finished(1, 0.2, (b"error details\n",))),
 	)
-	print_passes(states)
+	print_passes(states, term_width=80)
 	captured = capsys.readouterr()
 	assert "PASSED: a" in captured.out
 	assert "clean output" in captured.out

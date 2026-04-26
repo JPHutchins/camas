@@ -128,6 +128,6 @@ class Summary:
 		)
 		sys.stdout.buffer.write(("\n".join(cleaned) + "\n").encode("utf-8", errors="replace"))
 		sys.stdout.flush()
-		print_failures(ctx.state.states)
+		print_failures(ctx.state.states, ctx.term_width)
 		if self.options.show_passing:
-			print_passes(ctx.state.states)
+			print_passes(ctx.state.states, ctx.term_width)
