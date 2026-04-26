@@ -39,6 +39,7 @@ def test_help(tmp_path: Path) -> None:
 		cwd=tmp_path,
 		capture_output=True,
 		text=True,
+		encoding="utf-8",
 	)
 	assert result.returncode == 0
 	assert "expression" in result.stdout
@@ -50,6 +51,7 @@ def test_version(tmp_path: Path) -> None:
 		cwd=tmp_path,
 		capture_output=True,
 		text=True,
+		encoding="utf-8",
 	)
 	assert result.returncode == 0
 	assert "camas" in result.stdout
