@@ -464,6 +464,28 @@ def dispatch_arg(arg: str, tasks: Mapping[str, TaskNode]) -> TaskNode:
 	return parse_expression(arg, tasks=tasks)
 
 
+class CamasArgumentParser(argparse.ArgumentParser):
+	"""``ArgumentParser`` whose ``--help`` appends the discovered tasks listing,
+	the discovered Effects listing, and the Try hint after argparse's standard
+	output. ``tasks``/``source`` are populated by ``build_parser`` so the
+	override has access without nesting.
+	"""
+
+	tasks: Mapping[str, TaskNode] | None
+	source: Path | None
+
+	def format_help(self) -> str:
+		color = color_on()
+		sections = [super().format_help().rstrip()]
+		if self.tasks:
+			sections.append(format_task_summary_listing(self.tasks, self.source, color=color))
+		effects_listing = format_available_effects(color=color)
+		if effects_listing:
+			sections.append(effects_listing)
+		sections.append(format_try_hint(color))
+		return "\n\n".join(sections) + "\n"
+
+
 def build_parser(
 	tasks: Mapping[str, TaskNode] | None = None,
 	source: Path | None = None,
@@ -482,24 +504,13 @@ def build_parser(
 	>>> "task | expression" in build_parser({"all": Task("x")}).format_usage()
 	True
 	"""
-
-	class _Parser(argparse.ArgumentParser):
-		def format_help(self) -> str:
-			color = color_on()
-			sections = [super().format_help().rstrip()]
-			if tasks:
-				sections.append(format_task_summary_listing(tasks, source, color=color))
-			effects_listing = format_available_effects(color=color)
-			if effects_listing:
-				sections.append(effects_listing)
-			sections.append(format_try_hint(color))
-			return "\n\n".join(sections) + "\n"
-
-	parser: Final = _Parser(
+	parser: Final = CamasArgumentParser(
 		prog="camas",
 		description="Generic parallel/sequential task runner with TUI output.",
 		formatter_class=argparse.RawDescriptionHelpFormatter,
 	)
+	parser.tasks = tasks
+	parser.source = source
 	parser.add_argument(
 		"expression",
 		nargs="?",
