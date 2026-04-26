@@ -6,12 +6,14 @@ from __future__ import annotations
 import argparse
 import ast
 import asyncio
+import functools
 import importlib.metadata
 import io
+import os
 import re
 import runpy
 import sys
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Final, NamedTuple, TypeGuard, cast
 
@@ -24,8 +26,22 @@ else:  # pragma: no cover
 	from typing_extensions import assert_never
 
 from camas import Effect, Parallel, Sequential, Task, TaskNode, run
-from camas.effect.summary import Auto, Fixed, Summary, SummaryOptions
-from camas.effect.termtree import Termtree, TermtreeOptions, print_tree
+from camas.effect.termtree import GREY, RESET, print_tree
+
+BLUE: Final = "\033[34m"
+BOLD_BLUE: Final = "\033[1;34m"
+BOLD_CYAN: Final = "\033[1;36m"
+BOLD_YELLOW: Final = "\033[1;33m"
+
+
+def color_on() -> bool:
+	return sys.stdout.isatty() and not os.environ.get("NO_COLOR")
+
+
+def wrap_ansi(text: str, code: str) -> str:
+	"""Unconditionally wrap ``text`` in ``code``...``RESET``. Callers gate via
+	``maybe_color`` (or by checking ``color_on()`` themselves)."""
+	return f"{code}{text}{RESET}" if text else text
 
 
 class Ref(NamedTuple):
@@ -47,22 +63,6 @@ CONSTRUCTORS: Final = {
 CONFIG_CONSTRUCTORS: Final = CONSTRUCTORS | {Ref.__name__: Ref}
 
 EXPRESSION_PATTERN: Final = re.compile(r"^\s*(?:(?:Task|Sequential|Parallel|Ref)\s*\(|[(\{])")
-
-EXAMPLES: Final = """\
-examples:
-    camas                            # list defined tasks
-    camas <task>                     # run a defined task
-    camas '<expression>'             # run an inline expression
-
-    camas 'Parallel("ruff check .", "mypy .")'
-    camas '("ruff format --check .", {"mypy .", "pyright ."}, "pytest")'
-    camas 'Parallel("pytest --python {PY}", matrix={"PY": ("3.12", "3.13")})'
-
-named tasks (tasks.py or [tool.camas.tasks] in pyproject.toml):
-    lint = "ruff check ."
-    test = "pytest"
-    ci   = '(lint, test)'           # tuple → Sequential, set → Parallel
-"""
 
 
 def _format_syntax_error(source: str, err: SyntaxError) -> str:
@@ -464,7 +464,10 @@ def dispatch_arg(arg: str, tasks: Mapping[str, TaskNode]) -> TaskNode:
 	return parse_expression(arg, tasks=tasks)
 
 
-def build_parser(tasks: Mapping[str, TaskNode] | None = None) -> argparse.ArgumentParser:
+def build_parser(
+	tasks: Mapping[str, TaskNode] | None = None,
+	source: Path | None = None,
+) -> argparse.ArgumentParser:
 	"""Build the CLI argument parser.
 
 	When ``tasks`` is provided, known task names appear in the positional
@@ -479,17 +482,29 @@ def build_parser(tasks: Mapping[str, TaskNode] | None = None) -> argparse.Argume
 	>>> "task | expression" in build_parser({"all": Task("x")}).format_usage()
 	True
 	"""
-	parser: Final = argparse.ArgumentParser(
+
+	class _Parser(argparse.ArgumentParser):
+		def format_help(self) -> str:
+			color = color_on()
+			sections = [super().format_help().rstrip()]
+			if tasks:
+				sections.append(format_task_summary_listing(tasks, source, color=color))
+			effects_listing = format_available_effects(color=color)
+			if effects_listing:
+				sections.append(effects_listing)
+			sections.append(format_try_hint(color))
+			return "\n\n".join(sections) + "\n"
+
+	parser: Final = _Parser(
 		prog="camas",
 		description="Generic parallel/sequential task runner with TUI output.",
-		epilog=EXAMPLES,
 		formatter_class=argparse.RawDescriptionHelpFormatter,
 	)
 	parser.add_argument(
 		"expression",
 		nargs="?",
 		metavar=_expression_metavar(tasks),
-		help="name of a defined task, or a typed Python expression",
+		help="name of a defined task, or a camas expression",
 	)
 	parser.add_argument(
 		"--version",
@@ -513,11 +528,10 @@ def build_parser(tasks: Mapping[str, TaskNode] | None = None) -> argparse.Argume
 	)
 	parser.add_argument(
 		"--effects",
+		nargs="?",
 		default="(Termtree(),)",
-		help=(
-			"tuple expression of Effect instances, e.g. '(Summary(),)' for CI."
-			f" known: {', '.join(EFFECT_CONSTRUCTORS)}. default: '(Termtree(),)'"
-		),
+		const="",
+		help="tuple of Effect instances; pass with no value to list available Effects",
 	)
 	return parser
 
@@ -533,15 +547,15 @@ def _expression_metavar(tasks: Mapping[str, TaskNode] | None) -> str:
 	return "task | expression" if tasks else "expression"
 
 
-def _is_named_ref(node: TaskNode, names: frozenset[str]) -> bool:
+def is_named_ref(node: TaskNode, names: frozenset[str]) -> bool:
 	return node.name is not None and node.name in names
 
 
-def _par_child_summary(node: TaskNode, names: frozenset[str]) -> str:
+def par_child_summary(node: TaskNode, names: frozenset[str]) -> str:
 	"""Render a Parallel child, parenthesising an anonymous Sequential because
 	``,`` binds looser than ``|``."""
 	rendered = task_summary(node, names, is_root=False)
-	if isinstance(node, Sequential) and not _is_named_ref(node, names) and len(node.tasks) > 1:
+	if isinstance(node, Sequential) and not is_named_ref(node, names) and len(node.tasks) > 1:
 		return f"({rendered})"
 	return rendered
 
@@ -566,7 +580,7 @@ def task_summary(node: TaskNode, names: frozenset[str], is_root: bool = True) ->
 	>>> task_summary(Sequential(Task("a", name="lint"), Task("b")), frozenset({"lint"}))
 	'lint, b'
 	"""
-	if not is_root and _is_named_ref(node, names):
+	if not is_root and is_named_ref(node, names):
 		assert node.name is not None
 		return node.name
 	match node:
@@ -575,12 +589,12 @@ def task_summary(node: TaskNode, names: frozenset[str], is_root: bool = True) ->
 		case Sequential(tasks=tasks):
 			return ", ".join(task_summary(t, names, is_root=False) for t in tasks)
 		case Parallel(tasks=tasks):
-			return " | ".join(_par_child_summary(t, names) for t in tasks)
+			return " | ".join(par_child_summary(t, names) for t in tasks)
 		case _:
 			assert_never(node)
 
 
-def _summary_annotation(node: TaskNode) -> str:
+def summary_annotation(node: TaskNode) -> str:
 	"""Annotate a top-level entry with its matrix axes — important context that
 	doesn't appear in the body otherwise."""
 	if isinstance(node, Task) or node.matrix is None:
@@ -589,24 +603,46 @@ def _summary_annotation(node: TaskNode) -> str:
 	return f"  [matrix: {axes}]"
 
 
-def print_task_summary_listing(tasks: Mapping[str, TaskNode], source: Path | None) -> None:
-	"""Print the ``Tasks from <source>`` listing — one compact line per task."""
+def colorize_summary(body: str, color: bool) -> str:
+	"""Grey out the structural ``,`` and ``|`` operators in a task summary."""
+	if not color:
+		return body
+	return body.replace(", ", f"{GREY},{RESET} ").replace(" | ", f" {GREY}|{RESET} ")
+
+
+def maybe_color(text: str, code: str, on: bool) -> str:
+	return wrap_ansi(text, code) if on else text
+
+
+def format_task_summary_listing(
+	tasks: Mapping[str, TaskNode], source: Path | None, color: bool
+) -> str:
+	"""Build the ``Available tasks from <source>`` listing as a string."""
 	if not tasks:
 		if source is not None:
-			print(f"No tasks defined in {source}.")
-		else:
-			print("No tasks file found in this directory or any parent.")
-			print("Define tasks in tasks.py or [tool.camas.tasks] in pyproject.toml,")
-			print('or pass an expression directly: camas \'Parallel("ruff check .", "mypy .")\'')
-		return
+			return f"No tasks defined in {source}."
+		return (
+			"No tasks file found in this directory or any parent.\n"
+			"Define tasks in tasks.py or [tool.camas.tasks] in pyproject.toml,\n"
+			'or pass an expression directly: camas \'Parallel("ruff check .", "mypy .")\''
+		)
 	names = frozenset(tasks)
 	items = sorted(tasks.items())
 	width = max(len(n) for n, _ in items)
-	header = f"Available tasks from {source}:" if source is not None else "Tasks:"
-	print(header)
+	header_text = f"Available tasks from {source}:" if source is not None else "Tasks:"
+	lines = [maybe_color(header_text, BOLD_BLUE, color)]
 	for name, node in items:
-		body = task_summary(node, names)
-		print(f"  {(name).ljust(width + 1)} {body}{_summary_annotation(node)}")
+		body = colorize_summary(task_summary(node, names), color)
+		annotation = summary_annotation(node)
+		lines.append(
+			f"  {maybe_color(name.ljust(width + 1), BOLD_CYAN, color)} {body}"
+			f"{maybe_color(annotation, GREY, color) if annotation else ''}"
+		)
+	return "\n".join(lines)
+
+
+def print_task_summary_listing(tasks: Mapping[str, TaskNode], source: Path | None) -> None:
+	print(format_task_summary_listing(tasks, source, color=color_on()))
 
 
 def print_task_trees(tasks: Mapping[str, TaskNode], source: Path | None) -> None:
@@ -615,7 +651,7 @@ def print_task_trees(tasks: Mapping[str, TaskNode], source: Path | None) -> None
 		print_task_summary_listing(tasks, source)
 		return
 	header = f"Available tasks from {source}:" if source is not None else "Tasks:"
-	print(header)
+	print(maybe_color(header, BOLD_BLUE, color_on()))
 	print()
 	for _, task in sorted(tasks.items()):
 		print_tree(task, show_cmd=True)
@@ -640,14 +676,129 @@ def run_cli(scope: Mapping[str, object]) -> None:
 	dispatch(_name_scope_bindings(scope))
 
 
-EFFECT_CONSTRUCTORS: Final[Mapping[str, Callable[..., Any]]] = {
-	Auto.__name__: Auto,
-	Fixed.__name__: Fixed,
-	Summary.__name__: Summary,
-	SummaryOptions.__name__: SummaryOptions,
-	Termtree.__name__: Termtree,
-	TermtreeOptions.__name__: TermtreeOptions,
-}
+@functools.cache
+def discover_effects() -> tuple[Mapping[str, Any], tuple[tuple[str, Any], ...]]:
+	"""Walk every public binding in ``camas.effect.*`` and return
+	``(constructors, effects)``.
+
+	``constructors`` is every concrete class transitively referenced through
+	Effect constructor signatures — what the ``--effects`` mini-language is
+	allowed to call. ``effects`` is the (name, class) pairs that satisfy the
+	``Effect`` protocol.
+
+	Imports are scoped so ``camas <task>`` doesn't pay for the inspection
+	unless something asks for the listing. Result is cached.
+	"""
+	import importlib
+	import inspect
+	import pkgutil
+
+	import camas.effect as effect_pkg
+
+	constructors: dict[str, Any] = {}
+	effects: list[tuple[str, Any]] = []
+	for _, modname, _ in pkgutil.iter_modules(effect_pkg.__path__):
+		mod = importlib.import_module(f"{effect_pkg.__name__}.{modname}")
+		for name, obj in vars(mod).items():
+			if name.startswith("_") or obj is Effect:
+				continue
+			if inspect.isclass(obj) and obj.__module__ == mod.__name__:
+				constructors[name] = obj
+				if issubclass(obj, Effect):
+					effects.append((name, obj))  # pyright: ignore[reportUnknownArgumentType]
+			elif isinstance(obj, Effect):
+				constructors[name] = obj
+				effects.append((name, obj))  # pyright: ignore[reportUnknownArgumentType]
+
+	import inspect as _inspect
+
+	for _, obj in effects:
+		if _inspect.isclass(obj):
+			for ref in reachable_classes(obj):
+				constructors.setdefault(ref.__name__, ref)
+	return constructors, tuple(effects)
+
+
+def reachable_classes(cls: Any, seen: set[Any] | None = None) -> set[Any]:
+	"""Collect every class transitively reachable through ``cls``'s init signature."""
+	seen = seen if seen is not None else set()
+	if cls in seen:
+		return seen
+	seen.add(cls)
+	for _, _, annotation, _ in signature_fields(cls):
+		for leaf in flatten_annotation(annotation):
+			if isinstance(leaf, type) and getattr(leaf, "__module__", "").startswith(
+				"camas.effect"
+			):
+				reachable_classes(leaf, seen)
+	return seen
+
+
+def flatten_annotation(annotation: Any) -> Any:
+	"""Yield every leaf type from a possibly-generic/union annotation."""
+	from typing import get_args
+
+	args = get_args(annotation)
+	if not args:
+		yield annotation
+		return
+	for a in args:
+		yield from flatten_annotation(a)
+
+
+MISSING: Final = object()
+
+
+def signature_fields(cls: Any) -> list[tuple[str, Any, Any, Any]]:
+	"""Return ``[(name, kind, annotation, default), ...]`` for ``cls``'s constructor.
+
+	Handles NamedTuple, dataclass, and ordinary classes uniformly. ``kind`` is
+	``inspect.Parameter.kind`` so callers can render ``*args``/``**kwargs``.
+	``default`` is ``MISSING`` when the parameter is required.
+	"""
+	import dataclasses
+	import inspect
+	from typing import get_type_hints
+
+	if hasattr(cls, "_fields"):
+		try:
+			hints = get_type_hints(cls)
+		except (NameError, TypeError):
+			hints = {}
+		defaults = getattr(cls, "_field_defaults", {})
+		return [
+			(
+				n,
+				inspect.Parameter.POSITIONAL_OR_KEYWORD,
+				hints.get(n, Any),
+				defaults.get(n, MISSING),
+			)
+			for n in cls._fields
+		]
+	if dataclasses.is_dataclass(cls):
+		return [
+			(
+				f.name,
+				inspect.Parameter.POSITIONAL_OR_KEYWORD,
+				f.type,
+				f.default if f.default is not dataclasses.MISSING else MISSING,
+			)
+			for f in dataclasses.fields(cls)
+			if f.init
+		]
+	try:
+		sig = inspect.signature(cls)
+	except (ValueError, TypeError):
+		return []
+	return [
+		(
+			p.name,
+			p.kind,
+			p.annotation if p.annotation is not inspect.Parameter.empty else Any,
+			p.default if p.default is not inspect.Parameter.empty else MISSING,
+		)
+		for p in sig.parameters.values()
+	]
 
 
 def parse_effects(expr: str) -> tuple[Effect[Any], ...]:
@@ -668,33 +819,139 @@ def parse_effects(expr: str) -> tuple[Effect[Any], ...]:
 		raise ValueError(_format_syntax_error(expr, e)) from e
 	if not isinstance(tree.body, ast.Tuple):
 		raise ValueError(f"--effects must be a tuple, got {type(tree.body).__name__}")
-	return tuple(_expect_effect(_eval_value(elt)) for elt in tree.body.elts)
+	constructors, _ = discover_effects()
+	return tuple(expect_effect(eval_value(elt, constructors)) for elt in tree.body.elts)
 
 
-def _eval_value(node: ast.expr) -> Any:
+def eval_value(node: ast.expr, constructors: Mapping[str, Any]) -> Any:
 	"""Evaluate a node in the --effects mini-language. Returns Any since the
-	concrete type depends on the AST shape; ``_expect_effect`` validates at the
+	concrete type depends on the AST shape; ``expect_effect`` validates at the
 	tuple level."""
 	match node:
 		case ast.Constant(value=val):
 			return val
-		case ast.Call(func=ast.Name(id=name), args=args, keywords=keywords) if (
-			name in EFFECT_CONSTRUCTORS
-		):
-			return EFFECT_CONSTRUCTORS[name](
-				*(_eval_value(a) for a in args),
-				**{kw.arg: _eval_value(kw.value) for kw in keywords if kw.arg is not None},
+		case ast.Name(id=name) if name in constructors:
+			return constructors[name]
+		case ast.Call(func=ast.Name(id=name), args=args, keywords=keywords) if name in constructors:
+			return constructors[name](
+				*(eval_value(a, constructors) for a in args),
+				**{
+					kw.arg: eval_value(kw.value, constructors)
+					for kw in keywords
+					if kw.arg is not None
+				},
 			)
 		case _:
 			raise ValueError(
-				f"unsupported syntax (known: {', '.join(EFFECT_CONSTRUCTORS)}): {ast.dump(node)}"
+				f"unsupported syntax (known: {', '.join(sorted(constructors))}): {ast.dump(node)}"
 			)
 
 
-def _expect_effect(value: Any) -> Effect[Any]:
-	if not isinstance(value, Summary | Termtree):
+def expect_effect(value: Any) -> Effect[Any]:
+	if not isinstance(value, Effect):
 		raise ValueError(f"expected an Effect instance, got {type(value).__name__}")
-	return value
+	return value  # pyright: ignore[reportUnknownVariableType,reportReturnType]
+
+
+def format_annotation(annotation: Any, color: bool) -> str:
+	"""Render a type annotation for help output, stripping module qualifiers."""
+	if annotation is Any:
+		text = "Any"
+	elif isinstance(annotation, type):
+		text = annotation.__name__
+	else:
+		text = re.sub(r"(?:[\w]+\.)+(\w+)", r"\1", str(annotation))
+	return wrap_ansi(text, BLUE) if color else text
+
+
+def format_default(default: Any, color: bool) -> str:
+	"""Render a constructor default value compactly."""
+	if default is MISSING:
+		return ""
+	rendered = repr(default) if isinstance(default, str) else str(default)
+	return f" = {wrap_ansi(rendered, GREY) if color else rendered}"
+
+
+def format_signature(cls: Any, indent: str, color: bool) -> list[str]:
+	"""Render ``cls(field: Type = default, …)`` plus nested signatures of any
+	camas.effect classes appearing in the field annotations."""
+	import inspect
+
+	fields = signature_fields(cls)
+	cls_name = wrap_ansi(cls.__name__, BOLD_CYAN) if color else cls.__name__
+	if not fields:
+		return [f"{indent}{cls_name}()"]
+	parts: list[str] = []
+	nested: list[Any] = []
+	for name, kind, annotation, default in fields:
+		ann = format_annotation(annotation, color)
+		prefix = (
+			"*"
+			if kind is inspect.Parameter.VAR_POSITIONAL
+			else "**"
+			if kind is inspect.Parameter.VAR_KEYWORD
+			else ""
+		)
+		parts.append(f"{prefix}{name}: {ann}{format_default(default, color)}")
+		for leaf in flatten_annotation(annotation):
+			if (
+				isinstance(leaf, type)
+				and getattr(leaf, "__module__", "").startswith("camas.effect")
+				and leaf is not cls
+				and leaf not in nested
+			):
+				nested.append(leaf)
+	lines = [f"{indent}{cls_name}({', '.join(parts)})"]
+	for child in nested:
+		lines.extend(format_signature(child, indent + "  ", color))
+	return lines
+
+
+def format_available_effects(color: bool | None = None) -> str:
+	"""Render each discovered Effect with its full constructor signature and
+	the signatures of every parameter type it transitively references."""
+	_, effects = discover_effects()
+	if not effects:
+		return ""
+	on = color_on() if color is None else color
+	lines = [maybe_color("Available Effects:", BOLD_BLUE, on)]
+	for i, (name, cls) in enumerate(sorted(effects)):
+		if i > 0:
+			lines.append("")
+		doc = first_line_doc(cls)
+		name_str = maybe_color(name, BOLD_YELLOW, on)
+		doc_str = f"  — {maybe_color(doc, GREY, on)}" if doc else ""
+		lines.append(f"  {name_str}{doc_str}")
+		lines.extend(format_signature(cls, "    ", on))
+	return "\n".join(lines)
+
+
+def format_try_hint(color: bool) -> str:
+	"""Three-line table teaching ``( )`` (Sequential), ``{ }`` (Parallel), and ``--effects``."""
+	rows = (
+		('camas \'("echo Hello", "echo world!")\'', "( ) → Sequential"),
+		('camas \'{"echo Hello", "echo world!"}\'', "{ } → Parallel"),
+		("camas --effects '(Summary(),)' <task>", "post-run summary instead of live tree"),
+	)
+	width = max(len(cmd) for cmd, _ in rows)
+	header = maybe_color("Try:", BOLD_BLUE, color)
+	body = "\n".join(
+		f"  {cmd.ljust(width)}  {maybe_color(f'# {note}', GREY, color)}" for cmd, note in rows
+	)
+	return f"{header}\n{body}"
+
+
+def print_available_effects() -> None:
+	print(format_available_effects())
+
+
+def first_line_doc(obj: Any) -> str:
+	doc = getattr(obj, "__doc__", None) or ""
+	for line in doc.splitlines():
+		line = line.strip()
+		if line:
+			return line
+	return ""
 
 
 def dispatch(
@@ -714,7 +971,7 @@ def dispatch(
 		print_task_help(raw[0], tasks[raw[0]])
 		sys.exit(0)
 
-	parser: Final = build_parser(tasks)
+	parser: Final = build_parser(tasks, source)
 	args: Final = parser.parse_args(raw)
 
 	if args.list:
@@ -725,16 +982,17 @@ def dispatch(
 		print_task_trees(tasks, source)
 		sys.exit(0)
 
+	if args.effects == "":
+		print_available_effects()
+		sys.exit(0)
+
 	if args.expression is None:
 		if tasks:
 			print(parser.format_usage().rstrip())
 			print()
 			print_task_summary_listing(tasks, source)
 			print()
-			print("Try running a sequence of tasks using ( ):")
-			print('  camas \'("echo Hello", "echo world!")\'')
-			print("or parallel tasks using { }:")
-			print('  camas \'{"echo Hello", "echo world!"}\'')
+			print(format_try_hint(color_on()))
 			print()
 			sys.stdout.flush()
 			print(f"{parser.prog}: error: task or expression is required", file=sys.stderr)

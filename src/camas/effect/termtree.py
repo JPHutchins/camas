@@ -152,7 +152,7 @@ STATUS_COL_WIDTH: Final = 18
 PROG_WAITING: Final = " "
 PROG_RUNNING: Final = "┄"
 PROG_DONE: Final = "─"
-PROG_MAX_CELL_WIDTH: Final = 6
+PROG_MAX_CELL_WIDTH: Final = 12
 PROG_MIN_MARGIN: Final = 2
 
 
@@ -493,9 +493,13 @@ def render_frame(
 	return f"\033[{len(lines) - 1}F" + "\n".join(lines)
 
 
-def _print_task_output(task: Task, output: Sequence[bytes], label: str, color: str) -> None:
+def _print_task_output(
+	task: Task, output: Sequence[bytes], label: str, color: str, returncode: int
+) -> None:
 	sys.stdout.write(f"\n{color}{'=' * 60}{RESET}\n")
 	sys.stdout.write(f"{color}{BOLD} {label}: {task_label(task)} {RESET}\n")
+	sys.stdout.write(f" {task.cmd if isinstance(task.cmd, str) else ' '.join(task.cmd)}\n")
+	sys.stdout.write(f" exit code: {returncode}\n")
 	sys.stdout.write(f"{color}{'=' * 60}{RESET}\n")
 	sys.stdout.flush()
 	for line in output:
@@ -509,7 +513,7 @@ def print_failures(states: Sequence[LeafState]) -> None:
 	for state in states:
 		match state:
 			case Completed(task=task, completion=Finished(returncode=rc, output=output)) if rc > 0:
-				_print_task_output(task, output, "FAILED", RED)
+				_print_task_output(task, output, "FAILED", RED, rc)
 			case _:
 				pass
 
@@ -519,7 +523,7 @@ def print_passes(states: Sequence[LeafState]) -> None:
 	for state in states:
 		match state:
 			case Completed(task=task, completion=Finished(returncode=0, output=output)):
-				_print_task_output(task, output, "PASSED", GREEN)
+				_print_task_output(task, output, "PASSED", GREEN, 0)
 			case _:
 				pass
 

@@ -14,7 +14,7 @@ from collections.abc import Awaitable, Callable, Iterable, Iterator, Mapping, Se
 from dataclasses import dataclass
 from pathlib import Path
 from subprocess import STDOUT
-from typing import Any, Final, NamedTuple, Protocol, TypeAlias, TypeVar
+from typing import Any, Final, NamedTuple, Protocol, TypeAlias, TypeVar, runtime_checkable
 
 if sys.version_info >= (3, 11):
 	from asyncio import TaskGroup
@@ -301,6 +301,7 @@ EventSink: TypeAlias = Callable[[int, TaskEvent], Awaitable[None]]
 T = TypeVar("T")
 
 
+@runtime_checkable
 class Effect(Protocol[T]):
 	"""Observer over a run's event stream, with a per-leaf context of type T.
 

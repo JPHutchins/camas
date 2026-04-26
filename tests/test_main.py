@@ -12,11 +12,23 @@ import pytest
 
 from camas import Parallel, Sequential, Task
 from camas.main import (
+	MISSING,
 	build_parser,
+	discover_effects,
+	first_line_doc,
+	format_annotation,
+	format_available_effects,
+	format_default,
+	format_signature,
+	format_task_summary_listing,
+	format_try_hint,
 	main,
 	parse_effects,
 	parse_expression,
+	print_available_effects,
 	print_task_summary_listing,
+	print_task_trees,
+	signature_fields,
 	task_summary,
 )
 
@@ -275,9 +287,7 @@ def test_task_summary_named_ref_in_parallel_no_parens() -> None:
 	"""A named Sequential reference inside a Parallel renders as a bare name (no parens)."""
 	fix = Sequential(Task("a", name="lint_fix"), Task("b", name="format"), name="fix")
 	tree = Parallel(fix, Task("c", name="test"))
-	assert (
-		task_summary(tree, frozenset({"fix", "lint_fix", "format", "test"})) == "fix | test"
-	)
+	assert task_summary(tree, frozenset({"fix", "lint_fix", "format", "test"})) == "fix | test"
 
 
 def test_task_summary_root_name_does_not_self_reference() -> None:
@@ -317,3 +327,362 @@ def test_print_listing_matrix_annotation(capsys: pytest.CaptureFixture[str]) -> 
 	print_task_summary_listing({"matrix": matrix}, None)
 	out = capsys.readouterr().out
 	assert "[matrix: PY]" in out
+
+
+def test_format_task_summary_listing_no_tasks_with_source(tmp_path: Path) -> None:
+	source = tmp_path / "tasks.py"
+	out = format_task_summary_listing({}, source, color=False)
+	assert "No tasks defined in" in out
+	assert str(source) in out
+
+
+def test_format_task_summary_listing_no_tasks_no_source() -> None:
+	out = format_task_summary_listing({}, None, color=False)
+	assert "No tasks file found" in out
+	assert "tasks.py" in out
+
+
+def test_format_task_summary_listing_no_source_header() -> None:
+	out = format_task_summary_listing({"a": Task("x", name="a")}, None, color=False)
+	assert out.startswith("Tasks:")
+
+
+def test_format_task_summary_listing_with_color() -> None:
+	out = format_task_summary_listing(
+		{"a": Sequential(Task("x"), Task("y"), name="a")},
+		None,
+		color=True,
+	)
+	assert "\033[" in out
+
+
+def test_print_task_trees_empty(capsys: pytest.CaptureFixture[str]) -> None:
+	print_task_trees({}, None)
+	assert "No tasks file found" in capsys.readouterr().out
+
+
+def test_print_task_trees_with_tasks(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+	source = tmp_path / "tasks.py"
+	source.touch()
+	print_task_trees({"a": Task("echo a", name="a")}, source)
+	assert "echo a" in capsys.readouterr().out
+
+
+def test_format_try_hint_plain() -> None:
+	out = format_try_hint(color=False)
+	assert "Try:" in out
+	assert "( ) → Sequential" in out
+	assert "{ } → Parallel" in out
+	assert "Summary" in out
+
+
+def test_format_try_hint_colored() -> None:
+	assert "\033[" in format_try_hint(color=True)
+
+
+def test_discover_effects_returns_summary_termtree() -> None:
+	constructors, effects = discover_effects()
+	names = {n for n, _ in effects}
+	assert names == {"Summary", "Termtree"}
+	assert "SummaryOptions" in constructors
+	assert "Auto" in constructors
+	assert "Fixed" in constructors
+
+
+def test_format_available_effects_default_color() -> None:
+	out = format_available_effects()
+	assert "Summary" in out
+	assert "Termtree" in out
+
+
+def test_format_available_effects_no_color() -> None:
+	out = format_available_effects(color=False)
+	assert "\033[" not in out
+	assert "Summary" in out
+
+
+def test_format_available_effects_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+	from collections.abc import Mapping
+	from typing import Any
+
+	from camas import main as main_mod
+
+	def empty_discover() -> tuple[Mapping[str, Any], tuple[tuple[str, Any], ...]]:
+		return {}, ()
+
+	monkeypatch.setattr(main_mod, "discover_effects", empty_discover)
+	assert format_available_effects() == ""
+
+
+def test_print_available_effects(capsys: pytest.CaptureFixture[str]) -> None:
+	print_available_effects()
+	assert "Summary" in capsys.readouterr().out
+
+
+def test_first_line_doc_with_doc() -> None:
+	class C:
+		"""First line.
+
+		Second line.
+		"""
+
+	assert first_line_doc(C) == "First line."
+
+
+def test_first_line_doc_empty() -> None:
+	class C: ...
+
+	assert first_line_doc(C) == ""
+
+
+def test_first_line_doc_blank_then_text() -> None:
+	class C:
+		__doc__ = "\n\n  real line\n"
+
+	assert first_line_doc(C) == "real line"
+
+
+def test_format_annotation_any() -> None:
+	from typing import Any as _Any
+
+	assert format_annotation(_Any, color=False) == "Any"
+
+
+def test_format_annotation_concrete_type() -> None:
+	assert format_annotation(int, color=False) == "int"
+
+
+def test_format_annotation_string_repr() -> None:
+	assert format_annotation("camas.foo.Bar | None", color=False) == "Bar | None"
+
+
+def test_format_annotation_colored() -> None:
+	assert "\033[" in format_annotation(int, color=True)
+
+
+def test_format_default_missing() -> None:
+	assert format_default(MISSING, color=False) == ""
+
+
+def test_format_default_string() -> None:
+	assert format_default("hi", color=False) == " = 'hi'"
+
+
+def test_format_default_other() -> None:
+	assert format_default(3, color=False) == " = 3"
+
+
+def test_format_default_colored() -> None:
+	assert "\033[" in format_default(None, color=True)
+
+
+def test_signature_fields_namedtuple_with_defaults() -> None:
+	from camas.effect.summary import SummaryOptions
+
+	fields = signature_fields(SummaryOptions)
+	names = [n for n, _, _, _ in fields]
+	assert names == ["term_width", "show_passing"]
+
+
+def test_signature_fields_namedtuple_without_defaults() -> None:
+	from camas.effect.summary import Fixed
+
+	fields = signature_fields(Fixed)
+	assert [(n, d is MISSING) for n, _, _, d in fields] == [("columns", True)]
+
+
+def test_signature_fields_no_init() -> None:
+	"""builtins.object has no inspectable params for our purposes."""
+
+	class Empty: ...
+
+	# Empty has no __init__ params except self which inspect.signature elides.
+	assert signature_fields(Empty) == []
+
+
+def test_signature_fields_via_inspect_signature() -> None:
+	"""Ordinary class (not NamedTuple, not dataclass) → inspect.signature path."""
+
+	class C:
+		def __init__(self, a: int, b: str = "x") -> None: ...
+
+	fields = signature_fields(C)
+	names = [n for n, _, _, _ in fields]
+	assert names == ["a", "b"]
+
+
+def test_signature_fields_var_args() -> None:
+	"""``*args``/``**kwargs`` are reported with their kinds."""
+
+	class Tricky:
+		def __init__(self, *args: int, **kwargs: int) -> None: ...
+
+	fields = signature_fields(Tricky)
+	assert any(name in {"args", "kwargs"} for name, _, _, _ in fields)
+
+
+def test_signature_fields_dataclass() -> None:
+	from dataclasses import dataclass, field
+
+	@dataclass
+	class D:
+		x: int
+		y: str = "hi"
+		z: tuple[int, ...] = field(default=(), init=False)
+
+	fields = signature_fields(D)
+	names = [n for n, _, _, _ in fields]
+	assert names == ["x", "y"]  # init=False excluded
+
+
+def test_format_signature_no_fields() -> None:
+	class Empty: ...
+
+	out = format_signature(Empty, indent="  ", color=False)
+	assert out == ["  Empty()"]
+
+
+def test_format_signature_with_fields_and_nested() -> None:
+	from camas.effect.summary import Summary
+
+	out = "\n".join(format_signature(Summary, indent="", color=False))
+	assert "Summary(" in out
+	assert "SummaryOptions(" in out
+	assert "Auto()" in out
+
+
+def test_eval_value_constant_string() -> None:
+	import ast as _ast
+
+	from camas.main import eval_value
+
+	node = _ast.parse('"hello"', mode="eval").body
+	assert eval_value(node, {}) == "hello"
+
+
+def test_eval_value_bare_name() -> None:
+	import ast as _ast
+
+	from camas.effect.summary import Summary
+	from camas.main import eval_value
+
+	node = _ast.parse("Summary", mode="eval").body
+	assert eval_value(node, {"Summary": Summary}) is Summary
+
+
+def test_dispatch_effects_no_value_lists(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	monkeypatch.chdir(tmp_path)
+	with pytest.raises(SystemExit, match="0"):
+		with patch("sys.argv", ["camas", "--effects"]):
+			main()
+	assert "Available Effects:" in capsys.readouterr().out
+
+
+def test_help_includes_tasks_and_effects(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	(tmp_path / "tasks.py").write_text('from camas import Task\nlint = Task("ruff check .")\n')
+	monkeypatch.chdir(tmp_path)
+	with pytest.raises(SystemExit, match="0"):
+		with patch("sys.argv", ["camas", "--help"]):
+			main()
+	out = capsys.readouterr().out
+	assert "Available tasks from" in out
+	assert "lint" in out
+	assert "Available Effects:" in out
+	assert "Try:" in out
+
+
+def test_isinstance_effect_branch_in_discovery(monkeypatch: pytest.MonkeyPatch) -> None:
+	"""Cover the plugin path: a module-scope Effect *instance* (not class)."""
+	import pkgutil as _pkgutil
+	import sys as _sys
+	import types
+	from collections.abc import Iterator
+	from pkgutil import ModuleInfo
+
+	from camas.effect.summary import Summary
+	from camas.main import discover_effects as _discover
+
+	plugin = types.ModuleType("camas.effect._test_plugin")
+	setattr(plugin, "my_effect", Summary())
+	monkeypatch.setitem(_sys.modules, "camas.effect._test_plugin", plugin)
+
+	real_iter = _pkgutil.iter_modules
+
+	finders = [info.module_finder for info in real_iter(["src/camas/effect"])]
+
+	def fake_iter(path: list[str]) -> Iterator[ModuleInfo]:
+		yield from real_iter(path)
+		yield ModuleInfo(finders[0], "_test_plugin", False)
+
+	monkeypatch.setattr(_pkgutil, "iter_modules", fake_iter)
+	_discover.cache_clear()
+	try:
+		_, effects = _discover()
+	finally:
+		_discover.cache_clear()
+	names = {n for n, _ in effects}
+	assert "my_effect" in names
+
+
+def test_reachable_classes_seen_short_circuit() -> None:
+	from camas.effect.summary import Summary
+	from camas.main import reachable_classes
+
+	seen = {Summary}
+	out = reachable_classes(Summary, seen)
+	assert out is seen  # already seen → returns immediately
+
+
+def test_build_parser_format_help_no_tasks_no_effects(monkeypatch: pytest.MonkeyPatch) -> None:
+	from collections.abc import Mapping
+	from typing import Any
+
+	from camas import main as main_mod
+
+	def empty_discover() -> tuple[Mapping[str, Any], tuple[tuple[str, Any], ...]]:
+		return {}, ()
+
+	monkeypatch.setattr(main_mod, "discover_effects", empty_discover)
+	parser = build_parser()
+	out = parser.format_help()
+	assert "Available tasks" not in out
+	assert "Available Effects" not in out
+	assert "Try:" in out
+
+
+def test_signature_fields_namedtuple_unresolvable_hints(
+	monkeypatch: pytest.MonkeyPatch,
+) -> None:
+	from camas import main as main_mod
+	from camas.effect.summary import Auto
+
+	def boom(_obj: object) -> dict[str, object]:
+		raise NameError("forward ref")
+
+	monkeypatch.setattr(main_mod, "signature_fields", signature_fields)
+	# Patch get_type_hints inside signature_fields' import scope by monkeypatching typing.
+	import typing as _typing
+
+	import camas.main as _m
+
+	monkeypatch.setattr(_typing, "get_type_hints", boom)
+	fields = _m.signature_fields(Auto)
+	# Auto has no fields anyway, but the get_type_hints exception path should be taken.
+	assert fields == []
+
+
+def test_signature_fields_signature_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+	"""inspect.signature raises ValueError for some C-implemented callables."""
+	import inspect as _inspect
+
+	class Plain: ...
+
+	def boom(_obj: object) -> object:
+		raise ValueError("no signature")
+
+	monkeypatch.setattr(_inspect, "signature", boom)
+	assert signature_fields(Plain) == []
