@@ -75,7 +75,7 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["src", "tests"]
-norecursedirs = ["fixtures"]
+norecursedirs = ["fixtures", "examples"]
 markers = ["slow: visual demo tests with real delays"]
 
 [tool.ruff]

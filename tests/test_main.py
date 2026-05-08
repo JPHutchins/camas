@@ -330,7 +330,29 @@ def test_print_listing_matrix_annotation(capsys: pytest.CaptureFixture[str]) -> 
 	matrix = Sequential(Task("uv sync"), name="matrix", matrix={"PY": ("3.12", "3.13")})
 	print_task_summary_listing({"matrix": matrix}, None)
 	out = capsys.readouterr().out
-	assert "[matrix: PY]" in out
+	assert "[matrix: PY×2 (3.12..3.13)]" in out
+
+
+def test_print_listing_matrix_single_value_annotation(
+	capsys: pytest.CaptureFixture[str],
+) -> None:
+	matrix = Sequential(Task("uv sync"), name="matrix", matrix={"PY": ("3.13",)})
+	print_task_summary_listing({"matrix": matrix}, None)
+	out = capsys.readouterr().out
+	assert "[matrix: PY=3.13]" in out
+
+
+def test_print_listing_matrix_multi_axis_annotation(
+	capsys: pytest.CaptureFixture[str],
+) -> None:
+	t = Sequential(
+		Task("x"),
+		name="ci",
+		matrix={"DB": ("sqlite", "postgres"), "OPT": ("debug",)},
+	)
+	print_task_summary_listing({"ci": t}, None)
+	out = capsys.readouterr().out
+	assert "[matrix: DB×2 (sqlite..postgres) OPT=debug]" in out
 
 
 def test_format_task_summary_listing_no_tasks_with_source(tmp_path: Path) -> None:

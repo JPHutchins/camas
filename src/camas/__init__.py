@@ -438,6 +438,87 @@ def specialize_node(task: TaskNode, binding: MatrixBinding, suffix: str) -> Task
 			assert_never(task)
 
 
+def matrix_axes(task: TaskNode) -> dict[str, tuple[str, ...]]:
+	"""Walk a task tree and collect every matrix axis with its values.
+
+	When the same axis name appears in multiple matrices, the outermost (closest
+	to the root) wins — that's the value the user sees in ``--list`` and the one
+	overrides should target. Inner duplicates with the same key but different
+	values are unusual; users almost never write them.
+
+	>>> matrix_axes(Task("hi"))
+	{}
+	>>> matrix_axes(Parallel(Task("test"), matrix={"PY": ("3.12", "3.13")}))
+	{'PY': ('3.12', '3.13')}
+	>>> matrix_axes(Sequential(Parallel(Task("t"), matrix={"OS": ("a", "b")}), matrix={"PY": ("3.12",)}))
+	{'PY': ('3.12',), 'OS': ('a', 'b')}
+	"""
+	match task:
+		case Task():
+			return {}
+		case Sequential(tasks=tasks, matrix=matrix) | Parallel(tasks=tasks, matrix=matrix):
+			result: dict[str, tuple[str, ...]] = dict(matrix) if matrix else {}
+			for child in tasks:
+				for k, v in matrix_axes(child).items():
+					result.setdefault(k, v)
+			return result
+		case _:
+			assert_never(task)
+
+
+def override_matrix(task: TaskNode, overrides: Mapping[str, tuple[str, ...]]) -> TaskNode:
+	"""Return a tree with each ``matrix[k]`` replaced by ``overrides[k]`` everywhere
+	the key appears. Strict on keys: every override must match an axis present in
+	the tree. Permissive on values: any tuple is accepted.
+
+	>>> override_matrix(Parallel(Task("t"), matrix={"PY": ("3.12", "3.13")}), {"PY": ("3.13",)}).matrix  # type: ignore[union-attr]
+	{'PY': ('3.13',)}
+	>>> override_matrix(Task("hi"), {})
+	Task(cmd='hi', name=None, env={}, cwd=None)
+	>>> override_matrix(Parallel(Task("t"), matrix={"PY": ("3.12",)}), {"XX": ("a",)})
+	Traceback (most recent call last):
+	    ...
+	ValueError: unknown matrix axis 'XX' (known: PY)
+	"""
+	if not overrides:
+		return task
+	axes: Final = matrix_axes(task)
+	for key in overrides:
+		if key not in axes:
+			known = ", ".join(sorted(axes)) or "none"
+			raise ValueError(f"unknown matrix axis {key!r} (known: {known})")
+	return _override_matrix(task, overrides)
+
+
+def _override_matrix(task: TaskNode, overrides: Mapping[str, tuple[str, ...]]) -> TaskNode:
+	def applied(matrix: dict[str, tuple[str, ...]] | None) -> dict[str, tuple[str, ...]] | None:
+		if matrix is None:
+			return None
+		return {k: overrides.get(k, v) for k, v in matrix.items()}
+
+	match task:
+		case Task():
+			return task
+		case Sequential(tasks=tasks, name=name, matrix=matrix, env=env, cwd=cwd):
+			return Sequential(
+				*(_override_matrix(t, overrides) for t in tasks),
+				name=name,
+				matrix=applied(matrix),
+				env=env,
+				cwd=cwd,
+			)
+		case Parallel(tasks=tasks, name=name, matrix=matrix, env=env, cwd=cwd):
+			return Parallel(
+				*(_override_matrix(t, overrides) for t in tasks),
+				name=name,
+				matrix=applied(matrix),
+				env=env,
+				cwd=cwd,
+			)
+		case _:
+			assert_never(task)
+
+
 def matrix_bindings(matrix: dict[str, tuple[str, ...]]) -> tuple[MatrixBinding, ...]:
 	"""Generate all cartesian product bindings from a matrix definition.
 
