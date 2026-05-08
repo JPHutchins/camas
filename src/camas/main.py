@@ -12,6 +12,7 @@ import io
 import os
 import re
 import runpy
+import shlex
 import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -25,7 +26,7 @@ else:  # pragma: no cover
 	import tomli as tomllib
 	from typing_extensions import assert_never
 
-from camas import Effect, Parallel, Sequential, Task, TaskNode, resolve_cmd, run
+from camas import Effect, Parallel, Sequential, Task, TaskNode, run
 from camas.effect.termtree import GREY, RESET, print_tree
 
 BLUE: Final = "\033[34m"
@@ -482,14 +483,27 @@ def split_passthrough(argv: Sequence[str]) -> SplitArgv:
 def apply_passthrough(task: TaskNode, args: tuple[str, ...]) -> Task:
 	"""Append ``args`` to a leaf ``Task``'s command. Errors on Sequential/Parallel.
 
+	The ``cmd`` shape is preserved: tuple commands stay tuples (args appended);
+	string commands stay strings (args shell-joined and appended) so dry-run/tree
+	output keeps the user's original quoting.
+
 	>>> apply_passthrough(Task("pytest"), ("-v",))
-	Task(cmd=('pytest', '-v'), name=None, env={}, cwd=None)
+	Task(cmd='pytest -v', name=None, env={}, cwd=None)
+	>>> apply_passthrough(Task("git commit -m 'big msg'"), ("--no-verify",))
+	Task(cmd="git commit -m 'big msg' --no-verify", name=None, env={}, cwd=None)
 	>>> apply_passthrough(Task(("pytest",), name="t"), ("-v", "-k", "x"))
 	Task(cmd=('pytest', '-v', '-k', 'x'), name='t', env={}, cwd=None)
+	>>> apply_passthrough(Task("pytest"), ("-k", "a b"))
+	Task(cmd="pytest -k 'a b'", name=None, env={}, cwd=None)
 	"""
 	match task:
 		case Task(cmd=cmd, name=name, env=env, cwd=cwd):
-			return Task(cmd=resolve_cmd(cmd) + args, name=name, env=env, cwd=cwd)
+			return Task(
+				cmd=f"{cmd} {shlex.join(args)}" if isinstance(cmd, str) else cmd + args,
+				name=name,
+				env=env,
+				cwd=cwd,
+			)
 		case Sequential() | Parallel():
 			raise ValueError(
 				f"pass-through args (--) only apply to Task, got {type(task).__name__}"
