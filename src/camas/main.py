@@ -13,7 +13,7 @@ import os
 import re
 import runpy
 import sys
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Final, NamedTuple, TypeGuard, cast
 
@@ -25,7 +25,7 @@ else:  # pragma: no cover
 	import tomli as tomllib
 	from typing_extensions import assert_never
 
-from camas import Effect, Parallel, Sequential, Task, TaskNode, run
+from camas import Effect, Parallel, Sequential, Task, TaskNode, resolve_cmd, run
 from camas.effect.termtree import GREY, RESET, print_tree
 
 BLUE: Final = "\033[34m"
@@ -448,6 +448,56 @@ def load_tasks_from_py(path: Path) -> dict[str, TaskNode]:
 	return _name_scope_bindings(runpy.run_path(str(path)))
 
 
+class SplitArgv(NamedTuple):
+	"""argv partitioned at the first ``--`` separator.
+
+	>>> SplitArgv(("mytask",), ("-v",))
+	SplitArgv(head=('mytask',), passthrough=('-v',))
+	"""
+
+	head: tuple[str, ...]
+	"""Args before ``--`` (or the whole argv if no ``--`` is present)."""
+	passthrough: tuple[str, ...]
+	"""Args after ``--``, to be appended to a leaf Task's command."""
+
+
+def split_passthrough(argv: Sequence[str]) -> SplitArgv:
+	"""Split ``argv`` at the first ``--``; args after it are pass-through to the Task.
+
+	>>> split_passthrough(["mytask"])
+	SplitArgv(head=('mytask',), passthrough=())
+	>>> split_passthrough(["mytask", "--", "-v", "--tb=short"])
+	SplitArgv(head=('mytask',), passthrough=('-v', '--tb=short'))
+	>>> split_passthrough(["mytask", "--", "--", "x"])
+	SplitArgv(head=('mytask',), passthrough=('--', 'x'))
+	"""
+	argv_copy: Final = tuple(argv)
+	try:
+		idx: Final = argv_copy.index("--")
+	except ValueError:
+		return SplitArgv(argv_copy, ())
+	return SplitArgv(argv_copy[:idx], argv_copy[idx + 1 :])
+
+
+def apply_passthrough(task: TaskNode, args: tuple[str, ...]) -> Task:
+	"""Append ``args`` to a leaf ``Task``'s command. Errors on Sequential/Parallel.
+
+	>>> apply_passthrough(Task("pytest"), ("-v",))
+	Task(cmd=('pytest', '-v'), name=None, env={}, cwd=None)
+	>>> apply_passthrough(Task(("pytest",), name="t"), ("-v", "-k", "x"))
+	Task(cmd=('pytest', '-v', '-k', 'x'), name='t', env={}, cwd=None)
+	"""
+	match task:
+		case Task(cmd=cmd, name=name, env=env, cwd=cwd):
+			return Task(cmd=resolve_cmd(cmd) + args, name=name, env=env, cwd=cwd)
+		case Sequential() | Parallel():
+			raise ValueError(
+				f"pass-through args (--) only apply to Task, got {type(task).__name__}"
+			)
+		case _:
+			assert_never(task)
+
+
 def dispatch_arg(arg: str, tasks: Mapping[str, TaskNode]) -> TaskNode:
 	"""Interpret a CLI arg: task name (possibly hyphenated) ⇒ lookup, else inline expression."""
 	if arg in tasks:
@@ -515,7 +565,8 @@ def build_parser(
 		"expression",
 		nargs="?",
 		metavar=_expression_metavar(tasks),
-		help="name of a defined task, or a camas expression",
+		help="name of a defined task, or a camas expression "
+		"(trailing '-- ARGS' append to a Task's command)",
 	)
 	parser.add_argument(
 		"--version",
@@ -1066,14 +1117,18 @@ def dispatch(
 	of available tasks and exits 0 — the ``camas`` (no-args) ergonomic default,
 	mirroring ``just`` and ``task``.
 	"""
-	raw: Final = sys.argv[1:] if argv is None else argv
+	split: Final = split_passthrough(sys.argv[1:] if argv is None else argv)
 
-	if len(raw) >= 2 and raw[0] in tasks and any(a in ("-h", "--help") for a in raw[1:]):
-		print_task_help(raw[0], tasks[raw[0]])
+	if (
+		len(split.head) >= 2
+		and split.head[0] in tasks
+		and any(a in ("-h", "--help") for a in split.head[1:])
+	):
+		print_task_help(split.head[0], tasks[split.head[0]])
 		sys.exit(0)
 
 	parser: Final = build_parser(tasks, source)
-	args: Final = parser.parse_args(raw)
+	args: Final = parser.parse_args(split.head)
 
 	if args.list:
 		print_task_summary_listing(tasks, source)
@@ -1106,7 +1161,14 @@ def dispatch(
 		print(f"error: --effects: {e}", file=sys.stderr)
 		sys.exit(2)
 
-	task: Final = dispatch_arg(args.expression, tasks)
+	resolved: Final = dispatch_arg(args.expression, tasks)
+	try:
+		task: Final = (
+			apply_passthrough(resolved, split.passthrough) if split.passthrough else resolved
+		)
+	except ValueError as e:
+		print(f"error: {e}", file=sys.stderr)
+		sys.exit(2)
 	if args.dry_run:
 		print_tree(task, show_cmd=True)
 		sys.exit(0)
