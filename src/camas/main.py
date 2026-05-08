@@ -26,7 +26,7 @@ else:  # pragma: no cover
 	import tomli as tomllib
 	from typing_extensions import assert_never
 
-from camas import Effect, Parallel, Sequential, Task, TaskNode, run
+from camas import Effect, Parallel, Sequential, Task, TaskNode, matrix_axes, override_matrix, run
 from camas.effect.termtree import GREY, RESET, print_tree
 
 BLUE: Final = "\033[34m"
@@ -609,7 +609,51 @@ def build_parser(
 		const="",
 		help="tuple of Effect instances; pass with no value to list available Effects",
 	)
+	parser.add_argument(
+		"--matrix",
+		action="append",
+		default=[],
+		metavar="KEY=VAL[,VAL...]",
+		help="override a matrix axis (repeatable; e.g. --matrix PY=3.13)",
+	)
 	return parser
+
+
+RESERVED_FLAGS: Final = frozenset(
+	{"help", "version", "dry-run", "list", "tree", "effects", "matrix"}
+)
+
+
+def parse_matrix_kv(raw: str) -> tuple[str, tuple[str, ...]]:
+	"""Parse ``KEY=VAL[,VAL...]`` into ``(key, values)``.
+
+	>>> parse_matrix_kv("PY=3.13")
+	('PY', ('3.13',))
+	>>> parse_matrix_kv("PY=3.13,3.14")
+	('PY', ('3.13', '3.14'))
+	"""
+	if "=" not in raw:
+		raise ValueError(f"--matrix expects KEY=VAL[,VAL...], got {raw!r}")
+	key, _, rest = raw.partition("=")
+	if not key:
+		raise ValueError(f"--matrix expects KEY=VAL[,VAL...], got {raw!r}")
+	values = parse_axis_values(rest)
+	if not values:
+		raise ValueError(f"--matrix {key!r}: at least one value required")
+	return key, values
+
+
+def parse_axis_values(raw: str) -> tuple[str, ...]:
+	"""Comma-separated values into a tuple, trimming whitespace and dropping empties.
+
+	>>> parse_axis_values("3.13")
+	('3.13',)
+	>>> parse_axis_values("3.13, 3.14")
+	('3.13', '3.14')
+	>>> parse_axis_values("")
+	()
+	"""
+	return tuple(s for v in raw.split(",") if (s := v.strip()))
 
 
 def _expression_metavar(tasks: Mapping[str, TaskNode] | None) -> str:
@@ -670,12 +714,33 @@ def task_summary(node: TaskNode, names: frozenset[str], is_root: bool = True) ->
 			assert_never(node)
 
 
+def format_axis(name: str, values: tuple[str, ...]) -> str:
+	"""Render a matrix axis for the listing annotation.
+
+	>>> format_axis("PY", ("3.13",))
+	'PY=3.13'
+	>>> format_axis("PY", ("3.10", "3.11", "3.12", "3.13", "3.14", "3.15"))
+	'PY×6 (3.10..3.15)'
+	"""
+	if len(values) == 1:
+		return f"{name}={values[0]}"
+	return f"{name}×{len(values)} ({values[0]}..{values[-1]})"
+
+
 def summary_annotation(node: TaskNode) -> str:
 	"""Annotate a top-level entry with its matrix axes — important context that
-	doesn't appear in the body otherwise."""
+	doesn't appear in the body otherwise.
+
+	>>> summary_annotation(Task("hi"))
+	''
+	>>> summary_annotation(Parallel(Task("t"), matrix={"PY": ("3.12", "3.13")}))
+	'  [matrix: PY×2 (3.12..3.13)]'
+	>>> summary_annotation(Parallel(Task("t"), matrix={"DB": ("sqlite", "postgres"), "OPT": ("debug",)}))
+	'  [matrix: DB×2 (sqlite..postgres) OPT=debug]'
+	"""
 	if isinstance(node, Task) or node.matrix is None:
 		return ""
-	axes = ", ".join(node.matrix)
+	axes = " ".join(format_axis(k, v) for k, v in node.matrix.items())
 	return f"  [matrix: {axes}]"
 
 
@@ -734,12 +799,37 @@ def print_task_trees(tasks: Mapping[str, TaskNode], source: Path | None) -> None
 		print()
 
 
+def format_matrix_axes_help(axes: Mapping[str, tuple[str, ...]], color: bool) -> str:
+	"""Render the ``Matrix axes:`` block for per-task ``--help``.
+
+	>>> "Matrix axes" in format_matrix_axes_help({"PY": ("3.13", "3.14")}, color=False)
+	True
+	>>> "--PY" in format_matrix_axes_help({"PY": ("3.13",)}, color=False)
+	True
+	"""
+	width = max(len(name) for name in axes)
+	lines = [maybe_color("Matrix axes (override with --AXIS VAL[,VAL...]):", BOLD_BLUE, color)]
+	for name, values in axes.items():
+		flag = f"--{name}".ljust(width + 2)
+		current = ", ".join(values)
+		lines.append(
+			f"  {maybe_color(flag, BOLD_CYAN, color)}  {maybe_color(current, GREY, color)}"
+		)
+	return "\n".join(lines)
+
+
 def print_task_help(name: str, task: TaskNode) -> None:
-	"""Print subcommand help for a single task: its expanded tree."""
-	print(f"usage: camas {name} [-h] [--dry-run] [--effects EFFECTS]")
+	"""Print subcommand help for a single task: its expanded tree and any
+	matrix axes the user can override from the CLI."""
+	axes = matrix_axes(task)
+	axis_flags = "".join(f" [--{k} VAL[,VAL...]]" for k in axes)
+	print(f"usage: camas {name} [-h] [--dry-run] [--effects EFFECTS]{axis_flags}")
 	print()
 	print(f"runs the {name!r} task:")
 	print_tree(task, show_cmd=True)
+	if axes:
+		print()
+		print(format_matrix_axes_help(axes, color_on()))
 
 
 def run_cli(scope: Mapping[str, object]) -> None:
@@ -1142,7 +1232,23 @@ def dispatch(
 		sys.exit(0)
 
 	parser: Final = build_parser(tasks, source)
-	args: Final = parser.parse_args(split.head)
+	args, _leftover = parser.parse_known_args(split.head)
+
+	augmented_axes: dict[str, tuple[str, ...]] = {}
+	if isinstance(args.expression, str) and args.expression in tasks:
+		for name, values in matrix_axes(tasks[args.expression]).items():
+			if name.lower() in RESERVED_FLAGS:
+				continue
+			parser.add_argument(
+				f"--{name}",
+				dest=name,
+				action="store",
+				default=None,
+				metavar="VAL[,VAL...]",
+				help=f"override matrix axis {name!r} (current: {', '.join(values)})",
+			)
+			augmented_axes[name] = values
+	args = parser.parse_args(split.head)
 
 	if args.list:
 		print_task_summary_listing(tasks, source)
@@ -1175,7 +1281,30 @@ def dispatch(
 		print(f"error: --effects: {e}", file=sys.stderr)
 		sys.exit(2)
 
-	resolved: Final = dispatch_arg(args.expression, tasks)
+	overrides: dict[str, tuple[str, ...]] = {}
+	for raw in args.matrix:
+		try:
+			k, v = parse_matrix_kv(raw)
+		except ValueError as e:
+			print(f"error: {e}", file=sys.stderr)
+			sys.exit(2)
+		overrides[k] = v
+	for axis_name in augmented_axes:
+		val = getattr(args, axis_name, None)
+		if val is not None:
+			values = parse_axis_values(val)
+			if not values:
+				print(f"error: --{axis_name}: at least one value required", file=sys.stderr)
+				sys.exit(2)
+			overrides[axis_name] = values
+
+	resolved = dispatch_arg(args.expression, tasks)
+	if overrides:
+		try:
+			resolved = override_matrix(resolved, overrides)
+		except ValueError as e:
+			print(f"error: {e}", file=sys.stderr)
+			sys.exit(2)
 	try:
 		task: Final = (
 			apply_passthrough(resolved, split.passthrough) if split.passthrough else resolved
