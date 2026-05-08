@@ -1,5 +1,7 @@
 """camas task definitions for this project."""
 
+from pathlib import Path
+
 from camas import Parallel, Sequential, Task
 
 format = Task("uv run ruff format .")
@@ -26,5 +28,11 @@ matrix = Sequential(
 	Task("uv sync"),
 	check,
 	env={"UV_PROJECT_ENVIRONMENT": ".venv-{PY}", "UV_PYTHON": "{PY}"},
-	matrix={"PY": ("3.10", "3.11", "3.12", "3.13", "3.14", "3.15")},
+	matrix={
+		"PY": tuple(
+			stripped
+			for line in (Path(__file__).parent / ".python-version").read_text().splitlines()
+			if (stripped := line.strip()) and not stripped.startswith("#")
+		)
+	},
 )
