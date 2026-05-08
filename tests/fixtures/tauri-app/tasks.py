@@ -48,4 +48,5 @@ fix = Parallel(
 build = Parallel(
 	Task("npm run tauri build {FLAG}"),
 	matrix={"FLAG": ("-- --debug", "")},
+	help="Debug and release builds (FLAG='-- --debug' debug, FLAG='' release)",
 )

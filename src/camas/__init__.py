@@ -46,12 +46,17 @@ class Task(NamedTuple):
 	Hashable: ``env`` is a ``dict`` for ergonomic input/iteration, but ``__hash__``
 	uses a sorted-pairs view so ``Task`` can live in sets and dict keys.
 
+	``help`` is an optional one-line description shown in ``--list`` output and
+	``camas <task> --help`` instead of the bare command.
+
 	>>> Task("echo hi")
 	Task(cmd='echo hi', name=None, env={}, cwd=None)
 	>>> Task(("ruff", "check", "."), name="lint")
 	Task(cmd=('ruff', 'check', '.'), name='lint', env={}, cwd=None)
 	>>> Task("cargo test", cwd=Path("src-tauri")).cwd == Path("src-tauri")
 	True
+	>>> Task("ruff check .", help="Lint all sources").help
+	'Lint all sources'
 	>>> hash(Task("a")) == hash(Task("a"))
 	True
 	>>> {Task("a", env={"K": "v"}), Task("a", env={"K": "v"})} == {Task("a", env={"K": "v"})}
@@ -62,12 +67,17 @@ class Task(NamedTuple):
 	name: str | None = None
 	env: dict[str, str] = {}
 	cwd: Path | None = None
+	help: str | None = None
 
 	def __hash__(self) -> int:
-		return hash((self.cmd, self.name, tuple(sorted(self.env.items())), self.cwd))
+		return hash((self.cmd, self.name, tuple(sorted(self.env.items())), self.cwd, self.help))
+
+	def __repr__(self) -> str:
+		base = f"Task(cmd={self.cmd!r}, name={self.name!r}, env={self.env!r}, cwd={self.cwd!r}"
+		return f"{base}, help={self.help!r})" if self.help is not None else f"{base})"
 
 
-@dataclass(frozen=True, slots=True, init=False)
+@dataclass(frozen=True, slots=True, init=False, repr=False)
 class Group:
 	"""Shared base for ``Sequential`` and ``Parallel``: variadic ``*tasks`` (with
 	``str`` → ``Task`` coercion), identical kwargs, hashable. Use
@@ -85,6 +95,7 @@ class Group:
 	matrix: dict[str, tuple[str, ...]] | None
 	env: dict[str, str]
 	cwd: Path | None
+	help: str | None
 
 	def __init__(
 		self,
@@ -93,6 +104,7 @@ class Group:
 		matrix: dict[str, tuple[str, ...]] | None = None,
 		env: dict[str, str] | None = None,
 		cwd: Path | None = None,
+		help: str | None = None,
 	) -> None:
 		put = object.__setattr__
 		put(self, "tasks", tuple(Task(cmd=t) if isinstance(t, str) else t for t in tasks))
@@ -100,6 +112,7 @@ class Group:
 		put(self, "matrix", matrix)
 		put(self, "env", env if env is not None else {})
 		put(self, "cwd", cwd)
+		put(self, "help", help)
 
 	def __hash__(self) -> int:
 		matrix_key = None if self.matrix is None else tuple(sorted(self.matrix.items()))
@@ -110,8 +123,16 @@ class Group:
 				matrix_key,
 				tuple(sorted(self.env.items())),
 				self.cwd,
+				self.help,
 			)
 		)
+
+	def __repr__(self) -> str:
+		base = (
+			f"{type(self).__name__}(tasks={self.tasks!r}, name={self.name!r}, "
+			f"matrix={self.matrix!r}, env={self.env!r}, cwd={self.cwd!r}"
+		)
+		return f"{base}, help={self.help!r})" if self.help is not None else f"{base})"
 
 
 class Sequential(Group):  # pyrefly: ignore[bad-class-definition]
@@ -499,21 +520,23 @@ def _override_matrix(task: TaskNode, overrides: Mapping[str, tuple[str, ...]]) -
 	match task:
 		case Task():
 			return task
-		case Sequential(tasks=tasks, name=name, matrix=matrix, env=env, cwd=cwd):
+		case Sequential(tasks=tasks, name=name, matrix=matrix, env=env, cwd=cwd, help=help):
 			return Sequential(
 				*(_override_matrix(t, overrides) for t in tasks),
 				name=name,
 				matrix=applied(matrix),
 				env=env,
 				cwd=cwd,
+				help=help,
 			)
-		case Parallel(tasks=tasks, name=name, matrix=matrix, env=env, cwd=cwd):
+		case Parallel(tasks=tasks, name=name, matrix=matrix, env=env, cwd=cwd, help=help):
 			return Parallel(
 				*(_override_matrix(t, overrides) for t in tasks),
 				name=name,
 				matrix=applied(matrix),
 				env=env,
 				cwd=cwd,
+				help=help,
 			)
 		case _:
 			assert_never(task)

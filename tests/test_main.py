@@ -213,6 +213,54 @@ def test_print_task_help_with_axes(capsys: pytest.CaptureFixture[str]) -> None:
 	assert "--PY" in out
 
 
+def test_print_task_help_shows_help_text(capsys: pytest.CaptureFixture[str]) -> None:
+	task = Parallel(Task("a"), Task("b"), help="Run two things side-by-side")
+	with pytest.raises(SystemExit, match="0"):
+		dispatch({"both": task}, ["both", "--help"])
+	out = capsys.readouterr().out
+	assert "Run two things side-by-side" in out
+	idx_help = out.index("Run two things side-by-side")
+	idx_runs = out.index("runs the 'both' task")
+	assert idx_help < idx_runs
+
+
+def test_top_level_help_source_is_local_filesystem_path(tmp_path: Path) -> None:
+	"""Agents reading --help need a filesystem path they can read directly
+	without network access. Source is local; examples is remote (the wheel
+	doesn't ship the examples folder)."""
+	import camas as camas_pkg
+
+	result = subprocess.run(
+		[sys.executable, "-m", "camas", "--help"],
+		cwd=tmp_path,
+		capture_output=True,
+		text=True,
+		encoding="utf-8",
+	)
+	assert result.returncode == 0
+	assert "Reference:" in result.stdout
+	expected_source = str(Path(camas_pkg.__file__).parent)
+	assert expected_source in result.stdout, result.stdout
+	assert "https://github.com/JPHutchins/camas/tree/main/examples" in result.stdout
+	assert "https://pypi.org/project/camas/" in result.stdout
+
+
+def test_no_args_with_tasks_includes_reference_block(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	import camas as camas_pkg
+
+	tasks_py = tmp_path / "tasks.py"
+	tasks_py.write_text("from camas import Task\nlint = Task('ruff check .')\n")
+	monkeypatch.chdir(tmp_path)
+	with pytest.raises(SystemExit, match="2"):
+		with patch("sys.argv", ["camas"]):
+			main()
+	out = capsys.readouterr().out
+	assert "Reference:" in out
+	assert str(Path(camas_pkg.__file__).parent) in out, out
+
+
 def test_dispatch_per_axis_flag_overrides(capsys: pytest.CaptureFixture[str]) -> None:
 	task = Parallel(Task("echo {PY}"), matrix={"PY": ("3.12", "3.13")})
 	with pytest.raises(SystemExit, match="0"):
@@ -413,6 +461,36 @@ def test_print_listing_matrix_multi_axis_annotation(
 	print_task_summary_listing({"ci": t}, None)
 	out = capsys.readouterr().out
 	assert "[matrix: DB×2 (sqlite..postgres) OPT=debug]" in out
+
+
+def test_print_listing_help_replaces_command_body(
+	capsys: pytest.CaptureFixture[str],
+) -> None:
+	t = Task(
+		"uv run pytest --doctest-modules -m 'not slow' --cov --cov-report=term",
+		help="Run the full test suite with coverage",
+	)
+	print_task_summary_listing({"coverage": t}, None)
+	out = capsys.readouterr().out
+	assert "Run the full test suite with coverage" in out
+	assert "uv run pytest --doctest-modules" not in out
+
+
+def test_print_listing_help_on_group(capsys: pytest.CaptureFixture[str]) -> None:
+	t = Parallel(Task("uv run mypy ."), Task("uv run pyright ."), help="Type-check in parallel")
+	print_task_summary_listing({"typecheck": t}, None)
+	out = capsys.readouterr().out
+	assert "Type-check in parallel" in out
+	assert "uv run mypy" not in out
+
+
+def test_print_listing_no_help_falls_back_to_command(
+	capsys: pytest.CaptureFixture[str],
+) -> None:
+	t = Task("ruff check .", name="lint")
+	print_task_summary_listing({"lint": t}, None)
+	out = capsys.readouterr().out
+	assert "ruff check ." in out
 
 
 def test_format_task_summary_listing_no_tasks_with_source(tmp_path: Path) -> None:

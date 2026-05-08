@@ -334,21 +334,23 @@ def resolve_refs(
 			return resolve_refs(defs[name], defs, visiting | {name})
 		case Task():
 			return node
-		case Sequential(tasks=tasks, name=n, matrix=m, env=e, cwd=c):
+		case Sequential(tasks=tasks, name=n, matrix=m, env=e, cwd=c, help=h):
 			return Sequential(
 				*(resolve_refs(t, defs, visiting) for t in tasks),
 				name=n,
 				matrix=m,
 				env=e,
 				cwd=c,
+				help=h,
 			)
-		case Parallel(tasks=tasks, name=n, matrix=m, env=e, cwd=c):
+		case Parallel(tasks=tasks, name=n, matrix=m, env=e, cwd=c, help=h):
 			return Parallel(
 				*(resolve_refs(t, defs, visiting) for t in tasks),
 				name=n,
 				matrix=m,
 				env=e,
 				cwd=c,
+				help=h,
 			)
 		case _:
 			assert_never(node)
@@ -381,12 +383,12 @@ def _assign_key_name(node: TaskNode | Ref, key: str) -> TaskNode | Ref:
 	Ref(name='bar')
 	"""
 	match node:
-		case Task(cmd=cmd, name=None, env=env, cwd=cwd):
-			return Task(cmd=cmd, name=key, env=env, cwd=cwd)
-		case Sequential(tasks=tasks, name=None, matrix=matrix, env=env, cwd=cwd):
-			return Sequential(*tasks, name=key, matrix=matrix, env=env, cwd=cwd)
-		case Parallel(tasks=tasks, name=None, matrix=matrix, env=env, cwd=cwd):
-			return Parallel(*tasks, name=key, matrix=matrix, env=env, cwd=cwd)
+		case Task(cmd=cmd, name=None, env=env, cwd=cwd, help=help):
+			return Task(cmd=cmd, name=key, env=env, cwd=cwd, help=help)
+		case Sequential(tasks=tasks, name=None, matrix=matrix, env=env, cwd=cwd, help=help):
+			return Sequential(*tasks, name=key, matrix=matrix, env=env, cwd=cwd, help=help)
+		case Parallel(tasks=tasks, name=None, matrix=matrix, env=env, cwd=cwd, help=help):
+			return Parallel(*tasks, name=key, matrix=matrix, env=env, cwd=cwd, help=help)
 		case _:
 			return node
 
@@ -434,10 +436,14 @@ def _name_scope_bindings(scope: Mapping[str, object]) -> dict[str, TaskNode]:
 		match source:
 			case Task():
 				return source
-			case Sequential(tasks=children, name=n, matrix=m, env=e, cwd=c):
-				return Sequential(*(promote(ch) for ch in children), name=n, matrix=m, env=e, cwd=c)
-			case Parallel(tasks=children, name=n, matrix=m, env=e, cwd=c):
-				return Parallel(*(promote(ch) for ch in children), name=n, matrix=m, env=e, cwd=c)
+			case Sequential(tasks=children, name=n, matrix=m, env=e, cwd=c, help=h):
+				return Sequential(
+					*(promote(ch) for ch in children), name=n, matrix=m, env=e, cwd=c, help=h
+				)
+			case Parallel(tasks=children, name=n, matrix=m, env=e, cwd=c, help=h):
+				return Parallel(
+					*(promote(ch) for ch in children), name=n, matrix=m, env=e, cwd=c, help=h
+				)
 			case _:
 				assert_never(source)
 
@@ -497,12 +503,13 @@ def apply_passthrough(task: TaskNode, args: tuple[str, ...]) -> Task:
 	Task(cmd="pytest -k 'a b'", name=None, env={}, cwd=None)
 	"""
 	match task:
-		case Task(cmd=cmd, name=name, env=env, cwd=cwd):
+		case Task(cmd=cmd, name=name, env=env, cwd=cwd, help=help):
 			return Task(
 				cmd=f"{cmd} {shlex.join(args)}" if isinstance(cmd, str) else cmd + args,
 				name=name,
 				env=env,
 				cwd=cwd,
+				help=help,
 			)
 		case Sequential() | Parallel():
 			raise ValueError(
@@ -547,6 +554,7 @@ class CamasArgumentParser(argparse.ArgumentParser):
 		if effects_listing:
 			sections.append(effects_listing)
 		sections.append(format_try_hint(color))
+		sections.append(format_reference(color))
 		return "\n\n".join(sections) + "\n"
 
 
@@ -773,7 +781,11 @@ def format_task_summary_listing(
 	header_text = f"Available tasks from {source}:" if source is not None else "Tasks:"
 	lines = [maybe_color(header_text, BOLD_BLUE, color)]
 	for name, node in items:
-		body = colorize_summary(task_summary(node, names), color)
+		body = (
+			node.help
+			if node.help is not None
+			else colorize_summary(task_summary(node, names), color)
+		)
 		annotation = summary_annotation(node)
 		lines.append(
 			f"  {maybe_color(name.ljust(width + 1), BOLD_CYAN, color)} {body}"
@@ -824,6 +836,9 @@ def print_task_help(name: str, task: TaskNode) -> None:
 	axes = matrix_axes(task)
 	axis_flags = "".join(f" [--{k} VAL[,VAL...]]" for k in axes)
 	print(f"usage: camas {name} [-h] [--dry-run] [--effects EFFECTS]{axis_flags}")
+	if task.help is not None:
+		print()
+		print(task.help)
 	print()
 	print(f"runs the {name!r} task:")
 	print_tree(task, show_cmd=True)
@@ -1197,6 +1212,33 @@ def format_try_hint(color: bool) -> str:
 	return f"{header}\n{body}"
 
 
+def reference_entries() -> tuple[tuple[str, str], ...]:
+	"""Reference rows for the ``Reference:`` block.
+
+	Source resolves to the install path of this package — a local filesystem
+	directory agents and humans can open without a network round-trip.
+	Examples are not shipped with the wheel, so they remain at the GitHub URL.
+	"""
+	return (
+		("Source", str(Path(__file__).parent)),
+		("Examples", "https://github.com/JPHutchins/camas/tree/main/examples"),
+		("PyPI", "https://pypi.org/project/camas/"),
+	)
+
+
+def format_reference(color: bool) -> str:
+	"""``Reference:`` block — local source path, remote examples, PyPI."""
+	entries = reference_entries()
+	width = max(len(label) for label, _ in entries) + 1
+	header = maybe_color("Reference:", BOLD_BLUE, color)
+	body = "\n".join(
+		f"  {maybe_color((label + ':').ljust(width), BOLD_CYAN, color)}  "
+		f"{maybe_color(value, GREY, color)}"
+		for label, value in entries
+	)
+	return f"{header}\n{body}"
+
+
 def print_available_effects() -> None:
 	print(format_available_effects())
 
@@ -1269,6 +1311,8 @@ def dispatch(
 			print_task_summary_listing(tasks, source)
 			print()
 			print(format_try_hint(color_on()))
+			print()
+			print(format_reference(color_on()))
 			print()
 			sys.stdout.flush()
 			print(f"{parser.prog}: error: task or expression is required", file=sys.stderr)
