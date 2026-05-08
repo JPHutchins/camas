@@ -13,6 +13,7 @@ import pytest
 from camas import Parallel, Sequential, Task
 from camas.main import (
 	MISSING,
+	apply_passthrough,
 	build_parser,
 	discover_effects,
 	first_line_doc,
@@ -29,6 +30,7 @@ from camas.main import (
 	print_task_summary_listing,
 	print_task_trees,
 	signature_fields,
+	split_passthrough,
 	task_summary,
 )
 
@@ -950,6 +952,121 @@ def test_signature_fields_namedtuple_unresolvable_hints(
 	fields = _m.signature_fields(Auto)
 	# Auto has no fields anyway, but the get_type_hints exception path should be taken.
 	assert fields == []
+
+
+def test_split_passthrough_no_separator() -> None:
+	split = split_passthrough(["a", "b"])
+	assert split.head == ("a", "b")
+	assert split.passthrough == ()
+
+
+def test_split_passthrough_with_separator() -> None:
+	split = split_passthrough(["mytask", "--", "-v", "-k", "x"])
+	assert split.head == ("mytask",)
+	assert split.passthrough == ("-v", "-k", "x")
+
+
+def test_split_passthrough_empty_passthrough() -> None:
+	split = split_passthrough(["mytask", "--"])
+	assert split.head == ("mytask",)
+	assert split.passthrough == ()
+
+
+def test_split_passthrough_only_first_separator() -> None:
+	split = split_passthrough(["mytask", "--", "--", "x"])
+	assert split.passthrough == ("--", "x")
+
+
+def test_apply_passthrough_str_cmd_stays_string() -> None:
+	assert apply_passthrough(Task("pytest"), ("-v",)) == Task("pytest -v")
+
+
+def test_apply_passthrough_str_cmd_preserves_quoting() -> None:
+	"""String cmds keep their original quoting; passthrough args are shell-joined."""
+	assert apply_passthrough(Task("git commit -m 'big msg'"), ("--no-verify",)) == Task(
+		"git commit -m 'big msg' --no-verify"
+	)
+
+
+def test_apply_passthrough_str_cmd_quotes_passthrough_with_spaces() -> None:
+	assert apply_passthrough(Task("pytest"), ("-k", "a b")) == Task("pytest -k 'a b'")
+
+
+def test_apply_passthrough_tuple_cmd_preserves_name_env_cwd() -> None:
+	original = Task(("pytest",), name="test", env={"X": "1"}, cwd=Path("/tmp"))
+	assert apply_passthrough(original, ("-v",)) == Task(
+		("pytest", "-v"), name="test", env={"X": "1"}, cwd=Path("/tmp")
+	)
+
+
+def test_apply_passthrough_str_cmd_preserves_name_env_cwd() -> None:
+	original = Task("pytest", name="test", env={"X": "1"}, cwd=Path("/tmp"))
+	assert apply_passthrough(original, ("-v",)) == Task(
+		"pytest -v", name="test", env={"X": "1"}, cwd=Path("/tmp")
+	)
+
+
+def test_apply_passthrough_rejects_sequential() -> None:
+	with pytest.raises(ValueError, match="only apply to Task, got Sequential"):
+		apply_passthrough(Sequential(Task("a"), Task("b")), ("-v",))
+
+
+def test_apply_passthrough_rejects_parallel() -> None:
+	with pytest.raises(ValueError, match="only apply to Task, got Parallel"):
+		apply_passthrough(Parallel(Task("a"), Task("b")), ("-v",))
+
+
+def test_passthrough_appended_to_inline_task(capsys: pytest.CaptureFixture[str]) -> None:
+	with pytest.raises(SystemExit, match="0"):
+		with patch(
+			"sys.argv",
+			["camas", "--dry-run", 'Task(("python", "-c", "print(1)"))', "--", "extra"],
+		):
+			main()
+	assert "extra" in capsys.readouterr().out
+
+
+def test_passthrough_to_named_task(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	(tmp_path / "tasks.py").write_text(
+		"from camas import Task\ntest = Task('pytest')\n",
+	)
+	monkeypatch.chdir(tmp_path)
+	with pytest.raises(SystemExit, match="0"):
+		with patch("sys.argv", ["camas", "--dry-run", "test", "--", "-v", "-k", "x"]):
+			main()
+	out = capsys.readouterr().out
+	assert "pytest" in out and "-v" in out and "-k" in out and "x" in out
+
+
+def test_passthrough_rejects_sequential_task(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	(tmp_path / "tasks.py").write_text(
+		"from camas import Sequential, Task\nci = Sequential(Task('a'), Task('b'))\n",
+	)
+	monkeypatch.chdir(tmp_path)
+	with pytest.raises(SystemExit, match="2"):
+		with patch("sys.argv", ["camas", "ci", "--", "-v"]):
+			main()
+	assert "only apply to Task" in capsys.readouterr().err
+
+
+def test_passthrough_help_after_separator_not_consumed(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	"""``camas test -- --help`` should treat ``--help`` as pass-through, not show task help."""
+	(tmp_path / "tasks.py").write_text(
+		"from camas import Task\ntest = Task(('python', '-c', 'pass'))\n",
+	)
+	monkeypatch.chdir(tmp_path)
+	with pytest.raises(SystemExit, match="0"):
+		with patch("sys.argv", ["camas", "--dry-run", "test", "--", "--help"]):
+			main()
+	out = capsys.readouterr().out
+	assert "--help" in out
+	assert "usage:" not in out
 
 
 def test_signature_fields_signature_raises(monkeypatch: pytest.MonkeyPatch) -> None:
