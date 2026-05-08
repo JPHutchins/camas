@@ -16,6 +16,7 @@ from camas.main import (
 	apply_passthrough,
 	build_parser,
 	discover_effects,
+	dispatch,
 	first_line_doc,
 	format_annotation,
 	format_available_effects,
@@ -201,6 +202,65 @@ def test_dry_run_matrix(capsys: pytest.CaptureFixture[str]) -> None:
 	captured = capsys.readouterr()
 	assert "3.12" in captured.out
 	assert "3.13" in captured.out
+
+
+def test_print_task_help_with_axes(capsys: pytest.CaptureFixture[str]) -> None:
+	task = Parallel(Task("echo {PY}"), matrix={"PY": ("3.12", "3.13")})
+	with pytest.raises(SystemExit, match="0"):
+		dispatch({"check": task}, ["check", "--help"])
+	out = capsys.readouterr().out
+	assert "Matrix axes" in out
+	assert "--PY" in out
+
+
+def test_dispatch_per_axis_flag_overrides(capsys: pytest.CaptureFixture[str]) -> None:
+	task = Parallel(Task("echo {PY}"), matrix={"PY": ("3.12", "3.13")})
+	with pytest.raises(SystemExit, match="0"):
+		dispatch({"check": task}, ["--dry-run", "check", "--PY", "3.13"])
+	out = capsys.readouterr().out
+	assert "[PY=3.13]" in out
+	assert "[PY=3.12]" not in out
+
+
+def test_dispatch_matrix_flag_overrides(capsys: pytest.CaptureFixture[str]) -> None:
+	task = Parallel(Task("echo {PY}"), matrix={"PY": ("3.12", "3.13")})
+	with pytest.raises(SystemExit, match="0"):
+		dispatch({"check": task}, ["--dry-run", "check", "--matrix", "PY=3.13"])
+	out = capsys.readouterr().out
+	assert "[PY=3.13]" in out
+	assert "[PY=3.12]" not in out
+
+
+def test_dispatch_matrix_flag_bad_syntax_errors(capsys: pytest.CaptureFixture[str]) -> None:
+	task = Parallel(Task("echo {PY}"), matrix={"PY": ("3.12",)})
+	with pytest.raises(SystemExit, match="2"):
+		dispatch({"check": task}, ["check", "--matrix", "noequals"])
+	assert "--matrix expects KEY=VAL" in capsys.readouterr().err
+
+
+def test_dispatch_per_axis_flag_empty_value_errors(capsys: pytest.CaptureFixture[str]) -> None:
+	task = Parallel(Task("echo {PY}"), matrix={"PY": ("3.12",)})
+	with pytest.raises(SystemExit, match="2"):
+		dispatch({"check": task}, ["check", "--PY", ""])
+	assert "--PY" in capsys.readouterr().err
+
+
+def test_dispatch_matrix_unknown_axis_errors(capsys: pytest.CaptureFixture[str]) -> None:
+	task = Parallel(Task("echo {PY}"), matrix={"PY": ("3.12",)})
+	with pytest.raises(SystemExit, match="2"):
+		dispatch({"check": task}, ["check", "--matrix", "XX=1"])
+	assert "unknown matrix axis" in capsys.readouterr().err
+
+
+def test_dispatch_skips_reserved_axis_name_for_auto_flag(
+	capsys: pytest.CaptureFixture[str],
+) -> None:
+	task = Parallel(Task("echo {matrix}"), matrix={"matrix": ("a", "b")})
+	with pytest.raises(SystemExit, match="0"):
+		dispatch({"check": task}, ["--dry-run", "check", "--matrix", "matrix=b"])
+	out = capsys.readouterr().out
+	assert "[matrix=b]" in out
+	assert "[matrix=a]" not in out
 
 
 def test_successful_execution() -> None:

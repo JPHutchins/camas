@@ -6,6 +6,7 @@ from __future__ import annotations
 import pytest
 
 from camas import Parallel, Sequential, Task, matrix_axes, override_matrix
+from camas.main import parse_matrix_kv
 
 
 def test_matrix_axes_empty_for_task() -> None:
@@ -78,3 +79,28 @@ def test_override_matrix_permissive_on_values() -> None:
 	result = override_matrix(t, {"PY": ("3.99",)})
 	assert isinstance(result, Parallel)
 	assert result.matrix == {"PY": ("3.99",)}
+
+
+def test_override_matrix_walks_through_node_without_matrix() -> None:
+	inner = Parallel(Task("x"), matrix={"PY": ("3.12", "3.13")})
+	tree = Sequential(inner)
+	result = override_matrix(tree, {"PY": ("3.99",)})
+	assert isinstance(result, Sequential)
+	assert result.matrix is None
+	assert isinstance(result.tasks[0], Parallel)
+	assert result.tasks[0].matrix == {"PY": ("3.99",)}
+
+
+def test_parse_matrix_kv_missing_equals() -> None:
+	with pytest.raises(ValueError, match="--matrix expects KEY=VAL"):
+		parse_matrix_kv("PY")
+
+
+def test_parse_matrix_kv_empty_key() -> None:
+	with pytest.raises(ValueError, match="--matrix expects KEY=VAL"):
+		parse_matrix_kv("=3.13")
+
+
+def test_parse_matrix_kv_empty_values() -> None:
+	with pytest.raises(ValueError, match="at least one value required"):
+		parse_matrix_kv("PY=")
