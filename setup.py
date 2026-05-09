@@ -1,3 +1,4 @@
+import glob
 import os
 import sys
 
@@ -9,11 +10,12 @@ use_mypyc = os.environ.get("CAMAS_USE_MYPYC") == "1" and not is_editable
 if use_mypyc:
 	from mypyc.build import mypycify
 
+	# core/ stays interpreted: Effect's @runtime_checkable Protocol and Group's
+	# @dataclass-generated __eq__ don't survive compilation.
 	ext_modules = mypycify(
 		[
-			"src/camas/main.py",
-			"src/camas/effect/summary.py",
-			"src/camas/effect/termtree.py",
+			*glob.glob("src/camas/main/*.py"),
+			*glob.glob("src/camas/effect/[!_]*.py"),
 		],
 		opt_level="3",
 	)

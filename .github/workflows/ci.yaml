@@ -189,8 +189,8 @@ jobs:
           CIBW_BEFORE_ALL_LINUX: git config --global --add safe.directory '*'
           CIBW_TEST_REQUIRES: pytest cyclopts
           CIBW_TEST_COMMAND: >
-            python -c "import camas.main, camas.effect.summary, camas.effect.termtree;
-            assert all(not m.__file__.endswith('.py') for m in (camas.main, camas.effect.summary, camas.effect.termtree))" &&
+            python -c "import camas.main.dispatch, camas.main.entrypoint, camas.effect.summary, camas.effect.termtree;
+            assert all(not m.__file__.endswith('.py') for m in (camas.main.dispatch, camas.main.entrypoint, camas.effect.summary, camas.effect.termtree))" &&
             pytest {project}/tests -v -m "not slow"
 
       - if: always()

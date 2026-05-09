@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import pytest
 
-from camas import ChainLink, Parallel, Sequential, Task, flatten_leaves
+from camas import Parallel, Sequential, Task
+from camas.core.leaf_state import ChainLink
+from camas.core.traversal import flatten_leaves
 from camas.effect.termtree import print_tree
 
 

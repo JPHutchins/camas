@@ -6,7 +6,7 @@ from __future__ import annotations
 import pytest
 
 from camas import Parallel, Sequential, Task
-from camas.main import parse_expression
+from camas.main.expression import parse_expression
 
 
 @pytest.mark.parametrize(
@@ -170,3 +170,49 @@ def test_parse_fluent_with_explicit_constructors_mixed() -> None:
 	result = parse_expression('Sequential(Task("setup"), {"x", "y"})')
 	assert isinstance(result, Sequential)
 	assert isinstance(result.tasks[1], Parallel)
+
+
+def test_invalid_expression() -> None:
+	with pytest.raises(SystemExit, match="2"):
+		parse_expression("not valid +++")
+
+
+def test_unknown_type() -> None:
+	with pytest.raises(SystemExit, match="2"):
+		parse_expression('Foo(tasks=(Task("a"),))')
+
+
+def test_bare_string_coerces_to_task() -> None:
+	assert parse_expression('"just a string"') == Task("just a string")
+
+
+@pytest.mark.parametrize(
+	"expr",
+	[
+		'os.system("ls")',
+		'__import__("os")',
+	],
+)
+def test_rejects_unsafe(expr: str) -> None:
+	with pytest.raises(SystemExit, match="2"):
+		parse_expression(expr)
+
+
+def test_dict_with_non_str_key() -> None:
+	with pytest.raises(SystemExit, match="2"):
+		parse_expression('Task("x", env={1: "val"})')
+
+
+def test_eval_env_rejects_unpacking(capsys: pytest.CaptureFixture[str]) -> None:
+	"""``Task("x", env={**other, "K": "v"})`` would silently drop ``**other`` —
+	reject explicitly so users see a deterministic error."""
+	with pytest.raises(SystemExit, match="2"):
+		parse_expression('Task("x", env={**other, "K": "v"})')
+	assert "** unpacking" in capsys.readouterr().err
+
+
+def test_eval_matrix_rejects_unpacking(capsys: pytest.CaptureFixture[str]) -> None:
+	"""Same guard for ``matrix={**other, "PY": ("3.13",)}``."""
+	with pytest.raises(SystemExit, match="2"):
+		parse_expression('Parallel("x", matrix={**other, "PY": ("3.13",)})')
+	assert "** unpacking" in capsys.readouterr().err

@@ -2,39 +2,31 @@
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
 import asyncio
-import os
 import re
 import shutil
 import sys
 import time
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Final, NamedTuple, TypeAlias
+from typing import Final, NamedTuple
 
-if sys.version_info >= (3, 11):
-	from typing import assert_never
-else:
-	from typing_extensions import assert_never
-
-from camas import (
-	ChainLink,
-	Completed,
-	Finished,
-	LeafInfo,
-	LeafState,
-	Parallel,
-	Running,
-	Sequential,
-	Skipped,
-	Task,
-	TaskEvent,
-	TaskNode,
-	Waiting,
-	expand_matrix,
-	flatten_leaves,
-	task_label,
+from ..core.completion import Finished, Skipped
+from ..core.leaf_state import Completed, LeafInfo, LeafState, Running, Waiting
+from ..core.render import (
+	BOLD,
+	CYAN,
+	GREY,
+	RESET,
+	DisplayRow,
+	GroupHeader,
+	color_on,
+	flatten_rows,
+	render_tree_lines,
+	render_tree_prefix,
 )
+from ..core.task import Task, TaskNode, task_label
+from ..core.task_event import TaskEvent
+from ..core.traversal import flatten_leaves
 
 
 def truncate_middle(text: str, max_width: int) -> str:
@@ -87,21 +79,6 @@ class TermtreeOptions(NamedTuple):
 	show_passing: bool = False
 
 
-class GroupHeader(NamedTuple):
-	"""Display row for a Sequential or Parallel group header.
-
-	>>> GroupHeader("ci", 0, ())
-	GroupHeader(label='ci', depth=0, is_last_chain=())
-	"""
-
-	label: str
-	depth: int
-	is_last_chain: tuple[ChainLink, ...]
-
-
-DisplayRow: TypeAlias = LeafInfo | GroupHeader
-
-
 ANSI_ESCAPE: Final = re.compile(
 	r"\x1b(?:"
 	r"\[[0-?]*[ -/]*[@-~]"  # CSI sequences (colors, cursor movement, etc.)
@@ -126,13 +103,9 @@ def strip_ansi(text: str) -> str:
 	return ANSI_ESCAPE.sub("", text)
 
 
-BOLD: Final = "\033[1m"
 GREEN: Final = "\033[32m"
 YELLOW: Final = "\033[33m"
 RED: Final = "\033[31m"
-CYAN: Final = "\033[36m"
-GREY: Final = "\033[90m"
-RESET: Final = "\033[0m"
 CLEAR_LINE: Final = "\033[K"
 SPINNER: Final = (
 	" ▌    ",
@@ -156,7 +129,7 @@ PROG_MAX_CELL_WIDTH: Final = 12
 PROG_MIN_MARGIN: Final = 2
 
 
-def _bucket_glyph_color(states: Sequence[LeafState]) -> tuple[str, str]:
+def bucket_glyph_color(states: Sequence[LeafState]) -> tuple[str, str]:
 	"""Reduce a bucket of leaf states to (glyph, ANSI color) for a progress cell.
 
 	Worst-progress wins so the bar never overstates progress: any waiting →
@@ -164,19 +137,18 @@ def _bucket_glyph_color(states: Sequence[LeafState]) -> tuple[str, str]:
 	distinguishes the active state (cyan running) from the settled outcome
 	(red on any failure, grey if all skipped, otherwise green).
 
-	>>> from camas import Completed, Finished, Running, Skipped, Task, Waiting
 	>>> t = Task("x")
-	>>> _bucket_glyph_color([Waiting(t)]) == (' ', GREY)
+	>>> bucket_glyph_color([Waiting(t)]) == (' ', GREY)
 	True
-	>>> _bucket_glyph_color([Running(t, 0.0, b"")]) == ('┄', CYAN)
+	>>> bucket_glyph_color([Running(t, 0.0, b"")]) == ('┄', CYAN)
 	True
-	>>> _bucket_glyph_color([Completed(t, Finished(0, 0.1, ()))]) == ('─', GREEN)
+	>>> bucket_glyph_color([Completed(t, Finished(0, 0.1, ()))]) == ('─', GREEN)
 	True
-	>>> _bucket_glyph_color([Completed(t, Finished(1, 0.1, ()))]) == ('─', RED)
+	>>> bucket_glyph_color([Completed(t, Finished(1, 0.1, ()))]) == ('─', RED)
 	True
-	>>> _bucket_glyph_color([Completed(t, Skipped(1))]) == ('─', GREY)
+	>>> bucket_glyph_color([Completed(t, Skipped(1))]) == ('─', GREY)
 	True
-	>>> _bucket_glyph_color([Waiting(t), Running(t, 0.0, b"")]) == (' ', GREY)
+	>>> bucket_glyph_color([Waiting(t), Running(t, 0.0, b"")]) == (' ', GREY)
 	True
 	"""
 	if any(isinstance(s, Waiting) for s in states):
@@ -204,7 +176,6 @@ def render_progress_bar(states: Sequence[LeafState], width: int) -> str:
 	are bucketed across exactly ``width`` 1-column cells. Returned string
 	always has visible width ``width``.
 
-	>>> from camas import Completed, Finished, Running, Task, Waiting
 	>>> t = Task("x")
 	>>> bar = render_progress_bar([Waiting(t), Waiting(t)], 10)
 	>>> len(strip_ansi(bar))
@@ -248,119 +219,9 @@ def render_progress_bar(states: Sequence[LeafState], width: int) -> str:
 	pad_right: Final = pad - pad_left
 	cells: Final = "".join(
 		f"{color}{glyph * cell_width}{RESET}"
-		for glyph, color in (_bucket_glyph_color(b) for b in buckets)
+		for glyph, color in (bucket_glyph_color(b) for b in buckets)
 	)
 	return f"{' ' * pad_left}{cells}{' ' * pad_right}"
-
-
-def group_display_name(tasks: tuple[TaskNode, ...], separator: str) -> str:
-	"""Derive a display label for a group by joining children's names.
-
-	>>> group_display_name((Task("a"), Task("b")), " | ")
-	'a | b'
-	>>> group_display_name((Task("build"), Task("test")), " → ")
-	'build → test'
-	"""
-	parts: list[str] = []
-	for t in tasks:
-		match t:
-			case Task():
-				parts.append(task_label(t))
-			case Sequential(name=name) | Parallel(name=name):
-				parts.append(
-					name
-					if name is not None
-					else f"({group_display_name(t.tasks, ' | ' if isinstance(t, Parallel) else ' → ')})"
-				)
-			case _:
-				assert_never(t)
-	return separator.join(parts)
-
-
-def render_tree_prefix(depth: int, is_last_chain: tuple[ChainLink, ...]) -> str:
-	"""Reconstitute the ASCII tree prefix from structural position data.
-
-	Children of a ``Sequential`` get ``├─`` / ``└─`` branches with ``│`` continuations —
-	the sequence has an ordering and a terminator. Children of a ``Parallel`` get a
-	plain ``┃`` column with no ``├``/``└`` distinction, since parallel siblings have
-	no order.
-
-	>>> render_tree_prefix(0, ())
-	''
-	>>> render_tree_prefix(1, (ChainLink(True, False),))
-	'└─ '
-	>>> render_tree_prefix(1, (ChainLink(False, False),))
-	'├─ '
-	>>> render_tree_prefix(1, (ChainLink(False, True),))
-	'┃ '
-	>>> render_tree_prefix(1, (ChainLink(True, True),))
-	'┃ '
-	>>> render_tree_prefix(2, (ChainLink(False, False), ChainLink(True, True)))
-	'│ ┃ '
-	>>> render_tree_prefix(2, (ChainLink(True, False), ChainLink(False, False)))
-	'  ├─ '
-	"""
-	if depth == 0:
-		return ""
-	parts: list[str] = []
-	for link in is_last_chain[:-1]:
-		if link.parent_is_parallel:
-			parts.append("┃ ")
-		else:
-			parts.append("  " if link.is_last else "│ ")
-	last: Final = is_last_chain[-1]
-	if last.parent_is_parallel:
-		parts.append("┃ ")
-	else:
-		parts.append("└─ " if last.is_last else "├─ ")
-	return "".join(parts)
-
-
-SEQ_SUFFIX: Final = " →"
-PAR_SUFFIX: Final = " ∥"
-
-
-def iter_rows(
-	node: TaskNode,
-	depth: int = 0,
-	is_last_chain: tuple[ChainLink, ...] = (),
-) -> Iterator[DisplayRow]:
-	"""Walk a task tree depth-first, yielding one DisplayRow per node (groups + leaves)."""
-	match node:
-		case Task():
-			yield LeafInfo(node, depth, is_last_chain)
-		case Sequential(tasks=children, name=name):
-			seq_label = (
-				f"{name}{SEQ_SUFFIX}" if name is not None else group_display_name(children, " → ")
-			)
-			yield GroupHeader(seq_label, depth, is_last_chain)
-			seq_last = len(children) - 1
-			for i, child in enumerate(children):
-				link = ChainLink(is_last=i == seq_last, parent_is_parallel=False)
-				yield from iter_rows(child, depth + 1, (*is_last_chain, link))
-		case Parallel(tasks=children, name=name):
-			par_label = (
-				f"{name}{PAR_SUFFIX}" if name is not None else group_display_name(children, " | ")
-			)
-			yield GroupHeader(par_label, depth, is_last_chain)
-			par_last = len(children) - 1
-			for i, child in enumerate(children):
-				link = ChainLink(is_last=i == par_last, parent_is_parallel=True)
-				yield from iter_rows(child, depth + 1, (*is_last_chain, link))
-		case _:
-			assert_never(node)
-
-
-def flatten_rows(task: TaskNode) -> tuple[DisplayRow, ...]:
-	"""Flatten a task tree into display rows (GroupHeaders + LeafInfos) in DFS order.
-
-	>>> rows = flatten_rows(Parallel(Task("a"), Task("b")))
-	>>> len(rows)
-	3
-	>>> isinstance(rows[0], GroupHeader)
-	True
-	"""
-	return tuple(iter_rows(task))
 
 
 def decode_line(line: bytes) -> str:
@@ -493,7 +354,7 @@ def render_frame(
 	return f"\033[{len(lines) - 1}F" + "\n".join(lines)
 
 
-def _print_task_output(
+def print_task_output(
 	task: Task,
 	output: Sequence[bytes],
 	label: str,
@@ -519,7 +380,7 @@ def print_failures(states: Sequence[LeafState], term_width: int) -> None:
 	for state in states:
 		match state:
 			case Completed(task=task, completion=Finished(returncode=rc, output=output)) if rc > 0:
-				_print_task_output(task, output, "FAILED", RED, rc, term_width)
+				print_task_output(task, output, "FAILED", RED, rc, term_width)
 			case _:
 				pass
 
@@ -529,7 +390,7 @@ def print_passes(states: Sequence[LeafState], term_width: int) -> None:
 	for state in states:
 		match state:
 			case Completed(task=task, completion=Finished(returncode=0, output=output)):
-				_print_task_output(task, output, "PASSED", GREEN, 0, term_width)
+				print_task_output(task, output, "PASSED", GREEN, 0, term_width)
 			case _:
 				pass
 
@@ -547,99 +408,8 @@ def print_tree(task: TaskNode, show_cmd: bool = False) -> None:
 	>>> print_tree(Task("echo hi", name="greet"), show_cmd=True)
 	greet: echo hi
 	"""
-	color = _color_on()
-	for row, env_new, cwd_new in _walk_with_context(expand_matrix(task)):
-		prefix = render_tree_prefix(row.depth, row.is_last_chain)
-		meta: list[str] = []
-		if show_cmd and cwd_new is not None:
-			meta.append(_c(f"(cwd: {cwd_new})", GREY, color))
-		if show_cmd and env_new:
-			meta.append(_c(" ".join(f"{k}={v}" for k, v in env_new.items()), GREY, color))
-		meta_str = f"  {' '.join(meta)}" if meta else ""
-		match row:
-			case GroupHeader(label=label):
-				print(f"{_c(prefix, GREY, color)}{label}{meta_str}")
-			case LeafInfo(task=leaf_task):
-				print(
-					f"{_c(prefix, GREY, color)}{_leaf_label(leaf_task, show_cmd, color)}{meta_str}"
-				)
-			case _:
-				assert_never(row)
-
-
-def _walk_with_context(
-	node: TaskNode,
-	depth: int = 0,
-	is_last_chain: tuple[ChainLink, ...] = (),
-	ancestor_env: Mapping[str, str] = {},
-	ancestor_cwd: Path | None = None,
-) -> Iterator[tuple[DisplayRow, dict[str, str], Path | None]]:
-	"""Walk the expanded tree yielding (row, env_introduced_here, cwd_introduced_here).
-
-	Env entries and cwd are each reported only at the node that introduces or
-	changes them, so they render exactly once in the tree.
-	"""
-	match node:
-		case Task(env=env, cwd=cwd):
-			yield (
-				LeafInfo(node, depth, is_last_chain),
-				_env_diff(env, ancestor_env),
-				cwd if cwd != ancestor_cwd else None,
-			)
-		case Sequential(tasks=children, name=name, env=env, cwd=cwd):
-			here_env = _env_diff(env, ancestor_env)
-			here_cwd = cwd if cwd is not None and cwd != ancestor_cwd else None
-			label = (
-				f"{name}{SEQ_SUFFIX}" if name is not None else group_display_name(children, " → ")
-			)
-			yield GroupHeader(label, depth, is_last_chain), here_env, here_cwd
-			last_i = len(children) - 1
-			new_env = {**ancestor_env, **env}
-			new_cwd = cwd if cwd is not None else ancestor_cwd
-			for i, child in enumerate(children):
-				link = ChainLink(is_last=i == last_i, parent_is_parallel=False)
-				yield from _walk_with_context(
-					child, depth + 1, (*is_last_chain, link), new_env, new_cwd
-				)
-		case Parallel(tasks=children, name=name, env=env, cwd=cwd):
-			here_env = _env_diff(env, ancestor_env)
-			here_cwd = cwd if cwd is not None and cwd != ancestor_cwd else None
-			label = (
-				f"{name}{PAR_SUFFIX}" if name is not None else group_display_name(children, " | ")
-			)
-			yield GroupHeader(label, depth, is_last_chain), here_env, here_cwd
-			last_i = len(children) - 1
-			new_env = {**ancestor_env, **env}
-			new_cwd = cwd if cwd is not None else ancestor_cwd
-			for i, child in enumerate(children):
-				link = ChainLink(is_last=i == last_i, parent_is_parallel=True)
-				yield from _walk_with_context(
-					child, depth + 1, (*is_last_chain, link), new_env, new_cwd
-				)
-		case _:
-			assert_never(node)
-
-
-def _env_diff(env: Mapping[str, str], ancestor_env: Mapping[str, str]) -> dict[str, str]:
-	return {k: v for k, v in env.items() if ancestor_env.get(k) != v}
-
-
-def _color_on() -> bool:
-	return sys.stdout.isatty() and not os.environ.get("NO_COLOR")
-
-
-def _c(text: str, code: str, on: bool) -> str:
-	return f"{code}{text}{RESET}" if on and text else text
-
-
-def _leaf_label(task: Task, show_cmd: bool, color: bool) -> str:
-	label = task_label(task)
-	base = _c(label, BOLD, color)
-	if show_cmd and task.name is not None:
-		cmd = task.cmd if isinstance(task.cmd, str) else " ".join(task.cmd)
-		if cmd != task.name:
-			base = f"{base}: {_c(cmd, CYAN, color)}"
-	return base
+	for line in render_tree_lines(task, show_cmd=show_cmd, color=color_on()):
+		print(line)
 
 
 @dataclass

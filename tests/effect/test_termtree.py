@@ -10,27 +10,16 @@ from typing import TypeVar
 
 import pytest
 
-from camas import (
-	Completed,
-	CompletedEvent,
-	Effect,
-	Finished,
-	LeafState,
-	OutputEvent,
-	Parallel,
-	Running,
-	Sequential,
-	Skipped,
-	StartedEvent,
-	Task,
-	TaskEvent,
-	Waiting,
-)
+from camas import Parallel, Sequential, Task
+from camas.core.completion import Finished, Skipped
+from camas.core.effect import Effect
+from camas.core.leaf_state import Completed, LeafState, Running, Waiting
+from camas.core.render import flatten_rows
+from camas.core.task_event import CompletedEvent, OutputEvent, StartedEvent, TaskEvent
 from camas.effect.termtree import (
 	STATUS_COL_WIDTH,
 	Termtree,
 	TermtreeOptions,
-	flatten_rows,
 	print_failures,
 	print_passes,
 	render_frame,
@@ -58,7 +47,8 @@ async def drive(
 	events: list[TaskEvent],
 ) -> None:
 	"""Feed an effect through a full setup/on_event*/teardown lifecycle."""
-	from camas import flatten_leaves, next_state
+	from camas.core.leaf_state import next_state
+	from camas.core.traversal import flatten_leaves
 
 	leaves = flatten_leaves(task)
 	states: list[LeafState] = [Waiting(info.task) for info in leaves]

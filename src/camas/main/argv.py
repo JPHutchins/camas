@@ -1,0 +1,112 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 JP Hutchins
+
+from __future__ import annotations
+
+import shlex
+import sys
+from collections.abc import Sequence
+from typing import Final, NamedTuple
+
+if sys.version_info >= (3, 11):
+	from typing import assert_never
+else:  # pragma: no cover
+	from typing_extensions import assert_never
+
+from ..core.task import Parallel, Sequential, Task, TaskNode
+
+
+class SplitArgv(NamedTuple):
+	"""argv partitioned at the first ``--`` separator.
+
+	>>> SplitArgv(("mytask",), ("-v",))
+	SplitArgv(head=('mytask',), passthrough=('-v',))
+	"""
+
+	head: tuple[str, ...]
+	"""Args before ``--`` (or the whole argv if no ``--`` is present)."""
+	passthrough: tuple[str, ...]
+	"""Args after ``--``, to be appended to a leaf Task's command."""
+
+
+def split_passthrough(argv: Sequence[str]) -> SplitArgv:
+	"""Split ``argv`` at the first ``--``; args after it are pass-through to the Task.
+
+	>>> split_passthrough(["mytask"])
+	SplitArgv(head=('mytask',), passthrough=())
+	>>> split_passthrough(["mytask", "--", "-v", "--tb=short"])
+	SplitArgv(head=('mytask',), passthrough=('-v', '--tb=short'))
+	>>> split_passthrough(["mytask", "--", "--", "x"])
+	SplitArgv(head=('mytask',), passthrough=('--', 'x'))
+	"""
+	argv_copy: Final = tuple(argv)
+	try:
+		idx: Final = argv_copy.index("--")
+	except ValueError:
+		return SplitArgv(argv_copy, ())
+	return SplitArgv(argv_copy[:idx], argv_copy[idx + 1 :])
+
+
+def apply_passthrough(task: TaskNode, args: tuple[str, ...]) -> Task:
+	"""Append ``args`` to a leaf ``Task``'s command. Errors on Sequential/Parallel.
+
+	The ``cmd`` shape is preserved: tuple commands stay tuples (args appended);
+	string commands stay strings (args shell-joined and appended) so dry-run/tree
+	output keeps the user's original quoting.
+
+	>>> apply_passthrough(Task("pytest"), ("-v",))
+	Task(cmd='pytest -v', name=None, env={}, cwd=None)
+	>>> apply_passthrough(Task("git commit -m 'big msg'"), ("--no-verify",))
+	Task(cmd="git commit -m 'big msg' --no-verify", name=None, env={}, cwd=None)
+	>>> apply_passthrough(Task(("pytest",), name="t"), ("-v", "-k", "x"))
+	Task(cmd=('pytest', '-v', '-k', 'x'), name='t', env={}, cwd=None)
+	>>> apply_passthrough(Task("pytest"), ("-k", "a b"))
+	Task(cmd="pytest -k 'a b'", name=None, env={}, cwd=None)
+	"""
+	match task:
+		case Task(cmd=cmd, name=name, env=env, cwd=cwd, help=help):
+			return Task(
+				cmd=f"{cmd} {shlex.join(args)}" if isinstance(cmd, str) else cmd + args,
+				name=name,
+				env=env,
+				cwd=cwd,
+				help=help,
+			)
+		case Sequential() | Parallel():
+			raise ValueError(
+				f"pass-through args (--) only apply to Task, got {type(task).__name__}"
+			)
+		case _:
+			assert_never(task)
+
+
+def parse_matrix_kv(raw: str) -> tuple[str, tuple[str, ...]]:
+	"""Parse ``KEY=VAL[,VAL...]`` into ``(key, values)``.
+
+	>>> parse_matrix_kv("PY=3.13")
+	('PY', ('3.13',))
+	>>> parse_matrix_kv("PY=3.13,3.14")
+	('PY', ('3.13', '3.14'))
+	"""
+	if "=" not in raw:
+		raise ValueError(f"--matrix expects KEY=VAL[,VAL...], got {raw!r}")
+	key, _, rest = raw.partition("=")
+	if not key:
+		raise ValueError(f"--matrix expects KEY=VAL[,VAL...], got {raw!r}")
+	values = parse_axis_values(rest)
+	if not values:
+		raise ValueError(f"--matrix {key!r}: at least one value required")
+	return key, values
+
+
+def parse_axis_values(raw: str) -> tuple[str, ...]:
+	"""Comma-separated values into a tuple, trimming whitespace and dropping empties.
+
+	>>> parse_axis_values("3.13")
+	('3.13',)
+	>>> parse_axis_values("3.13, 3.14")
+	('3.13', '3.14')
+	>>> parse_axis_values("")
+	()
+	"""
+	return tuple(s for v in raw.split(",") if (s := v.strip()))

@@ -11,20 +11,23 @@ from unittest.mock import patch
 
 import pytest
 
-from camas import Parallel, Sequential, Task, TaskNode
-from camas.main import (
+from camas import Parallel, Sequential, Task
+from camas.core.task import TaskNode
+from camas.main import main
+from camas.main.dispatch import dispatch_arg, run_cli
+from camas.main.expression import (
 	Ref,
-	_assign_key_name,  # pyright: ignore[reportPrivateUsage]
-	dispatch_arg,
-	find_pyproject,
-	find_tasks_py,
-	load_tasks,
-	load_tasks_from_py,
-	main,
 	parse_expression,
 	parse_task_value,
 	resolve_refs,
-	run_cli,
+)
+from camas.main.tasks import (
+	assign_key_name,
+	find_pyproject,
+	find_tasks_py,
+	is_str_dict,
+	load_tasks,
+	load_tasks_from_py,
 )
 
 
@@ -520,13 +523,13 @@ def test_explicit_py_file_missing(
 
 
 def test_assign_key_name_preserves_cwd() -> None:
-	assert _assign_key_name(Task("x", cwd=Path("rust")), "lint") == Task(
+	assert assign_key_name(Task("x", cwd=Path("rust")), "lint") == Task(
 		"x", name="lint", cwd=Path("rust")
 	)
-	assert _assign_key_name(Parallel(Task("x"), cwd=Path("rust")), "grp") == Parallel(
+	assert assign_key_name(Parallel(Task("x"), cwd=Path("rust")), "grp") == Parallel(
 		Task("x"), name="grp", cwd=Path("rust")
 	)
-	assert _assign_key_name(Sequential(Task("x"), cwd=Path("rust")), "grp") == Sequential(
+	assert assign_key_name(Sequential(Task("x"), cwd=Path("rust")), "grp") == Sequential(
 		Task("x"), name="grp", cwd=Path("rust")
 	)
 
@@ -642,3 +645,20 @@ def test_autodiscover_skips_warning_when_pyproject_tasks_invalid(
 	captured = capsys.readouterr()
 	assert "both define tasks" not in captured.err
 	assert "hi" in captured.out
+
+
+def test_is_str_dict_accepts_str_keys() -> None:
+	assert is_str_dict({"k": "v"})
+	assert is_str_dict({})
+
+
+def test_is_str_dict_rejects_non_str_keys() -> None:
+	"""Type guard must not lie: a dict with int keys is not ``dict[str, Any]``."""
+	assert not is_str_dict({1: "v"})
+	assert not is_str_dict({"k": "v", 2: "x"})
+
+
+def test_is_str_dict_rejects_non_dict() -> None:
+	assert not is_str_dict("oops")
+	assert not is_str_dict([("k", "v")])
+	assert not is_str_dict(None)

@@ -6,6 +6,8 @@ hashability of ``Task``/``Sequential``/``Parallel``."""
 
 from __future__ import annotations
 
+from typing import cast
+
 import pytest
 
 from camas import Parallel, Sequential, Task
@@ -122,3 +124,19 @@ def test_parallel_is_hashable() -> None:
 
 def test_groups_in_set() -> None:
 	assert len({Sequential("a"), Parallel("a"), Task("a")}) == 3
+
+
+def test_task_env_default_cannot_be_mutated() -> None:
+	"""The shared default is a read-only ``MappingProxyType`` — the historical
+	NamedTuple shared-mutable-default footgun can't fire."""
+	a = Task("a")
+	with pytest.raises(TypeError):
+		cast("dict[str, str]", a.env)["X"] = "v"
+
+
+def test_task_user_env_is_stored_as_provided() -> None:
+	"""Explicit env arg passes through; users own that dict."""
+	src = {"K": "v"}
+	t = Task("a", env=src)
+	assert t.env == {"K": "v"}
+	assert dict(t.env) == src
