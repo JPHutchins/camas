@@ -269,7 +269,7 @@ def format_available_effects(
 	"""Render each discovered Effect with its full constructor signature and
 	the signatures of every parameter type it transitively references.
 
-	``scope_effects`` adds user-defined Effect classes/instances to the listing.
+	``scope_effects`` adds user-defined Effect classes to the listing.
 	"""
 	_, effects = available_effects(scope_effects)
 	if not effects:

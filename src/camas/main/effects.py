@@ -173,7 +173,7 @@ def parse_effects(
 ) -> tuple[Effect[Any], ...]:
 	"""Parse a ``--effects`` expression into a tuple of Effect instances.
 
-	``scope_effects`` is a mapping of user-defined Effect classes/instances
+	``scope_effects`` is a mapping of user-defined Effect classes
 	(typically from a ``tasks.py`` scope) merged with the built-in registry.
 
 	>>> [type(e).__name__ for e in parse_effects("(Summary(),)")]

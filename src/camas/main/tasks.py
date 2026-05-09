@@ -145,8 +145,8 @@ def load_tasks_from_py(
 	"""Execute a Python task-definition file and collect module-level bindings.
 
 	Returns ``(tasks, scope_effects)`` — the TaskNode bindings (with name
-	propagation) and any Effect classes/instances defined in the file's
-	module-level scope.
+	propagation) and any Effect classes defined in the file's module-level
+	scope.
 	"""
 	scope: Final = runpy.run_path(str(path))
 	return name_scope_bindings(scope), name_scope_effects(scope)

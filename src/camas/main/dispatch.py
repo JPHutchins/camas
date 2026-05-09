@@ -53,7 +53,7 @@ def run_cli(scope: Mapping[str, object]) -> None:
 	Names starting with ``_`` and non-task values are skipped. Public bindings
 	are named by their binding identifier, and nested references inherit those
 	names (consistent with ``[tool.camas.tasks]`` in pyproject.toml). Public
-	Effect classes/instances in ``scope`` are also picked up so users can
+	Effect classes in ``scope`` are also picked up so users can
 	pass them to ``--effects`` and see them under ``camas --effects``.
 	"""
 	dispatch(name_scope_bindings(scope), scope_effects=name_scope_effects(scope))
