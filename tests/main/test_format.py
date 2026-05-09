@@ -217,14 +217,18 @@ def test_format_available_effects_no_color() -> None:
 def test_format_available_effects_empty(monkeypatch: pytest.MonkeyPatch) -> None:
 	from collections.abc import Mapping
 
-	from camas.main import format as format_mod
+	from camas.main import effects as effects_mod
 
-	def empty_available(
-		_scope: Mapping[str, Any] = {},
-	) -> tuple[Mapping[str, Any], tuple[tuple[str, Any], ...]]:
+	def empty_discover() -> tuple[Mapping[str, Any], tuple[tuple[str, Any], ...]]:
 		return {}, ()
 
-	monkeypatch.setattr(format_mod, "available_effects", empty_available)
+	# Patch ``discover_effects`` at its definition site rather than
+	# ``format.available_effects``: under mypyc the compiled
+	# ``format_available_effects`` calls ``available_effects`` directly
+	# (no module-dict lookup), so patching it has no effect; but
+	# ``discover_effects`` is wrapped by ``functools.cache`` so the
+	# Python-level callable IS reached via attribute lookup.
+	monkeypatch.setattr(effects_mod, "discover_effects", empty_discover)
 	assert format_available_effects() == ""
 
 

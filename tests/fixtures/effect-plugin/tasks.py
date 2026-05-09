@@ -5,8 +5,6 @@ from pathlib import Path
 from textwrap import dedent
 from typing import Final
 
-from typing_extensions import override
-
 from camas import Parallel, Sequential, Task
 from camas.core.effect import Effect
 from camas.core.leaf_state import LeafState
@@ -19,10 +17,8 @@ class Tail(Effect[None]):
 	a less-sophisticated Termtree suited to CI logs where you want interleaved
 	per-task output without ANSI redraws."""
 
-	@override
 	async def setup(self, task: TaskNode) -> None: ...
 
-	@override
 	async def on_event(
 		self,
 		event: TaskEvent,
@@ -38,7 +34,6 @@ class Tail(Effect[None]):
 			case _:
 				pass
 
-	@override
 	async def teardown(self, ctxs: tuple[None, ...]) -> None: ...
 
 
@@ -58,12 +53,10 @@ class FileLog(Effect[Path | None]):
 	path; ``setup`` creates the directory once, ``StartedEvent`` derives
 	the path, ``OutputEvent`` appends each line to it."""
 
-	@override
 	async def setup(self, task: TaskNode) -> Path | None:
 		Path("logs").mkdir(exist_ok=True)
 		return None
 
-	@override
 	async def on_event(
 		self,
 		event: TaskEvent,
@@ -82,7 +75,6 @@ class FileLog(Effect[Path | None]):
 			case _:
 				return ctx
 
-	@override
 	async def teardown(self, ctxs: tuple[Path | None, ...]) -> None: ...
 
 

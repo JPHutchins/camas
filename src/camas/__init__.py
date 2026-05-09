@@ -54,6 +54,7 @@ those at the shell from ``tmp``.
 	...         return subprocess.run(
 	...             [sys.executable, "-m", "camas", *args],
 	...             cwd=tmp, capture_output=True, text=True,
+	...             encoding="utf-8", errors="replace",
 	...             env={**os.environ, "NO_COLOR": "1"},
 	...         )
 	...     return camas

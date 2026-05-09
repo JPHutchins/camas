@@ -171,7 +171,7 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
-        python: ["310", "311", "312", "313", "314"]
+        python: ["311", "312", "313", "314"]
       fail-fast: false
     runs-on: ${{ matrix.os }}
     continue-on-error: true
