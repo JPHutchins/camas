@@ -24,13 +24,6 @@ ci = Sequential(
 )
 ```
 
-```
-camas ci                           # run the tree
-camas ci --dry-run                 # print without running
-camas ci --effects='(Summary(),)'  # post-run summary instead of live tree
-camas matrix --PY 3.13             # pin a matrix axis from the CLI
-```
-
 The animated tree above is from a live test fixture — [see the walkthrough](#walkthrough).
 
 ## Install
