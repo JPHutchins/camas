@@ -75,11 +75,11 @@ The project's own [.github/workflows/ci.yaml](https://github.com/JPHutchins/cama
 
 ## Effects plugins
 
-Define an `Effect` in your `tasks.py` and it's discovered automatically — usable by name from `--effects` and listed under `camas --effects`. See [examples/effect-plugin/](https://github.com/JPHutchins/camas/tree/main/examples/effect-plugin) for a typed `Tail` effect that streams per-task output as it arrives.
+Define an `Effect` in your `tasks.py` and it's discovered automatically — usable by name from `--effects` and listed under `camas --effects`. See [examples/effect-plugin/](https://github.com/JPHutchins/camas/tree/main/tests/fixtures/effect-plugin) for a typed `Tail` effect that streams per-task output as it arrives.
 
 ## Reference
 
-- **[examples/](https://github.com/JPHutchins/camas/tree/main/examples)** — full project layouts under test coverage. The canonical reference for how to structure `tasks.py`, use `[tool.camas.tasks]` in `pyproject.toml`, drive a matrix from `.python-version`, or scope a 2-axis matrix from the CLI.
+- **[examples/](https://github.com/JPHutchins/camas/tree/main/tests/fixtures)** — full project layouts under test coverage. The canonical reference for how to structure `tasks.py`, use `[tool.camas.tasks]` in `pyproject.toml`, drive a matrix from `.python-version`, or scope a 2-axis matrix from the CLI.
 - **[src/camas/](https://github.com/JPHutchins/camas/tree/main/src/camas)** — typed Python with thorough docstrings. `camas --help` and `camas <task> --help` link back here.
 - **`camas`** with no args lists tasks; `camas <task> --help` shows the expanded tree, matrix axes, and override flags.
 
