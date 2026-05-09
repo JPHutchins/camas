@@ -8,7 +8,8 @@ import asyncio
 import cyclopts
 import pytest
 
-from camas import Parallel, Sequential, Task, run
+from camas import Parallel, Sequential, Task
+from camas.core.execution import run
 from camas.effect.termtree import Termtree, TermtreeOptions
 
 app = cyclopts.App()

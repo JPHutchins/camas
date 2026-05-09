@@ -5,8 +5,9 @@ from __future__ import annotations
 
 import pytest
 
-from camas import Parallel, Sequential, Task, matrix_axes, override_matrix
-from camas.main import parse_matrix_kv
+from camas import Parallel, Sequential, Task
+from camas.core.matrix import matrix_axes, override_matrix
+from camas.main.argv import parse_matrix_kv
 
 
 def test_matrix_axes_empty_for_task() -> None:

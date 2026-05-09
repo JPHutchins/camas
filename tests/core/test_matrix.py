@@ -5,7 +5,8 @@ from __future__ import annotations
 
 import pytest
 
-from camas import Parallel, Sequential, Task, expand_matrix
+from camas import Parallel, Sequential, Task
+from camas.core.matrix import expand_matrix
 
 
 def test_no_matrix_passthrough() -> None:

@@ -13,12 +13,14 @@ if sys.version_info >= (3, 11):
 else:
 	from typing_extensions import assert_never
 
-from camas import LeafState, TaskEvent, TaskNode, Waiting, flatten_leaves
-from camas.effect.termtree import (
+from ..core.leaf_state import LeafState, Waiting
+from ..core.render import DisplayRow, flatten_rows
+from ..core.task import TaskNode
+from ..core.task_event import TaskEvent
+from ..core.traversal import flatten_leaves
+from .termtree import (
 	CLEAR_LINE,
 	STATUS_COL_WIDTH,
-	DisplayRow,
-	flatten_rows,
 	print_failures,
 	print_passes,
 	render_lines,

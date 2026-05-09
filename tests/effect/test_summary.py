@@ -9,19 +9,11 @@ from typing import TypeVar
 
 import pytest
 
-from camas import (
-	CompletedEvent,
-	Effect,
-	Finished,
-	LeafState,
-	Parallel,
-	Sequential,
-	Skipped,
-	StartedEvent,
-	Task,
-	TaskEvent,
-	Waiting,
-)
+from camas import Parallel, Sequential, Task
+from camas.core.completion import Finished, Skipped
+from camas.core.effect import Effect
+from camas.core.leaf_state import LeafState, Waiting
+from camas.core.task_event import CompletedEvent, StartedEvent, TaskEvent
 from camas.effect.summary import Fixed, Summary, SummaryOptions
 
 T = TypeVar("T")
@@ -37,7 +29,8 @@ async def drive(
 	events: list[TaskEvent],
 ) -> None:
 	"""Feed an effect through a full setup/on_event*/teardown lifecycle."""
-	from camas import flatten_leaves, next_state
+	from camas.core.leaf_state import next_state
+	from camas.core.traversal import flatten_leaves
 
 	leaves = flatten_leaves(task)
 	states: list[LeafState] = [Waiting(info.task) for info in leaves]
@@ -64,7 +57,8 @@ def test_summary_renders_only_at_teardown(capsys: pytest.CaptureFixture[str]) ->
 
 	async def run_and_capture() -> tuple[str, str]:
 		effect = Summary(SummaryOptions())
-		from camas import flatten_leaves, next_state
+		from camas.core.leaf_state import next_state
+		from camas.core.traversal import flatten_leaves
 
 		leaves = flatten_leaves(task)
 		states: list[LeafState] = [Waiting(info.task) for info in leaves]
