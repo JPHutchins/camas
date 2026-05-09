@@ -39,7 +39,7 @@ def color_env(merged: dict[str, str]) -> dict[str, str]:
 async def run_cmd(task: Task, leaf_index: int, dispatch: EventSink) -> TaskResult:
 	"""Run one leaf as a subprocess, dispatching Started/Output/Completed events."""
 	start: Final = time.perf_counter()
-	await dispatch(leaf_index, StartedEvent(leaf_index, start))
+	await dispatch(leaf_index, StartedEvent(task, leaf_index, start))
 	proc: Final = await asyncio.create_subprocess_exec(
 		*resolve_cmd(task.cmd),
 		stdout=asyncio.subprocess.PIPE,
@@ -51,12 +51,12 @@ async def run_cmd(task: Task, leaf_index: int, dispatch: EventSink) -> TaskResul
 	if proc.stdout is not None:  # pragma: no branch
 		async for line in proc.stdout:
 			output.append(line)
-			await dispatch(leaf_index, OutputEvent(leaf_index, line, time.perf_counter()))
+			await dispatch(leaf_index, OutputEvent(task, leaf_index, line, time.perf_counter()))
 	await proc.wait()
 	elapsed: Final = time.perf_counter() - start
 	rc: Final = proc.returncode or 0
 	completion: Final = Finished(rc, elapsed, output)
-	await dispatch(leaf_index, CompletedEvent(leaf_index, completion))
+	await dispatch(leaf_index, CompletedEvent(task, leaf_index, completion))
 	return TaskResult(task_label(task), completion)
 
 
@@ -70,7 +70,7 @@ async def skip_subtree(
 	"""Dispatch a Skipped completion for every leaf in a subtree, in DFS order."""
 	results: tuple[TaskResult, ...] = ()
 	for idx in subtree_leaf_indices(child, index_map):
-		await dispatch(idx, CompletedEvent(idx, skip))
+		await dispatch(idx, CompletedEvent(leaves[idx], idx, skip))
 		results = (*results, TaskResult(task_label(leaves[idx]), skip))
 	return results
 

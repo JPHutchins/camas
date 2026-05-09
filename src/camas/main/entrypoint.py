@@ -18,8 +18,7 @@ def main() -> None:
 	"""
 	for stream in (sys.stdout, sys.stderr):
 		cast(io.TextIOWrapper, stream).reconfigure(encoding="utf-8", errors="replace")
-	tasks, argv, source = resolve_tasks_source(sys.argv[1:])
-	dispatch(tasks, argv, source)
+	dispatch(*resolve_tasks_source(sys.argv[1:]))
 
 
 if __name__ == "__main__":

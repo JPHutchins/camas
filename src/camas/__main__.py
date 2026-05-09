@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
+"""See ``camas.__init__`` for docs."""
 
 from camas.main import main
 

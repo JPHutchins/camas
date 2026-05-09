@@ -25,12 +25,16 @@ def test_build_parser_format_help_no_tasks_no_effects(monkeypatch: pytest.Monkey
 	from collections.abc import Mapping
 	from typing import Any
 
-	from camas.main import format as format_mod
+	from camas.main import effects as effects_mod
 
 	def empty_discover() -> tuple[Mapping[str, Any], tuple[tuple[str, Any], ...]]:
 		return {}, ()
 
-	monkeypatch.setattr(format_mod, "discover_effects", empty_discover)
+	# Patch ``discover_effects`` (the ``functools.cache``-wrapped Python
+	# callable) rather than ``available_effects`` so the patch survives
+	# under mypyc compilation, where compiled-to-compiled calls bypass
+	# the module dict.
+	monkeypatch.setattr(effects_mod, "discover_effects", empty_discover)
 	parser = build_parser()
 	out = parser.format_help()
 	assert "Available tasks" not in out

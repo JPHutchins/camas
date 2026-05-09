@@ -14,11 +14,12 @@ if sys.version_info >= (3, 11):
 else:  # pragma: no cover
 	from typing_extensions import assert_never
 
+from ..core.effect import Effect
 from ..core.matrix import matrix_axes
 from ..core.render import GREY, RESET, color_on, render_tree_lines
 from ..core.task import Parallel, Sequential, Task, TaskNode
 from .color import BLUE, BOLD_BLUE, BOLD_CYAN, BOLD_YELLOW, maybe_color, wrap_ansi
-from .effects import discover_effects, flatten_annotation, signature_fields
+from .effects import available_effects, flatten_annotation, signature_fields
 from .mypyc import MISSING
 
 
@@ -261,10 +262,16 @@ def format_signature(cls: Any, indent: str, color: bool) -> list[str]:
 	return lines
 
 
-def format_available_effects(color: bool | None = None) -> str:
+def format_available_effects(
+	color: bool | None = None,
+	scope_effects: Mapping[str, type[Effect[Any]]] = {},
+) -> str:
 	"""Render each discovered Effect with its full constructor signature and
-	the signatures of every parameter type it transitively references."""
-	_, effects = discover_effects()
+	the signatures of every parameter type it transitively references.
+
+	``scope_effects`` adds user-defined Effect classes to the listing.
+	"""
+	_, effects = available_effects(scope_effects)
 	if not effects:
 		return ""
 	on = color_on() if color is None else color
@@ -322,8 +329,10 @@ def format_reference(color: bool) -> str:
 	return f"{header}\n{body}"
 
 
-def print_available_effects() -> None:
-	print(format_available_effects())
+def print_available_effects(
+	scope_effects: Mapping[str, type[Effect[Any]]] = {},
+) -> None:
+	print(format_available_effects(scope_effects=scope_effects))
 
 
 def first_line_doc(obj: Any) -> str:

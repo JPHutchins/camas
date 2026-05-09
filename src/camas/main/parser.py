@@ -7,8 +7,9 @@ import argparse
 import importlib.metadata
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Final
+from typing import Any, Final
 
+from ..core.effect import Effect
 from ..core.render import color_on
 from ..core.task import TaskNode
 from .format import (
@@ -22,19 +23,20 @@ from .format import (
 class CamasArgumentParser(argparse.ArgumentParser):
 	"""``ArgumentParser`` whose ``--help`` appends the discovered tasks listing,
 	the discovered Effects listing, and the Try hint after argparse's standard
-	output. ``tasks``/``source`` are populated by ``build_parser`` so the
-	override has access without nesting.
+	output. ``tasks``/``source``/``scope_effects`` are populated by
+	``build_parser`` so the override has access without nesting.
 	"""
 
 	tasks: Mapping[str, TaskNode] | None
 	source: Path | None
+	scope_effects: Mapping[str, type[Effect[Any]]]
 
 	def format_help(self) -> str:
 		color = color_on()
 		sections = [super().format_help().rstrip()]
 		if self.tasks:
 			sections.append(format_task_summary_listing(self.tasks, self.source, color=color))
-		effects_listing = format_available_effects(color=color)
+		effects_listing = format_available_effects(color=color, scope_effects=self.scope_effects)
 		if effects_listing:
 			sections.append(effects_listing)
 		sections.append(format_try_hint(color))
@@ -45,6 +47,7 @@ class CamasArgumentParser(argparse.ArgumentParser):
 def build_parser(
 	tasks: Mapping[str, TaskNode] | None = None,
 	source: Path | None = None,
+	scope_effects: Mapping[str, type[Effect[Any]]] = {},
 ) -> argparse.ArgumentParser:
 	"""Build the CLI argument parser.
 
@@ -68,6 +71,7 @@ def build_parser(
 	)
 	parser.tasks = tasks
 	parser.source = source
+	parser.scope_effects = scope_effects
 	parser.add_argument(
 		"expression",
 		nargs="?",

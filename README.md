@@ -1,13 +1,12 @@
 # Camas
 
-Parallel and sequential task-tree runner with matrix expansion and flexible effects all defined as typechecked Python.
+Parallel and sequential task-tree runner with matrix expansion and effects plugins.
 
 ![demo](https://raw.githubusercontent.com/JPHutchins/camas/gh-storage/demos/demo-latest.gif)
 
 ## Example
 
 ```python
-# tasks.py
 from camas import Parallel, Sequential
 
 ci = Sequential(
@@ -23,13 +22,6 @@ ci = Sequential(
     "npx tsc --noEmit"
   ),
 )
-```
-
-```
-camas ci                           # run the tree
-camas ci --dry-run                 # print without running
-camas ci --effects='(Summary(),)'  # post-run summary instead of live tree
-camas matrix --PY 3.13             # pin a matrix axis from the CLI
 ```
 
 The animated tree above is from a live test fixture — [see the walkthrough](#walkthrough).
@@ -79,12 +71,16 @@ The renderer is swappable, not the tree. Run the same `tasks.py` locally with th
 - run: uv run camas check --effects='(Summary(SummaryOptions(Fixed(90))),)'
 ```
 
-The [project's own CI workflow](https://github.com/JPHutchins/camas/blob/main/.github/workflows/ci.yaml) is a working example.
+The project's own [.github/workflows/ci.yaml](https://github.com/JPHutchins/camas/blob/main/.github/workflows/ci.yaml) is a working example.
+
+## Effects plugins
+
+Define an `Effect` in your `tasks.py` and it's discovered automatically — usable by name from `--effects` and listed under `camas --effects`. See [examples/effect-plugin/](https://github.com/JPHutchins/camas/tree/main/examples/effect-plugin) for a typed `Tail` effect that streams per-task output as it arrives.
 
 ## Reference
 
-- **[Examples](https://github.com/JPHutchins/camas/tree/main/examples)** — full project layouts under test coverage. The canonical reference for how to structure `tasks.py`, use `[tool.camas.tasks]` in `pyproject.toml`, drive a matrix from `.python-version`, or scope a 2-axis matrix from the CLI.
-- **[Source](https://github.com/JPHutchins/camas/tree/main/src/camas)** — typed Python with thorough docstrings. `camas --help` and `camas <task> --help` link back here.
+- **[examples/](https://github.com/JPHutchins/camas/tree/main/examples)** — full project layouts under test coverage. The canonical reference for how to structure `tasks.py`, use `[tool.camas.tasks]` in `pyproject.toml`, drive a matrix from `.python-version`, or scope a 2-axis matrix from the CLI.
+- **[src/camas/](https://github.com/JPHutchins/camas/tree/main/src/camas)** — typed Python with thorough docstrings. `camas --help` and `camas <task> --help` link back here.
 - **`camas`** with no args lists tasks; `camas <task> --help` shows the expanded tree, matrix axes, and override flags.
 
 ## Walkthrough

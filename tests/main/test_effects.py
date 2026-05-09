@@ -15,6 +15,7 @@ from pkgutil import ModuleInfo
 import pytest
 
 from camas.main.effects import (
+	available_effects,
 	discover_effects,
 	eval_value,
 	parse_effects,
@@ -51,6 +52,37 @@ def test_discover_effects_returns_summary_termtree() -> None:
 	assert "SummaryOptions" in constructors
 	assert "Auto" in constructors
 	assert "Fixed" in constructors
+
+
+def test_available_effects_merges_scope_into_builtins() -> None:
+	"""User scope_effects appears alongside built-ins in both maps."""
+	from camas.effect.summary import Summary
+
+	scope = {"AliasedSummary": Summary}
+	constructors, effects = available_effects(scope)
+	assert "AliasedSummary" in constructors
+	assert constructors["AliasedSummary"] is Summary
+	assert ("AliasedSummary", Summary) in effects
+	# Built-ins remain present.
+	assert "Summary" in constructors
+	assert any(name == "Summary" for name, _ in effects)
+
+
+def test_available_effects_empty_scope_is_passthrough() -> None:
+	"""Empty scope returns the same shape as discover_effects with no copying."""
+	cons_a, eff_a = available_effects({})
+	cons_b, eff_b = discover_effects()
+	assert cons_a is cons_b
+	assert eff_a is eff_b
+
+
+def test_parse_effects_uses_scope_effects() -> None:
+	"""A name only present in scope_effects is callable from --effects."""
+	from camas.effect.summary import Summary
+
+	out = parse_effects("(Aliased(),)", {"Aliased": Summary})
+	assert len(out) == 1
+	assert isinstance(out[0], Summary)
 
 
 def test_eval_value_constant_string() -> None:
