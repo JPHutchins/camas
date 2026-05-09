@@ -1,0 +1,18 @@
+# Allowlist: ignore everything VCS-tracked, then add back what the sdist
+# actually needs. Setuptools-scm's default is the inverse (include every
+# tracked file), which drags ``.github/``, ``tests/``, ``examples/`` etc.
+# into the sdist; clearing the slate first matches a Hatch-style mental
+# model where the manifest is a subset, not a subtraction.
+
+recursive-exclude * *
+exclude *
+
+graft src
+include LICENSE
+include README.md
+include pyproject.toml
+include setup.py
+include MANIFEST.in
+
+global-exclude __pycache__
+global-exclude *.py[co]
