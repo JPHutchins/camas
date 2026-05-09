@@ -1,6 +1,6 @@
 [project]
 name = "camas"
-description = "Generic parallel/sequential task runner"
+description = "Parallel and sequential task-tree runner with matrix expansion and effects plugins."
 readme = "README.md"
 license = "MIT"
 authors = [{ name = "JP Hutchins", email = "jphutchins@gmail.com" }]

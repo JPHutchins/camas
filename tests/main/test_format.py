@@ -219,10 +219,12 @@ def test_format_available_effects_empty(monkeypatch: pytest.MonkeyPatch) -> None
 
 	from camas.main import format as format_mod
 
-	def empty_discover() -> tuple[Mapping[str, Any], tuple[tuple[str, Any], ...]]:
+	def empty_available(
+		_scope: Mapping[str, Any] = {},
+	) -> tuple[Mapping[str, Any], tuple[tuple[str, Any], ...]]:
 		return {}, ()
 
-	monkeypatch.setattr(format_mod, "discover_effects", empty_discover)
+	monkeypatch.setattr(format_mod, "available_effects", empty_available)
 	assert format_available_effects() == ""
 
 

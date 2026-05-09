@@ -88,13 +88,13 @@ def next_state(state: LeafState, event: TaskEvent) -> LeafState:
 
 	>>> from camas.core.completion import Finished, Skipped
 	>>> t = Task("echo hi")
-	>>> next_state(Waiting(t), StartedEvent(0, 100.0))
+	>>> next_state(Waiting(t), StartedEvent(t, 0, 100.0))
 	Running(task=Task(cmd='echo hi', name=None, env={}, cwd=None), start_time=100.0, last_line=b'')
-	>>> next_state(Running(t, 100.0, b""), OutputEvent(0, b"hi", 100.5))
+	>>> next_state(Running(t, 100.0, b""), OutputEvent(t, 0, b"hi", 100.5))
 	Running(task=Task(cmd='echo hi', name=None, env={}, cwd=None), start_time=100.0, last_line=b'hi')
-	>>> next_state(Running(t, 100.0, b""), CompletedEvent(0, Finished(0, 0.5, (b"done",))))
+	>>> next_state(Running(t, 100.0, b""), CompletedEvent(t, 0, Finished(0, 0.5, (b"done",))))
 	Completed(task=Task(cmd='echo hi', name=None, env={}, cwd=None), completion=Finished(returncode=0, elapsed=0.5, output=(b'done',)))
-	>>> next_state(Waiting(t), CompletedEvent(0, Skipped(1)))
+	>>> next_state(Waiting(t), CompletedEvent(t, 0, Skipped(1)))
 	Completed(task=Task(cmd='echo hi', name=None, env={}, cwd=None), completion=Skipped(returncode=1))
 	"""
 	match state:

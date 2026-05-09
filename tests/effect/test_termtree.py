@@ -130,12 +130,14 @@ def test_print_passes_outputs_passed_task(capsys: pytest.CaptureFixture[str]) ->
 def test_termtree_show_passing_prints_passed_output(
 	capsys: pytest.CaptureFixture[str],
 ) -> None:
-	task = Parallel(make_task("a"), make_task("b"))
+	a = make_task("a")
+	b = make_task("b")
+	task = Parallel(a, b)
 	events: list[TaskEvent] = [
-		StartedEvent(0, 100.0),
-		StartedEvent(1, 100.0),
-		CompletedEvent(0, Finished(0, 0.1, (b"first output\n",))),
-		CompletedEvent(1, Finished(0, 0.2, (b"second output\n",))),
+		StartedEvent(a, 0, 100.0),
+		StartedEvent(b, 1, 100.0),
+		CompletedEvent(a, 0, Finished(0, 0.1, (b"first output\n",))),
+		CompletedEvent(b, 1, Finished(0, 0.2, (b"second output\n",))),
 	]
 	asyncio.run(
 		drive(
@@ -154,10 +156,11 @@ def test_termtree_show_passing_prints_passed_output(
 def test_termtree_show_passing_defaults_to_false(
 	capsys: pytest.CaptureFixture[str],
 ) -> None:
-	task = Parallel(make_task("a"))
+	a = make_task("a")
+	task = Parallel(a)
 	events: list[TaskEvent] = [
-		StartedEvent(0, 100.0),
-		CompletedEvent(0, Finished(0, 0.1, (b"quiet\n",))),
+		StartedEvent(a, 0, 100.0),
+		CompletedEvent(a, 0, Finished(0, 0.1, (b"quiet\n",))),
 	]
 	asyncio.run(drive(Termtree(TermtreeOptions(frame_interval_ms=50)), task, events))
 	captured = capsys.readouterr()
@@ -167,13 +170,15 @@ def test_termtree_show_passing_defaults_to_false(
 def test_termtree_effect_consumes_events_and_renders(
 	capsys: pytest.CaptureFixture[str],
 ) -> None:
-	task = Parallel(make_task("a"), make_task("b"))
+	a = make_task("a")
+	b = make_task("b")
+	task = Parallel(a, b)
 	events: list[TaskEvent] = [
-		StartedEvent(0, 100.0),
-		StartedEvent(1, 100.0),
-		OutputEvent(0, b"line from a\n", 100.05),
-		CompletedEvent(0, Finished(0, 0.1, (b"line from a\n",))),
-		CompletedEvent(1, Finished(1, 0.2, (b"boom\n",))),
+		StartedEvent(a, 0, 100.0),
+		StartedEvent(b, 1, 100.0),
+		OutputEvent(a, 0, b"line from a\n", 100.05),
+		CompletedEvent(a, 0, Finished(0, 0.1, (b"line from a\n",))),
+		CompletedEvent(b, 1, Finished(1, 0.2, (b"boom\n",))),
 	]
 	asyncio.run(drive(Termtree(TermtreeOptions(frame_interval_ms=50)), task, events))
 	captured = capsys.readouterr()
@@ -190,7 +195,7 @@ def test_termtree_frame_tick_keeps_spinner_alive_between_events() -> None:
 		# Idle for long enough that several ticks fire while nothing is happening.
 		await asyncio.sleep(0.08)
 		ctx = await effect.on_event(
-			CompletedEvent(0, Finished(0, 0.08, (b"done\n",))),
+			CompletedEvent(task, 0, Finished(0, 0.08, (b"done\n",))),
 			(Completed(task, Finished(0, 0.08, (b"done\n",))),),
 			ctx,
 		)
@@ -210,9 +215,9 @@ def test_termtree_effect_handles_groups_and_skipped(
 	b = make_task("b")
 	task = Sequential(a, b, name="pipeline")
 	events: list[TaskEvent] = [
-		StartedEvent(0, 100.0),
-		CompletedEvent(0, Finished(1, 0.1, (b"failed\n",))),
-		CompletedEvent(1, Skipped(1)),
+		StartedEvent(a, 0, 100.0),
+		CompletedEvent(a, 0, Finished(1, 0.1, (b"failed\n",))),
+		CompletedEvent(b, 1, Skipped(1)),
 	]
 	asyncio.run(drive(Termtree(TermtreeOptions(frame_interval_ms=50)), task, events))
 	captured = capsys.readouterr()

@@ -17,6 +17,7 @@ else:  # pragma: no cover
 	import tomli as tomllib
 	from typing_extensions import assert_never
 
+from ..core.effect import Effect
 from ..core.task import Parallel, Sequential, Task, TaskNode
 from .expression import Ref, parse_task_value, resolve_refs
 
@@ -58,8 +59,13 @@ def assign_key_name(node: TaskNode | Ref, key: str) -> TaskNode | Ref:
 			return node
 
 
-def load_tasks(path: Path) -> dict[str, TaskNode]:
-	"""Read [tool.camas.tasks] from a pyproject.toml and resolve all refs."""
+def load_tasks(path: Path) -> tuple[dict[str, TaskNode], dict[str, type[Effect[Any]]]]:
+	"""Read [tool.camas.tasks] from a pyproject.toml and resolve all refs.
+
+	Returns ``(tasks, scope_effects)``; ``scope_effects`` is always empty for
+	pyproject sources (TOML can't host Python classes) — the pair shape is
+	for symmetry with :func:`load_tasks_from_py`.
+	"""
 	parsed: dict[str, Any] = tomllib.loads(path.read_text())
 	raw: Any = dig(dig(dig(parsed, "tool"), "camas"), "tasks")
 	if not is_str_dict(raw):
@@ -72,7 +78,7 @@ def load_tasks(path: Path) -> dict[str, TaskNode]:
 			pre[name] = assign_key_name(parse_task_value(value), name)
 		except ValueError as e:
 			raise ValueError(f"task {name!r}: {e}") from e
-	return {name: resolve_refs(tree, pre, frozenset({name})) for name, tree in pre.items()}
+	return {name: resolve_refs(tree, pre, frozenset({name})) for name, tree in pre.items()}, {}
 
 
 def find_tasks_py(start: Path) -> Path | None:
@@ -115,6 +121,32 @@ def name_scope_bindings(scope: Mapping[str, object]) -> dict[str, TaskNode]:
 	return {name: promote(val) for name, val in bindings.items()}
 
 
-def load_tasks_from_py(path: Path) -> dict[str, TaskNode]:
-	"""Execute a Python task-definition file and collect module-level TaskNode bindings."""
-	return name_scope_bindings(runpy.run_path(str(path)))
+def name_scope_effects(scope: Mapping[str, object]) -> dict[str, type[Effect[Any]]]:
+	"""Public Effect classes from a tasks-file scope.
+
+	Skips ``Effect`` itself, names starting with ``_``, and anything whose
+	``__module__`` already starts with ``camas.effect`` (already covered by
+	:func:`camas.main.effects.discover_effects`).
+	"""
+	return {
+		name: val
+		for name, val in scope.items()
+		if not name.startswith("_")
+		and val is not Effect
+		and not getattr(val, "__module__", "").startswith("camas.effect")
+		and isinstance(val, type)
+		and issubclass(val, Effect)
+	}
+
+
+def load_tasks_from_py(
+	path: Path,
+) -> tuple[dict[str, TaskNode], dict[str, type[Effect[Any]]]]:
+	"""Execute a Python task-definition file and collect module-level bindings.
+
+	Returns ``(tasks, scope_effects)`` — the TaskNode bindings (with name
+	propagation) and any Effect classes/instances defined in the file's
+	module-level scope.
+	"""
+	scope: Final = runpy.run_path(str(path))
+	return name_scope_bindings(scope), name_scope_effects(scope)

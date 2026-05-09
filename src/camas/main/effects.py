@@ -149,8 +149,32 @@ def signature_fields(cls: Any) -> list[tuple[str, Any, Any, Any]]:
 	return from_inspect
 
 
-def parse_effects(expr: str) -> tuple[Effect[Any], ...]:
+def available_effects(
+	scope_effects: Mapping[str, type[Effect[Any]]] = {},
+) -> tuple[Mapping[str, Any], tuple[tuple[str, Any], ...]]:
+	"""Built-in effects merged with ``scope_effects`` (user effects from a
+	tasks-file scope).
+
+	The returned shape mirrors :func:`discover_effects` so callers can use
+	either uniformly: ``constructors`` is what ``--effects`` may reference by
+	name, ``effects`` is the listing.
+	"""
+	builtin_constructors, builtin_effects = discover_effects()
+	if not scope_effects:
+		return builtin_constructors, builtin_effects
+	return (
+		{**builtin_constructors, **scope_effects},
+		builtin_effects + tuple(scope_effects.items()),
+	)
+
+
+def parse_effects(
+	expr: str, scope_effects: Mapping[str, type[Effect[Any]]] = {}
+) -> tuple[Effect[Any], ...]:
 	"""Parse a ``--effects`` expression into a tuple of Effect instances.
+
+	``scope_effects`` is a mapping of user-defined Effect classes/instances
+	(typically from a ``tasks.py`` scope) merged with the built-in registry.
 
 	>>> [type(e).__name__ for e in parse_effects("(Summary(),)")]
 	['Summary']
@@ -167,7 +191,7 @@ def parse_effects(expr: str) -> tuple[Effect[Any], ...]:
 		raise ValueError(format_syntax_error(expr, e)) from e
 	if not isinstance(tree.body, ast.Tuple):
 		raise ValueError(f"--effects must be a tuple, got {type(tree.body).__name__}")
-	constructors, _ = discover_effects()
+	constructors, _ = available_effects(scope_effects)
 	return tuple(expect_effect(eval_value(elt, constructors)) for elt in tree.body.elts)
 
 

@@ -8,8 +8,9 @@ import asyncio
 import sys
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Final
+from typing import Any, Final, NamedTuple
 
+from ..core.effect import Effect
 from ..core.execution import run
 from ..core.matrix import matrix_axes, override_matrix
 from ..core.render import color_on
@@ -27,7 +28,7 @@ from .format import (
 	print_tree,
 )
 from .parser import RESERVED_FLAGS, build_parser
-from .tasks import load_tasks, load_tasks_from_py, name_scope_bindings
+from .tasks import load_tasks, load_tasks_from_py, name_scope_bindings, name_scope_effects
 
 
 def dispatch_arg(arg: str, tasks: Mapping[str, TaskNode]) -> TaskNode:
@@ -51,15 +52,18 @@ def run_cli(scope: Mapping[str, object]) -> None:
 
 	Names starting with ``_`` and non-task values are skipped. Public bindings
 	are named by their binding identifier, and nested references inherit those
-	names (consistent with ``[tool.camas.tasks]`` in pyproject.toml).
+	names (consistent with ``[tool.camas.tasks]`` in pyproject.toml). Public
+	Effect classes/instances in ``scope`` are also picked up so users can
+	pass them to ``--effects`` and see them under ``camas --effects``.
 	"""
-	dispatch(name_scope_bindings(scope))
+	dispatch(name_scope_bindings(scope), scope_effects=name_scope_effects(scope))
 
 
 def dispatch(
 	tasks: Mapping[str, TaskNode],
 	argv: list[str] | None = None,
 	source: Path | None = None,
+	scope_effects: Mapping[str, type[Effect[Any]]] = {},
 ) -> None:
 	"""Parse ``argv`` (defaulting to sys.argv) against ``tasks`` and run the dispatched task.
 
@@ -77,7 +81,7 @@ def dispatch(
 		print_task_help(split.head[0], tasks[split.head[0]])
 		sys.exit(0)
 
-	parser: Final = build_parser(tasks, source)
+	parser: Final = build_parser(tasks, source, scope_effects)
 	args, _leftover = parser.parse_known_args(split.head)
 
 	augmented_axes: dict[str, tuple[str, ...]] = {}
@@ -105,7 +109,7 @@ def dispatch(
 		sys.exit(0)
 
 	if args.effects == "":
-		print_available_effects()
+		print_available_effects(scope_effects)
 		sys.exit(0)
 
 	if args.expression is None:
@@ -124,7 +128,7 @@ def dispatch(
 		parser.error("task or expression is required (no tasks defined)")
 
 	try:
-		effects: Final = parse_effects(args.effects)
+		effects: Final = parse_effects(args.effects, scope_effects)
 	except ValueError as e:
 		print(f"error: --effects: {e}", file=sys.stderr)
 		sys.exit(2)
@@ -181,17 +185,27 @@ def looks_like_py_file(arg: str) -> bool:
 	return arg.endswith(".py")
 
 
-def resolve_tasks_source(
-	argv: list[str],
-) -> tuple[dict[str, TaskNode], list[str], Path | None]:
-	"""Locate the tasks source and return (tasks, remaining_argv, source_path).
+class TasksSource(NamedTuple):
+	"""Result of locating a tasks source on disk."""
+
+	tasks: dict[str, TaskNode]
+	"""Tasks parsed from ``source``; empty when no tasks file was found."""
+	argv: list[str]
+	"""Remaining argv after consuming an explicit ``foo.py`` first arg, if any."""
+	source: Path | None
+	"""File the tasks were loaded from, or ``None`` when none was found."""
+	scope_effects: dict[str, type[Effect[Any]]]
+	"""User-defined Effects from a ``tasks.py`` scope; empty for pyproject."""
+
+
+def resolve_tasks_source(argv: list[str]) -> TasksSource:
+	"""Locate the tasks source and return a :class:`TasksSource`.
 
 	If ``argv[0]`` ends in ``.py`` it is consumed as an explicit file path.
 	Otherwise walks upward from cwd and returns tasks from the nearest directory
 	that defines any; ``tasks.py`` wins over ``pyproject.toml`` at the same level.
 	A ``pyproject.toml`` without ``[tool.camas.tasks]`` is not a match — the walk
-	continues upward. ``source_path`` is the file the tasks were loaded from, or
-	``None`` when no tasks file was found.
+	continues upward.
 	"""
 	if argv and looks_like_py_file(argv[0]):
 		path = Path(argv[0])
@@ -199,7 +213,8 @@ def resolve_tasks_source(
 			print(f"error: {path}: no such file", file=sys.stderr)
 			sys.exit(2)
 		try:
-			return load_tasks_from_py(path), argv[1:], path
+			tasks_py_loaded, scope_effects = load_tasks_from_py(path)
+			return TasksSource(tasks_py_loaded, argv[1:], path, scope_effects)
 		except Exception as e:
 			print(f"error: {path}: {e}", file=sys.stderr)
 			sys.exit(2)
@@ -209,18 +224,19 @@ def resolve_tasks_source(
 		tasks_py = candidate / "tasks.py"
 		if tasks_py.is_file():
 			try:
-				return load_tasks_from_py(tasks_py), argv, tasks_py
+				tasks_py_loaded, scope_effects = load_tasks_from_py(tasks_py)
+				return TasksSource(tasks_py_loaded, argv, tasks_py, scope_effects)
 			except Exception as e:
 				print(f"error: {tasks_py}: {e}", file=sys.stderr)
 				sys.exit(2)
 		pyproject = candidate / "pyproject.toml"
 		if pyproject.is_file():
 			try:
-				tasks = load_tasks(pyproject)
+				tasks, _ = load_tasks(pyproject)
 			except ValueError as e:
 				print(f"error: {pyproject}: {e}", file=sys.stderr)
 				sys.exit(2)
 			if tasks:
-				return tasks, argv, pyproject
+				return TasksSource(tasks, argv, pyproject, {})
 
-	return {}, argv, None
+	return TasksSource({}, argv, None, {})

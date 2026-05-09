@@ -28,6 +28,7 @@ from camas.main.tasks import (
 	is_str_dict,
 	load_tasks,
 	load_tasks_from_py,
+	name_scope_effects,
 )
 
 
@@ -212,7 +213,8 @@ test = "pytest"
 ci = 'Sequential(Ref("lint"), Ref("typecheck"), Ref("test"))'
 """
 	)
-	tasks = load_tasks(pyproject)
+	tasks, scope_effects = load_tasks(pyproject)
+	assert scope_effects == {}
 	assert tasks["lint"] == Task("ruff check .", name="lint")
 	assert tasks["typecheck"] == Parallel(
 		Task("mypy .", name="mypy"), Task("pyright .", name="pyright"), name="typecheck"
@@ -233,7 +235,7 @@ def test_load_tasks_matrix(tmp_path: Path) -> None:
 tests = 'Parallel(Task("pytest --python {PY}"), matrix={"PY": ("3.12","3.13")})'
 """
 	)
-	tasks = load_tasks(pyproject)
+	tasks, _ = load_tasks(pyproject)
 	assert tasks["tests"] == Parallel(
 		Task("pytest --python {PY}"), matrix={"PY": ("3.12", "3.13")}, name="tests"
 	)
@@ -242,7 +244,7 @@ tests = 'Parallel(Task("pytest --python {PY}"), matrix={"PY": ("3.12","3.13")})'
 def test_load_tasks_empty(tmp_path: Path) -> None:
 	pyproject = tmp_path / "pyproject.toml"
 	pyproject.write_text('[project]\nname = "x"\nversion = "0"\n')
-	assert load_tasks(pyproject) == {}
+	assert load_tasks(pyproject) == ({}, {})
 
 
 def test_load_tasks_rejects_non_table(tmp_path: Path) -> None:
@@ -476,7 +478,8 @@ def test_load_tasks_from_py_propagates_names(tmp_path: Path) -> None:
 		"typecheck = Parallel(mypy, pyright)\n"
 		"_private = Task('nope')\n"
 	)
-	tasks = load_tasks_from_py(tasks_py)
+	tasks, scope_effects = load_tasks_from_py(tasks_py)
+	assert scope_effects == {}
 	assert tasks["mypy"] == Task("mypy .", name="mypy")
 	assert tasks["typecheck"] == Parallel(
 		Task("mypy .", name="mypy"), Task("pyright .", name="pyright"), name="typecheck"
@@ -542,7 +545,7 @@ def test_load_tasks_from_py_preserves_cwd(tmp_path: Path) -> None:
 		"leaf = Task('cargo test', cwd=Path('src-tauri'))\n"
 		"group = Parallel(Task('cargo check'), cwd=Path('src-tauri'))\n"
 	)
-	tasks = load_tasks_from_py(tasks_py)
+	tasks, _ = load_tasks_from_py(tasks_py)
 	assert tasks["leaf"].cwd == Path("src-tauri")
 	assert tasks["group"].cwd == Path("src-tauri")
 
@@ -662,3 +665,46 @@ def test_is_str_dict_rejects_non_dict() -> None:
 	assert not is_str_dict("oops")
 	assert not is_str_dict([("k", "v")])
 	assert not is_str_dict(None)
+
+
+def test_name_scope_effects_finds_class() -> None:
+	"""A class satisfying the Effect protocol structurally is exposed; bare
+	instances are ignored — ``--effects`` invokes effects with ``()``."""
+	from collections.abc import Sequence
+
+	from camas.core.leaf_state import LeafState
+	from camas.core.task_event import TaskEvent
+
+	class MyEffect:
+		async def setup(self, task: TaskNode) -> int:
+			return 0  # pragma: no cover
+
+		async def on_event(self, event: TaskEvent, states: Sequence[LeafState], ctx: int) -> int:
+			return ctx  # pragma: no cover
+
+		async def teardown(self, ctxs: tuple[int, ...]) -> None: ...
+
+	scope: dict[str, object] = {"MyEffect": MyEffect, "instance": MyEffect()}
+	assert name_scope_effects(scope) == {"MyEffect": MyEffect}
+
+
+def test_name_scope_effects_skips_builtins_and_private() -> None:
+	"""Names starting with ``_``, ``Effect`` itself, things not satisfying the
+	Effect protocol, and re-exported built-ins (module starts with
+	``camas.effect``) are all excluded from the returned scope."""
+	from camas.core.effect import Effect
+	from camas.effect.summary import Summary
+
+	class NotAnEffect:
+		"""Has only some of the protocol methods."""
+
+		def setup(self) -> None: ...
+
+	scope: dict[str, object] = {
+		"_HiddenEffect": Summary,
+		"Effect": Effect,
+		"NotAnEffect": NotAnEffect,
+		"BuiltinSummary": Summary,
+		"plain": 42,
+	}
+	assert name_scope_effects(scope) == {}
