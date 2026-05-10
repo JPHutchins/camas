@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 from collections.abc import Iterator, Mapping
 from pathlib import Path
@@ -22,6 +23,37 @@ BOLD: Final = "\033[1m"
 CYAN: Final = "\033[36m"
 GREY: Final = "\033[90m"
 RESET: Final = "\033[0m"
+
+ANSI_ESCAPE: Final = re.compile(
+	r"\x1b(?:"
+	r"\[[0-?]*[ -/]*[@-~]"  # CSI sequences (colors, cursor movement, etc.)
+	r"|\][^\x07]*\x07"  # OSC terminated by BEL (hyperlinks, window title)
+	r"|\][^\x1b]*\x1b\\"  # OSC terminated by ST
+	r"|[@-Z\\-_]"  # two-character Fe sequences (after OSC: ] is in range)
+	r")"
+	r"|[\x00-\x08\x0b-\x1f\x7f]"  # ASCII control chars except \t (\x09) and \n (\x0a)
+)
+
+
+def strip_ansi(text: str) -> str:
+	"""Remove ANSI escape sequences and ASCII control characters from a string.
+
+	Tab (``\\t``) and newline (``\\n``) are preserved — they're load-bearing for
+	formatted log output. Carriage return (``\\r``), BEL, BS, and other
+	control chars are stripped.
+
+	>>> strip_ansi("\x1b[32mgreen\x1b[0m text")
+	'green text'
+	>>> strip_ansi("\x1b]8;;https://example.com\x07link\x1b]8;;\x07 text")
+	'link text'
+	>>> strip_ansi("no escapes")
+	'no escapes'
+	>>> strip_ansi("line one\\nline two\\tcol")
+	'line one\\nline two\\tcol'
+	>>> strip_ansi("\\r\x1b[2Kprogress")
+	'progress'
+	"""
+	return ANSI_ESCAPE.sub("", text)
 
 
 def color_on() -> bool:

@@ -71,7 +71,30 @@ The renderer is swappable, not the tree. Run the same `tasks.py` locally with th
 - run: uv run camas check --effects='(Summary(SummaryOptions(Fixed(90))),)'
 ```
 
-The project's own [.github/workflows/ci.yaml](https://github.com/JPHutchins/camas/blob/main/.github/workflows/ci.yaml) is a working example.
+For per-leaf visibility in the PR Checks panel, add the `GitHubChecks` effect (opt-in extra: `camas[github_checks]`). Each leaf task becomes its own check run, so reviewers see `lint` / `mypy` / `pytest` pass-or-fail individually instead of one monolithic log.
+
+```yaml
+- run: |
+    uv run --extra github_checks camas matrix --effects='(
+      Summary(SummaryOptions(Fixed(90))),
+      GitHubChecks(GitHubChecksOptions(
+        sha="${{ github.event.pull_request.head.sha || github.sha }}",
+      )),
+    )'
+  env:
+    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+```
+
+The job needs `permissions: checks: write`. Defaults read `GITHUB_TOKEN`, `GITHUB_REPOSITORY`, and `GITHUB_SHA` from the Actions env. The `pull_request.head.sha` override attaches checks to the PR head rather than the synthetic merge commit. See the [`github-checks-demo` job](https://github.com/JPHutchins/camas/blob/main/.github/workflows/ci.yaml) for a working example.
+
+**When to use it.** Two things it gives you:
+
+- **SSOT between local dev and CI.** Your `camas matrix` terminal view and the PR Checks panel show the same per-leaf shape (`lint [PY=3.10]`, `mypy [PY=3.14]`, …). The matrix definition lives once in `tasks.py`; CI doesn't re-encode it in YAML.
+- **One runner instead of N.** Camas-side parallel matrix on a single runner produces the same per-`(cell, leaf)` granularity that a GHA matrix gets across N runners — at 1/N the minutes and camas gives you efficient task parallelization pushing that runner to 100% utilization as much as possible. Worth it on paid-runner budgets.
+
+The downside is that fork PRs get a read-only `GITHUB_TOKEN` from GitHub and can't write checks — usually a non-issue for Enterprise teams where contributors have push to the org repo.
+
+**When not to bother.** OSS gets free runners — just GHA-matrix them in parallel for faster wall-clock time. The cost is small: you give up either SSOT (matrix definition moves into YAML) or per-leaf-UI granularity (one PR check entry per runner instead of per leaf) — pick one. What *is* a deal-breaker for OSS is fork PRs: external-contributor PRs return 403 from the Checks API, so per-leaf entries silently don't appear. The `github-checks-demo` job is marked `continue-on-error` so it doesn't block CI when that happens, but `GitHubChecks` isn't a workable OSS solution.
 
 ## Effects plugins
 

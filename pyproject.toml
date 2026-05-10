@@ -12,7 +12,15 @@ dependencies = [
 "typing_extensions>=4.12,<5; python_version < '3.11'",
 ]
 dynamic = ["version"]
-keywords = ["task-runner", "parallel", "sequential", "async"]
+keywords = [
+"task-runner",
+"parallel",
+"sequential",
+"async",
+"github",
+"agents",
+"CI/CD",
+]
 classifiers = [
 "Development Status :: 3 - Alpha",
 "Intended Audience :: Developers",
@@ -31,6 +39,9 @@ classifiers = [
 Homepage = "https://github.com/JPHutchins/camas"
 Repository = "https://github.com/JPHutchins/camas"
 Issues = "https://github.com/JPHutchins/camas/issues"
+
+[project.optional-dependencies]
+github_checks = ["httpx>=0.28,<1"]
 
 [project.scripts]
 camas = "camas.main:main"
@@ -60,6 +71,7 @@ dev = [
 "mypy>=1.19,<2",
 "pyright>=1.1.408,<2",
 "pytest>=9,<10",
+"pytest-asyncio>=1,<2",
 "pytest-cov>=7,<8",
 "cyclopts>=4,<5",
 "ruff>=0.12,<1",
@@ -71,12 +83,14 @@ dev = [
 "taskgroup>=0.2",
 "tomli>=2",
 "typing_extensions>=4.12",
+"httpx>=0.28,<1",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["src", "tests"]
 norecursedirs = ["fixtures", "examples"]
 markers = ["slow: visual demo tests with real delays"]
+asyncio_mode = "auto"
 
 [tool.ruff]
 line-length = 100
@@ -102,7 +116,7 @@ exclude = ["tests/fixtures/**", "examples/**"]
 exclude = ["tests/fixtures/", "examples/", "build/", "setup.py"]
 
 [tool.pyrefly]
-project-excludes = ["tests/fixtures/**", "examples/**", "build/**", "setup.py"]
+project-excludes = ["tests/fixtures/**", "examples/**", "build/**", "setup.py", ".venv*/**"]
 
 [tool.coverage.run]
 source = ["camas", "tests"]
