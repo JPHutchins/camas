@@ -2,7 +2,6 @@
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
 import asyncio
-import re
 import shutil
 import sys
 import time
@@ -23,6 +22,7 @@ from ..core.render import (
 	flatten_rows,
 	render_tree_lines,
 	render_tree_prefix,
+	strip_ansi,
 )
 from ..core.task import Task, TaskNode, task_label
 from ..core.task_event import TaskEvent
@@ -77,30 +77,6 @@ class TermtreeOptions(NamedTuple):
 
 	frame_interval_ms: float = 16.667
 	show_passing: bool = False
-
-
-ANSI_ESCAPE: Final = re.compile(
-	r"\x1b(?:"
-	r"\[[0-?]*[ -/]*[@-~]"  # CSI sequences (colors, cursor movement, etc.)
-	r"|\][^\x07]*\x07"  # OSC terminated by BEL (hyperlinks, window title)
-	r"|\][^\x1b]*\x1b\\"  # OSC terminated by ST
-	r"|[@-Z\\-_]"  # two-character Fe sequences (after OSC: ] is in range)
-	r")"
-	r"|[\x00-\x1f\x7f]"  # remaining ASCII control characters (e.g. \r from tools)
-)
-
-
-def strip_ansi(text: str) -> str:
-	"""Remove ANSI escape sequences and ASCII control characters from a string.
-
-	>>> strip_ansi("\x1b[32mgreen\x1b[0m text")
-	'green text'
-	>>> strip_ansi("\x1b]8;;https://example.com\x07link\x1b]8;;\x07 text")
-	'link text'
-	>>> strip_ansi("no escapes")
-	'no escapes'
-	"""
-	return ANSI_ESCAPE.sub("", text)
 
 
 GREEN: Final = "\033[32m"

@@ -14,7 +14,7 @@ from camas import Parallel, Sequential, Task
 from camas.core.completion import Finished, Skipped
 from camas.core.effect import Effect
 from camas.core.leaf_state import Completed, LeafState, Running, Waiting
-from camas.core.render import flatten_rows
+from camas.core.render import flatten_rows, strip_ansi
 from camas.core.task_event import CompletedEvent, OutputEvent, StartedEvent, TaskEvent
 from camas.effect.termtree import (
 	STATUS_COL_WIDTH,
@@ -24,7 +24,6 @@ from camas.effect.termtree import (
 	print_passes,
 	render_frame,
 	render_lines,
-	strip_ansi,
 )
 
 ANSI_ESCAPE_PATTERN = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]")

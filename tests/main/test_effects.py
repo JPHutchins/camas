@@ -45,13 +45,23 @@ def test_parse_effects_rejects_non_effect_value() -> None:
 		parse_effects("(SummaryOptions(),)")
 
 
-def test_discover_effects_returns_summary_termtree() -> None:
+def test_discover_effects_returns_builtin_set() -> None:
 	constructors, effects = discover_effects()
 	names = {n for n, _ in effects}
-	assert names == {"Summary", "Termtree"}
+	assert names == {"Summary", "Termtree", "GitHubChecks"}
 	assert "SummaryOptions" in constructors
 	assert "Auto" in constructors
 	assert "Fixed" in constructors
+	assert "GitHubChecksOptions" in constructors
+
+
+def test_parse_effects_constructs_github_checks_with_options() -> None:
+	out = parse_effects('(GitHubChecks(GitHubChecksOptions(name_prefix="pfx/")),)')
+	assert len(out) == 1
+	from camas.effect.github_checks import GitHubChecks
+
+	assert isinstance(out[0], GitHubChecks)
+	assert out[0].options.name_prefix == "pfx/"
 
 
 def test_available_effects_merges_scope_into_builtins() -> None:
