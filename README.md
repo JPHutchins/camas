@@ -1,6 +1,6 @@
 <img align="right" width="120" src="https://raw.githubusercontent.com/JPHutchins/camas/main/resources/artwork/camas-451x1023.png" alt="camas-sketch-by-jph">
 
-<ul><summary><h1>Camas</h1></summary></ul>
+<summary><h1>Camas</h1></summary>
 
 A task-tree runner with parallel execution, matrix expansion, and pluggable output effects.
 
@@ -9,6 +9,8 @@ A task-tree runner with parallel execution, matrix expansion, and pluggable outp
 - **For LLMs:** _coming soon — structured JSON stream + MCP_
 
 <br clear="all">
+
+&nbsp;
 
 ![demo](https://raw.githubusercontent.com/JPHutchins/camas/gh-storage/demos/demo-latest.gif)
 
