@@ -1,6 +1,8 @@
+<img align="right" width="180" src="https://raw.githubusercontent.com/JPHutchins/camas/main/resources/artwork/camas-451x1023.png" alt="Camas">
+
 # Camas
 
-Parallel and sequential task-tree runner with matrix expansion and effects plugins.
+A beautiful task-tree runner with parallel runs, matrix expansion, and effects plugins.
 
 ![demo](https://raw.githubusercontent.com/JPHutchins/camas/gh-storage/demos/demo-latest.gif)
 
