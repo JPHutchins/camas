@@ -1,6 +1,6 @@
-<img align="right" width="120" src="https://raw.githubusercontent.com/JPHutchins/camas/main/resources/artwork/camas-451x1023.png" alt="camas-sketch-by-jph">
+<img align="right" width="150" src="https://raw.githubusercontent.com/JPHutchins/camas/main/resources/artwork/camas-451x1023.png" alt="camas-sketch-by-jph">
 
-<summary><h1>Camas</h1></summary>
+# Camas
 
 A task-tree runner with parallel execution, matrix expansion, and pluggable output effects.
 
