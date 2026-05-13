@@ -1,8 +1,19 @@
-<img align="right" width="180" src="https://raw.githubusercontent.com/JPHutchins/camas/main/resources/artwork/camas-451x1023.png" alt="Camas">
+<table>
+<tr>
+<td>
 
 # Camas
 
-A beautiful task-tree runner with parallel runs, matrix expansion, and effects plugins.
+A task-tree runner with parallel execution, matrix expansion, and pluggable output effects.
+
+- **For developers:** live tree view that updates in place as tasks stream
+- **For CI/CD:** one definition drives both local runs and CI
+- **For LLMs:** _coming soon — structured JSON stream + MCP_
+
+</td>
+<td><img src="https://raw.githubusercontent.com/JPHutchins/camas/main/resources/artwork/camas-451x1023.png" alt="camas-sketch-by-jph" width="180"></td>
+</tr>
+</table>
 
 ![demo](https://raw.githubusercontent.com/JPHutchins/camas/gh-storage/demos/demo-latest.gif)
 
