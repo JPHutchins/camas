@@ -21,6 +21,8 @@ coverage = Task(
 	"uv run pytest --doctest-modules -m 'not slow' --cov --cov-report=term-missing --cov-report=xml"
 )
 
+nix = Task("nix flake check --all-systems --print-build-logs")
+
 all = Sequential(fix, Parallel(typecheck, test))
 check = Parallel(format_check, lint, typecheck, test)
 
