@@ -8,3 +8,4 @@ dist/
 *.egg-info/
 src/**/*.so
 src/**/*.c
+result*

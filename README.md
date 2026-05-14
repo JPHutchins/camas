@@ -2,7 +2,7 @@
 
 # Camas
 
-A task-tree runner with parallel execution, matrix expansion, and pluggable output effects.
+A task runner with parallel execution, matrix expansion, and pluggable output effects.
 
 - **For developers:** live tree view that updates in place as tasks stream
 - **For CI/CD:** one definition drives both local runs and CI
@@ -38,8 +38,23 @@ The animated tree above is from a live test fixture — [see the walkthrough](#w
 
 ## Install
 
+> [!TIP]
+> Add extras with PEP 621, e.g. `camas[github_checks]`
+
+pipx:
 ```
 pipx install camas
+```
+
+uv:
+```
+uv tool install camas
+```
+
+Nix:
+```
+nix run github:JPHutchins/camas                     # default
+nix run github:JPHutchins/camas#with-github-checks  # adds httpx for the GitHubChecks effect
 ```
 
 ## Why camas?

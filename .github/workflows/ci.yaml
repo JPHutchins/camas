@@ -89,6 +89,21 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  nix:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest]
+      fail-fast: false
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: DeterminateSystems/nix-installer-action@v22
+
+      - uses: DeterminateSystems/magic-nix-cache-action@v13
+
+      - run: nix flake check --print-build-logs
+
   tauri-fixture:
     runs-on: ubuntu-latest
     permissions:
@@ -239,7 +254,7 @@ jobs:
 
   publish:
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [check, coverage, wheels, sdist, tauri-fixture, example]
+    needs: [check, coverage, wheels, sdist, tauri-fixture, example, nix]
     runs-on: ubuntu-latest
     environment:
       name: pypi
