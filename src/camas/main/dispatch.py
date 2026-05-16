@@ -8,9 +8,13 @@ import asyncio
 import sys
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Final, NamedTuple
+from typing import Final
 
-from ..core.effect import Effect
+if sys.version_info >= (3, 11):
+	from typing import assert_never
+else:  # pragma: no cover
+	from typing_extensions import assert_never
+
 from ..core.execution import run
 from ..core.matrix import matrix_axes, override_matrix
 from ..core.render import color_on
@@ -19,6 +23,7 @@ from .argv import apply_passthrough, parse_axis_values, parse_matrix_kv, split_p
 from .effects import parse_effects
 from .expression import parse_expression
 from .format import (
+	format_load_error_hint,
 	format_reference,
 	format_try_hint,
 	print_available_effects,
@@ -28,6 +33,7 @@ from .format import (
 	print_tree,
 )
 from .parser import RESERVED_FLAGS, build_parser
+from .state import EMPTY_STATE, LoadErr, LoadOk, TasksState
 from .tasks import load_tasks, load_tasks_from_py, name_scope_bindings, name_scope_effects
 
 
@@ -53,25 +59,42 @@ def run_cli(scope: Mapping[str, object]) -> None:
 	Names starting with ``_`` and non-task values are skipped. Public bindings
 	are named by their binding identifier, and nested references inherit those
 	names (consistent with ``[tool.camas.tasks]`` in pyproject.toml). Public
-	Effect classes in ``scope`` are also picked up so users can
-	pass them to ``--effects`` and see them under ``camas --effects``.
+	Effect classes in ``scope`` are also picked up so users can pass them to
+	``--effects`` and see them under ``camas --effects``.
+
+	Propagates ``scope['__file__']`` as the :class:`LoadOk` ``source`` so per-task
+	help cites the right path and ``--check`` knows which file to type-check.
 	"""
-	dispatch(name_scope_bindings(scope), scope_effects=name_scope_effects(scope))
+	source_obj = scope.get("__file__")
+	source = Path(source_obj) if isinstance(source_obj, (str, Path)) else None
+	dispatch(
+		LoadOk(
+			tasks=name_scope_bindings(scope),
+			source=source,
+			scope_effects=name_scope_effects(scope),
+		)
+	)
 
 
-def dispatch(
-	tasks: Mapping[str, TaskNode],
-	argv: list[str] | None = None,
-	source: Path | None = None,
-	scope_effects: Mapping[str, type[Effect[Any]]] = {},
-) -> None:
-	"""Parse ``argv`` (defaulting to sys.argv) against ``tasks`` and run the dispatched task.
+def exit_for_load_err(err: LoadErr) -> None:
+	"""Print a minimal trace + opportunistic typecheck for ``err`` and exit ``1``."""
+	from .check import report_eval_error
 
-	When invoked with no expression and tasks are defined, prints a compact listing
-	of available tasks and exits 0 — the ``camas`` (no-args) ergonomic default,
-	mirroring ``just`` and ``task``.
+	sys.exit(report_eval_error(err.source, err.exception))
+
+
+def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
+	"""Parse ``argv`` (defaulting to sys.argv) against ``state`` and run the dispatched task.
+
+	Dispatch is structured around the state sum type:
+
+	* :class:`LoadOk` — task-running path. ``camas`` with no expression prints
+	  the listing and exits ``2`` (a la ``just`` / ``task``).
+	* :class:`LoadErr` — meta actions (``--list`` / ``--tree`` / ``--effects``)
+	  still render; everything else delegates to :func:`exit_for_load_err`.
 	"""
 	split: Final = split_passthrough(sys.argv[1:] if argv is None else argv)
+	tasks: Mapping[str, TaskNode] = state.tasks if isinstance(state, LoadOk) else {}
 
 	if (
 		len(split.head) >= 2
@@ -81,93 +104,117 @@ def dispatch(
 		print_task_help(split.head[0], tasks[split.head[0]])
 		sys.exit(0)
 
-	parser: Final = build_parser(tasks, source, scope_effects)
-	args, _leftover = parser.parse_known_args(split.head)
+	parser: Final = build_parser(state)
 
-	augmented_axes: dict[str, tuple[str, ...]] = {}
-	if isinstance(args.expression, str) and args.expression in tasks:
-		for name, values in matrix_axes(tasks[args.expression]).items():
-			if name.lower() in RESERVED_FLAGS:
-				continue
-			parser.add_argument(
-				f"--{name}",
-				dest=name,
-				action="store",
-				default=None,
-				metavar="VAL[,VAL...]",
-				help=f"override matrix axis {name!r} (current: {', '.join(values)})",
-			)
-			augmented_axes[name] = values
-	args = parser.parse_args(split.head)
+	match state:
+		case LoadErr() as err:
+			# No per-task matrix axes to augment; parse strictly so typos in
+			# flags surface instead of being silently consumed.
+			args = parser.parse_args(split.head)
+			if args.list or args.tree:
+				print(format_load_error_hint(err.source, err.exception))
+				sys.exit(0)
+			if args.effects == "":
+				print_available_effects({})
+				sys.exit(0)
+			exit_for_load_err(err)
 
-	if args.list:
-		print_task_summary_listing(tasks, source)
-		sys.exit(0)
+		case LoadOk(tasks=tasks, source=source, scope_effects=scope_effects):
+			args, _leftover = parser.parse_known_args(split.head)
+			augmented_axes: dict[str, tuple[str, ...]] = {}
+			if isinstance(args.expression, str) and args.expression in tasks:
+				for name, values in matrix_axes(tasks[args.expression]).items():
+					if name.lower() in RESERVED_FLAGS:
+						continue
+					parser.add_argument(
+						f"--{name}",
+						dest=name,
+						action="store",
+						default=None,
+						metavar="VAL[,VAL...]",
+						help=f"override matrix axis {name!r} (current: {', '.join(values)})",
+					)
+					augmented_axes[name] = values
+			args = parser.parse_args(split.head)
 
-	if args.tree:
-		print_task_trees(tasks, source)
-		sys.exit(0)
+			if args.list:
+				print_task_summary_listing(tasks, source)
+				sys.exit(0)
 
-	if args.effects == "":
-		print_available_effects(scope_effects)
-		sys.exit(0)
+			if args.tree:
+				print_task_trees(tasks, source)
+				sys.exit(0)
 
-	if args.expression is None:
-		if tasks:
-			print(parser.format_usage().rstrip())
-			print()
-			print_task_summary_listing(tasks, source)
-			print()
-			print(format_try_hint(color_on()))
-			print()
-			print(format_reference(color_on()))
-			print()
-			sys.stdout.flush()
-			print(f"{parser.prog}: error: task or expression is required", file=sys.stderr)
-			sys.exit(2)
-		parser.error("task or expression is required (no tasks defined)")
+			if args.check:
+				from .check import run_typecheck_only
 
-	try:
-		effects: Final = parse_effects(args.effects, scope_effects)
-	except ValueError as e:
-		print(f"error: --effects: {e}", file=sys.stderr)
-		sys.exit(2)
+				sys.exit(run_typecheck_only(source))
 
-	overrides: dict[str, tuple[str, ...]] = {}
-	for raw in args.matrix:
-		try:
-			k, v = parse_matrix_kv(raw)
-		except ValueError as e:
-			print(f"error: {e}", file=sys.stderr)
-			sys.exit(2)
-		overrides[k] = v
-	for axis_name in augmented_axes:
-		val = getattr(args, axis_name, None)
-		if val is not None:
-			values = parse_axis_values(val)
-			if not values:
-				print(f"error: --{axis_name}: at least one value required", file=sys.stderr)
+			if args.effects == "":
+				print_available_effects(scope_effects)
+				sys.exit(0)
+
+			if args.expression is None:
+				if tasks:
+					print(parser.format_usage().rstrip())
+					print()
+					print_task_summary_listing(tasks, source)
+					print()
+					print(format_try_hint(color_on()))
+					print()
+					print(format_reference(color_on()))
+					print()
+					sys.stdout.flush()
+					print(f"{parser.prog}: error: task or expression is required", file=sys.stderr)
+					sys.exit(2)
+				parser.error("task or expression is required (no tasks defined)")
+
+			try:
+				effects: Final = parse_effects(args.effects, scope_effects)
+			except ValueError as e:
+				print(f"error: --effects: {e}", file=sys.stderr)
 				sys.exit(2)
-			overrides[axis_name] = values
 
-	resolved = dispatch_arg(args.expression, tasks)
-	if overrides:
-		try:
-			resolved = override_matrix(resolved, overrides)
-		except ValueError as e:
-			print(f"error: {e}", file=sys.stderr)
-			sys.exit(2)
-	try:
-		task: Final = (
-			apply_passthrough(resolved, split.passthrough) if split.passthrough else resolved
-		)
-	except ValueError as e:
-		print(f"error: {e}", file=sys.stderr)
-		sys.exit(2)
-	if args.dry_run:
-		print_tree(task, show_cmd=True)
-		sys.exit(0)
-	sys.exit(asyncio.run(run(task, effects=effects)).returncode)
+			overrides: dict[str, tuple[str, ...]] = {}
+			for raw in args.matrix:
+				try:
+					k, v = parse_matrix_kv(raw)
+				except ValueError as e:
+					print(f"error: {e}", file=sys.stderr)
+					sys.exit(2)
+				overrides[k] = v
+			for axis_name in augmented_axes:
+				val = getattr(args, axis_name, None)
+				if val is not None:
+					values = parse_axis_values(val)
+					if not values:
+						print(f"error: --{axis_name}: at least one value required", file=sys.stderr)
+						sys.exit(2)
+					overrides[axis_name] = values
+
+			resolved = dispatch_arg(args.expression, tasks)
+			if overrides:
+				try:
+					resolved = override_matrix(resolved, overrides)
+				except ValueError as e:
+					print(f"error: {e}", file=sys.stderr)
+					sys.exit(2)
+			try:
+				task: Final = (
+					apply_passthrough(resolved, split.passthrough)
+					if split.passthrough
+					else resolved
+				)
+			except ValueError as e:
+				print(f"error: {e}", file=sys.stderr)
+				sys.exit(2)
+			if args.dry_run:
+				print_tree(task, show_cmd=True)
+				sys.exit(0)
+			sys.exit(asyncio.run(run(task, effects=effects)).returncode)
+
+		case _:
+			assert_never(state)
 
 
 def looks_like_py_file(arg: str) -> bool:
@@ -185,50 +232,36 @@ def looks_like_py_file(arg: str) -> bool:
 	return arg.endswith(".py")
 
 
-class TasksSource(NamedTuple):
-	"""Result of locating a tasks source on disk."""
-
-	tasks: dict[str, TaskNode]
-	"""Tasks parsed from ``source``; empty when no tasks file was found."""
-	argv: list[str]
-	"""Remaining argv after consuming an explicit ``foo.py`` first arg, if any."""
-	source: Path | None
-	"""File the tasks were loaded from, or ``None`` when none was found."""
-	scope_effects: dict[str, type[Effect[Any]]]
-	"""User-defined Effects from a ``tasks.py`` scope; empty for pyproject."""
+def _load_py(path: Path) -> TasksState:
+	"""Evaluate ``path`` and return a :class:`LoadOk` / :class:`LoadErr`."""
+	try:
+		tasks, scope_effects = load_tasks_from_py(path)
+	except Exception as e:
+		return LoadErr(source=path, exception=e)
+	return LoadOk(tasks=tasks, source=path, scope_effects=scope_effects)
 
 
-def resolve_tasks_source(argv: list[str]) -> TasksSource:
-	"""Locate the tasks source and return a :class:`TasksSource`.
+def resolve_tasks_source(argv: list[str]) -> tuple[TasksState, list[str]]:
+	"""Locate the tasks source and return ``(state, remaining_argv)``.
 
 	If ``argv[0]`` ends in ``.py`` it is consumed as an explicit file path.
-	Otherwise walks upward from cwd and returns tasks from the nearest directory
-	that defines any; ``tasks.py`` wins over ``pyproject.toml`` at the same level.
-	A ``pyproject.toml`` without ``[tool.camas.tasks]`` is not a match — the walk
-	continues upward.
+	Otherwise walks upward from cwd: ``tasks.py`` wins over ``pyproject.toml``
+	at the same level; a ``pyproject.toml`` without ``[tool.camas.tasks]`` keeps
+	the walk going. A ``tasks.py`` whose evaluation raises returns
+	:class:`LoadErr` so meta operations (``--help``, ``--list``) still work.
 	"""
 	if argv and looks_like_py_file(argv[0]):
 		path = Path(argv[0])
 		if not path.is_file():
 			print(f"error: {path}: no such file", file=sys.stderr)
 			sys.exit(2)
-		try:
-			tasks_py_loaded, scope_effects = load_tasks_from_py(path)
-			return TasksSource(tasks_py_loaded, argv[1:], path, scope_effects)
-		except Exception as e:
-			print(f"error: {path}: {e}", file=sys.stderr)
-			sys.exit(2)
+		return _load_py(path), argv[1:]
 
 	start: Final = Path.cwd()
 	for candidate in (start, *start.parents):
 		tasks_py = candidate / "tasks.py"
 		if tasks_py.is_file():
-			try:
-				tasks_py_loaded, scope_effects = load_tasks_from_py(tasks_py)
-				return TasksSource(tasks_py_loaded, argv, tasks_py, scope_effects)
-			except Exception as e:
-				print(f"error: {tasks_py}: {e}", file=sys.stderr)
-				sys.exit(2)
+			return _load_py(tasks_py), argv
 		pyproject = candidate / "pyproject.toml"
 		if pyproject.is_file():
 			try:
@@ -237,6 +270,6 @@ def resolve_tasks_source(argv: list[str]) -> TasksSource:
 				print(f"error: {pyproject}: {e}", file=sys.stderr)
 				sys.exit(2)
 			if tasks:
-				return TasksSource(tasks, argv, pyproject, {})
+				return LoadOk(tasks=tasks, source=pyproject, scope_effects={}), argv
 
-	return TasksSource({}, argv, None, {})
+	return EMPTY_STATE, argv

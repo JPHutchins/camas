@@ -30,11 +30,15 @@ instances (NamedTuple stores defaults on the class), but immutable so a
 caller can't accidentally mutate other Tasks via ``task.env``."""
 
 
-class Task(NamedTuple):
+@dataclass(frozen=True, slots=True, init=False, repr=False)
+class Task:
 	"""A leaf task that executes a shell command.
 
 	``env`` is a ``Mapping`` (read-only contract). The default is a shared
 	``MappingProxyType({})``; user-provided dicts are stored as-is.
+
+	``cwd`` is stored as ``Path | None``; the constructor also accepts a bare
+	``str`` and coerces it (``"src-tauri"`` ⇒ ``Path("src-tauri")``).
 
 	``help`` is an optional one-line description shown in ``--list`` output and
 	``camas <task> --help`` instead of the bare command.
@@ -45,6 +49,8 @@ class Task(NamedTuple):
 	Task(cmd=('ruff', 'check', '.'), name='lint', env={}, cwd=None)
 	>>> Task("cargo test", cwd=Path("src-tauri")).cwd == Path("src-tauri")
 	True
+	>>> Task("cargo test", cwd="src-tauri").cwd == Path("src-tauri")
+	True
 	>>> Task("ruff check .", help="Lint all sources").help
 	'Lint all sources'
 	>>> hash(Task("a")) == hash(Task("a"))
@@ -54,10 +60,25 @@ class Task(NamedTuple):
 	"""
 
 	cmd: str | tuple[str, ...]
-	name: str | None = None
-	env: Mapping[str, str] = _EMPTY_ENV
-	cwd: Path | None = None
-	help: str | None = None
+	name: str | None
+	env: Mapping[str, str]
+	cwd: Path | None
+	help: str | None
+
+	def __init__(
+		self,
+		cmd: str | tuple[str, ...],
+		name: str | None = None,
+		env: Mapping[str, str] = _EMPTY_ENV,
+		cwd: str | Path | None = None,
+		help: str | None = None,
+	) -> None:
+		put = object.__setattr__
+		put(self, "cmd", cmd)
+		put(self, "name", name)
+		put(self, "env", env)
+		put(self, "cwd", Path(cwd) if isinstance(cwd, str) else cwd)
+		put(self, "help", help)
 
 	def __hash__(self) -> int:
 		return hash((self.cmd, self.name, tuple(sorted(self.env.items())), self.cwd, self.help))
@@ -95,7 +116,7 @@ class Group:
 		name: str | None = None,
 		matrix: dict[str, tuple[str, ...]] | None = None,
 		env: dict[str, str] | None = None,
-		cwd: Path | None = None,
+		cwd: str | Path | None = None,
 		help: str | None = None,
 	) -> None:
 		put = object.__setattr__
@@ -103,7 +124,7 @@ class Group:
 		put(self, "name", name)
 		put(self, "matrix", matrix)
 		put(self, "env", env if env is not None else {})
-		put(self, "cwd", cwd)
+		put(self, "cwd", Path(cwd) if isinstance(cwd, str) else cwd)
 		put(self, "help", help)
 
 	def __hash__(self) -> int:

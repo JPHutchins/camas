@@ -3,16 +3,28 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from typing import Any
+
 import pytest
 
 from camas import Parallel, Task
+from camas.core.effect import Effect
+from camas.core.task import TaskNode
 from camas.main.dispatch import dispatch
+from camas.main.state import LoadOk
+
+
+def _state(tasks: Mapping[str, TaskNode]) -> LoadOk:
+	loaded: dict[str, TaskNode] = dict(tasks)
+	effects: dict[str, type[Effect[Any]]] = {}
+	return LoadOk(tasks=loaded, source=None, scope_effects=effects)
 
 
 def test_print_task_help_with_axes(capsys: pytest.CaptureFixture[str]) -> None:
 	task = Parallel(Task("echo {PY}"), matrix={"PY": ("3.12", "3.13")})
 	with pytest.raises(SystemExit, match="0"):
-		dispatch({"check": task}, ["check", "--help"])
+		dispatch(_state({"check": task}), ["check", "--help"])
 	out = capsys.readouterr().out
 	assert "Matrix axes" in out
 	assert "--PY" in out
@@ -21,7 +33,7 @@ def test_print_task_help_with_axes(capsys: pytest.CaptureFixture[str]) -> None:
 def test_print_task_help_shows_help_text(capsys: pytest.CaptureFixture[str]) -> None:
 	task = Parallel(Task("a"), Task("b"), help="Run two things side-by-side")
 	with pytest.raises(SystemExit, match="0"):
-		dispatch({"both": task}, ["both", "--help"])
+		dispatch(_state({"both": task}), ["both", "--help"])
 	out = capsys.readouterr().out
 	assert "Run two things side-by-side" in out
 	idx_help = out.index("Run two things side-by-side")
@@ -32,7 +44,7 @@ def test_print_task_help_shows_help_text(capsys: pytest.CaptureFixture[str]) -> 
 def test_dispatch_per_axis_flag_overrides(capsys: pytest.CaptureFixture[str]) -> None:
 	task = Parallel(Task("echo {PY}"), matrix={"PY": ("3.12", "3.13")})
 	with pytest.raises(SystemExit, match="0"):
-		dispatch({"check": task}, ["--dry-run", "check", "--PY", "3.13"])
+		dispatch(_state({"check": task}), ["--dry-run", "check", "--PY", "3.13"])
 	out = capsys.readouterr().out
 	assert "[PY=3.13]" in out
 	assert "[PY=3.12]" not in out
@@ -41,7 +53,7 @@ def test_dispatch_per_axis_flag_overrides(capsys: pytest.CaptureFixture[str]) ->
 def test_dispatch_matrix_flag_overrides(capsys: pytest.CaptureFixture[str]) -> None:
 	task = Parallel(Task("echo {PY}"), matrix={"PY": ("3.12", "3.13")})
 	with pytest.raises(SystemExit, match="0"):
-		dispatch({"check": task}, ["--dry-run", "check", "--matrix", "PY=3.13"])
+		dispatch(_state({"check": task}), ["--dry-run", "check", "--matrix", "PY=3.13"])
 	out = capsys.readouterr().out
 	assert "[PY=3.13]" in out
 	assert "[PY=3.12]" not in out
@@ -50,21 +62,21 @@ def test_dispatch_matrix_flag_overrides(capsys: pytest.CaptureFixture[str]) -> N
 def test_dispatch_matrix_flag_bad_syntax_errors(capsys: pytest.CaptureFixture[str]) -> None:
 	task = Parallel(Task("echo {PY}"), matrix={"PY": ("3.12",)})
 	with pytest.raises(SystemExit, match="2"):
-		dispatch({"check": task}, ["check", "--matrix", "noequals"])
+		dispatch(_state({"check": task}), ["check", "--matrix", "noequals"])
 	assert "--matrix expects KEY=VAL" in capsys.readouterr().err
 
 
 def test_dispatch_per_axis_flag_empty_value_errors(capsys: pytest.CaptureFixture[str]) -> None:
 	task = Parallel(Task("echo {PY}"), matrix={"PY": ("3.12",)})
 	with pytest.raises(SystemExit, match="2"):
-		dispatch({"check": task}, ["check", "--PY", ""])
+		dispatch(_state({"check": task}), ["check", "--PY", ""])
 	assert "--PY" in capsys.readouterr().err
 
 
 def test_dispatch_matrix_unknown_axis_errors(capsys: pytest.CaptureFixture[str]) -> None:
 	task = Parallel(Task("echo {PY}"), matrix={"PY": ("3.12",)})
 	with pytest.raises(SystemExit, match="2"):
-		dispatch({"check": task}, ["check", "--matrix", "XX=1"])
+		dispatch(_state({"check": task}), ["check", "--matrix", "XX=1"])
 	assert "unknown matrix axis" in capsys.readouterr().err
 
 
@@ -73,7 +85,7 @@ def test_dispatch_skips_reserved_axis_name_for_auto_flag(
 ) -> None:
 	task = Parallel(Task("echo {matrix}"), matrix={"matrix": ("a", "b")})
 	with pytest.raises(SystemExit, match="0"):
-		dispatch({"check": task}, ["--dry-run", "check", "--matrix", "matrix=b"])
+		dispatch(_state({"check": task}), ["--dry-run", "check", "--matrix", "matrix=b"])
 	out = capsys.readouterr().out
 	assert "[matrix=b]" in out
 	assert "[matrix=a]" not in out

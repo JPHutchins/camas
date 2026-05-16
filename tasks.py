@@ -23,7 +23,7 @@ coverage = Task(
 
 nix = Task("nix flake check --all-systems --print-build-logs")
 
-all = Sequential(fix, Parallel(typecheck, test))
+all = Sequential(fix, Parallel(typecheck, coverage))
 check = Parallel(format_check, lint, typecheck, test)
 
 matrix = Sequential(

@@ -5,38 +5,54 @@ from __future__ import annotations
 
 import argparse
 import importlib.metadata
+import sys
 from collections.abc import Mapping
-from pathlib import Path
 from typing import Any, Final
+
+if sys.version_info >= (3, 11):
+	from typing import assert_never
+else:  # pragma: no cover
+	from typing_extensions import assert_never
 
 from ..core.effect import Effect
 from ..core.render import color_on
 from ..core.task import TaskNode
+from .check import describe_check_help
 from .format import (
 	format_available_effects,
+	format_load_error_hint,
 	format_reference,
 	format_task_summary_listing,
 	format_try_hint,
 )
+from .state import EMPTY_STATE, LoadErr, LoadOk, TasksState
 
 
 class CamasArgumentParser(argparse.ArgumentParser):
-	"""``ArgumentParser`` whose ``--help`` appends the discovered tasks listing,
-	the discovered Effects listing, and the Try hint after argparse's standard
-	output. ``tasks``/``source``/``scope_effects`` are populated by
-	``build_parser`` so the override has access without nesting.
+	"""``ArgumentParser`` whose ``--help`` appends the discovered tasks listing
+	(or load-error hint), the Effects listing, and the Try hint after argparse's
+	standard output. ``state`` is populated by ``build_parser`` so the override
+	has access without nesting.
 	"""
 
-	tasks: Mapping[str, TaskNode] | None
-	source: Path | None
-	scope_effects: Mapping[str, type[Effect[Any]]]
+	state: TasksState
 
 	def format_help(self) -> str:
 		color = color_on()
 		sections = [super().format_help().rstrip()]
-		if self.tasks:
-			sections.append(format_task_summary_listing(self.tasks, self.source, color=color))
-		effects_listing = format_available_effects(color=color, scope_effects=self.scope_effects)
+		match self.state:
+			case LoadOk(tasks=tasks, source=source) if tasks:
+				sections.append(format_task_summary_listing(tasks, source, color=color))
+			case LoadErr(source=source, exception=exc):
+				sections.append(format_load_error_hint(source, exc))
+			case LoadOk():
+				pass
+			case _:
+				assert_never(self.state)
+		effects: Mapping[str, type[Effect[Any]]] = (
+			self.state.scope_effects if isinstance(self.state, LoadOk) else {}
+		)
+		effects_listing = format_available_effects(color=color, scope_effects=effects)
 		if effects_listing:
 			sections.append(effects_listing)
 		sections.append(format_try_hint(color))
@@ -44,38 +60,33 @@ class CamasArgumentParser(argparse.ArgumentParser):
 		return "\n\n".join(sections) + "\n"
 
 
-def build_parser(
-	tasks: Mapping[str, TaskNode] | None = None,
-	source: Path | None = None,
-	scope_effects: Mapping[str, type[Effect[Any]]] = {},
-) -> argparse.ArgumentParser:
+def build_parser(state: TasksState = EMPTY_STATE) -> argparse.ArgumentParser:
 	"""Build the CLI argument parser.
 
-	When ``tasks`` is provided, known task names appear in the positional
-	metavar so the usage line reads like a list of subcommands.
+	When ``state`` is :class:`LoadOk` with tasks, known task names appear in the
+	positional metavar so the usage line reads like a list of subcommands.
 
 	>>> from camas.core.task import Task
+	>>> from camas.main.state import LoadOk
 	>>> parser = build_parser()
-	>>> args = parser.parse_args(['Task("echo hi")'])
-	>>> args.expression
+	>>> parser.parse_args(['Task("echo hi")']).expression
 	'Task("echo hi")'
 	>>> parser.parse_args(["--list"]).list
 	True
-	>>> "task | expression" in build_parser({"all": Task("x")}).format_usage()
+	>>> "task | expression" in build_parser(LoadOk({"all": Task("x")}, None, {})).format_usage()
 	True
 	"""
+	tasks_for_metavar: Mapping[str, TaskNode] = state.tasks if isinstance(state, LoadOk) else {}
 	parser: Final = CamasArgumentParser(
 		prog="camas",
 		description="Generic parallel/sequential task runner with TUI output.",
 		formatter_class=argparse.RawDescriptionHelpFormatter,
 	)
-	parser.tasks = tasks
-	parser.source = source
-	parser.scope_effects = scope_effects
+	parser.state = state
 	parser.add_argument(
 		"expression",
 		nargs="?",
-		metavar=expression_metavar(tasks),
+		metavar=expression_metavar(tasks_for_metavar),
 		help="name of a defined task, or a camas expression "
 		"(trailing '-- ARGS' append to a Task's command)",
 	)
@@ -100,6 +111,11 @@ def build_parser(
 		help="print every defined task's expanded tree and exit",
 	)
 	parser.add_argument(
+		"--check",
+		action="store_true",
+		help=describe_check_help(),
+	)
+	parser.add_argument(
 		"--effects",
 		nargs="?",
 		default="(Termtree(),)",
@@ -117,7 +133,7 @@ def build_parser(
 
 
 RESERVED_FLAGS: Final = frozenset(
-	{"help", "version", "dry-run", "list", "tree", "effects", "matrix"}
+	{"help", "version", "dry-run", "list", "tree", "check", "effects", "matrix"}
 )
 
 

@@ -107,8 +107,24 @@ def colorize_summary(body: str, color: bool) -> str:
 	return body.replace(", ", f"{GREY},{RESET} ").replace(" | ", f" {GREY}|{RESET} ")
 
 
+def format_load_error_hint(source: Path, exception: Exception) -> str:
+	"""One-line hint shown in place of the task listing when ``tasks.py`` fails
+	to evaluate — points the user at ``camas --check`` for the full diagnostic.
+
+	>>> "camas --check" in format_load_error_hint(Path("/x/tasks.py"), RuntimeError("boom"))
+	True
+	"""
+	return (
+		f"Tasks unavailable — {source} failed to evaluate "
+		f"({type(exception).__name__}: {exception}). "
+		"Run `camas --check` for the full diagnostic."
+	)
+
+
 def format_task_summary_listing(
-	tasks: Mapping[str, TaskNode], source: Path | None, color: bool
+	tasks: Mapping[str, TaskNode],
+	source: Path | None,
+	color: bool,
 ) -> str:
 	"""Build the ``Available tasks from <source>`` listing as a string."""
 	if not tasks:

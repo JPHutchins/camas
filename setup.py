@@ -14,9 +14,16 @@ if use_mypyc:
 	# @dataclass-generated __eq__ don't survive compilation.
 	# github_checks.py stays interpreted: its optional httpx dep isn't available
 	# in the isolated build env, so mypy/mypyc compilation can't resolve it.
+	# check.py and state.py stay interpreted: mypyc's NamedTuple codegen rejects
+	# the built-in ``Exception`` as a field type (KeyError: 'Exception' at import).
+	_main_excluded = {"check.py", "state.py"}
 	ext_modules = mypycify(
 		[
-			*glob.glob("src/camas/main/*.py"),
+			*(
+				p
+				for p in glob.glob("src/camas/main/*.py")
+				if os.path.basename(p) not in _main_excluded
+			),
 			*(
 				p
 				for p in glob.glob("src/camas/effect/[!_]*.py")
