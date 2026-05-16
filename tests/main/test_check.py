@@ -548,3 +548,49 @@ def test_help_output_for_load_err_includes_hint(
 	out = build_parser(LoadErr(source=p, exception=RuntimeError("cannot load"))).format_help()
 	assert "Tasks unavailable" in out
 	assert "camas --check" in out
+
+
+def test_dispatch_load_err_rejects_unknown_flag(
+	tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+	"""Even when ``tasks.py`` failed to load, unknown CLI flags must surface as
+	argparse errors — not silently fall through to ``exit_for_load_err``."""
+	from camas.main.dispatch import dispatch
+	from camas.main.state import LoadErr
+
+	p = tmp_path / "tasks.py"
+	with pytest.raises(SystemExit, match="2"):
+		dispatch(
+			LoadErr(source=p, exception=RuntimeError("boom")),
+			["--no-such-flag-typo"],
+		)
+	assert "unrecognized arguments" in capsys.readouterr().err
+
+
+def test_run_cli_accepts_path_for_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+	"""``run_cli`` should propagate ``__file__`` whether it's a ``str`` or a ``Path``."""
+	from camas.main.dispatch import run_cli
+
+	(tmp_path / "tasks.py").write_text("from camas import Task\nhi = Task('echo hi')\n")
+	scope: dict[str, object] = {"__file__": tmp_path / "tasks.py", "hi": object()}
+	monkeypatch.setattr(check_mod, "run_typecheck", _stub_ok)
+	with pytest.raises(SystemExit, match="0"):
+		with patch("sys.argv", ["tasks.py", "--check"]):
+			run_cli(scope)
+
+
+def test_empty_state_is_immutable() -> None:
+	"""``EMPTY_STATE`` is reused across calls, so its dicts must be read-only.
+
+	Cast through ``dict`` only to bypass the static guarantee — the test
+	intentionally exercises the runtime ``TypeError`` raised by
+	``MappingProxyType.__setitem__``.
+	"""
+	from typing import cast
+
+	from camas.main.state import EMPTY_STATE
+
+	with pytest.raises(TypeError):
+		cast("dict[str, object]", EMPTY_STATE.tasks)["x"] = object()
+	with pytest.raises(TypeError):
+		cast("dict[str, object]", EMPTY_STATE.scope_effects)["y"] = object()

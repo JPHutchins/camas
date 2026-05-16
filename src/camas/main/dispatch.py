@@ -66,7 +66,7 @@ def run_cli(scope: Mapping[str, object]) -> None:
 	help cites the right path and ``--check`` knows which file to type-check.
 	"""
 	source_obj = scope.get("__file__")
-	source = Path(source_obj) if isinstance(source_obj, str) else None
+	source = Path(source_obj) if isinstance(source_obj, (str, Path)) else None
 	dispatch(
 		LoadOk(
 			tasks=name_scope_bindings(scope),
@@ -105,10 +105,12 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 		sys.exit(0)
 
 	parser: Final = build_parser(state)
-	args, _leftover = parser.parse_known_args(split.head)
 
 	match state:
 		case LoadErr() as err:
+			# No per-task matrix axes to augment; parse strictly so typos in
+			# flags surface instead of being silently consumed.
+			args = parser.parse_args(split.head)
 			if args.list or args.tree:
 				print(format_load_error_hint(err.source, err.exception))
 				sys.exit(0)
@@ -118,6 +120,7 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 			exit_for_load_err(err)
 
 		case LoadOk(tasks=tasks, source=source, scope_effects=scope_effects):
+			args, _leftover = parser.parse_known_args(split.head)
 			augmented_axes: dict[str, tuple[str, ...]] = {}
 			if isinstance(args.expression, str) and args.expression in tasks:
 				for name, values in matrix_axes(tasks[args.expression]).items():

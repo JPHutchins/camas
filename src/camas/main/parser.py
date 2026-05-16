@@ -7,13 +7,14 @@ import argparse
 import importlib.metadata
 import sys
 from collections.abc import Mapping
-from typing import Final
+from typing import Any, Final
 
 if sys.version_info >= (3, 11):
 	from typing import assert_never
 else:  # pragma: no cover
 	from typing_extensions import assert_never
 
+from ..core.effect import Effect
 from ..core.render import color_on
 from ..core.task import TaskNode
 from .check import describe_check_help
@@ -48,7 +49,9 @@ class CamasArgumentParser(argparse.ArgumentParser):
 				pass
 			case _:
 				assert_never(self.state)
-		effects = self.state.scope_effects if isinstance(self.state, LoadOk) else {}
+		effects: Mapping[str, type[Effect[Any]]] = (
+			self.state.scope_effects if isinstance(self.state, LoadOk) else {}
+		)
 		effects_listing = format_available_effects(color=color, scope_effects=effects)
 		if effects_listing:
 			sections.append(effects_listing)
@@ -73,7 +76,7 @@ def build_parser(state: TasksState = EMPTY_STATE) -> argparse.ArgumentParser:
 	>>> "task | expression" in build_parser(LoadOk({"all": Task("x")}, None, {})).format_usage()
 	True
 	"""
-	tasks_for_metavar = state.tasks if isinstance(state, LoadOk) else {}
+	tasks_for_metavar: Mapping[str, TaskNode] = state.tasks if isinstance(state, LoadOk) else {}
 	parser: Final = CamasArgumentParser(
 		prog="camas",
 		description="Generic parallel/sequential task runner with TUI output.",

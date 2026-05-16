@@ -14,7 +14,9 @@ the types without a cycle.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Final, NamedTuple, TypeAlias
 
 from ..core.effect import Effect
@@ -22,12 +24,17 @@ from ..core.task import TaskNode
 
 
 class LoadOk(NamedTuple):
-	"""Tasks loaded successfully (or no tasks file found at all)."""
+	"""Tasks loaded successfully (or no tasks file found at all).
 
-	tasks: dict[str, TaskNode]
+	``tasks`` and ``scope_effects`` are read-only ``Mapping``s so the shared
+	:data:`EMPTY_STATE` constant can't be mutated through accidental
+	``state.tasks[...] = ...`` aliasing.
+	"""
+
+	tasks: Mapping[str, TaskNode]
 	source: Path | None
 	"""``None`` only when no tasks file exists anywhere up the tree."""
-	scope_effects: dict[str, type[Effect[Any]]]
+	scope_effects: Mapping[str, type[Effect[Any]]]
 
 
 class LoadErr(NamedTuple):
@@ -40,6 +47,11 @@ class LoadErr(NamedTuple):
 TasksState: TypeAlias = LoadOk | LoadErr
 
 
-EMPTY_STATE: Final = LoadOk(tasks={}, source=None, scope_effects={})
+EMPTY_STATE: Final = LoadOk(
+	tasks=MappingProxyType({}),
+	source=None,
+	scope_effects=MappingProxyType({}),
+)
 """Default :class:`LoadOk` used by parser/dispatch when no state is supplied —
-behaves like ``camas`` invoked in a directory with no tasks file."""
+behaves like ``camas`` invoked in a directory with no tasks file. Backed by
+``MappingProxyType`` so it stays immutable across calls."""
