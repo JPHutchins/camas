@@ -36,6 +36,18 @@ from camas.main.check import (
 FIXTURES: Final = Path(__file__).parents[1] / "fixtures" / "check"
 
 
+_FOUND: Final = find_typechecker()
+CHECKER_NAME: Final = _FOUND.name if _FOUND is not None else None
+"""Name of the checker actually available in this test env (``ty`` or ``mypy``).
+Tests that exercise checker output match against this so they stay valid
+regardless of which one happens to be installed."""
+
+requires_checker = pytest.mark.skipif(
+	CHECKER_NAME is None,
+	reason="real-checker test requires ty or mypy on PATH (install camas[check])",
+)
+
+
 def _stub_ok(_p: Path) -> CheckerOk:
 	return CheckerOk(name="ty")
 
@@ -64,17 +76,20 @@ def test_checker_priority_is_ty_then_mypy() -> None:
 	assert CHECKER_PRIORITY == ("ty", "mypy")
 
 
+EXE_SUFFIX: Final = ".exe" if sys.platform == "win32" else ""
+
+
 def test_checker_argv_ty() -> None:
-	assert checker_argv(FoundChecker("ty", Path("/usr/bin/ty")), Path("tasks.py")) == [
-		"/usr/bin/ty",
+	assert checker_argv(FoundChecker("ty", Path("ty")), Path("tasks.py")) == [
+		"ty",
 		"check",
 		"tasks.py",
 	]
 
 
 def test_checker_argv_mypy() -> None:
-	assert checker_argv(FoundChecker("mypy", Path("/usr/bin/mypy")), Path("tasks.py")) == [
-		"/usr/bin/mypy",
+	assert checker_argv(FoundChecker("mypy", Path("mypy")), Path("tasks.py")) == [
+		"mypy",
 		"tasks.py",
 	]
 
@@ -82,48 +97,48 @@ def test_checker_argv_mypy() -> None:
 def test_find_typechecker_internal_ty_preferred(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-	(tmp_path / "python").write_text("")
-	(tmp_path / "ty").write_text("")
-	monkeypatch.setattr(sys, "executable", str(tmp_path / "python"))
+	(tmp_path / f"python{EXE_SUFFIX}").write_text("")
+	(tmp_path / f"ty{EXE_SUFFIX}").write_text("")
+	monkeypatch.setattr(sys, "executable", str(tmp_path / f"python{EXE_SUFFIX}"))
 	monkeypatch.setenv("PATH", "")
-	assert find_typechecker() == FoundChecker(name="ty", path=tmp_path / "ty")
+	assert find_typechecker() == FoundChecker(name="ty", path=tmp_path / f"ty{EXE_SUFFIX}")
 
 
 def test_find_typechecker_falls_back_to_path_ty(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-	(tmp_path / "python").write_text("")
+	(tmp_path / f"python{EXE_SUFFIX}").write_text("")
 	path_dir = tmp_path / "bin"
 	path_dir.mkdir()
-	(path_dir / "ty").write_text("")
-	(path_dir / "ty").chmod(0o755)
-	monkeypatch.setattr(sys, "executable", str(tmp_path / "python"))
+	(path_dir / f"ty{EXE_SUFFIX}").write_text("")
+	(path_dir / f"ty{EXE_SUFFIX}").chmod(0o755)
+	monkeypatch.setattr(sys, "executable", str(tmp_path / f"python{EXE_SUFFIX}"))
 	monkeypatch.setenv("PATH", str(path_dir))
 	result = find_typechecker()
 	assert result is not None
 	assert result.name == "ty"
-	assert result.path == path_dir / "ty"
+	assert result.path == path_dir / f"ty{EXE_SUFFIX}"
 
 
 def test_find_typechecker_internal_mypy_when_no_ty(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-	(tmp_path / "python").write_text("")
-	(tmp_path / "mypy").write_text("")
-	monkeypatch.setattr(sys, "executable", str(tmp_path / "python"))
+	(tmp_path / f"python{EXE_SUFFIX}").write_text("")
+	(tmp_path / f"mypy{EXE_SUFFIX}").write_text("")
+	monkeypatch.setattr(sys, "executable", str(tmp_path / f"python{EXE_SUFFIX}"))
 	monkeypatch.setenv("PATH", "")
-	assert find_typechecker() == FoundChecker(name="mypy", path=tmp_path / "mypy")
+	assert find_typechecker() == FoundChecker(name="mypy", path=tmp_path / f"mypy{EXE_SUFFIX}")
 
 
 def test_find_typechecker_falls_back_to_path_mypy(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-	(tmp_path / "python").write_text("")
+	(tmp_path / f"python{EXE_SUFFIX}").write_text("")
 	path_dir = tmp_path / "bin"
 	path_dir.mkdir()
-	(path_dir / "mypy").write_text("")
-	(path_dir / "mypy").chmod(0o755)
-	monkeypatch.setattr(sys, "executable", str(tmp_path / "python"))
+	(path_dir / f"mypy{EXE_SUFFIX}").write_text("")
+	(path_dir / f"mypy{EXE_SUFFIX}").chmod(0o755)
+	monkeypatch.setattr(sys, "executable", str(tmp_path / f"python{EXE_SUFFIX}"))
 	monkeypatch.setenv("PATH", str(path_dir))
 	result = find_typechecker()
 	assert result is not None
@@ -133,14 +148,15 @@ def test_find_typechecker_falls_back_to_path_mypy(
 def test_find_typechecker_returns_none_when_neither(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-	(tmp_path / "python").write_text("")
+	(tmp_path / f"python{EXE_SUFFIX}").write_text("")
 	empty = tmp_path / "empty"
 	empty.mkdir()
-	monkeypatch.setattr(sys, "executable", str(tmp_path / "python"))
+	monkeypatch.setattr(sys, "executable", str(tmp_path / f"python{EXE_SUFFIX}"))
 	monkeypatch.setenv("PATH", str(empty))
 	assert find_typechecker() is None
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="exercises the non-Windows suffix path")
 def test_find_typechecker_win32_uses_exe_suffix(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -167,20 +183,24 @@ def test_run_eval_captures_exception(tmp_path: Path) -> None:
 	assert str(result.exception) == "boom"
 
 
+@requires_checker
 def test_run_typecheck_passes(tmp_path: Path) -> None:
 	p = tmp_path / "clean.py"
 	p.write_text("x: int = 1\n")
 	result = run_typecheck(p)
 	assert isinstance(result, CheckerOk)
-	assert result.name in ("ty", "mypy")
+	assert result.name == CHECKER_NAME
 
 
+@requires_checker
 def test_run_typecheck_fails(tmp_path: Path) -> None:
 	p = tmp_path / "broken.py"
 	p.write_text('x: int = "wrong"\n')
 	result = run_typecheck(p)
 	assert isinstance(result, CheckerErr)
-	assert "wrong" in result.output
+	# Both ty and mypy reference the declared type in their error message;
+	# the exact wording differs, so we only assert the shared anchor.
+	assert "int" in result.output
 
 
 def test_run_typecheck_no_checker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -216,6 +236,9 @@ def test_format_minimal_trace_simple_error(tmp_path: Path) -> None:
 	assert "RuntimeError: boom" in out
 
 
+@pytest.mark.skipif(
+	sys.version_info < (3, 11), reason="PEP 657 column-precise tracebacks require Python 3.11+"
+)
 def test_format_minimal_trace_includes_caret(tmp_path: Path) -> None:
 	p = tmp_path / "tasks.py"
 	p.write_text("x = undefined_thing\n")
@@ -382,6 +405,7 @@ def _camas(*args: str, cwd: Path) -> subprocess.CompletedProcess[str]:
 	)
 
 
+@requires_checker
 def test_camas_check_pass_fixture() -> None:
 	r = _camas("--check", cwd=FIXTURES / "pass")
 	assert r.returncode == 0, r.stderr
@@ -396,22 +420,23 @@ def test_camas_check_eval_fail_fixture() -> None:
 	assert ".python-version" in r.stderr
 
 
+@requires_checker
 def test_camas_check_type_fail_fixture() -> None:
 	r = _camas("--check", cwd=FIXTURES / "type-fail")
 	assert r.returncode == 1
-	assert "ty:" in r.stderr
-	assert "tuple[str, ...]" in r.stderr
+	assert f"{CHECKER_NAME}:" in r.stderr
 
 
+@requires_checker
 def test_camas_check_both_fail_fixture() -> None:
 	r = _camas("--check", cwd=FIXTURES / "both-fail")
 	assert r.returncode == 1
 	assert "FileNotFoundError" in r.stderr
-	assert "ty:" in r.stderr
-	assert "tuple[str, ...]" in r.stderr
-	assert r.stderr.index("FileNotFoundError") < r.stderr.index("ty:")
+	assert f"{CHECKER_NAME}:" in r.stderr
+	assert r.stderr.index("FileNotFoundError") < r.stderr.index(f"{CHECKER_NAME}:")
 
 
+@requires_checker
 def test_camas_run_task_eval_fail_shows_minimal_trace_and_typecheck(
 	tmp_path: Path,
 ) -> None:
@@ -426,7 +451,7 @@ def test_camas_run_task_eval_fail_shows_minimal_trace_and_typecheck(
 	assert f"error: {tmp_path / 'tasks.py'}:4" in r.stderr
 	assert "NameError" in r.stderr
 	assert "undefined_ref" in r.stderr
-	assert "ty:" in r.stderr
+	assert f"{CHECKER_NAME}:" in r.stderr
 
 
 def test_camas_help_works_with_broken_tasks_py(tmp_path: Path) -> None:

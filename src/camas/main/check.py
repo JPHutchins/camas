@@ -141,10 +141,10 @@ def run_eval(tasks_py: Path) -> EvalResult:
 def checker_argv(found: FoundChecker, tasks_py: Path) -> list[str]:
 	"""Build the per-tool argv: ``ty check <path>`` vs ``mypy <path>``.
 
-	>>> checker_argv(FoundChecker("ty", Path("/usr/bin/ty")), Path("tasks.py"))
-	['/usr/bin/ty', 'check', 'tasks.py']
-	>>> checker_argv(FoundChecker("mypy", Path("/usr/bin/mypy")), Path("tasks.py"))
-	['/usr/bin/mypy', 'tasks.py']
+	>>> checker_argv(FoundChecker("ty", Path("ty")), Path("tasks.py"))
+	['ty', 'check', 'tasks.py']
+	>>> checker_argv(FoundChecker("mypy", Path("mypy")), Path("tasks.py"))
+	['mypy', 'tasks.py']
 	"""
 	match found.name:
 		case "ty":
@@ -160,7 +160,13 @@ def run_typecheck(tasks_py: Path) -> TypeCheckResult:
 	found = find_typechecker()
 	if found is None:
 		return CheckerNotFound()
-	proc = subprocess.run(checker_argv(found, tasks_py), capture_output=True, text=True)
+	proc = subprocess.run(
+		checker_argv(found, tasks_py),
+		capture_output=True,
+		text=True,
+		encoding="utf-8",
+		errors="replace",
+	)
 	if proc.returncode == 0:
 		return CheckerOk(name=found.name)
 	return CheckerErr(name=found.name, output=proc.stdout + proc.stderr)
