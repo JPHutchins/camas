@@ -71,6 +71,7 @@ def test_filelog_writes_per_task_files(tmp_path: Path) -> None:
 	"""``FileLog`` produces one log file per leaf — named tasks get clean
 	filenames; matrix-expanded leaves get one file per binding."""
 	(tmp_path / "tasks.py").write_text((FIXTURE / "tasks.py").read_text())
+	(tmp_path / "tail.py").write_text((FIXTURE / "tail.py").read_text())
 
 	r = _camas_in(tmp_path, "check", "--effects=(FileLog(),)")
 	assert r.returncode == 0, r.stderr
@@ -85,6 +86,7 @@ def test_filelog_writes_per_matrix_binding(tmp_path: Path) -> None:
 	"""Each matrix binding gets its own log file because matrix expansion
 	produces a distinct ``task.name`` per binding."""
 	(tmp_path / "tasks.py").write_text((FIXTURE / "tasks.py").read_text())
+	(tmp_path / "tail.py").write_text((FIXTURE / "tail.py").read_text())
 
 	r = _camas_in(tmp_path, "build", "--effects=(FileLog(),)")
 	assert r.returncode == 0, r.stderr
