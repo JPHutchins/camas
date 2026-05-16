@@ -37,6 +37,13 @@
         {
           default = mkCamas pkgs { };
           with-github-checks = mkCamas pkgs { extras = [ "github_checks" ]; };
+          with-check = mkCamas pkgs { extras = [ "check" ]; };
+          all = mkCamas pkgs {
+            extras = [
+              "github_checks"
+              "check"
+            ];
+          };
           interpreted = mkCamas pkgs { withMypyC = false; };
         }
       );
@@ -49,6 +56,14 @@
         with-github-checks = {
           type = "app";
           program = "${self.packages.${system}.with-github-checks}/bin/camas";
+        };
+        with-check = {
+          type = "app";
+          program = "${self.packages.${system}.with-check}/bin/camas";
+        };
+        all = {
+          type = "app";
+          program = "${self.packages.${system}.all}/bin/camas";
         };
         interpreted = {
           type = "app";
@@ -95,6 +110,8 @@
 
           package = self.packages.${system}.default;
           package-with-github-checks = self.packages.${system}.with-github-checks;
+          package-with-check = self.packages.${system}.with-check;
+          package-all = self.packages.${system}.all;
           package-interpreted = self.packages.${system}.interpreted;
         }
       );

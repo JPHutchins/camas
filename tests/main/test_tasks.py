@@ -577,31 +577,35 @@ def test_subcommand_help_shows_tree(
 	assert "do-b" in out
 
 
-def test_explicit_py_file_load_error(
+def test_explicit_py_file_load_error_listed_with_hint(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
+	"""A broken tasks file no longer aborts ``--list``; it surfaces a hint that
+	points the user at ``camas --check`` for the full diagnostic."""
 	monkeypatch.chdir(tmp_path)
 	broken = tmp_path / "broken.py"
 	broken.write_text("raise RuntimeError('boom from tasks file')\n")
-	with pytest.raises(SystemExit, match="2"):
+	with pytest.raises(SystemExit, match="0"):
 		with patch("sys.argv", ["camas", str(broken), "--list"]):
 			main()
-	err = capsys.readouterr().err
-	assert str(broken) in err
-	assert "boom from tasks file" in err
+	out = capsys.readouterr().out
+	assert str(broken) in out
+	assert "boom from tasks file" in out
+	assert "camas --check" in out
 
 
-def test_autodiscover_tasks_py_load_error(
+def test_autodiscover_tasks_py_load_error_listed_with_hint(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
 	monkeypatch.chdir(tmp_path)
 	(tmp_path / "tasks.py").write_text("raise RuntimeError('boom autodiscover')\n")
-	with pytest.raises(SystemExit, match="2"):
+	with pytest.raises(SystemExit, match="0"):
 		with patch("sys.argv", ["camas", "--list"]):
 			main()
-	err = capsys.readouterr().err
-	assert "tasks.py" in err
-	assert "boom autodiscover" in err
+	out = capsys.readouterr().out
+	assert "tasks.py" in out
+	assert "boom autodiscover" in out
+	assert "camas --check" in out
 
 
 def test_nearer_pyproject_wins_over_farther_tasks_py(

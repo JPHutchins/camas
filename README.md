@@ -55,6 +55,8 @@ Nix:
 ```
 nix run github:JPHutchins/camas                     # default
 nix run github:JPHutchins/camas#with-github-checks  # adds httpx for the GitHubChecks effect
+nix run github:JPHutchins/camas#with-check          # adds ty for `camas --check`
+nix run github:JPHutchins/camas#all                 # both extras
 ```
 
 ## Why camas?
