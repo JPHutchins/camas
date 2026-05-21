@@ -14,6 +14,8 @@ if sys.version_info >= (3, 11):
 else:  # pragma: no cover
 	from exceptiongroup import BaseExceptionGroup
 
+from datetime import datetime
+
 import httpx
 import pytest
 
@@ -38,6 +40,8 @@ from camas.effect.github_checks import (
 	render_body,
 	resolve_config,
 )
+
+TS = datetime(2026, 5, 21, 14, 30, 0)
 
 
 def clear_gh_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -414,7 +418,7 @@ async def test_on_event_started_spawns_post_task(monkeypatch: pytest.MonkeyPatch
 	effect = GitHubChecks(GitHubChecksOptions(name_prefix="pfx/"))
 	ctx = await effect.setup(Task("x"))
 	t = Task("cmd", name="lint")
-	ctx = await effect.on_event(StartedEvent(t, 0, 0.0), [], ctx)
+	ctx = await effect.on_event(StartedEvent(t, 0, TS), [], ctx)
 	assert isinstance(ctx, Active)
 	assert ctx.tail == b""
 	await ctx.post_task
@@ -435,9 +439,9 @@ async def test_on_event_output_accumulates_and_trims_tail(
 	effect = GitHubChecks(GitHubChecksOptions(tail_bytes=5))
 	ctx = await effect.setup(Task("x"))
 	t = Task("cmd", name="t")
-	ctx = await effect.on_event(StartedEvent(t, 0, 0.0), [], ctx)
-	ctx = await effect.on_event(OutputEvent(t, 0, b"abc", 0.0), [], ctx)
-	ctx = await effect.on_event(OutputEvent(t, 0, b"defgh", 0.0), [], ctx)
+	ctx = await effect.on_event(StartedEvent(t, 0, TS), [], ctx)
+	ctx = await effect.on_event(OutputEvent(t, 0, b"abc", TS), [], ctx)
+	ctx = await effect.on_event(OutputEvent(t, 0, b"defgh", TS), [], ctx)
 	assert isinstance(ctx, Active)
 	assert ctx.tail == b"defgh"
 	await effect.teardown((Closed(task=None),))
@@ -464,8 +468,8 @@ async def test_on_event_completed_finished_spawns_patch_success(
 	effect = GitHubChecks()
 	ctx = await effect.setup(Task("x"))
 	t = Task("cmd", name="t")
-	ctx = await effect.on_event(StartedEvent(t, 0, 0.0), [], ctx)
-	ctx = await effect.on_event(CompletedEvent(t, 0, Finished(0, 1.0, ())), [], ctx)
+	ctx = await effect.on_event(StartedEvent(t, 0, TS), [], ctx)
+	ctx = await effect.on_event(CompletedEvent(t, 0, Finished(0, 1.0, ()), TS), [], ctx)
 	assert isinstance(ctx, Closed)
 	assert ctx.task is not None
 	await effect.teardown((ctx,))
@@ -480,7 +484,7 @@ async def test_on_event_completed_skipped_on_pending_returns_closed_none(
 	effect = GitHubChecks()
 	ctx = await effect.setup(Task("x"))
 	t = Task("cmd", name="t")
-	ctx = await effect.on_event(CompletedEvent(t, 0, Skipped(1)), [], ctx)
+	ctx = await effect.on_event(CompletedEvent(t, 0, Skipped(1), TS), [], ctx)
 	assert isinstance(ctx, Closed)
 	assert ctx.task is None
 	await effect.teardown((ctx,))

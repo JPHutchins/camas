@@ -3,9 +3,9 @@
 
 import shutil
 import sys
-import time
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Final, NamedTuple, TypeAlias
 
 if sys.version_info >= (3, 11):
@@ -76,7 +76,7 @@ class SummaryContext(NamedTuple):
 	rows: tuple[DisplayRow, ...]
 	term_width: int
 	display_width: int
-	wall_start: float
+	wall_start: datetime
 	state: SummaryState
 
 
@@ -103,7 +103,7 @@ class Summary:
 			rows=flatten_rows(task),
 			term_width=term_width,
 			display_width=term_width - STATUS_COL_WIDTH - 1,
-			wall_start=time.perf_counter(),
+			wall_start=datetime.now(),
 			state=SummaryState(
 				states=tuple(Waiting(info.task) for info in flatten_leaves(task)),
 			),
@@ -122,7 +122,7 @@ class Summary:
 			ctx.state.states,
 			ctx.term_width,
 			ctx.display_width,
-			time.perf_counter(),
+			datetime.now(),
 			ctx.wall_start,
 		)
 		cleaned: Final = tuple(  # zuban: ignore[misc] # zuban defies PEP591

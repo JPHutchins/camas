@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import re
 from collections.abc import Callable
+from datetime import datetime
 from typing import TypeVar
 
 import pytest
@@ -25,6 +26,8 @@ from camas.effect.termtree import (
 	render_frame,
 	render_lines,
 )
+
+TS = datetime(2026, 5, 21, 14, 30, 0)
 
 ANSI_ESCAPE_PATTERN = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]")
 
@@ -67,7 +70,7 @@ def test_render_frame_all_waiting_shows_group_header_and_wait_cells(
 	tree = Parallel(make_task("a"), make_task("b"), name="root")
 	rows = flatten_rows(tree)
 	states: tuple[LeafState, ...] = (Waiting(make_task("a")), Waiting(make_task("b")))
-	frame = render_frame(rows, states, term_width=80, display_width=60, now=100.0, wall_start=100.0)
+	frame = render_frame(rows, states, term_width=80, display_width=60, now=TS, wall_start=TS)
 	assert "root" in frame
 	assert "WAIT" in frame
 
@@ -80,10 +83,10 @@ def test_render_frame_mixed_states() -> None:
 	rows = flatten_rows(tree)
 	states: tuple[LeafState, ...] = (
 		Completed(a, Finished(0, 0.1, (b"all clean\n",))),
-		Running(b, 100.0, b"working..."),
+		Running(b, TS, b"working..."),
 		Completed(c, Skipped(1)),
 	)
-	frame = render_frame(rows, states, term_width=80, display_width=60, now=100.5, wall_start=100.0)
+	frame = render_frame(rows, states, term_width=80, display_width=60, now=TS, wall_start=TS)
 	assert "PASS" in frame
 	assert "SKIP" in frame
 	assert "all clean" in frame
@@ -94,7 +97,7 @@ def test_render_frame_failure_summary() -> None:
 	tree = Parallel(a)
 	rows = flatten_rows(tree)
 	states: tuple[LeafState, ...] = (Completed(a, Finished(1, 0.1, (b"boom\n",))),)
-	frame = render_frame(rows, states, term_width=80, display_width=60, now=100.5, wall_start=100.0)
+	frame = render_frame(rows, states, term_width=80, display_width=60, now=TS, wall_start=TS)
 	assert "FAIL" in frame
 
 
@@ -133,10 +136,10 @@ def test_termtree_show_passing_prints_passed_output(
 	b = make_task("b")
 	task = Parallel(a, b)
 	events: list[TaskEvent] = [
-		StartedEvent(a, 0, 100.0),
-		StartedEvent(b, 1, 100.0),
-		CompletedEvent(a, 0, Finished(0, 0.1, (b"first output\n",))),
-		CompletedEvent(b, 1, Finished(0, 0.2, (b"second output\n",))),
+		StartedEvent(a, 0, TS),
+		StartedEvent(b, 1, TS),
+		CompletedEvent(a, 0, Finished(0, 0.1, (b"first output\n",)), TS),
+		CompletedEvent(b, 1, Finished(0, 0.2, (b"second output\n",)), TS),
 	]
 	asyncio.run(
 		drive(
@@ -158,8 +161,8 @@ def test_termtree_show_passing_defaults_to_false(
 	a = make_task("a")
 	task = Parallel(a)
 	events: list[TaskEvent] = [
-		StartedEvent(a, 0, 100.0),
-		CompletedEvent(a, 0, Finished(0, 0.1, (b"quiet\n",))),
+		StartedEvent(a, 0, TS),
+		CompletedEvent(a, 0, Finished(0, 0.1, (b"quiet\n",)), TS),
 	]
 	asyncio.run(drive(Termtree(TermtreeOptions(frame_interval_ms=50)), task, events))
 	captured = capsys.readouterr()
@@ -173,11 +176,11 @@ def test_termtree_effect_consumes_events_and_renders(
 	b = make_task("b")
 	task = Parallel(a, b)
 	events: list[TaskEvent] = [
-		StartedEvent(a, 0, 100.0),
-		StartedEvent(b, 1, 100.0),
-		OutputEvent(a, 0, b"line from a\n", 100.05),
-		CompletedEvent(a, 0, Finished(0, 0.1, (b"line from a\n",))),
-		CompletedEvent(b, 1, Finished(1, 0.2, (b"boom\n",))),
+		StartedEvent(a, 0, TS),
+		StartedEvent(b, 1, TS),
+		OutputEvent(a, 0, b"line from a\n", TS),
+		CompletedEvent(a, 0, Finished(0, 0.1, (b"line from a\n",)), TS),
+		CompletedEvent(b, 1, Finished(1, 0.2, (b"boom\n",)), TS),
 	]
 	asyncio.run(drive(Termtree(TermtreeOptions(frame_interval_ms=50)), task, events))
 	captured = capsys.readouterr()
@@ -194,7 +197,7 @@ def test_termtree_frame_tick_keeps_spinner_alive_between_events() -> None:
 		# Idle for long enough that several ticks fire while nothing is happening.
 		await asyncio.sleep(0.08)
 		ctx = await effect.on_event(
-			CompletedEvent(task, 0, Finished(0, 0.08, (b"done\n",))),
+			CompletedEvent(task, 0, Finished(0, 0.08, (b"done\n",)), TS),
 			(Completed(task, Finished(0, 0.08, (b"done\n",))),),
 			ctx,
 		)
@@ -214,9 +217,9 @@ def test_termtree_effect_handles_groups_and_skipped(
 	b = make_task("b")
 	task = Sequential(a, b, name="pipeline")
 	events: list[TaskEvent] = [
-		StartedEvent(a, 0, 100.0),
-		CompletedEvent(a, 0, Finished(1, 0.1, (b"failed\n",))),
-		CompletedEvent(b, 1, Skipped(1)),
+		StartedEvent(a, 0, TS),
+		CompletedEvent(a, 0, Finished(1, 0.1, (b"failed\n",)), TS),
+		CompletedEvent(b, 1, Skipped(1), TS),
 	]
 	asyncio.run(drive(Termtree(TermtreeOptions(frame_interval_ms=50)), task, events))
 	captured = capsys.readouterr()
@@ -232,7 +235,7 @@ def _waiting(t: Task) -> LeafState:
 
 
 def _running(t: Task) -> LeafState:
-	return Running(t, 100.0, b"working on it")
+	return Running(t, TS, b"working on it")
 
 
 def _done(t: Task) -> LeafState:
@@ -261,7 +264,7 @@ def test_render_lines_never_exceed_term_width_for_long_matrix_names(
 	rows = flatten_rows(tree)
 	display_width = term_width - STATUS_COL_WIDTH - 1
 	states: tuple[LeafState, ...] = (state_factory(long_task),)
-	lines = render_lines(rows, states, term_width, display_width, 100.5, 100.0)
+	lines = render_lines(rows, states, term_width, display_width, TS, TS)
 	for line in lines:
 		assert visible_width(line) < term_width, (
 			f"line {visible_width(line)} chars exceeds term_width {term_width}: {line!r}"
@@ -282,9 +285,7 @@ def test_render_lines_strips_ansi_from_done_tail() -> None:
 	states: tuple[LeafState, ...] = (
 		Completed(task, Finished(0, 0.1, (b"\x1b[38;5;214mcolored\x1b[0m\n",))),
 	)
-	lines = render_lines(
-		rows, states, term_width=120, display_width=100, now=100.5, wall_start=100.0
-	)
+	lines = render_lines(rows, states, term_width=120, display_width=100, now=TS, wall_start=TS)
 	combined = "".join(lines)
 	assert "\x1b[38;5;214m" not in combined
 	assert "colored" in ANSI_ESCAPE_PATTERN.sub("", combined)
@@ -293,10 +294,8 @@ def test_render_lines_strips_ansi_from_done_tail() -> None:
 def test_render_lines_strips_ansi_from_running_tail() -> None:
 	task = make_task("a")
 	rows = flatten_rows(Parallel(task))
-	states: tuple[LeafState, ...] = (Running(task, 100.0, b"\x1b[38;5;214mbuilding\x1b[0m"),)
-	lines = render_lines(
-		rows, states, term_width=120, display_width=100, now=100.5, wall_start=100.0
-	)
+	states: tuple[LeafState, ...] = (Running(task, TS, b"\x1b[38;5;214mbuilding\x1b[0m"),)
+	lines = render_lines(rows, states, term_width=120, display_width=100, now=TS, wall_start=TS)
 	combined = "".join(lines)
 	assert "\x1b[38;5;214m" not in combined
 	assert "building" in ANSI_ESCAPE_PATTERN.sub("", combined)
@@ -308,9 +307,7 @@ def test_render_lines_preserves_full_name_when_it_fits() -> None:
 	tree = Parallel(task)
 	rows = flatten_rows(tree)
 	states: tuple[LeafState, ...] = (Completed(task, Finished(0, 0.1, (b"All checks passed!\n",))),)
-	lines = render_lines(
-		rows, states, term_width=120, display_width=100, now=100.5, wall_start=100.0
-	)
+	lines = render_lines(rows, states, term_width=120, display_width=100, now=TS, wall_start=TS)
 	leaf_line = next(ln for ln in lines if "PASS" in ln)
 	plain = ANSI_ESCAPE_PATTERN.sub("", leaf_line).lstrip("\r")
 	assert "uv run ruff check ." in plain
@@ -327,7 +324,7 @@ def test_render_lines_truncates_name_only_when_it_cannot_fit() -> None:
 	tree = Parallel(long_task)
 	rows = flatten_rows(tree)
 	states: tuple[LeafState, ...] = (Completed(long_task, Finished(0, 0.1, (b"built\n",))),)
-	lines = render_lines(rows, states, term_width=60, display_width=41, now=100.5, wall_start=100.0)
+	lines = render_lines(rows, states, term_width=60, display_width=41, now=TS, wall_start=TS)
 	leaf_line = next(ln for ln in lines if "PASS" in ln)
 	plain = ANSI_ESCAPE_PATTERN.sub("", leaf_line).lstrip("\r")
 	assert "..." in plain
@@ -339,7 +336,7 @@ def test_render_lines_stream_uses_only_leftover_space() -> None:
 	tree = Parallel(task)
 	rows = flatten_rows(tree)
 	states: tuple[LeafState, ...] = (Completed(task, Finished(0, 0.1, (b"shouldnt appear\n",))),)
-	lines = render_lines(rows, states, term_width=60, display_width=41, now=100.5, wall_start=100.0)
+	lines = render_lines(rows, states, term_width=60, display_width=41, now=TS, wall_start=TS)
 	leaf_line = next(ln for ln in lines if "PASS" in ln)
 	plain = ANSI_ESCAPE_PATTERN.sub("", leaf_line).lstrip("\r")
 	assert "shouldnt appear" not in plain

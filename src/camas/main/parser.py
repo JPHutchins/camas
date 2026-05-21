@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.metadata
+import os
 import sys
 from collections.abc import Mapping
 from typing import Any, Final
@@ -26,6 +27,29 @@ from .format import (
 	format_try_hint,
 )
 from .state import EMPTY_STATE, LoadErr, LoadOk, TasksState
+
+
+def default_effects_expr() -> str:
+	"""Pick the default ``--effects`` expression based on the runtime environment.
+
+	GitHub Actions sets ``GITHUB_ACTIONS=true`` reliably; in that case prefer
+	``Status`` with the ``github`` mode (collapsed workflow groups) over the
+	live ``Termtree`` (which renders garbage in non-interactive log capture).
+
+	>>> import os
+	>>> _saved = os.environ.pop("GITHUB_ACTIONS", None)
+	>>> default_effects_expr()
+	'(Termtree(),)'
+	>>> os.environ["GITHUB_ACTIONS"] = "true"
+	>>> default_effects_expr()
+	'(Status(StatusOptions(output_mode="github")),)'
+	>>> os.environ.pop("GITHUB_ACTIONS", None)
+	'true'
+	>>> _ = os.environ.update({"GITHUB_ACTIONS": _saved}) if _saved else None
+	"""
+	if os.environ.get("GITHUB_ACTIONS") == "true":
+		return '(Status(StatusOptions(output_mode="github")),)'
+	return "(Termtree(),)"
 
 
 class CamasArgumentParser(argparse.ArgumentParser):
@@ -118,9 +142,10 @@ def build_parser(state: TasksState = EMPTY_STATE) -> argparse.ArgumentParser:
 	parser.add_argument(
 		"--effects",
 		nargs="?",
-		default="(Termtree(),)",
+		default=default_effects_expr(),
 		const="",
-		help="tuple of Effect instances; pass with no value to list available Effects",
+		help="tuple of Effect instances; pass with no value to list available Effects "
+		"(default: Termtree, or Status('github') when GITHUB_ACTIONS=true)",
 	)
 	parser.add_argument(
 		"--matrix",

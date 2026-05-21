@@ -48,7 +48,7 @@ def test_parse_effects_rejects_non_effect_value() -> None:
 def test_discover_effects_returns_builtin_set() -> None:
 	constructors, effects = discover_effects()
 	names = {n for n, _ in effects}
-	assert names == {"Summary", "Termtree", "GitHubChecks"}
+	assert names == {"Summary", "Termtree", "GitHubChecks", "Status"}
 	assert "SummaryOptions" in constructors
 	assert "Auto" in constructors
 	assert "Fixed" in constructors

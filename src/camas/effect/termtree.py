@@ -4,9 +4,9 @@
 import asyncio
 import shutil
 import sys
-import time
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Final, NamedTuple
 
 from ..core.completion import Finished, Skipped
@@ -232,8 +232,8 @@ def render_lines(
 	states: Sequence[LeafState],
 	term_width: int,
 	display_width: int,
-	now: float,
-	wall_start: float,
+	now: datetime,
+	wall_start: datetime,
 ) -> list[str]:
 	"""Build the list of ANSI-formatted lines for one frame (leaves + summary)."""
 	lines: list[str] = []
@@ -273,7 +273,7 @@ def render_lines(
 									f"\r{header}{padding} [{GREY} SKIP {RESET}]{CLEAR_LINE}"
 								)
 					case Running(start_time=start_time, last_line=last_line):
-						elapsed = now - start_time
+						elapsed = (now - start_time).total_seconds()
 						spin = SPINNER[int(elapsed * 10) % len(SPINNER)]
 						stream_line = strip_ansi(decode_line(last_line)) if last_line else ""
 						stream = (
@@ -288,7 +288,7 @@ def render_lines(
 					case Waiting():
 						padding = " " * gap
 						lines.append(f"\r{header}{padding} [{GREY} WAIT {RESET}]{CLEAR_LINE}")
-	wall_elapsed: Final = now - wall_start
+	wall_elapsed: Final = (now - wall_start).total_seconds()
 	alldone: Final = all(isinstance(s, Completed) for s in states)
 	summary_pad: Final = render_progress_bar(states, max(display_width - 6, 0))
 	if alldone:
@@ -316,8 +316,8 @@ def render_frame(
 	states: Sequence[LeafState],
 	term_width: int,
 	display_width: int,
-	now: float,
-	wall_start: float,
+	now: datetime,
+	wall_start: datetime,
 ) -> str:
 	"""Render one positioned frame as an ANSI string, for live animation.
 
@@ -402,7 +402,7 @@ class TermtreeContext(NamedTuple):
 	rows: tuple[DisplayRow, ...]
 	term_width: int
 	display_width: int
-	wall_start: float
+	wall_start: datetime
 	state: TermtreeState
 
 
@@ -426,7 +426,7 @@ class Termtree:
 			rows=rows,
 			term_width=term_width,
 			display_width=term_width - STATUS_COL_WIDTH - 1,
-			wall_start=time.perf_counter(),
+			wall_start=datetime.now(),
 			state=TermtreeState(
 				states=tuple(Waiting(info.task) for info in flatten_leaves(task)),
 			),
@@ -469,7 +469,7 @@ def draw(ctx: TermtreeContext) -> None:
 		ctx.state.states,
 		ctx.term_width,
 		ctx.display_width,
-		time.perf_counter(),
+		datetime.now(),
 		ctx.wall_start,
 	)
 	sys.stdout.buffer.write(frame.encode("utf-8", errors="replace"))

@@ -92,18 +92,38 @@ camas is **not a build system**. camas is for the specific job of running struct
 
 ## CI integration
 
-The renderer is swappable, not the tree. Run the same `tasks.py` locally with the live `Termtree` and in CI with the post-run `Summary` — one flag changes the output, the pipeline definition is unchanged.
+The renderer is swappable, not the tree. Run the same `tasks.py` locally with the live `Termtree` and in CI with `Status` — one flag changes the output, the pipeline definition is unchanged.
+
+**On GitHub Actions, no flag is needed.** Camas detects `GITHUB_ACTIONS=true` and defaults `--effects` to `(Status(StatusOptions(output_mode="github")),)` — collapsed workflow groups, ISO timestamps with millisecond precision, ANSI colors preserved.
 
 ```yaml
-- run: uv run camas check --effects='(Summary(SummaryOptions(Fixed(90))),)'
+- run: uv run camas check
 ```
 
-For per-leaf visibility in the PR Checks panel, add the `GitHubChecks` effect (opt-in extra: `camas[github_checks]`). Each leaf task becomes its own check run, so reviewers see `lint` / `mypy` / `pytest` pass-or-fail individually instead of one monolithic log.
+On other CI providers (or to opt into a specific mode), spell it out:
+
+```yaml
+- run: uv run camas check --effects='(Status(StatusOptions(output_mode="errors")),)'
+```
+
+`Status` modes — pick one for the `output_mode` arg:
+
+| Mode | What it dumps per task | When to use |
+|---|---|---|
+| `quiet` | status line only (no captured output) | trust the exit code; minimum log noise |
+| `errors` *(default)* | status line, plus the full block on failure | most CI providers |
+| `all` | status line + every block | informational runs (coverage, smoke) |
+| `stream` | every line as it arrives, prefixed with `[task]` | watching long-running jobs in real time |
+| `github` *(auto on GHA)* | like `all`, wrapped in `::group::`/`::endgroup::` so blocks render collapsed | GitHub Actions |
+
+Each `Status` line carries `[YYYY-MM-DD HH:MM:SS.mmm]` and the task name in brackets, so logs are grep-able and aligned. The [`status-modes-demo` job](https://github.com/JPHutchins/camas/blob/main/.github/workflows/ci.yaml) renders one CI run per mode for visual comparison.
+
+For per-leaf visibility in the PR Checks panel, add the `GitHubChecks` effect alongside `Status` (opt-in extra: `camas[github_checks]`). Each leaf task becomes its own check run, so reviewers see `lint` / `mypy` / `pytest` pass-or-fail individually instead of one monolithic log.
 
 ```yaml
 - run: |
     uv run --extra github_checks camas matrix --effects='(
-      Summary(SummaryOptions(Fixed(90))),
+      Status(StatusOptions(output_mode="github")),
       GitHubChecks(GitHubChecksOptions(
         sha="${{ github.event.pull_request.head.sha || github.sha }}",
       )),
