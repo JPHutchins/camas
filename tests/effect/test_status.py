@@ -357,3 +357,13 @@ def test_discoverable_via_parse_effects() -> None:
 	assert type(effects[0]).__name__ == "Status"
 	effects2 = parse_effects("(Status(StatusOptions(output_mode='github')),)")
 	assert type(effects2[0]).__name__ == "Status"
+
+
+def test_github_stop_token_retries_on_collision(monkeypatch: pytest.MonkeyPatch) -> None:
+	"""If the first generated token already appears as ``::TOKEN::`` in the body,
+	the picker loops until it finds a clean one. Forces the retry branch."""
+	from camas.effect import status
+
+	tokens = iter(["aaaaaaaa", "bbbbbbbb"])
+	monkeypatch.setattr(status.secrets, "token_hex", lambda _n: next(tokens))
+	assert status._github_stop_token("noise ::aaaaaaaa:: noise\n") == "bbbbbbbb"
