@@ -3,6 +3,7 @@
 
 import shutil
 import sys
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -71,12 +72,19 @@ class SummaryState:
 
 
 class SummaryContext(NamedTuple):
-	"""Immutable context threaded through the summary Effect's lifecycle."""
+	"""Immutable context threaded through the summary Effect's lifecycle.
+
+	``wall_start`` is the wall-clock setup time (for human-facing timestamps if
+	ever surfaced); ``wall_start_mono`` is the corresponding monotonic reading
+	(``time.perf_counter()``) used to compute the displayed elapsed total so
+	the summary line is immune to NTP/DST steps mid-run.
+	"""
 
 	rows: tuple[DisplayRow, ...]
 	term_width: int
 	display_width: int
 	wall_start: datetime
+	wall_start_mono: float
 	state: SummaryState
 
 
@@ -104,6 +112,7 @@ class Summary:
 			term_width=term_width,
 			display_width=term_width - STATUS_COL_WIDTH - 1,
 			wall_start=datetime.now(),
+			wall_start_mono=time.perf_counter(),
 			state=SummaryState(
 				states=tuple(Waiting(info.task) for info in flatten_leaves(task)),
 			),
@@ -123,7 +132,7 @@ class Summary:
 			ctx.term_width,
 			ctx.display_width,
 			datetime.now(),
-			ctx.wall_start,
+			time.perf_counter() - ctx.wall_start_mono,
 		)
 		cleaned: Final = tuple(  # zuban: ignore[misc] # zuban defies PEP591
 			line.removeprefix("\r").replace(CLEAR_LINE, "") for line in lines

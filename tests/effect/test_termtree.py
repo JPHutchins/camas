@@ -70,7 +70,7 @@ def test_render_frame_all_waiting_shows_group_header_and_wait_cells(
 	tree = Parallel(make_task("a"), make_task("b"), name="root")
 	rows = flatten_rows(tree)
 	states: tuple[LeafState, ...] = (Waiting(make_task("a")), Waiting(make_task("b")))
-	frame = render_frame(rows, states, term_width=80, display_width=60, now=TS, wall_start=TS)
+	frame = render_frame(rows, states, term_width=80, display_width=60, now=TS, wall_elapsed=0.0)
 	assert "root" in frame
 	assert "WAIT" in frame
 
@@ -86,7 +86,7 @@ def test_render_frame_mixed_states() -> None:
 		Running(b, TS, b"working..."),
 		Completed(c, Skipped(1)),
 	)
-	frame = render_frame(rows, states, term_width=80, display_width=60, now=TS, wall_start=TS)
+	frame = render_frame(rows, states, term_width=80, display_width=60, now=TS, wall_elapsed=0.0)
 	assert "PASS" in frame
 	assert "SKIP" in frame
 	assert "all clean" in frame
@@ -97,7 +97,7 @@ def test_render_frame_failure_summary() -> None:
 	tree = Parallel(a)
 	rows = flatten_rows(tree)
 	states: tuple[LeafState, ...] = (Completed(a, Finished(1, 0.1, (b"boom\n",))),)
-	frame = render_frame(rows, states, term_width=80, display_width=60, now=TS, wall_start=TS)
+	frame = render_frame(rows, states, term_width=80, display_width=60, now=TS, wall_elapsed=0.0)
 	assert "FAIL" in frame
 
 
@@ -264,7 +264,7 @@ def test_render_lines_never_exceed_term_width_for_long_matrix_names(
 	rows = flatten_rows(tree)
 	display_width = term_width - STATUS_COL_WIDTH - 1
 	states: tuple[LeafState, ...] = (state_factory(long_task),)
-	lines = render_lines(rows, states, term_width, display_width, TS, TS)
+	lines = render_lines(rows, states, term_width, display_width, TS, 0.0)
 	for line in lines:
 		assert visible_width(line) < term_width, (
 			f"line {visible_width(line)} chars exceeds term_width {term_width}: {line!r}"
@@ -285,7 +285,7 @@ def test_render_lines_strips_ansi_from_done_tail() -> None:
 	states: tuple[LeafState, ...] = (
 		Completed(task, Finished(0, 0.1, (b"\x1b[38;5;214mcolored\x1b[0m\n",))),
 	)
-	lines = render_lines(rows, states, term_width=120, display_width=100, now=TS, wall_start=TS)
+	lines = render_lines(rows, states, term_width=120, display_width=100, now=TS, wall_elapsed=0.0)
 	combined = "".join(lines)
 	assert "\x1b[38;5;214m" not in combined
 	assert "colored" in ANSI_ESCAPE_PATTERN.sub("", combined)
@@ -295,7 +295,7 @@ def test_render_lines_strips_ansi_from_running_tail() -> None:
 	task = make_task("a")
 	rows = flatten_rows(Parallel(task))
 	states: tuple[LeafState, ...] = (Running(task, TS, b"\x1b[38;5;214mbuilding\x1b[0m"),)
-	lines = render_lines(rows, states, term_width=120, display_width=100, now=TS, wall_start=TS)
+	lines = render_lines(rows, states, term_width=120, display_width=100, now=TS, wall_elapsed=0.0)
 	combined = "".join(lines)
 	assert "\x1b[38;5;214m" not in combined
 	assert "building" in ANSI_ESCAPE_PATTERN.sub("", combined)
@@ -307,7 +307,7 @@ def test_render_lines_preserves_full_name_when_it_fits() -> None:
 	tree = Parallel(task)
 	rows = flatten_rows(tree)
 	states: tuple[LeafState, ...] = (Completed(task, Finished(0, 0.1, (b"All checks passed!\n",))),)
-	lines = render_lines(rows, states, term_width=120, display_width=100, now=TS, wall_start=TS)
+	lines = render_lines(rows, states, term_width=120, display_width=100, now=TS, wall_elapsed=0.0)
 	leaf_line = next(ln for ln in lines if "PASS" in ln)
 	plain = ANSI_ESCAPE_PATTERN.sub("", leaf_line).lstrip("\r")
 	assert "uv run ruff check ." in plain
@@ -324,7 +324,7 @@ def test_render_lines_truncates_name_only_when_it_cannot_fit() -> None:
 	tree = Parallel(long_task)
 	rows = flatten_rows(tree)
 	states: tuple[LeafState, ...] = (Completed(long_task, Finished(0, 0.1, (b"built\n",))),)
-	lines = render_lines(rows, states, term_width=60, display_width=41, now=TS, wall_start=TS)
+	lines = render_lines(rows, states, term_width=60, display_width=41, now=TS, wall_elapsed=0.0)
 	leaf_line = next(ln for ln in lines if "PASS" in ln)
 	plain = ANSI_ESCAPE_PATTERN.sub("", leaf_line).lstrip("\r")
 	assert "..." in plain
@@ -336,7 +336,7 @@ def test_render_lines_stream_uses_only_leftover_space() -> None:
 	tree = Parallel(task)
 	rows = flatten_rows(tree)
 	states: tuple[LeafState, ...] = (Completed(task, Finished(0, 0.1, (b"shouldnt appear\n",))),)
-	lines = render_lines(rows, states, term_width=60, display_width=41, now=TS, wall_start=TS)
+	lines = render_lines(rows, states, term_width=60, display_width=41, now=TS, wall_elapsed=0.0)
 	leaf_line = next(ln for ln in lines if "PASS" in ln)
 	plain = ANSI_ESCAPE_PATTERN.sub("", leaf_line).lstrip("\r")
 	assert "shouldnt appear" not in plain

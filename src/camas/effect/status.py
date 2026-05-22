@@ -14,6 +14,7 @@ on :func:`block_for` / :func:`fmt_started` / :func:`fmt_completed` /
 
 from __future__ import annotations
 
+import secrets
 import sys
 from collections.abc import Sequence
 from datetime import datetime
@@ -190,11 +191,55 @@ def fmt_output(opts: StatusOptions, task: Task, line: bytes, ts: datetime) -> st
 	)
 
 
+def _github_safe_title(label: str) -> str:
+	"""Strip newlines/CRs so a ``::group::`` title stays on one line.
+
+	>>> _github_safe_title("normal")
+	'normal'
+	>>> _github_safe_title("a\\nb\\rc")
+	'a b c'
+	"""
+	return label.replace("\r", " ").replace("\n", " ")
+
+
+def _github_stop_token(body: str) -> str:
+	"""Pick a stop-commands token that does not appear as ``::{token}::`` in ``body``.
+
+	>>> tok = _github_stop_token("plain body\\n")
+	>>> len(tok) >= 8 and tok.isalnum()
+	True
+	"""
+	for _ in range(32):
+		token = secrets.token_hex(8)
+		if f"::{token}::" not in body:
+			return token
+	raise RuntimeError("could not pick a stop-commands token")  # pragma: no cover
+
+
+def _format_github_group(title: str, body: str, token: str) -> str:
+	"""Wrap ``body`` in a GitHub ``::group::`` with ``::stop-commands::`` neutralization.
+
+	The stop-commands bracket disables workflow-command parsing for the body
+	so output lines like ``::endgroup::`` or ``::add-mask::`` are emitted
+	verbatim instead of being interpreted by Actions.
+
+	>>> _format_github_group("x", "ok\\n", "T")
+	'::group::x\\n::stop-commands::T\\nok\\n::T::\\n::endgroup::\\n'
+	>>> _format_github_group("x", "::endgroup::\\n", "T")
+	'::group::x\\n::stop-commands::T\\n::endgroup::\\n::T::\\n::endgroup::\\n'
+	"""
+	return f"::group::{title}\n::stop-commands::{token}\n{body}::{token}::\n::endgroup::\n"
+
+
 def block_for(mode: OutputMode, task: Task, c: Completion, output: bytes) -> str:
 	"""Return the completion-block text for ``mode`` (empty when nothing to dump).
 
 	Output bytes are passed through verbatim — ANSI escapes are preserved so
 	downstream viewers (terminals, Actions logs) render the original colors.
+	For ``github`` mode the body is wrapped in ``::stop-commands::`` so task
+	output that happens to start with ``::`` (e.g. another tool's
+	``::endgroup::`` or ``::warning::``) cannot prematurely close the group
+	or inject workflow commands.
 
 	>>> block_for("all", Task("a", name="x"), Finished(0, 1.0, ()), b"ok\\n")
 	'ok\\n'
@@ -204,8 +249,11 @@ def block_for(mode: OutputMode, task: Task, c: Completion, output: bytes) -> str
 	''
 	>>> block_for("errors", Task("a", name="x"), Finished(2, 1.0, ()), b"boom\\n")
 	'boom\\n'
-	>>> block_for("github", Task("a", name="x"), Finished(0, 1.0, ()), b"ok\\n")
-	'::group::x\\nok\\n::endgroup::\\n'
+	>>> out = block_for("github", Task("a", name="x"), Finished(0, 1.0, ()), b"ok\\n")
+	>>> out.startswith("::group::x\\n::stop-commands::") and out.endswith("::\\n::endgroup::\\n")
+	True
+	>>> "ok\\n" in out
+	True
 	>>> block_for("quiet", Task("a"), Finished(0, 1.0, ()), b"ok\\n")
 	''
 	>>> block_for("stream", Task("a"), Finished(0, 1.0, ()), b"ok\\n")
@@ -227,7 +275,9 @@ def block_for(mode: OutputMode, task: Task, c: Completion, output: bytes) -> str
 		case "errors":
 			return body if failed else ""
 		case "github":
-			return f"::group::{task_label(task)}\n{body}::endgroup::\n"
+			return _format_github_group(
+				_github_safe_title(task_label(task)), body, _github_stop_token(body)
+			)
 		case "quiet" | "stream":
 			return ""
 		case _:

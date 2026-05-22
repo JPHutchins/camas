@@ -4,6 +4,7 @@
 import asyncio
 import shutil
 import sys
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -114,9 +115,10 @@ def bucket_glyph_color(states: Sequence[LeafState]) -> tuple[str, str]:
 	(red on any failure, grey if all skipped, otherwise green).
 
 	>>> t = Task("x")
+	>>> t0 = datetime(2026, 1, 1)
 	>>> bucket_glyph_color([Waiting(t)]) == (' ', GREY)
 	True
-	>>> bucket_glyph_color([Running(t, 0.0, b"")]) == ('┄', CYAN)
+	>>> bucket_glyph_color([Running(t, t0, b"")]) == ('┄', CYAN)
 	True
 	>>> bucket_glyph_color([Completed(t, Finished(0, 0.1, ()))]) == ('─', GREEN)
 	True
@@ -124,7 +126,7 @@ def bucket_glyph_color(states: Sequence[LeafState]) -> tuple[str, str]:
 	True
 	>>> bucket_glyph_color([Completed(t, Skipped(1))]) == ('─', GREY)
 	True
-	>>> bucket_glyph_color([Waiting(t), Running(t, 0.0, b"")]) == (' ', GREY)
+	>>> bucket_glyph_color([Waiting(t), Running(t, t0, b"")]) == (' ', GREY)
 	True
 	"""
 	if any(isinstance(s, Waiting) for s in states):
@@ -153,12 +155,13 @@ def render_progress_bar(states: Sequence[LeafState], width: int) -> str:
 	always has visible width ``width``.
 
 	>>> t = Task("x")
+	>>> t0 = datetime(2026, 1, 1)
 	>>> bar = render_progress_bar([Waiting(t), Waiting(t)], 10)
 	>>> len(strip_ansi(bar))
 	10
 	>>> strip_ansi(bar)
 	'          '
-	>>> bar = render_progress_bar([Running(t, 0.0, b"")], 10)
+	>>> bar = render_progress_bar([Running(t, t0, b"")], 10)
 	>>> strip_ansi(bar)
 	'  ┄┄┄┄┄┄  '
 	>>> render_progress_bar([], 5)
@@ -173,7 +176,7 @@ def render_progress_bar(states: Sequence[LeafState], width: int) -> str:
 	True
 	>>> render_progress_bar([Waiting(t)], 3)
 	'   '
-	>>> strip_ansi(render_progress_bar([Running(t, 0.0, b"")] * 10, 10))
+	>>> strip_ansi(render_progress_bar([Running(t, t0, b"")] * 10, 10))
 	'  ┄┄┄┄┄┄  '
 	"""
 	if width <= 0 or len(states) == 0:
@@ -233,9 +236,15 @@ def render_lines(
 	term_width: int,
 	display_width: int,
 	now: datetime,
-	wall_start: datetime,
+	wall_elapsed: float,
 ) -> list[str]:
-	"""Build the list of ANSI-formatted lines for one frame (leaves + summary)."""
+	"""Build the list of ANSI-formatted lines for one frame (leaves + summary).
+
+	``wall_elapsed`` is supplied as monotonic seconds (``time.perf_counter()``
+	delta) by the caller so the displayed total time is immune to wall-clock
+	jumps (NTP, DST); ``now`` is still a wall-clock ``datetime`` because the
+	per-leaf running counter is derived from ``Running.start_time``.
+	"""
 	lines: list[str] = []
 	leaf_idx = 0
 	for row in rows:
@@ -288,7 +297,6 @@ def render_lines(
 					case Waiting():
 						padding = " " * gap
 						lines.append(f"\r{header}{padding} [{GREY} WAIT {RESET}]{CLEAR_LINE}")
-	wall_elapsed: Final = (now - wall_start).total_seconds()
 	alldone: Final = all(isinstance(s, Completed) for s in states)
 	summary_pad: Final = render_progress_bar(states, max(display_width - 6, 0))
 	if alldone:
@@ -317,7 +325,7 @@ def render_frame(
 	term_width: int,
 	display_width: int,
 	now: datetime,
-	wall_start: datetime,
+	wall_elapsed: float,
 ) -> str:
 	"""Render one positioned frame as an ANSI string, for live animation.
 
@@ -326,7 +334,7 @@ def render_frame(
 	space (via `"\\n" * N`) so the frame has room to render inline without
 	scrolling the viewport.
 	"""
-	lines: Final = render_lines(rows, states, term_width, display_width, now, wall_start)
+	lines: Final = render_lines(rows, states, term_width, display_width, now, wall_elapsed)
 	return f"\033[{len(lines) - 1}F" + "\n".join(lines)
 
 
@@ -397,12 +405,19 @@ class TermtreeState:
 
 
 class TermtreeContext(NamedTuple):
-	"""Immutable context threaded through the termtree Effect's lifecycle."""
+	"""Immutable context threaded through the termtree Effect's lifecycle.
+
+	``wall_start`` is the wall-clock setup time (for human-facing timestamps if
+	ever surfaced); ``wall_start_mono`` is the corresponding monotonic reading
+	(``time.perf_counter()``) used to compute the displayed elapsed total so
+	the TUI never sees a backward/forward NTP step.
+	"""
 
 	rows: tuple[DisplayRow, ...]
 	term_width: int
 	display_width: int
 	wall_start: datetime
+	wall_start_mono: float
 	state: TermtreeState
 
 
@@ -427,6 +442,7 @@ class Termtree:
 			term_width=term_width,
 			display_width=term_width - STATUS_COL_WIDTH - 1,
 			wall_start=datetime.now(),
+			wall_start_mono=time.perf_counter(),
 			state=TermtreeState(
 				states=tuple(Waiting(info.task) for info in flatten_leaves(task)),
 			),
@@ -470,7 +486,7 @@ def draw(ctx: TermtreeContext) -> None:
 		ctx.term_width,
 		ctx.display_width,
 		datetime.now(),
-		ctx.wall_start,
+		time.perf_counter() - ctx.wall_start_mono,
 	)
 	sys.stdout.buffer.write(frame.encode("utf-8", errors="replace"))
 	sys.stdout.flush()

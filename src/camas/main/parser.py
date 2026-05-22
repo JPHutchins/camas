@@ -45,7 +45,7 @@ def default_effects_expr() -> str:
 	'(Status(StatusOptions(output_mode="github")),)'
 	>>> os.environ.pop("GITHUB_ACTIONS", None)
 	'true'
-	>>> _ = os.environ.update({"GITHUB_ACTIONS": _saved}) if _saved else None
+	>>> _ = os.environ.update({"GITHUB_ACTIONS": _saved}) if _saved is not None else None
 	"""
 	if os.environ.get("GITHUB_ACTIONS") == "true":
 		return '(Status(StatusOptions(output_mode="github")),)'
