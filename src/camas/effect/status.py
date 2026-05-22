@@ -211,7 +211,7 @@ def _github_stop_token(body: str) -> str:
 	"""
 	for _ in range(32):
 		token = secrets.token_hex(8)
-		if f"::{token}::" not in body:
+		if f"::{token}::" not in body:  # pragma: no branch
 			return token
 	raise RuntimeError("could not pick a stop-commands token")  # pragma: no cover
 
