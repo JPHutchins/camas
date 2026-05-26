@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "github-actions-matrix-subset",
-  "description": "Matrix subschema extracted verbatim from SchemaStore github-workflow.json (sha dbc0fd17b1c6b5f2fe151ffd0e504ca01c777151, fetched 2026-05-26). Source: https://github.com/SchemaStore/schemastore/blob/dbc0fd17b1c6b5f2fe151ffd0e504ca01c777151/src/schemas/json/github-workflow.json#L%23/definitions/matrix",
+  "description": "Matrix subschema extracted verbatim from SchemaStore github-workflow.json (sha dbc0fd17b1c6b5f2fe151ffd0e504ca01c777151, fetched 2026-05-26). Source: https://github.com/SchemaStore/schemastore/blob/dbc0fd17b1c6b5f2fe151ffd0e504ca01c777151/src/schemas/json/github-workflow.json — see definitions.matrix.",
   "$ref": "#/definitions/matrix",
   "definitions": {
     "expressionSyntax": {

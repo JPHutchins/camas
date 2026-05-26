@@ -65,7 +65,7 @@ dev = [
     { name = "cyclopts" },
     { name = "exceptiongroup" },
     { name = "httpx" },
-    { name = "jsonschema" },
+    { name = "jsonschema", marker = "python_full_version < '3.15'" },
     { name = "mypy" },
     { name = "pyrefly" },
     { name = "pyright" },
@@ -100,7 +100,7 @@ dev = [
     { name = "cyclopts", specifier = ">=4,<5" },
     { name = "exceptiongroup", specifier = ">=1.2" },
     { name = "httpx", specifier = ">=0.28,<1" },
-    { name = "jsonschema", specifier = ">=4,<5" },
+    { name = "jsonschema", marker = "python_full_version < '3.15'", specifier = ">=4,<5" },
     { name = "mypy", specifier = ">=1.19,<2" },
     { name = "pyrefly", specifier = ">=0.61,<1" },
     { name = "pyright", specifier = ">=1.1.408,<2" },
@@ -360,10 +360,10 @@ name = "jsonschema"
 version = "4.26.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "attrs" },
-    { name = "jsonschema-specifications" },
-    { name = "referencing" },
-    { name = "rpds-py" },
+    { name = "attrs", marker = "python_full_version < '3.15'" },
+    { name = "jsonschema-specifications", marker = "python_full_version < '3.15'" },
+    { name = "referencing", marker = "python_full_version < '3.15'" },
+    { name = "rpds-py", marker = "python_full_version < '3.15'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/b3/fc/e067678238fa451312d4c62bf6e6cf5ec56375422aee02f9cb5f909b3047/jsonschema-4.26.0.tar.gz", hash = "sha256:0c26707e2efad8aa1bfc5b7ce170f3fccc2e4918ff85989ba9ffa9facb2be326", size = 366583, upload-time = "2026-01-07T13:41:07.246Z" }
 wheels = [
@@ -375,7 +375,7 @@ name = "jsonschema-specifications"
 version = "2025.9.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "referencing" },
+    { name = "referencing", marker = "python_full_version < '3.15'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/19/74/a633ee74eb36c44aa6d1095e7cc5569bebf04342ee146178e2d36600708b/jsonschema_specifications-2025.9.1.tar.gz", hash = "sha256:b540987f239e745613c7a9176f3edb72b832a4ac465cf02712288397832b5e8d", size = 32855, upload-time = "2025-09-08T01:34:59.186Z" }
 wheels = [

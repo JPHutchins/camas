@@ -42,6 +42,7 @@ python3Packages.buildPythonApplication {
     pytest-asyncio
     cyclopts
     httpx
+    jsonschema
   ];
 
   disabledTestMarks = [ "slow" ];

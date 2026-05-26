@@ -142,6 +142,11 @@ RESERVED_FLAGS: Final = frozenset(
 	{"help", "version", "dry-run", "github-matrix", "list", "tree", "check", "effects", "matrix"}
 )
 
+RESERVED_DESTS: Final = frozenset(f.replace("-", "_") for f in RESERVED_FLAGS)
+"""argparse derives ``dest`` by replacing ``-`` with ``_``; matrix axis names whose
+normalized form collides with a built-in flag's dest must be filtered out (an
+axis literally named ``github_matrix`` would silently overwrite ``args.github_matrix``)."""
+
 
 def expression_metavar(tasks: Mapping[str, TaskNode] | None) -> str:
 	"""Build the positional metavar.
