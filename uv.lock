@@ -94,7 +94,7 @@ dev = [
     { name = "ruff" },
     { name = "taskgroup" },
     { name = "tomli" },
-    { name = "types-jsonschema" },
+    { name = "types-jsonschema", marker = "python_full_version < '3.15'" },
     { name = "types-setuptools" },
     { name = "typing-extensions" },
     { name = "zuban" },
@@ -130,7 +130,7 @@ dev = [
     { name = "ruff", specifier = ">=0.12,<1" },
     { name = "taskgroup", specifier = ">=0.2" },
     { name = "tomli", specifier = ">=2" },
-    { name = "types-jsonschema" },
+    { name = "types-jsonschema", marker = "python_full_version < '3.15'" },
     { name = "types-setuptools" },
     { name = "typing-extensions", specifier = ">=4.12" },
     { name = "zuban", specifier = ">=0.7,<1" },
@@ -1605,7 +1605,7 @@ name = "types-jsonschema"
 version = "4.26.0.20260518"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "referencing" },
+    { name = "referencing", marker = "python_full_version < '3.15'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/dd/46/73b6a5d61a61015c4248030a8cb07e5bdddb4041430fae9e585a68692578/types_jsonschema-4.26.0.20260518.tar.gz", hash = "sha256:e1dd53dc97a64f5eccdd6fa9839666e09bb500a8ebba2db6fdaf1789faea81a6", size = 16638, upload-time = "2026-05-18T06:06:44.106Z" }
 wheels = [
