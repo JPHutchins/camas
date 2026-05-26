@@ -36,6 +36,7 @@ from .format import (
 	print_task_summary_listing,
 	print_task_trees,
 )
+from .github_matrix import emit as emit_github_matrix
 from .init import write_starter_tasks_py
 from .parser import RESERVED_FLAGS, build_parser, resolve_jobs
 from .state import EMPTY_STATE, LoadErr, LoadOk, TasksState
@@ -387,6 +388,20 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 				except ValueError as e:
 					print(f"error: {e}", file=sys.stderr)
 					sys.exit(2)
+
+			if args.github_matrix:
+				if split.passthrough:
+					print(
+						"error: --github-matrix does not accept '--' passthrough args",
+						file=sys.stderr,
+					)
+					sys.exit(2)
+				try:
+					print(emit_github_matrix(resolved, pretty=sys.stdout.isatty()))
+				except ValueError as e:
+					print(f"error: {e}", file=sys.stderr)
+					sys.exit(2)
+				sys.exit(0)
 
 			if args.paths is not None:
 				base = source.parent if source is not None else Path.cwd()

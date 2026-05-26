@@ -256,10 +256,16 @@ def build_parser(state: TasksState = EMPTY_STATE) -> argparse.ArgumentParser:
 		action="version",
 		version=f"camas {importlib.metadata.version('camas')}",
 	)
-	parser.add_argument(
+	preview = parser.add_mutually_exclusive_group()
+	preview.add_argument(
 		"--dry-run",
 		action="store_true",
 		help="print the task tree without executing",
+	)
+	preview.add_argument(
+		"--github-matrix",
+		action="store_true",
+		help="emit GitHub Actions matrix JSON for the task's axes (consume via fromJSON)",
 	)
 	parser.add_argument(
 		"--list",
@@ -332,6 +338,7 @@ RESERVED_FLAGS: Final = frozenset(
 		"help",
 		"version",
 		"dry-run",
+		"github-matrix",
 		"list",
 		"tree",
 		"check",
