@@ -76,7 +76,7 @@ dev = [
     { name = "taskgroup" },
     { name = "tomli" },
     { name = "ty" },
-    { name = "types-jsonschema" },
+    { name = "types-jsonschema", marker = "python_full_version < '3.15'" },
     { name = "types-setuptools" },
     { name = "typing-extensions" },
     { name = "zuban" },
@@ -111,7 +111,7 @@ dev = [
     { name = "taskgroup", specifier = ">=0.2" },
     { name = "tomli", specifier = ">=2" },
     { name = "ty", specifier = ">=0.0.31,<1" },
-    { name = "types-jsonschema" },
+    { name = "types-jsonschema", marker = "python_full_version < '3.15'" },
     { name = "types-setuptools" },
     { name = "typing-extensions", specifier = ">=4.12" },
     { name = "zuban", specifier = ">=0.7,<1" },
@@ -681,8 +681,8 @@ name = "referencing"
 version = "0.37.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "attrs" },
-    { name = "rpds-py" },
+    { name = "attrs", marker = "python_full_version < '3.15'" },
+    { name = "rpds-py", marker = "python_full_version < '3.15'" },
     { name = "typing-extensions", marker = "python_full_version < '3.13'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/22/f5/df4e9027acead3ecc63e50fe1e36aca1523e1719559c499951bb4b53188f/referencing-0.37.0.tar.gz", hash = "sha256:44aefc3142c5b842538163acb373e24cce6632bd54bdb01b21ad5863489f50d8", size = 78036, upload-time = "2025-10-13T15:30:48.871Z" }
@@ -959,7 +959,7 @@ name = "types-jsonschema"
 version = "4.26.0.20260518"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "referencing" },
+    { name = "referencing", marker = "python_full_version < '3.15'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/dd/46/73b6a5d61a61015c4248030a8cb07e5bdddb4041430fae9e585a68692578/types_jsonschema-4.26.0.20260518.tar.gz", hash = "sha256:e1dd53dc97a64f5eccdd6fa9839666e09bb500a8ebba2db6fdaf1789faea81a6", size = 16638, upload-time = "2026-05-18T06:06:44.106Z" }
 wheels = [
