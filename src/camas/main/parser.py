@@ -351,6 +351,11 @@ RESERVED_FLAGS: Final = frozenset(
 	}
 )
 
+RESERVED_DESTS: Final = frozenset(f.replace("-", "_") for f in RESERVED_FLAGS)
+"""argparse derives ``dest`` by replacing ``-`` with ``_``; matrix axis names whose
+normalized form collides with a built-in flag's dest must be filtered out (an
+axis literally named ``github_matrix`` would silently overwrite ``args.github_matrix``)."""
+
 
 def expression_metavar(tasks: Mapping[str, TaskNode] | None) -> str:
 	"""Positional metavar: prepends ``task`` when tasks exist; ``mcp`` is always reserved."""

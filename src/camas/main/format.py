@@ -230,8 +230,8 @@ def print_task_help(name: str, task: TaskNode) -> None:
 	"""
 	axes = matrix_axes(task)
 	axis_flags = "".join(f" [--{k} VAL[,VAL...]]" for k in axes)
-	matrix_flag = " [--github-matrix]" if axes else ""
-	print(f"usage: camas {name} [-h] [--dry-run]{matrix_flag} [--effects EFFECTS]{axis_flags}")
+	preview = "[--dry-run | --github-matrix]" if axes else "[--dry-run]"
+	print(f"usage: camas {name} [-h] {preview} [--effects EFFECTS]{axis_flags}")
 	if task.help is not None:
 		print()
 		print(task.help)

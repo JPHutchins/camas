@@ -9,7 +9,6 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-import jsonschema
 import pytest
 
 from camas import Parallel, Sequential, Task
@@ -17,8 +16,14 @@ from camas.core.effect import Effect
 from camas.core.task import TaskNode
 from camas.main.dispatch import dispatch
 from camas.main.github_matrix import emit, format_matrix_json, to_matrix_object
-from camas.main.parser import RESERVED_FLAGS, build_parser
+from camas.main.parser import RESERVED_DESTS, RESERVED_FLAGS, build_parser
 from camas.main.state import LoadOk
+
+jsonschema = pytest.importorskip("jsonschema")
+"""Python 3.15 currently cannot install ``jsonschema`` because its transitive
+``rpds-py`` dependency relies on a PyO3 release that doesn't yet support 3.15.
+Schema-validation tests skip cleanly on those interpreters instead of erroring
+at import."""
 
 SCHEMA_PATH = Path(__file__).parent.parent / "fixtures" / "github-actions-matrix-schema.json"
 
@@ -39,11 +44,6 @@ def make_state(tasks: Mapping[str, TaskNode]) -> LoadOk:
 	loaded: dict[str, TaskNode] = dict(tasks)
 	effects: dict[str, type[Effect[Any]]] = {}
 	return LoadOk(tasks=loaded, source=None, scope_effects=effects)
-
-
-# ---------------------------------------------------------------------------
-# to_matrix_object: pure projection
-# ---------------------------------------------------------------------------
 
 
 def test_to_matrix_object_single_axis() -> None:
@@ -80,11 +80,6 @@ def test_to_matrix_object_empty_axis_errors() -> None:
 		to_matrix_object(task)
 
 
-# ---------------------------------------------------------------------------
-# format_matrix_json: serialization shape
-# ---------------------------------------------------------------------------
-
-
 def test_format_compact_has_no_spaces() -> None:
 	assert format_matrix_json({"PY": ["3.12", "3.13"]}, pretty=False) == '{"PY":["3.12","3.13"]}'
 
@@ -109,11 +104,6 @@ def test_format_pretty_round_trips_through_json() -> None:
 	assert json.loads(format_matrix_json(original, pretty=True)) == original
 
 
-# ---------------------------------------------------------------------------
-# emit: composition
-# ---------------------------------------------------------------------------
-
-
 def test_emit_smoke_compact() -> None:
 	task = Parallel(Task("t"), matrix={"PY": ("3.12",)})
 	assert emit(task, pretty=False) == '{"PY":["3.12"]}'
@@ -122,12 +112,6 @@ def test_emit_smoke_compact() -> None:
 def test_emit_smoke_pretty() -> None:
 	task = Parallel(Task("t"), matrix={"PY": ("3.12",)})
 	assert emit(task, pretty=True) == '{\n  "PY": [\n    "3.12"\n  ]\n}'
-
-
-# ---------------------------------------------------------------------------
-# Schema validation — every emitted output must conform to the GHA workflow
-# schema's matrix subset (vendored fixture from SchemaStore).
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -176,11 +160,6 @@ def test_schema_fixture_rejects_empty_axis(matrix_schema: Mapping[str, Any]) -> 
 def test_schema_fixture_rejects_empty_object(matrix_schema: Mapping[str, Any]) -> None:
 	with pytest.raises(jsonschema.ValidationError):
 		jsonschema.validate({}, matrix_schema)
-
-
-# ---------------------------------------------------------------------------
-# CLI integration (via dispatch)
-# ---------------------------------------------------------------------------
 
 
 def test_cli_github_matrix_emits_valid_json(
@@ -270,11 +249,6 @@ def test_cli_github_matrix_rejects_passthrough(
 	assert "passthrough" in capsys.readouterr().err
 
 
-# ---------------------------------------------------------------------------
-# Parser surface
-# ---------------------------------------------------------------------------
-
-
 def test_parser_github_matrix_flag() -> None:
 	args = build_parser().parse_args(["--github-matrix", "check"])
 	assert args.github_matrix is True
@@ -283,6 +257,15 @@ def test_parser_github_matrix_flag() -> None:
 
 def test_parser_github_matrix_in_reserved_flags() -> None:
 	assert "github-matrix" in RESERVED_FLAGS
+
+
+def test_reserved_dests_normalizes_hyphens_to_underscores() -> None:
+	"""``RESERVED_DESTS`` is what dispatch compares axis names against, so the
+	underscore form of every built-in flag must be present — an axis literally
+	named ``github_matrix`` shares argparse's auto-derived dest with
+	``--github-matrix`` and must be filtered out before registration."""
+	assert "github_matrix" in RESERVED_DESTS
+	assert "dry_run" in RESERVED_DESTS
 
 
 def test_parser_mutex_dry_run_and_github_matrix(
@@ -294,18 +277,28 @@ def test_parser_mutex_dry_run_and_github_matrix(
 	assert "not allowed" in capsys.readouterr().err.lower()
 
 
-# ---------------------------------------------------------------------------
-# Per-task --help advertises the flag for matrix-bearing tasks only
-# ---------------------------------------------------------------------------
+def test_dispatch_skips_axis_whose_dest_collides_with_builtin(
+	capsys: pytest.CaptureFixture[str],
+) -> None:
+	"""A matrix axis named ``github_matrix`` normalizes to the same dest as the
+	built-in ``--github-matrix`` flag; the axis must be filtered out of CLI
+	registration so the two don't overwrite each other in ``args``."""
+	task = Parallel(Task("echo {github_matrix}"), matrix={"github_matrix": ("a", "b")})
+	with pytest.raises(SystemExit, match="0"):
+		dispatch(make_state({"check": task}), ["--dry-run", "check"])
+	out = capsys.readouterr().out
+	assert "[github_matrix=a]" in out
+	assert "[github_matrix=b]" in out
 
 
-def test_task_help_advertises_github_matrix_when_axes_exist(
+def test_task_help_shows_mutex_when_axes_exist(
 	capsys: pytest.CaptureFixture[str],
 ) -> None:
 	task = Parallel(Task("echo {PY}"), matrix={"PY": ("3.12", "3.13")})
 	with pytest.raises(SystemExit, match="0"):
 		dispatch(make_state({"check": task}), ["check", "--help"])
-	assert "[--github-matrix]" in capsys.readouterr().out
+	out = capsys.readouterr().out
+	assert "[--dry-run | --github-matrix]" in out
 
 
 def test_task_help_omits_github_matrix_when_no_axes(
@@ -314,4 +307,6 @@ def test_task_help_omits_github_matrix_when_no_axes(
 	task = Task("echo hi")
 	with pytest.raises(SystemExit, match="0"):
 		dispatch(make_state({"plain": task}), ["plain", "--help"])
-	assert "[--github-matrix]" not in capsys.readouterr().out
+	out = capsys.readouterr().out
+	assert "--github-matrix" not in out
+	assert "[--dry-run]" in out

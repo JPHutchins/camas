@@ -38,7 +38,7 @@ from .format import (
 )
 from .github_matrix import emit as emit_github_matrix
 from .init import write_starter_tasks_py
-from .parser import RESERVED_FLAGS, build_parser, resolve_jobs
+from .parser import RESERVED_DESTS, build_parser, resolve_jobs
 from .state import EMPTY_STATE, LoadErr, LoadOk, TasksState
 from .tasks import (
 	load_tasks,
@@ -296,7 +296,7 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 			augmented_axes: dict[str, tuple[str, ...]] = {}
 			if axis_node is not None:
 				for name, values in matrix_axes(axis_node).items():
-					if name.lower() in RESERVED_FLAGS:
+					if name.lower().replace("-", "_") in RESERVED_DESTS:
 						continue
 					parser.add_argument(
 						f"--{name}",
