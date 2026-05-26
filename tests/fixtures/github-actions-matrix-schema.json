@@ -1,0 +1,61 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "github-actions-matrix-subset",
+  "description": "Matrix subschema extracted verbatim from SchemaStore github-workflow.json (sha dbc0fd17b1c6b5f2fe151ffd0e504ca01c777151, fetched 2026-05-26). Source: https://github.com/SchemaStore/schemastore/blob/dbc0fd17b1c6b5f2fe151ffd0e504ca01c777151/src/schemas/json/github-workflow.json#L%23/definitions/matrix",
+  "$ref": "#/definitions/matrix",
+  "definitions": {
+    "expressionSyntax": {
+      "type": "string",
+      "pattern": "^\\$\\{\\{(.|[\r\n])*\\}\\}$"
+    },
+    "configuration": {
+      "oneOf": [
+        { "type": "string" },
+        { "type": "number" },
+        { "type": "boolean" },
+        {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/definitions/configuration" }
+        },
+        {
+          "type": "array",
+          "items": { "$ref": "#/definitions/configuration" }
+        }
+      ]
+    },
+    "matrix": {
+      "oneOf": [
+        {
+          "type": "object",
+          "patternProperties": {
+            "^(in|ex)clude$": {
+              "oneOf": [
+                { "$ref": "#/definitions/expressionSyntax" },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": { "$ref": "#/definitions/configuration" }
+                  },
+                  "minItems": 1
+                }
+              ]
+            }
+          },
+          "additionalProperties": {
+            "oneOf": [
+              {
+                "type": "array",
+                "items": { "$ref": "#/definitions/configuration" },
+                "minItems": 1
+              },
+              { "$ref": "#/definitions/expressionSyntax" }
+            ]
+          },
+          "minProperties": 1
+        },
+        { "$ref": "#/definitions/expressionSyntax" }
+      ]
+    }
+  }
+}
