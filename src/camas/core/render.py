@@ -22,6 +22,11 @@ from .task import Parallel, Sequential, Task, TaskNode, task_label
 BOLD: Final = "\033[1m"
 CYAN: Final = "\033[36m"
 GREY: Final = "\033[90m"
+GREEN: Final = "\033[32m"
+RED: Final = "\033[31m"
+BLUE: Final = "\033[34m"
+YELLOW: Final = "\033[33m"
+VIOLET: Final = "\033[95m"
 RESET: Final = "\033[0m"
 
 ANSI_ESCAPE: Final = re.compile(
@@ -29,6 +34,7 @@ ANSI_ESCAPE: Final = re.compile(
 	r"\[[0-?]*[ -/]*[@-~]"  # CSI sequences (colors, cursor movement, etc.)
 	r"|\][^\x07]*\x07"  # OSC terminated by BEL (hyperlinks, window title)
 	r"|\][^\x1b]*\x1b\\"  # OSC terminated by ST
+	r"|[()*+][\x20-\x7e]"  # ISO-2022 character-set designation (e.g. ESC(B = G0 ASCII)
 	r"|[@-Z\\-_]"  # two-character Fe sequences (after OSC: ] is in range)
 	r")"
 	r"|[\x00-\x08\x0b-\x1f\x7f]"  # ASCII control chars except \t (\x09) and \n (\x0a)
@@ -52,6 +58,8 @@ def strip_ansi(text: str) -> str:
 	'line one\\nline two\\tcol'
 	>>> strip_ansi("\\r\x1b[2Kprogress")
 	'progress'
+	>>> strip_ansi("\x1b[1mbold\x1b(B\x1b[m done")
+	'bold done'
 	"""
 	return ANSI_ESCAPE.sub("", text)
 

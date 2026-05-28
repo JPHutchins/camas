@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import sys
+from datetime import datetime
 from typing import NamedTuple, TypeAlias
 
 if sys.version_info >= (3, 11):
@@ -54,12 +55,12 @@ class Waiting(NamedTuple):
 class Running(NamedTuple):
 	"""Leaf state: task is currently executing.
 
-	>>> Running(Task("echo hi"), 100.0, b"output")
-	Running(task=Task(cmd='echo hi', name=None, env={}, cwd=None), start_time=100.0, last_line=b'output')
+	>>> Running(Task("echo hi"), datetime(2026, 1, 1, 12, 0, 0), b"output")
+	Running(task=Task(cmd='echo hi', name=None, env={}, cwd=None), start_time=datetime.datetime(2026, 1, 1, 12, 0), last_line=b'output')
 	"""
 
 	task: Task
-	start_time: float
+	start_time: datetime
 	last_line: bytes
 
 
@@ -88,13 +89,15 @@ def next_state(state: LeafState, event: TaskEvent) -> LeafState:
 
 	>>> from camas.core.completion import Finished, Skipped
 	>>> t = Task("echo hi")
-	>>> next_state(Waiting(t), StartedEvent(t, 0, 100.0))
-	Running(task=Task(cmd='echo hi', name=None, env={}, cwd=None), start_time=100.0, last_line=b'')
-	>>> next_state(Running(t, 100.0, b""), OutputEvent(t, 0, b"hi", 100.5))
-	Running(task=Task(cmd='echo hi', name=None, env={}, cwd=None), start_time=100.0, last_line=b'hi')
-	>>> next_state(Running(t, 100.0, b""), CompletedEvent(t, 0, Finished(0, 0.5, (b"done",))))
+	>>> t0 = datetime(2026, 1, 1, 12, 0, 0)
+	>>> t1 = datetime(2026, 1, 1, 12, 0, 1)
+	>>> next_state(Waiting(t), StartedEvent(t, 0, t0))
+	Running(task=Task(cmd='echo hi', name=None, env={}, cwd=None), start_time=datetime.datetime(2026, 1, 1, 12, 0), last_line=b'')
+	>>> next_state(Running(t, t0, b""), OutputEvent(t, 0, b"hi", t1))
+	Running(task=Task(cmd='echo hi', name=None, env={}, cwd=None), start_time=datetime.datetime(2026, 1, 1, 12, 0), last_line=b'hi')
+	>>> next_state(Running(t, t0, b""), CompletedEvent(t, 0, Finished(0, 0.5, (b"done",)), t1))
 	Completed(task=Task(cmd='echo hi', name=None, env={}, cwd=None), completion=Finished(returncode=0, elapsed=0.5, output=(b'done',)))
-	>>> next_state(Waiting(t), CompletedEvent(t, 0, Skipped(1)))
+	>>> next_state(Waiting(t), CompletedEvent(t, 0, Skipped(1), t0))
 	Completed(task=Task(cmd='echo hi', name=None, env={}, cwd=None), completion=Skipped(returncode=1))
 	"""
 	match state:

@@ -6,6 +6,7 @@ import sys
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Final, NamedTuple, TypeAlias
 
 if sys.version_info >= (3, 11):
@@ -71,12 +72,19 @@ class SummaryState:
 
 
 class SummaryContext(NamedTuple):
-	"""Immutable context threaded through the summary Effect's lifecycle."""
+	"""Immutable context threaded through the summary Effect's lifecycle.
+
+	``wall_start`` is the wall-clock setup time (for human-facing timestamps if
+	ever surfaced); ``wall_start_mono`` is the corresponding monotonic reading
+	(``time.perf_counter()``) used to compute the displayed elapsed total so
+	the summary line is immune to NTP/DST steps mid-run.
+	"""
 
 	rows: tuple[DisplayRow, ...]
 	term_width: int
 	display_width: int
-	wall_start: float
+	wall_start: datetime
+	wall_start_mono: float
 	state: SummaryState
 
 
@@ -88,8 +96,8 @@ class Summary:
 	produces garbage. End-state output matches ``Termtree``'s final frame.
 	"""
 
-	def __init__(self, options: SummaryOptions | None = None) -> None:
-		self.options: Final = options if options is not None else SummaryOptions()
+	def __init__(self, options: SummaryOptions = SummaryOptions()) -> None:
+		self.options: Final = options
 
 	async def setup(self, task: TaskNode) -> SummaryContext:
 		match self.options.term_width:
@@ -103,7 +111,8 @@ class Summary:
 			rows=flatten_rows(task),
 			term_width=term_width,
 			display_width=term_width - STATUS_COL_WIDTH - 1,
-			wall_start=time.perf_counter(),
+			wall_start=datetime.now(),
+			wall_start_mono=time.perf_counter(),
 			state=SummaryState(
 				states=tuple(Waiting(info.task) for info in flatten_leaves(task)),
 			),
@@ -122,8 +131,8 @@ class Summary:
 			ctx.state.states,
 			ctx.term_width,
 			ctx.display_width,
-			time.perf_counter(),
-			ctx.wall_start,
+			datetime.now(),
+			time.perf_counter() - ctx.wall_start_mono,
 		)
 		cleaned: Final = tuple(  # zuban: ignore[misc] # zuban defies PEP591
 			line.removeprefix("\r").replace(CLEAR_LINE, "") for line in lines

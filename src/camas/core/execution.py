@@ -8,6 +8,7 @@ import os
 import sys
 import time
 from collections.abc import Iterable, Sequence
+from datetime import datetime
 from subprocess import STDOUT
 from typing import Any, Final
 
@@ -29,34 +30,35 @@ from .task_event import CompletedEvent, OutputEvent, StartedEvent, TaskEvent
 from .traversal import flatten_leaves, subtree_leaf_indices
 
 
-def color_env(merged: dict[str, str]) -> dict[str, str]:
-	"""Inject FORCE_COLOR/CLICOLOR_FORCE unless NO_COLOR is set (which also strips them)."""
-	if "NO_COLOR" in merged:
-		return {k: v for k, v in merged.items() if k not in {"FORCE_COLOR", "CLICOLOR_FORCE"}}
-	return merged | {"FORCE_COLOR": "1", "CLICOLOR_FORCE": "1"}
+def subprocess_env(merged: dict[str, str]) -> dict[str, str]:
+	"""Leaf-subprocess env: defaults merged underneath ``merged``; ``NO_COLOR`` strips color forces."""
+	base = {"PYTHONUNBUFFERED": "1"} | merged
+	if "NO_COLOR" in base:
+		return {k: v for k, v in base.items() if k not in {"FORCE_COLOR", "CLICOLOR_FORCE"}}
+	return {"FORCE_COLOR": "1", "CLICOLOR_FORCE": "1"} | base
 
 
 async def run_cmd(task: Task, leaf_index: int, dispatch: EventSink) -> TaskResult:
 	"""Run one leaf as a subprocess, dispatching Started/Output/Completed events."""
-	start: Final = time.perf_counter()
-	await dispatch(leaf_index, StartedEvent(task, leaf_index, start))
+	start_pc: Final = time.perf_counter()
+	await dispatch(leaf_index, StartedEvent(task, leaf_index, datetime.now()))
 	proc: Final = await asyncio.create_subprocess_exec(
 		*resolve_cmd(task.cmd),
 		stdout=asyncio.subprocess.PIPE,
 		stderr=STDOUT,
-		env=color_env({**os.environ, **task.env}),
+		env=subprocess_env({**os.environ, **task.env}),
 		cwd=task.cwd,
 	)
 	output: Final[list[bytes]] = []
 	if proc.stdout is not None:  # pragma: no branch
 		async for line in proc.stdout:
 			output.append(line)
-			await dispatch(leaf_index, OutputEvent(task, leaf_index, line, time.perf_counter()))
+			await dispatch(leaf_index, OutputEvent(task, leaf_index, line, datetime.now()))
 	await proc.wait()
-	elapsed: Final = time.perf_counter() - start
+	elapsed: Final = time.perf_counter() - start_pc
 	rc: Final = proc.returncode or 0
 	completion: Final = Finished(rc, elapsed, output)
-	await dispatch(leaf_index, CompletedEvent(task, leaf_index, completion))
+	await dispatch(leaf_index, CompletedEvent(task, leaf_index, completion, datetime.now()))
 	return TaskResult(task_label(task), completion)
 
 
@@ -70,7 +72,7 @@ async def skip_subtree(
 	"""Dispatch a Skipped completion for every leaf in a subtree, in DFS order."""
 	results: tuple[TaskResult, ...] = ()
 	for idx in subtree_leaf_indices(child, index_map):
-		await dispatch(idx, CompletedEvent(leaves[idx], idx, skip))
+		await dispatch(idx, CompletedEvent(leaves[idx], idx, skip, datetime.now()))
 		results = (*results, TaskResult(task_label(leaves[idx]), skip))
 	return results
 

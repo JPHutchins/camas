@@ -469,8 +469,8 @@ class GitHubChecks:
 	required ``checks: write`` workflow permission.
 	"""
 
-	def __init__(self, options: GitHubChecksOptions | None = None) -> None:
-		self.options: Final = options if options is not None else GitHubChecksOptions()
+	def __init__(self, options: GitHubChecksOptions = GitHubChecksOptions()) -> None:
+		self.options: Final = options
 		self.state: EffectState | None = None
 
 	async def setup(self, task: TaskNode) -> LeafCtx:
