@@ -118,9 +118,9 @@ def test_stream_mode_emits_lines_live_and_strips_ansi(
 	]
 	asyncio.run(drive(Status(StatusOptions(output_mode="stream")), task, events))
 	out = capsys.readouterr().out
-	assert "[lint] red line" in out
-	assert "[lint] plain" in out
-	assert out.count("·\x1b[0m [lint] ") == 2
+	assert "[lint]\x1b[0m red line" in out
+	assert "[lint]\x1b[0m plain" in out
+	assert out.count("· [lint]\x1b[0m ") == 2
 
 
 def test_stream_mode_interleaves_across_parallel_tasks(
@@ -142,10 +142,10 @@ def test_stream_mode_interleaves_across_parallel_tasks(
 	]
 	asyncio.run(drive(Status(StatusOptions(output_mode="stream")), task, events))
 	out = capsys.readouterr().out
-	a1 = out.index("[fast] a1")
-	b1 = out.index("[slow] b1")
-	a2 = out.index("[fast] a2")
-	b2 = out.index("[slow] b2")
+	a1 = out.index("[fast]\x1b[0m a1")
+	b1 = out.index("[slow]\x1b[0m b1")
+	a2 = out.index("[fast]\x1b[0m a2")
+	b2 = out.index("[slow]\x1b[0m b2")
 	assert a1 < b1 < a2 < b2
 
 

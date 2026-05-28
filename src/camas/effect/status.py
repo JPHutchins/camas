@@ -52,22 +52,23 @@ class StatusOptions(NamedTuple):
 
 	output_mode: OutputMode = "errors"
 	started_fmt: str = (
-		f"[{{timestamp:%Y-%m-%d %H:%M:%S}}.{{ms:03d}}] {VIOLET}▶ [{{name}}] started{RESET}"
+		f"{GREY}[{{timestamp:%Y-%m-%d %H:%M:%S}}.{{ms:03d}}]{RESET} "
+		f"{VIOLET}▶ [{{name}}] started{RESET}"
 	)
 	finished_fmt: str = (
-		f"[{{timestamp:%Y-%m-%d %H:%M:%S}}.{{ms:03d}}] "
+		f"{GREY}[{{timestamp:%Y-%m-%d %H:%M:%S}}.{{ms:03d}}]{RESET} "
 		f"{GREEN}✓ [{{name}}] success{RESET} ({{elapsed:.3f}}s)"
 	)
 	failed_fmt: str = (
-		f"[{{timestamp:%Y-%m-%d %H:%M:%S}}.{{ms:03d}}] "
+		f"{GREY}[{{timestamp:%Y-%m-%d %H:%M:%S}}.{{ms:03d}}]{RESET} "
 		f"{RED}✗ [{{name}}] error{RESET} exit={{rc}} ({{elapsed:.3f}}s)"
 	)
 	skipped_fmt: str = (
-		f"[{{timestamp:%Y-%m-%d %H:%M:%S}}.{{ms:03d}}] "
+		f"{GREY}[{{timestamp:%Y-%m-%d %H:%M:%S}}.{{ms:03d}}]{RESET} "
 		f"{GREY}⏭ [{{name}}] skipped{RESET} (prior rc={{rc}})"
 	)
 	output_fmt: str = (
-		f"[{{timestamp:%Y-%m-%d %H:%M:%S}}.{{ms:03d}}] {GREY}·{RESET} [{{name}}] {{line}}"
+		f"{GREY}[{{timestamp:%Y-%m-%d %H:%M:%S}}.{{ms:03d}}] · [{{name}}]{RESET} {{line}}"
 	)
 
 
@@ -116,7 +117,7 @@ def fmt_started(opts: StatusOptions, task: Task, ts: datetime) -> str | None:
 
 	>>> t0 = datetime(2026, 5, 21, 14, 30, 0, 123000)
 	>>> fmt_started(StatusOptions(), Task("echo hi", name="greet"), t0)
-	'[2026-05-21 14:30:00.123] \\x1b[95m▶ [greet] started\\x1b[0m'
+	'\\x1b[90m[2026-05-21 14:30:00.123]\\x1b[0m \\x1b[95m▶ [greet] started\\x1b[0m'
 	>>> fmt_started(StatusOptions(started_fmt=""), Task("echo hi"), t0) is None
 	True
 	>>> fmt_started(
@@ -137,11 +138,11 @@ def fmt_completed(opts: StatusOptions, task: Task, c: Completion, ts: datetime) 
 
 	>>> t0 = datetime(2026, 5, 21, 14, 30, 0, 123000)
 	>>> fmt_completed(StatusOptions(), Task("a", name="lint"), Finished(0, 1.5, ()), t0)
-	'[2026-05-21 14:30:00.123] \\x1b[32m✓ [lint] success\\x1b[0m (1.500s)'
+	'\\x1b[90m[2026-05-21 14:30:00.123]\\x1b[0m \\x1b[32m✓ [lint] success\\x1b[0m (1.500s)'
 	>>> fmt_completed(StatusOptions(), Task("a", name="lint"), Finished(2, 0.5, ()), t0)
-	'[2026-05-21 14:30:00.123] \\x1b[31m✗ [lint] error\\x1b[0m exit=2 (0.500s)'
+	'\\x1b[90m[2026-05-21 14:30:00.123]\\x1b[0m \\x1b[31m✗ [lint] error\\x1b[0m exit=2 (0.500s)'
 	>>> fmt_completed(StatusOptions(), Task("a", name="follow"), Skipped(2), t0)
-	'[2026-05-21 14:30:00.123] \\x1b[90m⏭ [follow] skipped\\x1b[0m (prior rc=2)'
+	'\\x1b[90m[2026-05-21 14:30:00.123]\\x1b[0m \\x1b[90m⏭ [follow] skipped\\x1b[0m (prior rc=2)'
 	>>> fmt_completed(
 	...     StatusOptions(finished_fmt=""), Task("a"), Finished(0, 1.0, ()), t0,
 	... ) is None
@@ -174,9 +175,9 @@ def fmt_output(opts: StatusOptions, task: Task, line: bytes, ts: datetime) -> st
 
 	>>> t0 = datetime(2026, 5, 21, 14, 30, 0, 123000)
 	>>> fmt_output(StatusOptions(), Task("a", name="lint"), b"hello\\n", t0)
-	'[2026-05-21 14:30:00.123] \\x1b[90m·\\x1b[0m [lint] hello'
+	'\\x1b[90m[2026-05-21 14:30:00.123] · [lint]\\x1b[0m hello'
 	>>> fmt_output(StatusOptions(), Task("a", name="lint"), b"\\x1b[31mred\\x1b[0m\\n", t0)
-	'[2026-05-21 14:30:00.123] \\x1b[90m·\\x1b[0m [lint] red'
+	'\\x1b[90m[2026-05-21 14:30:00.123] · [lint]\\x1b[0m red'
 	>>> fmt_output(StatusOptions(output_fmt=""), Task("a"), b"x\\n", t0) is None
 	True
 	"""
