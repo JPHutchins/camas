@@ -106,17 +106,7 @@ On other CI providers (or to opt into a specific mode), spell it out:
 - run: uv run camas check --effects='(Status(StatusOptions(output_mode="errors")),)'
 ```
 
-`Status` modes — pick one for the `output_mode` arg:
-
-| Mode | What it dumps per task | When to use |
-|---|---|---|
-| `quiet` | status line only (no captured output) | trust the exit code; minimum log noise |
-| `errors` *(default)* | status line, plus the full block on failure | most CI providers |
-| `all` | status line + every block | informational runs (coverage, smoke) |
-| `stream` | every line as it arrives, prefixed with `[task]` | watching long-running jobs in real time |
-| `github` *(auto on GHA)* | like `all`, wrapped in `::group::`/`::endgroup::` so blocks render collapsed | GitHub Actions |
-
-Each `Status` line carries `[YYYY-MM-DD HH:MM:SS.mmm]` and the task name in brackets, so logs are grep-able and aligned. The [`status-modes-demo` job](https://github.com/JPHutchins/camas/blob/main/.github/workflows/ci.yaml) renders one CI run per mode for visual comparison.
+See the [`OutputMode`](https://github.com/JPHutchins/camas/blob/main/src/camas/effect/status.py) literal and `block_for` doctests for the per-mode behavior. The [`status-modes-demo` job](https://github.com/JPHutchins/camas/blob/main/.github/workflows/ci.yaml) renders one CI run per mode for visual comparison.
 
 For per-leaf visibility in the PR Checks panel, add the `GitHubChecks` effect alongside `Status` (opt-in extra: `camas[github_checks]`). Each leaf task becomes its own check run, so reviewers see `lint` / `mypy` / `pytest` pass-or-fail individually instead of one monolithic log.
 

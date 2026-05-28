@@ -31,13 +31,18 @@ from .traversal import flatten_leaves, subtree_leaf_indices
 
 
 def subprocess_env(merged: dict[str, str]) -> dict[str, str]:
-	"""Inject env for leaf subprocesses: PYTHONUNBUFFERED so Python tools stream
-	stdout line-by-line into the pipe, plus FORCE_COLOR/CLICOLOR_FORCE unless
-	NO_COLOR is set (which also strips them)."""
-	base = merged | {"PYTHONUNBUFFERED": "1"}
+	"""Inject env for leaf subprocesses: ``PYTHONUNBUFFERED=1`` so Python tools
+	stream stdout line-by-line into the pipe, plus ``FORCE_COLOR``/``CLICOLOR_FORCE``
+	unless ``NO_COLOR`` is set (which also strips them).
+
+	``merged`` (parent env + ``Task.env``) takes precedence over the injected
+	defaults — so a user who explicitly sets ``PYTHONUNBUFFERED=0`` via
+	``Task.env`` (or in the parent shell) keeps buffered output.
+	"""
+	base = {"PYTHONUNBUFFERED": "1"} | merged
 	if "NO_COLOR" in base:
 		return {k: v for k, v in base.items() if k not in {"FORCE_COLOR", "CLICOLOR_FORCE"}}
-	return base | {"FORCE_COLOR": "1", "CLICOLOR_FORCE": "1"}
+	return {"FORCE_COLOR": "1", "CLICOLOR_FORCE": "1"} | base
 
 
 async def run_cmd(task: Task, leaf_index: int, dispatch: EventSink) -> TaskResult:
