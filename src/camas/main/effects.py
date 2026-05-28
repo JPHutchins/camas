@@ -138,7 +138,8 @@ def signature_fields(cls: Any) -> list[tuple[str, Any, Any, Any]]:
 		try:
 			sig = inspect.signature(cls)
 		except (ValueError, TypeError):
-			return []
+			from_src = signature_fields_from_source(cls)
+			return from_src if from_src is not None else []
 	from_inspect: list[tuple[str, Any, Any, Any]] = [
 		(
 			p.name,

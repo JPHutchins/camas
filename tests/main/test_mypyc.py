@@ -232,6 +232,25 @@ def test_resolve_in_namespace_falls_back_to_string() -> None:
 	assert resolve_in_namespace(node, {}) == "undefined_name_xyz"
 
 
+def test_signature_fields_falls_back_when_inspect_signature_raises(
+	monkeypatch: pytest.MonkeyPatch,
+) -> None:
+	"""When ``inspect.signature`` raises (the mypyc fingerprint for compiled
+	classes whose ``__init__`` is a C function with no inspectable signature),
+	``signature_fields`` falls through to the source-parse path."""
+	import inspect as _inspect
+
+	from camas.effect.summary import Summary
+
+	def boom(*_a: object, **_kw: object) -> _inspect.Signature:
+		raise ValueError("no signature")
+
+	monkeypatch.setattr(_inspect, "signature", boom)
+	out = signature_fields(Summary)
+	annot = next(annot for n, _, annot, _ in out if n == "options")
+	assert "SummaryOptions" in str(annot)
+
+
 def test_signature_fields_namedtuple_unresolvable_hints(
 	monkeypatch: pytest.MonkeyPatch,
 ) -> None:
