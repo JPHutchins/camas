@@ -31,14 +31,7 @@ from .traversal import flatten_leaves, subtree_leaf_indices
 
 
 def subprocess_env(merged: dict[str, str]) -> dict[str, str]:
-	"""Inject env for leaf subprocesses: ``PYTHONUNBUFFERED=1`` so Python tools
-	stream stdout line-by-line into the pipe, plus ``FORCE_COLOR``/``CLICOLOR_FORCE``
-	unless ``NO_COLOR`` is set (which also strips them).
-
-	``merged`` (parent env + ``Task.env``) takes precedence over the injected
-	defaults — so a user who explicitly sets ``PYTHONUNBUFFERED=0`` via
-	``Task.env`` (or in the parent shell) keeps buffered output.
-	"""
+	"""Leaf-subprocess env: defaults merged underneath ``merged``; ``NO_COLOR`` strips color forces."""
 	base = {"PYTHONUNBUFFERED": "1"} | merged
 	if "NO_COLOR" in base:
 		return {k: v for k, v in base.items() if k not in {"FORCE_COLOR", "CLICOLOR_FORCE"}}
