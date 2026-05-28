@@ -34,7 +34,7 @@ def test_signature_fields_from_source_regular_class() -> None:
 	assert name == "options"
 	assert "SummaryOptions" in str(annot)
 	assert SummaryOptions.__name__ in str(annot)
-	assert default is None
+	assert default == SummaryOptions()
 
 
 def test_signature_fields_from_source_module_not_loaded() -> None:

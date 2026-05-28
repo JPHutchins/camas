@@ -82,7 +82,7 @@ jobs:
 
       - run: |
           uv run --extra github_checks camas matrix --effects='(
-            Status(),
+            Status(StatusOptions(output_mode="github")),
             GitHubChecks(GitHubChecksOptions(
               sha="${{ github.event.pull_request.head.sha || github.sha }}",
             )),

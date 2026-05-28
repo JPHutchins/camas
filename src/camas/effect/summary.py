@@ -96,8 +96,8 @@ class Summary:
 	produces garbage. End-state output matches ``Termtree``'s final frame.
 	"""
 
-	def __init__(self, options: SummaryOptions | None = None) -> None:
-		self.options: Final = options if options is not None else SummaryOptions()
+	def __init__(self, options: SummaryOptions = SummaryOptions()) -> None:
+		self.options: Final = options
 
 	async def setup(self, task: TaskNode) -> SummaryContext:
 		match self.options.term_width:
