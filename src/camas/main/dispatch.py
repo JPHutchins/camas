@@ -32,7 +32,7 @@ from .format import (
 	print_task_trees,
 	print_tree,
 )
-from .parser import RESERVED_FLAGS, build_parser
+from .parser import RESERVED_FLAGS, build_parser, default_effects_expr, reconstruct
 from .state import EMPTY_STATE, LoadErr, LoadOk, TasksState
 from .tasks import load_tasks, load_tasks_from_py, name_scope_bindings, name_scope_effects
 
@@ -110,20 +110,20 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 		case LoadErr() as err:
 			# No per-task matrix axes to augment; parse strictly so typos in
 			# flags surface instead of being silently consumed.
-			args = parser.parse_args(split.head)
-			if args.list or args.tree:
+			cli = reconstruct(parser.parse_args(split.head))
+			if cli.list_ or cli.tree:
 				print(format_load_error_hint(err.source, err.exception))
 				sys.exit(0)
-			if args.effects == "":
+			if cli.effects == "":
 				print_available_effects({})
 				sys.exit(0)
 			exit_for_load_err(err)
 
 		case LoadOk(tasks=tasks, source=source, scope_effects=scope_effects):
-			args, _leftover = parser.parse_known_args(split.head)
+			peek = reconstruct(parser.parse_known_args(split.head)[0])
 			augmented_axes: dict[str, tuple[str, ...]] = {}
-			if isinstance(args.expression, str) and args.expression in tasks:
-				for name, values in matrix_axes(tasks[args.expression]).items():
+			if isinstance(peek.expression, str) and peek.expression in tasks:
+				for name, values in matrix_axes(tasks[peek.expression]).items():
 					if name.lower() in RESERVED_FLAGS:
 						continue
 					parser.add_argument(
@@ -135,26 +135,27 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 						help=f"override matrix axis {name!r} (current: {', '.join(values)})",
 					)
 					augmented_axes[name] = values
-			args = parser.parse_args(split.head)
+			namespace = parser.parse_args(split.head)
+			cli = reconstruct(namespace)
 
-			if args.list:
+			if cli.list_:
 				print_task_summary_listing(tasks, source)
 				sys.exit(0)
 
-			if args.tree:
+			if cli.tree:
 				print_task_trees(tasks, source)
 				sys.exit(0)
 
-			if args.check:
+			if cli.check:
 				from .check import run_typecheck_only
 
 				sys.exit(run_typecheck_only(source))
 
-			if args.effects == "":
+			if cli.effects == "":
 				print_available_effects(scope_effects)
 				sys.exit(0)
 
-			if args.expression is None:
+			if cli.expression is None:
 				if tasks:
 					print(parser.format_usage().rstrip())
 					print()
@@ -169,14 +170,15 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 					sys.exit(2)
 				parser.error("task or expression is required (no tasks defined)")
 
+			effects_expr: Final = cli.effects if cli.effects is not None else default_effects_expr()
 			try:
-				effects: Final = parse_effects(args.effects, scope_effects)
+				effects: Final = parse_effects(effects_expr, scope_effects)
 			except ValueError as e:
 				print(f"error: --effects: {e}", file=sys.stderr)
 				sys.exit(2)
 
 			overrides: dict[str, tuple[str, ...]] = {}
-			for raw in args.matrix:
+			for raw in cli.matrix:
 				try:
 					k, v = parse_matrix_kv(raw)
 				except ValueError as e:
@@ -184,7 +186,7 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 					sys.exit(2)
 				overrides[k] = v
 			for axis_name in augmented_axes:
-				val = getattr(args, axis_name, None)
+				val = getattr(namespace, axis_name, None)
 				if val is not None:
 					values = parse_axis_values(val)
 					if not values:
@@ -192,7 +194,7 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 						sys.exit(2)
 					overrides[axis_name] = values
 
-			resolved = dispatch_arg(args.expression, tasks)
+			resolved = dispatch_arg(cli.expression, tasks)
 			if overrides:
 				try:
 					resolved = override_matrix(resolved, overrides)
@@ -208,7 +210,7 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 			except ValueError as e:
 				print(f"error: {e}", file=sys.stderr)
 				sys.exit(2)
-			if args.dry_run:
+			if cli.dry_run:
 				print_tree(task, show_cmd=True)
 				sys.exit(0)
 			sys.exit(asyncio.run(run(task, effects=effects)).returncode)

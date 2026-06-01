@@ -8,7 +8,10 @@ import importlib.metadata
 import os
 import sys
 from collections.abc import Mapping
-from typing import Any, Final
+from typing import Any, Final, NamedTuple
+
+from argtree import arg, from_namespace
+from argtree import build_parser as argtree_build_parser
 
 if sys.version_info >= (3, 11):
 	from typing import assert_never
@@ -52,6 +55,54 @@ def default_effects_expr() -> str:
 	return "(Termtree(),)"
 
 
+class Cli(NamedTuple):
+	"""The ``camas`` command line as an :mod:`argtree` spec — one field per
+	``argparse`` argument, recovered as a typed value by :func:`reconstruct`.
+
+	``effects`` is ``str | None`` rather than carrying the environment-sensitive
+	default directly: a field default is frozen at class-definition time, but the
+	``--effects`` default depends on ``GITHUB_ACTIONS`` *at parse time*, so the
+	resolution is deferred to :func:`camas.main.dispatch` (``None`` ⇒ absent ⇒
+	:func:`default_effects_expr`, ``""`` ⇒ given without a value ⇒ list Effects).
+	"""
+
+	expression: str | None = arg(
+		positional=True,
+		nargs="?",
+		help="name of a defined task, or a camas expression "
+		"(trailing '-- ARGS' append to a Task's command)",
+	)
+	version: bool = arg(
+		"--version",
+		action="version",
+		version=f"camas {importlib.metadata.version('camas')}",
+	)
+	dry_run: bool = arg("--dry-run", help="print the task tree without executing")
+	list_: bool = arg(
+		"--list",
+		help="list all defined tasks and exit (also the default with no args)",
+	)
+	tree: bool = arg("--tree", help="print every defined task's expanded tree and exit")
+	check: bool = arg("--check", help=describe_check_help())
+	effects: str | None = arg(
+		"--effects",
+		nargs="?",
+		const="",
+		help="tuple of Effect instances; pass with no value to list available Effects "
+		"(default: Termtree, or Status('github') when GITHUB_ACTIONS=true)",
+	)
+	matrix: list[str] = arg(
+		"--matrix",
+		action="append",
+		default=[],
+		metavar="KEY=VAL[,VAL...]",
+		help="override a matrix axis (repeatable; e.g. --matrix PY=3.13)",
+	)
+
+
+DESCRIPTION: Final = "Generic parallel/sequential task runner with TUI output."
+
+
 class CamasArgumentParser(argparse.ArgumentParser):
 	"""``ArgumentParser`` whose ``--help`` appends the discovered tasks listing
 	(or load-error hint), the Effects listing, and the Try hint after argparse's
@@ -87,74 +138,46 @@ class CamasArgumentParser(argparse.ArgumentParser):
 def build_parser(state: TasksState = EMPTY_STATE) -> argparse.ArgumentParser:
 	"""Build the CLI argument parser.
 
-	When ``state`` is :class:`LoadOk` with tasks, known task names appear in the
-	positional metavar so the usage line reads like a list of subcommands.
+	The argument surface is declared once on :class:`Cli`; :func:`argtree.build_parser`
+	turns it into a vanilla ``ArgumentParser``, which a :class:`CamasArgumentParser`
+	adopts via argparse's ``parents=`` so the custom ``--help`` (tasks/Effects/Try
+	listings) layers on top. When ``state`` is :class:`LoadOk` with tasks, known task
+	names appear in the positional metavar so the usage line reads like a list of
+	subcommands.
 
 	>>> from camas.core.task import Task
 	>>> from camas.main.state import LoadOk
-	>>> parser = build_parser()
-	>>> parser.parse_args(['Task("echo hi")']).expression
+	>>> reconstruct(build_parser().parse_args(['Task("echo hi")'])).expression
 	'Task("echo hi")'
-	>>> parser.parse_args(["--list"]).list
+	>>> reconstruct(build_parser().parse_args(["--list"])).list_
 	True
 	>>> "task | expression" in build_parser(LoadOk({"all": Task("x")}, None, {})).format_usage()
 	True
 	"""
 	tasks_for_metavar: Mapping[str, TaskNode] = state.tasks if isinstance(state, LoadOk) else {}
+	vanilla: Final = argtree_build_parser(Cli, add_help=False)
 	parser: Final = CamasArgumentParser(
 		prog="camas",
-		description="Generic parallel/sequential task runner with TUI output.",
+		description=DESCRIPTION,
 		formatter_class=argparse.RawDescriptionHelpFormatter,
+		parents=[vanilla],
 	)
 	parser.state = state
-	parser.add_argument(
-		"expression",
-		nargs="?",
-		metavar=expression_metavar(tasks_for_metavar),
-		help="name of a defined task, or a camas expression "
-		"(trailing '-- ARGS' append to a Task's command)",
-	)
-	parser.add_argument(
-		"--version",
-		action="version",
-		version=f"camas {importlib.metadata.version('camas')}",
-	)
-	parser.add_argument(
-		"--dry-run",
-		action="store_true",
-		help="print the task tree without executing",
-	)
-	parser.add_argument(
-		"--list",
-		action="store_true",
-		help="list all defined tasks and exit (also the default with no args)",
-	)
-	parser.add_argument(
-		"--tree",
-		action="store_true",
-		help="print every defined task's expanded tree and exit",
-	)
-	parser.add_argument(
-		"--check",
-		action="store_true",
-		help=describe_check_help(),
-	)
-	parser.add_argument(
-		"--effects",
-		nargs="?",
-		default=default_effects_expr(),
-		const="",
-		help="tuple of Effect instances; pass with no value to list available Effects "
-		"(default: Termtree, or Status('github') when GITHUB_ACTIONS=true)",
-	)
-	parser.add_argument(
-		"--matrix",
-		action="append",
-		default=[],
-		metavar="KEY=VAL[,VAL...]",
-		help="override a matrix axis (repeatable; e.g. --matrix PY=3.13)",
-	)
+	metavar: Final = expression_metavar(tasks_for_metavar)
+	for action in parser._actions:
+		if not action.option_strings:
+			action.metavar = metavar
 	return parser
+
+
+def reconstruct(namespace: argparse.Namespace) -> Cli:
+	"""Rebuild the typed :class:`Cli` from a parsed argparse namespace.
+
+	The dynamically-added per-matrix-axis flags (e.g. ``--PY``) are not part of
+	:class:`Cli`; :func:`argtree.from_namespace` ignores them, and the dispatcher
+	reads them off the raw namespace by their (clean) dest.
+	"""
+	return from_namespace(Cli, namespace)
 
 
 RESERVED_FLAGS: Final = frozenset(

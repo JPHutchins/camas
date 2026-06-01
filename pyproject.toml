@@ -6,10 +6,11 @@ license = "MIT"
 authors = [{ name = "JP Hutchins", email = "jphutchins@gmail.com" }]
 requires-python = ">=3.10"
 dependencies = [
-"exceptiongroup>=1.2,<2; python_version < '3.11'",
-"taskgroup>=0.2,<1; python_version < '3.11'",
-"tomli>=2,<3; python_version < '3.11'",
-"typing_extensions>=4.12,<5; python_version < '3.11'",
+    "argtree>=0.1,<1",
+    "exceptiongroup>=1.2,<2; python_version < '3.11'",
+    "taskgroup>=0.2,<1; python_version < '3.11'",
+    "tomli>=2,<3; python_version < '3.11'",
+    "typing_extensions>=4.12,<5; python_version < '3.11'",
 ]
 dynamic = ["version"]
 keywords = [
@@ -53,6 +54,10 @@ requires = [
 "setuptools>=68",
 "setuptools-scm>=8",
 "mypy[mypyc]>=1.19",
+# argtree backs camas.main.parser's CLI spec; the compiled dispatch.py imports
+# it, so mypy must resolve it in the isolated build env even though parser.py
+# itself stays interpreted (see _main_excluded in setup.py).
+"argtree>=0.1,<1",
 "exceptiongroup>=1.2; python_version < '3.11'",
 "taskgroup>=0.2; python_version < '3.11'",
 "tomli>=2; python_version < '3.11'",
