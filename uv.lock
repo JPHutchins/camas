@@ -22,11 +22,10 @@ wheels = [
 
 [[package]]
 name = "argtree"
-version = "0.1.0"
+version = "0.1.2"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/0c/c1/c2117bad1a43bf6d9f63b654bc2bf1c372b7a645b9a0fd3fcf515bff49b1/argtree-0.1.0.tar.gz", hash = "sha256:5d7cd8724b12455330cf8994542d85e351d4a027bd08a2b8a5cdcaddd4c67bdd", size = 61732, upload-time = "2026-05-31T20:48:39.132Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c4/4b/a19f7b9c404f4a8853036e32448052ea4c4f889ad913d9cee9ff00719b76/argtree-0.1.0-py3-none-any.whl", hash = "sha256:de0b7935f8d0e297e16f0a49a0cfa451720a855954d40467847c5d06421c5f14", size = 16497, upload-time = "2026-05-31T20:48:37.951Z" },
+    { url = "https://files.pythonhosted.org/packages/42/fa/486e161cd6f3aefb99f57672735f02b779ad165d20953f401fcb0ceb4d21/argtree-0.1.2-py3-none-any.whl", hash = "sha256:5d231c541b394d6670b1d26ae77e5aa7888c4bb325150db1de06f4dadf5b3805", size = 20057, upload-time = "2026-06-05T00:19:50.955Z" },
 ]
 
 [[package]]
@@ -92,7 +91,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "argtree", specifier = ">=0.1,<1" },
+    { name = "argtree", specifier = ">=0.1.2,<1" },
     { name = "exceptiongroup", marker = "python_full_version < '3.11'", specifier = ">=1.2,<2" },
     { name = "httpx", marker = "extra == 'all'", specifier = ">=0.28,<1" },
     { name = "httpx", marker = "extra == 'github-checks'", specifier = ">=0.28,<1" },

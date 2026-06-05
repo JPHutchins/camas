@@ -139,11 +139,10 @@ def build_parser(state: TasksState = EMPTY_STATE) -> argparse.ArgumentParser:
 	"""Build the CLI argument parser.
 
 	The argument surface is declared once on :class:`Cli`; :func:`argtree.build_parser`
-	turns it into a vanilla ``ArgumentParser``, which a :class:`CamasArgumentParser`
-	adopts via argparse's ``parents=`` so the custom ``--help`` (tasks/Effects/Try
-	listings) layers on top. When ``state`` is :class:`LoadOk` with tasks, known task
-	names appear in the positional metavar so the usage line reads like a list of
-	subcommands.
+	constructs it straight into a :class:`CamasArgumentParser` (via ``parser_class=``)
+	so the custom ``--help`` (tasks/Effects/Try listings) layers on top. When ``state``
+	is :class:`LoadOk` with tasks, known task names appear in the positional metavar so
+	the usage line reads like a list of subcommands.
 
 	>>> from camas.core.task import Task
 	>>> from camas.main.state import LoadOk
@@ -155,12 +154,12 @@ def build_parser(state: TasksState = EMPTY_STATE) -> argparse.ArgumentParser:
 	True
 	"""
 	tasks_for_metavar: Mapping[str, TaskNode] = state.tasks if isinstance(state, LoadOk) else {}
-	vanilla: Final = argtree_build_parser(Cli, add_help=False)
-	parser: Final = CamasArgumentParser(
+	parser: Final = argtree_build_parser(
+		Cli,
+		parser_class=CamasArgumentParser,
 		prog="camas",
 		description=DESCRIPTION,
 		formatter_class=argparse.RawDescriptionHelpFormatter,
-		parents=[vanilla],
 	)
 	parser.state = state
 	metavar: Final = expression_metavar(tasks_for_metavar)

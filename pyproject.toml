@@ -6,7 +6,7 @@ license = "MIT"
 authors = [{ name = "JP Hutchins", email = "jphutchins@gmail.com" }]
 requires-python = ">=3.10"
 dependencies = [
-    "argtree>=0.1,<1",
+    "argtree>=0.1.2,<1",
     "exceptiongroup>=1.2,<2; python_version < '3.11'",
     "taskgroup>=0.2,<1; python_version < '3.11'",
     "tomli>=2,<3; python_version < '3.11'",
@@ -56,8 +56,9 @@ requires = [
 "mypy[mypyc]>=1.19",
 # argtree backs camas.main.parser's CLI spec; the compiled dispatch.py imports
 # it, so mypy must resolve it in the isolated build env even though parser.py
-# itself stays interpreted (see _main_excluded in setup.py).
-"argtree>=0.1,<1",
+# itself stays interpreted (see _main_excluded in setup.py). >=0.1.2 for the
+# parser_class= kwarg that parser.py uses.
+"argtree>=0.1.2,<1",
 "exceptiongroup>=1.2; python_version < '3.11'",
 "taskgroup>=0.2; python_version < '3.11'",
 "tomli>=2; python_version < '3.11'",
