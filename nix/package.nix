@@ -33,9 +33,11 @@ python3Packages.buildPythonApplication {
     mypy
   ];
 
-  dependencies =
-    lib.optionals (lib.elem "github_checks" extras) [ python3Packages.httpx ]
-    ++ lib.optionals (lib.elem "check" extras) [ python3Packages.ty ];
+  dependencies = [
+    python3Packages.argtree
+  ]
+  ++ lib.optionals (lib.elem "github_checks" extras) [ python3Packages.httpx ]
+  ++ lib.optionals (lib.elem "check" extras) [ python3Packages.ty ];
 
   nativeCheckInputs = with python3Packages; [
     pytestCheckHook

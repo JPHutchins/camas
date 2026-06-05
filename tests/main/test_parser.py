@@ -5,20 +5,20 @@ from __future__ import annotations
 
 import pytest
 
-from camas.main.parser import build_parser
+from camas.main.parser import build_parser, reconstruct
 
 
 def test_parser_has_expression_arg() -> None:
 	parser = build_parser()
-	args = parser.parse_args(['Task("echo hi")'])
-	assert args.expression == 'Task("echo hi")'
-	assert args.dry_run is False
+	cli = reconstruct(parser.parse_args(['Task("echo hi")']))
+	assert cli.expression == 'Task("echo hi")'
+	assert cli.dry_run is False
 
 
 def test_parser_dry_run_flag() -> None:
 	parser = build_parser()
-	args = parser.parse_args(["--dry-run", 'Task("echo hi")'])
-	assert args.dry_run is True
+	cli = reconstruct(parser.parse_args(["--dry-run", 'Task("echo hi")']))
+	assert cli.dry_run is True
 
 
 def test_build_parser_format_help_no_tasks_no_effects(monkeypatch: pytest.MonkeyPatch) -> None:

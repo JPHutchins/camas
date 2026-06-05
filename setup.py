@@ -16,7 +16,9 @@ if use_mypyc:
 	# in the isolated build env, so mypy/mypyc compilation can't resolve it.
 	# check.py and state.py stay interpreted: mypyc's NamedTuple codegen rejects
 	# the built-in ``Exception`` as a field type (KeyError: 'Exception' at import).
-	_main_excluded = {"check.py", "state.py"}
+	# parser.py stays interpreted: its ``Cli`` argtree spec is parsed at runtime
+	# via ``typing.get_type_hints``, which mypyc's annotation erasure defeats.
+	_main_excluded = {"check.py", "state.py", "parser.py"}
 	ext_modules = mypycify(
 		[
 			*(

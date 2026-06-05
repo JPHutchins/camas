@@ -21,6 +21,14 @@ wheels = [
 ]
 
 [[package]]
+name = "argtree"
+version = "0.1.2"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/42/fa/486e161cd6f3aefb99f57672735f02b779ad165d20953f401fcb0ceb4d21/argtree-0.1.2-py3-none-any.whl", hash = "sha256:5d231c541b394d6670b1d26ae77e5aa7888c4bb325150db1de06f4dadf5b3805", size = 20057, upload-time = "2026-06-05T00:19:50.955Z" },
+]
+
+[[package]]
 name = "attrs"
 version = "26.1.0"
 source = { registry = "https://pypi.org/simple" }
@@ -42,6 +50,7 @@ wheels = [
 name = "camas"
 source = { editable = "." }
 dependencies = [
+    { name = "argtree" },
     { name = "exceptiongroup", marker = "python_full_version < '3.11'" },
     { name = "taskgroup", marker = "python_full_version < '3.11'" },
     { name = "tomli", marker = "python_full_version < '3.11'" },
@@ -82,6 +91,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "argtree", specifier = ">=0.1.2,<1" },
     { name = "exceptiongroup", marker = "python_full_version < '3.11'", specifier = ">=1.2,<2" },
     { name = "httpx", marker = "extra == 'all'", specifier = ">=0.28,<1" },
     { name = "httpx", marker = "extra == 'github-checks'", specifier = ">=0.28,<1" },
