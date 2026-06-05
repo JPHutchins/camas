@@ -18,6 +18,24 @@
 
       version = "0.0.0+${self.shortRev or self.dirtyShortRev or "unknown"}";
 
+      # argtree isn't in nixpkgs yet; add it to every python package set so
+      # nix/package.nix can depend on it as plain `python3Packages.argtree`
+      # (the form a future nixpkgs build will use). Drop once it lands upstream.
+      argtreeOverlay = final: prev: {
+        pythonPackagesExtensions = prev.pythonPackagesExtensions ++ [
+          (pyfinal: pyprev: {
+            argtree = pyfinal.callPackage ./nix/argtree.nix { };
+          })
+        ];
+      };
+
+      pkgsFor =
+        system:
+        import nixpkgs {
+          inherit system;
+          overlays = [ argtreeOverlay ];
+        };
+
       mkCamas =
         pkgs: args:
         pkgs.callPackage ./nix/package.nix (
@@ -32,7 +50,7 @@
       packages = forAllSystems (
         system:
         let
-          pkgs = nixpkgs.legacyPackages.${system};
+          pkgs = pkgsFor system;
         in
         {
           default = mkCamas pkgs { };
@@ -104,7 +122,7 @@
                 nativeBuildInputs = [ pkgs.nixfmt ];
               }
               ''
-                nixfmt --check ${./flake.nix} ${./nix/package.nix}
+                nixfmt --check ${./flake.nix} ${./nix/package.nix} ${./nix/argtree.nix}
                 touch $out
               '';
 
