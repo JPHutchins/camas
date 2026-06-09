@@ -1,12 +1,13 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
+"""argv pre-processing: ``--`` passthrough splitting and matrix axis overrides."""
+
 from __future__ import annotations
 
 import shlex
 import sys
-from collections.abc import Sequence
-from typing import Final, NamedTuple
+from typing import TYPE_CHECKING, Final, NamedTuple
 
 if sys.version_info >= (3, 11):
 	from typing import assert_never
@@ -14,6 +15,9 @@ else:  # pragma: no cover
 	from typing_extensions import assert_never
 
 from ..core.task import Parallel, Sequential, Task, TaskNode
+
+if TYPE_CHECKING:
+	from collections.abc import Sequence
 
 
 class SplitArgv(NamedTuple):
@@ -54,6 +58,9 @@ def apply_passthrough(task: TaskNode, args: tuple[str, ...]) -> Task:
 	string commands stay strings (args shell-joined and appended) so dry-run/tree
 	output keeps the user's original quoting.
 
+	Raises:
+		ValueError: if ``task`` is a ``Sequential`` or ``Parallel``.
+
 	>>> apply_passthrough(Task("pytest"), ("-v",))
 	Task(cmd='pytest -v', name=None, env={}, cwd=None)
 	>>> apply_passthrough(Task("git commit -m 'big msg'"), ("--no-verify",))
@@ -82,6 +89,9 @@ def apply_passthrough(task: TaskNode, args: tuple[str, ...]) -> Task:
 
 def parse_matrix_kv(raw: str) -> tuple[str, tuple[str, ...]]:
 	"""Parse ``KEY=VAL[,VAL...]`` into ``(key, values)``.
+
+	Raises:
+		ValueError: on a missing or empty key, or an empty value list.
 
 	>>> parse_matrix_kv("PY=3.13")
 	('PY', ('3.13',))

@@ -6,8 +6,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
-from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 if sys.version_info >= (3, 11):
 	from builtins import BaseExceptionGroup
@@ -40,6 +39,9 @@ from camas.effect.github_checks import (
 	render_body,
 	resolve_config,
 )
+
+if TYPE_CHECKING:
+	from collections.abc import Callable
 
 TS = datetime(2026, 5, 21, 14, 30, 0)
 
@@ -525,7 +527,8 @@ async def test_teardown_fail_on_api_error_raises_exceptiongroup(
 	with pytest.raises(BaseExceptionGroup) as ei:
 		await effect.teardown((Closed(task=bad),))
 	(inner,) = ei.value.exceptions
-	assert isinstance(inner, RuntimeError) and "boom" in str(inner)
+	assert isinstance(inner, RuntimeError)
+	assert "boom" in str(inner)
 
 
 async def test_teardown_logs_errors_without_raising_by_default(

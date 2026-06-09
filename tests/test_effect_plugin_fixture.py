@@ -23,6 +23,7 @@ def _camas(*args: str) -> subprocess.CompletedProcess[str]:
 		text=True,
 		encoding="utf-8",
 		env={**os.environ, "NO_COLOR": "1"},
+		check=False,
 	)
 
 
@@ -34,6 +35,7 @@ def _camas_in(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
 		text=True,
 		encoding="utf-8",
 		env={**os.environ, "NO_COLOR": "1"},
+		check=False,
 	)
 
 
@@ -111,5 +113,6 @@ def test_fixture_typechecks_under_strict_mypy() -> None:
 		cwd=FIXTURE,
 		capture_output=True,
 		text=True,
+		check=False,
 	)
 	assert r.returncode == 0, f"stdout:\n{r.stdout}\nstderr:\n{r.stderr}"

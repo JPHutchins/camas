@@ -27,9 +27,7 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
-from collections.abc import Sequence
 from datetime import datetime, timezone
-from types import ModuleType
 from typing import TYPE_CHECKING, Final, NamedTuple, TypeAlias
 
 if sys.version_info >= (3, 11):
@@ -40,10 +38,14 @@ else:  # pragma: no cover
 	from typing_extensions import assert_never
 
 if TYPE_CHECKING:
+	from collections.abc import Sequence
+	from types import ModuleType
+
 	import httpx
 
+	from ..core.leaf_state import LeafState
+
 from ..core.completion import Completion, Finished, Skipped
-from ..core.leaf_state import LeafState
 from ..core.render import strip_ansi
 from ..core.task import Task, TaskNode, task_label
 from ..core.task_event import (
@@ -128,7 +130,8 @@ class Active(NamedTuple):
 class Closed(NamedTuple):
 	"""All HTTP for this leaf is scheduled (awaited in teardown).
 
-	``task`` is ``None`` when the leaf was Skipped before any Started fired."""
+	``task`` is ``None`` when the leaf was Skipped before any Started fired.
+	"""
 
 	task: asyncio.Task[None] | None
 
@@ -145,7 +148,11 @@ class EffectState(NamedTuple):
 
 
 def require_httpx() -> ModuleType:
-	"""Import httpx lazily; raise with the install hint when the extra is missing."""
+	"""Import httpx lazily; raise with the install hint when the extra is missing.
+
+	Raises:
+		RuntimeError: when the ``camas[github_checks]`` extra is not installed.
+	"""
 	try:
 		import httpx
 	except ImportError as e:
@@ -155,6 +162,10 @@ def require_httpx() -> ModuleType:
 
 def resolve_config(opts: GitHubChecksOptions) -> ResolvedConfig:
 	"""Resolve options + env vars into a fully-specified ResolvedConfig.
+
+	Raises:
+		RuntimeError: when token, repository, or sha is unset, or repository
+			is not ``owner/repo``.
 
 	>>> resolve_config(GitHubChecksOptions(token="t", repository="o/r", sha="s")).repo
 	'r'
@@ -257,13 +268,14 @@ _FENCE_OVERHEAD: Final = len("```\n\n```")
 
 
 def render_body(task: Task, tail: bytes, completion: Completion | None) -> tuple[str, str, str]:
-	"""Return ``(title, summary, text)`` for the check-run output object.
+	r"""Return ``(title, summary, text)`` for the check-run output object.
 
 	ANSI escape sequences are stripped from ``tail`` — GitHub renders the
 	output text as plain text in a fenced code block, so escapes would
-	otherwise appear as literal ``\\x1b[...m`` noise. ``text`` is clamped to
+	otherwise appear as literal ``\x1b[...m`` noise. ``text`` is clamped to
 	``OUTPUT_TEXT_LIMIT`` characters so an over-eager ``tail_bytes`` setting
-	can't exceed GitHub's 65535-char ``output.text`` cap."""
+	can't exceed GitHub's 65535-char ``output.text`` cap.
+	"""
 	cmd_str = task.cmd if isinstance(task.cmd, str) else " ".join(task.cmd)
 	decoded = strip_ansi(tail.decode("utf-8", errors="replace")) if tail else ""
 	if len(decoded) > OUTPUT_TEXT_LIMIT - _FENCE_OVERHEAD:
@@ -302,7 +314,8 @@ async def post_check_run(
 
 	``external_id`` is a stable identifier per leaf (derived from name_prefix +
 	task_label) — lets integrators correlate check_runs back to camas leaves
-	via the API even when names collide."""
+	via the API even when names collide.
+	"""
 	response = await http.post(
 		f"https://{GH_API_HOST}/repos/{cfg.owner}/{cfg.repo}/check-runs",
 		json={
@@ -368,7 +381,8 @@ async def post_then_cancel(
 ) -> None:
 	"""Teardown path for Active leaves whose event stream was truncated:
 	wait for POST, then PATCH ``conclusion="cancelled"`` so the check
-	doesn't linger ``in_progress`` in the GH UI."""
+	doesn't linger ``in_progress`` in the GH UI.
+	"""
 	await post_then_patch(
 		http,
 		cfg,
@@ -387,7 +401,8 @@ def started_to_active(state: EffectState, task: Task) -> Active:
 
 	Creates the POST task; the returned Active holds the task handle, so the
 	ctx itself is what keeps the task referenced (the runtime stores ctxs in
-	ctx_grid for the duration of the run)."""
+	ctx_grid for the duration of the run).
+	"""
 	name = build_name(state.cfg.name_prefix, task)
 	return Active(
 		post_task=asyncio.create_task(
@@ -415,7 +430,8 @@ def completed_to_closed(
 	"""Pure: build the next ctx for a CompletedEvent on an Active leaf.
 
 	Spawns the wrap task that awaits the prior POST and PATCHes the result.
-	The wrap task is stored in the returned Closed."""
+	The wrap task is stored in the returned Closed.
+	"""
 	return Closed(
 		task=asyncio.create_task(
 			post_then_patch(
@@ -444,7 +460,8 @@ def pipelines_from_ctxs(
 
 	The cancel pipelines for Active leaves are created here, not held on the
 	effect; their refs live in the returned tuple until ``teardown`` awaits
-	them."""
+	them.
+	"""
 	return tuple(extracted for ctx in ctxs if (extracted := pipeline_of(state, ctx)) is not None)
 
 

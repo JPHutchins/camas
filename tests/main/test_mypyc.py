@@ -6,13 +6,15 @@ from __future__ import annotations
 import ast
 import sys
 import types
-from pathlib import Path
-from typing import NamedTuple
-
-import pytest
+from typing import TYPE_CHECKING, NamedTuple
 
 from camas.main.effects import signature_fields
 from camas.main.mypyc import MISSING, resolve_in_namespace, signature_fields_from_source
+
+if TYPE_CHECKING:
+	from pathlib import Path
+
+	import pytest
 
 
 def test_signature_fields_from_source_namedtuple() -> None:
@@ -134,8 +136,10 @@ def test_signature_fields_from_source_with_required_arg(
 	out = signature_fields_from_source(C)
 	assert out is not None
 	(must_have, optional) = out
-	assert must_have[0] == "must_have" and must_have[3] is MISSING
-	assert optional[0] == "optional" and optional[3] == "x"
+	assert must_have[0] == "must_have"
+	assert must_have[3] is MISSING
+	assert optional[0] == "optional"
+	assert optional[3] == "x"
 
 
 def test_signature_fields_falls_back_for_compiled_namedtuple(

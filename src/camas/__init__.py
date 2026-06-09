@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
-"""camas — parallel and sequential task-tree runner.
+r"""camas — parallel and sequential task-tree runner.
 
 Define your task tree in ``tasks.py``. ``camas <name>`` runs a task by
 name, ``camas --list`` enumerates them, ``camas --help`` shows
@@ -66,7 +66,7 @@ task's stdout so the leaf's output is verifiable from the run record;
 
 	>>> with tempfile.TemporaryDirectory() as tmp:
 	...     camas = make_camas(tmp)
-	...     _ = (Path(tmp) / "tasks.py").write_text(dedent('''\\
+	...     _ = (Path(tmp) / "tasks.py").write_text(dedent('''\
 	...         from camas import Task
 	...         hello = Task(("python", "-c", "print('hello world')"))
 	...     '''))
@@ -90,7 +90,7 @@ the dispatched task's command:
 	>>> with tempfile.TemporaryDirectory() as tmp:
 	...     camas = make_camas(tmp)
 	...     (Path(tmp) / "subdir").mkdir()
-	...     _ = (Path(tmp) / "tasks.py").write_text(dedent('''\\
+	...     _ = (Path(tmp) / "tasks.py").write_text(dedent('''\
 	...         from pathlib import Path
 	...         from camas import Parallel, Sequential, Task
 	...
@@ -134,7 +134,7 @@ than executed, and the camas process exits non-zero:
 
 	>>> with tempfile.TemporaryDirectory() as tmp:
 	...     camas = make_camas(tmp)
-	...     _ = (Path(tmp) / "tasks.py").write_text(dedent('''\\
+	...     _ = (Path(tmp) / "tasks.py").write_text(dedent('''\
 	...         from camas import Sequential, Task
 	...         pipeline = Sequential(
 	...             Task(("python", "-c", "raise SystemExit(2)"), name="boom"),
@@ -156,7 +156,7 @@ documents the matrix override flag:
 
 	>>> with tempfile.TemporaryDirectory() as tmp:
 	...     camas = make_camas(tmp)
-	...     _ = (Path(tmp) / "tasks.py").write_text(dedent('''\\
+	...     _ = (Path(tmp) / "tasks.py").write_text(dedent('''\
 	...         from camas import Parallel, Task
 	...         greet = Parallel(
 	...             Task(("python", "-c", "print('hello, {NAME}')")),
@@ -183,7 +183,7 @@ axes:
 
 	>>> with tempfile.TemporaryDirectory() as tmp:
 	...     camas = make_camas(tmp)
-	...     _ = (Path(tmp) / "tasks.py").write_text(dedent('''\\
+	...     _ = (Path(tmp) / "tasks.py").write_text(dedent('''\
 	...         from camas import Parallel, Task
 	...         meet = Parallel(
 	...             Task(("python", "-c", "print('hi {NAME1}, meet {NAME2}')")),
@@ -233,7 +233,7 @@ report and the streaming per-task lines:
 
 	>>> with tempfile.TemporaryDirectory() as tmp:
 	...     camas = make_camas(tmp)
-	...     _ = (Path(tmp) / "tasks.py").write_text(dedent('''\\
+	...     _ = (Path(tmp) / "tasks.py").write_text(dedent('''\
 	...         from collections.abc import Sequence
 	...         from camas import Effect, Parallel, Task
 	...         from camas.core.leaf_state import LeafState

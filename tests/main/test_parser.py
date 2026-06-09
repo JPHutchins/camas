@@ -3,9 +3,14 @@
 
 from __future__ import annotations
 
-import pytest
+from typing import TYPE_CHECKING
 
 from camas.main.parser import build_parser
+
+if TYPE_CHECKING:
+	from collections.abc import Mapping
+
+	import pytest
 
 
 def test_parser_has_expression_arg() -> None:
@@ -22,7 +27,6 @@ def test_parser_dry_run_flag() -> None:
 
 
 def test_build_parser_format_help_no_tasks_no_effects(monkeypatch: pytest.MonkeyPatch) -> None:
-	from collections.abc import Mapping
 	from typing import Any
 
 	from camas.main import effects as effects_mod

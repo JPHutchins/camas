@@ -1,23 +1,22 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
+"""argparse construction: help is generated from the loaded tasks and effects."""
+
 from __future__ import annotations
 
 import argparse
 import importlib.metadata
 import os
 import sys
-from collections.abc import Mapping
-from typing import Any, Final
+from typing import TYPE_CHECKING, Any, Final
 
 if sys.version_info >= (3, 11):
 	from typing import assert_never
 else:  # pragma: no cover
 	from typing_extensions import assert_never
 
-from ..core.effect import Effect
 from ..core.render import color_on
-from ..core.task import TaskNode
 from .check import describe_check_help
 from .format import (
 	format_available_effects,
@@ -27,6 +26,12 @@ from .format import (
 	format_try_hint,
 )
 from .state import EMPTY_STATE, LoadErr, LoadOk, TasksState
+
+if TYPE_CHECKING:
+	from collections.abc import Mapping
+
+	from ..core.effect import Effect
+	from ..core.task import TaskNode
 
 
 def default_effects_expr() -> str:

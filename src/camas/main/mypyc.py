@@ -12,9 +12,11 @@ signatures the help formatter needs.
 from __future__ import annotations
 
 import ast
-from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Final
+from typing import TYPE_CHECKING, Any, Final
+
+if TYPE_CHECKING:
+	from collections.abc import Mapping
 
 MISSING: Final = object()
 
@@ -85,9 +87,10 @@ def signature_fields_from_source(cls: Any) -> list[tuple[str, Any, Any, Any]] | 
 def resolve_in_namespace(node: ast.expr, ns: Mapping[str, Any]) -> Any:
 	"""Evaluate an AST expression in ``ns`` (the source module's globals).
 	Falls back to the unparsed string when evaluation fails — typically a
-	forward reference to a name not yet bound when the source is read."""
+	forward reference to a name not yet bound when the source is read.
+	"""
 	src = ast.unparse(node)
 	try:
-		return eval(src, dict(ns))  # noqa: S307 — evaluating our own annotations
-	except Exception:  # noqa: BLE001
+		return eval(src, dict(ns))  # evaluating our own annotations
+	except Exception:
 		return src

@@ -3,16 +3,19 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
 from camas import Parallel, Task
-from camas.core.effect import Effect
-from camas.core.task import TaskNode
 from camas.main.dispatch import dispatch
 from camas.main.state import LoadOk
+
+if TYPE_CHECKING:
+	from collections.abc import Mapping
+
+	from camas.core.effect import Effect
+	from camas.core.task import TaskNode
 
 
 def _state(tasks: Mapping[str, TaskNode]) -> LoadOk:

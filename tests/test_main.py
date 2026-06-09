@@ -20,6 +20,7 @@ def test_help(tmp_path: Path) -> None:
 		capture_output=True,
 		text=True,
 		encoding="utf-8",
+		check=False,
 	)
 	assert result.returncode == 0
 	assert "expression" in result.stdout
@@ -32,6 +33,7 @@ def test_version(tmp_path: Path) -> None:
 		capture_output=True,
 		text=True,
 		encoding="utf-8",
+		check=False,
 	)
 	assert result.returncode == 0
 	assert "camas" in result.stdout
@@ -49,6 +51,7 @@ def test_top_level_help_source_is_local_filesystem_path(tmp_path: Path) -> None:
 		capture_output=True,
 		text=True,
 		encoding="utf-8",
+		check=False,
 	)
 	assert result.returncode == 0
 	assert "Reference:" in result.stdout
@@ -62,9 +65,8 @@ def test_no_args_with_no_tasks_errors(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
 	monkeypatch.chdir(tmp_path)
-	with pytest.raises(SystemExit, match="2"):
-		with patch("sys.argv", ["camas"]):
-			main()
+	with pytest.raises(SystemExit, match="2"), patch("sys.argv", ["camas"]):
+		main()
 	assert "expression is required" in capsys.readouterr().err
 
 
@@ -79,9 +81,8 @@ def test_no_args_with_tasks_lists_them(
 		"ci = Sequential(lint, test)\n"
 	)
 	monkeypatch.chdir(tmp_path)
-	with pytest.raises(SystemExit, match="2"):
-		with patch("sys.argv", ["camas"]):
-			main()
+	with pytest.raises(SystemExit, match="2"), patch("sys.argv", ["camas"]):
+		main()
 	captured = capsys.readouterr()
 	assert "Available tasks from" in captured.out
 	assert "tasks.py" in captured.out
@@ -100,9 +101,8 @@ def test_no_args_with_tasks_includes_reference_block(
 	tasks_py = tmp_path / "tasks.py"
 	tasks_py.write_text("from camas import Task\nlint = Task('ruff check .')\n")
 	monkeypatch.chdir(tmp_path)
-	with pytest.raises(SystemExit, match="2"):
-		with patch("sys.argv", ["camas"]):
-			main()
+	with pytest.raises(SystemExit, match="2"), patch("sys.argv", ["camas"]):
+		main()
 	out = capsys.readouterr().out
 	assert "Reference:" in out
 	assert str(Path(camas_pkg.__file__).parent) in out, out
@@ -119,9 +119,8 @@ def test_list_flag_with_tasks(
 		"both = Parallel(a, b)\n"
 	)
 	monkeypatch.chdir(tmp_path)
-	with pytest.raises(SystemExit, match="0"):
-		with patch("sys.argv", ["camas", "--list"]):
-			main()
+	with pytest.raises(SystemExit, match="0"), patch("sys.argv", ["camas", "--list"]):
+		main()
 	out = capsys.readouterr().out
 	assert "both" in out
 	assert "a | b" in out
@@ -138,9 +137,8 @@ def test_tree_flag_prints_expanded_trees(
 		"both = Parallel(a, b)\n"
 	)
 	monkeypatch.chdir(tmp_path)
-	with pytest.raises(SystemExit, match="0"):
-		with patch("sys.argv", ["camas", "--tree"]):
-			main()
+	with pytest.raises(SystemExit, match="0"), patch("sys.argv", ["camas", "--tree"]):
+		main()
 	out = capsys.readouterr().out
 	assert "Available tasks from" in out
 	assert "echo a" in out
@@ -151,35 +149,41 @@ def test_dispatch_rejects_bad_effects(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
 	monkeypatch.chdir(tmp_path)
-	with pytest.raises(SystemExit, match="2"):
-		with patch("sys.argv", ["camas", "--effects=nope(", 'Task("echo hi")']):
-			main()
+	with (
+		pytest.raises(SystemExit, match="2"),
+		patch("sys.argv", ["camas", "--effects=nope(", 'Task("echo hi")']),
+	):
+		main()
 	assert "--effects" in capsys.readouterr().err
 
 
 def test_dry_run_prints_tree(capsys: pytest.CaptureFixture[str]) -> None:
-	with pytest.raises(SystemExit, match="0"):
-		with patch(
+	with (
+		pytest.raises(SystemExit, match="0"),
+		patch(
 			"sys.argv",
 			["camas", "--dry-run", 'Parallel(Task("echo a"),Task("echo b"))'],
-		):
-			main()
+		),
+	):
+		main()
 	captured = capsys.readouterr()
 	assert "echo a" in captured.out
 	assert "echo b" in captured.out
 
 
 def test_dry_run_matrix(capsys: pytest.CaptureFixture[str]) -> None:
-	with pytest.raises(SystemExit, match="0"):
-		with patch(
+	with (
+		pytest.raises(SystemExit, match="0"),
+		patch(
 			"sys.argv",
 			[
 				"camas",
 				"--dry-run",
 				'Parallel(Task("test {PY}"),matrix={"PY": ("3.12", "3.13")})',
 			],
-		):
-			main()
+		),
+	):
+		main()
 	captured = capsys.readouterr()
 	assert "3.12" in captured.out
 	assert "3.13" in captured.out
@@ -189,9 +193,8 @@ def test_dispatch_effects_no_value_lists(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
 	monkeypatch.chdir(tmp_path)
-	with pytest.raises(SystemExit, match="0"):
-		with patch("sys.argv", ["camas", "--effects"]):
-			main()
+	with pytest.raises(SystemExit, match="0"), patch("sys.argv", ["camas", "--effects"]):
+		main()
 	assert "Available Effects:" in capsys.readouterr().out
 
 
@@ -200,9 +203,8 @@ def test_help_includes_tasks_and_effects(
 ) -> None:
 	(tmp_path / "tasks.py").write_text('from camas import Task\nlint = Task("ruff check .")\n')
 	monkeypatch.chdir(tmp_path)
-	with pytest.raises(SystemExit, match="0"):
-		with patch("sys.argv", ["camas", "--help"]):
-			main()
+	with pytest.raises(SystemExit, match="0"), patch("sys.argv", ["camas", "--help"]):
+		main()
 	out = capsys.readouterr().out
 	assert "Available tasks from" in out
 	assert "lint" in out
@@ -211,26 +213,30 @@ def test_help_includes_tasks_and_effects(
 
 
 def test_successful_execution() -> None:
-	with pytest.raises(SystemExit, match="0"):
-		with patch("sys.argv", ["camas", 'Task(("python", "-c", "pass"), name="ok")']):
-			main()
+	with (
+		pytest.raises(SystemExit, match="0"),
+		patch("sys.argv", ["camas", 'Task(("python", "-c", "pass"), name="ok")']),
+	):
+		main()
 
 
 def test_failed_execution() -> None:
-	with pytest.raises(SystemExit, match="1"):
-		with patch(
-			"sys.argv", ["camas", 'Task(("python", "-c", "raise SystemExit(1)"), name="fail")']
-		):
-			main()
+	with (
+		pytest.raises(SystemExit, match="1"),
+		patch("sys.argv", ["camas", 'Task(("python", "-c", "raise SystemExit(1)"), name="fail")']),
+	):
+		main()
 
 
 def test_passthrough_appended_to_inline_task(capsys: pytest.CaptureFixture[str]) -> None:
-	with pytest.raises(SystemExit, match="0"):
-		with patch(
+	with (
+		pytest.raises(SystemExit, match="0"),
+		patch(
 			"sys.argv",
 			["camas", "--dry-run", 'Task(("python", "-c", "print(1)"))', "--", "extra"],
-		):
-			main()
+		),
+	):
+		main()
 	assert "extra" in capsys.readouterr().out
 
 
@@ -241,11 +247,16 @@ def test_passthrough_to_named_task(
 		"from camas import Task\ntest = Task('pytest')\n",
 	)
 	monkeypatch.chdir(tmp_path)
-	with pytest.raises(SystemExit, match="0"):
-		with patch("sys.argv", ["camas", "--dry-run", "test", "--", "-v", "-k", "x"]):
-			main()
+	with (
+		pytest.raises(SystemExit, match="0"),
+		patch("sys.argv", ["camas", "--dry-run", "test", "--", "-v", "-k", "x"]),
+	):
+		main()
 	out = capsys.readouterr().out
-	assert "pytest" in out and "-v" in out and "-k" in out and "x" in out
+	assert "pytest" in out
+	assert "-v" in out
+	assert "-k" in out
+	assert "x" in out
 
 
 def test_passthrough_rejects_sequential_task(
@@ -255,9 +266,8 @@ def test_passthrough_rejects_sequential_task(
 		"from camas import Sequential, Task\nci = Sequential(Task('a'), Task('b'))\n",
 	)
 	monkeypatch.chdir(tmp_path)
-	with pytest.raises(SystemExit, match="2"):
-		with patch("sys.argv", ["camas", "ci", "--", "-v"]):
-			main()
+	with pytest.raises(SystemExit, match="2"), patch("sys.argv", ["camas", "ci", "--", "-v"]):
+		main()
 	assert "only apply to Task" in capsys.readouterr().err
 
 
@@ -269,9 +279,11 @@ def test_passthrough_help_after_separator_not_consumed(
 		"from camas import Task\ntest = Task(('python', '-c', 'pass'))\n",
 	)
 	monkeypatch.chdir(tmp_path)
-	with pytest.raises(SystemExit, match="0"):
-		with patch("sys.argv", ["camas", "--dry-run", "test", "--", "--help"]):
-			main()
+	with (
+		pytest.raises(SystemExit, match="0"),
+		patch("sys.argv", ["camas", "--dry-run", "test", "--", "--help"]),
+	):
+		main()
 	out = capsys.readouterr().out
 	assert "--help" in out
 	assert "usage:" not in out

@@ -1,15 +1,16 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
+"""Matrix expansion: bind axis values, specialize subtrees, and apply CLI overrides."""
+
 from __future__ import annotations
 
 import functools
 import itertools
 import shlex
 import sys
-from collections.abc import Mapping
 from pathlib import Path
-from typing import Final
+from typing import TYPE_CHECKING, Final
 
 if sys.version_info >= (3, 11):
 	from typing import assert_never
@@ -17,6 +18,9 @@ else:  # pragma: no cover
 	from typing_extensions import assert_never
 
 from .task import MatrixBinding, Parallel, Sequential, Task, TaskNode, VarBinding, task_label
+
+if TYPE_CHECKING:
+	from collections.abc import Mapping
 
 
 def resolve_cmd(cmd: str | tuple[str, ...]) -> tuple[str, ...]:
@@ -148,6 +152,9 @@ def override_matrix(task: TaskNode, overrides: Mapping[str, tuple[str, ...]]) ->
 	"""Return a tree with each ``matrix[k]`` replaced by ``overrides[k]`` everywhere
 	the key appears. Strict on keys: every override must match an axis present in
 	the tree. Permissive on values: any tuple is accepted.
+
+	Raises:
+		ValueError: if an override key matches no matrix axis in the tree.
 
 	>>> override_matrix(Parallel(Task("t"), matrix={"PY": ("3.12", "3.13")}), {"PY": ("3.13",)}).matrix  # type: ignore[union-attr]
 	{'PY': ('3.13',)}

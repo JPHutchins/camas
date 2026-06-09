@@ -1,14 +1,14 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
+"""ANSI primitives and tree-layout rendering shared by the display Effects."""
+
 from __future__ import annotations
 
 import os
 import re
 import sys
-from collections.abc import Iterator, Mapping
-from pathlib import Path
-from typing import Final, NamedTuple, TypeAlias
+from typing import TYPE_CHECKING, Final, NamedTuple, TypeAlias
 
 if sys.version_info >= (3, 11):
 	from typing import assert_never
@@ -18,6 +18,10 @@ else:  # pragma: no cover
 from .leaf_state import ChainLink, LeafInfo
 from .matrix import expand_matrix
 from .task import Parallel, Sequential, Task, TaskNode, task_label
+
+if TYPE_CHECKING:
+	from collections.abc import Iterator, Mapping
+	from pathlib import Path
 
 BOLD: Final = "\033[1m"
 CYAN: Final = "\033[36m"
@@ -42,10 +46,10 @@ ANSI_ESCAPE: Final = re.compile(
 
 
 def strip_ansi(text: str) -> str:
-	"""Remove ANSI escape sequences and ASCII control characters from a string.
+	r"""Remove ANSI escape sequences and ASCII control characters from a string.
 
-	Tab (``\\t``) and newline (``\\n``) are preserved — they're load-bearing for
-	formatted log output. Carriage return (``\\r``), BEL, BS, and other
+	Tab (``\t``) and newline (``\n``) are preserved — they're load-bearing for
+	formatted log output. Carriage return (``\r``), BEL, BS, and other
 	control chars are stripped.
 
 	>>> strip_ansi("\x1b[32mgreen\x1b[0m text")
@@ -54,9 +58,9 @@ def strip_ansi(text: str) -> str:
 	'link text'
 	>>> strip_ansi("no escapes")
 	'no escapes'
-	>>> strip_ansi("line one\\nline two\\tcol")
-	'line one\\nline two\\tcol'
-	>>> strip_ansi("\\r\x1b[2Kprogress")
+	>>> strip_ansi("line one\nline two\tcol")
+	'line one\nline two\tcol'
+	>>> strip_ansi("\r\x1b[2Kprogress")
 	'progress'
 	>>> strip_ansi("\x1b[1mbold\x1b(B\x1b[m done")
 	'bold done'

@@ -5,8 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
-from collections.abc import Sequence
-from typing import NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
 
 import pytest
 
@@ -19,8 +18,12 @@ from camas import Parallel, Sequential, Task
 from camas.core.completion import Skipped
 from camas.core.execution import run
 from camas.core.leaf_state import Completed, LeafState
-from camas.core.task import TaskNode
 from camas.core.task_event import CompletedEvent, StartedEvent, TaskEvent
+
+if TYPE_CHECKING:
+	from collections.abc import Sequence
+
+	from camas.core.task import TaskNode
 
 
 class RecorderCtx(NamedTuple):
@@ -95,7 +98,8 @@ def test_multi_effect_receives_identical_streams() -> None:
 		)
 	)
 
-	assert a.final is not None and b.final is not None
+	assert a.final is not None
+	assert b.final is not None
 	assert a.final == b.final
 	all_events = [e for ctx in a.final for e in ctx.events]
 	assert any(isinstance(e, StartedEvent) for e in all_events)
@@ -145,7 +149,7 @@ def test_sequential_skip_emits_skipped_completed_event() -> None:
 
 
 def test_on_event_exception_surfaces_and_teardown_still_runs() -> None:
-	class Boom(Exception):
+	class BoomError(Exception):
 		pass
 
 	class FailCtx(NamedTuple):
@@ -161,13 +165,13 @@ def test_on_event_exception_surfaces_and_teardown_still_runs() -> None:
 		async def on_event(
 			self, event: TaskEvent, states: Sequence[LeafState], ctx: FailCtx
 		) -> FailCtx:
-			raise Boom("effect crashed")
+			raise BoomError("effect crashed")
 
 		async def teardown(self, ctxs: tuple[FailCtx, ...]) -> None:
 			self.torn_down = True
 
 	failing = FailingOnEvent()
-	with pytest.raises(Boom):
+	with pytest.raises(BoomError):
 		asyncio.run(run(Task(("python", "-c", "pass")), effects=(failing,)))
 	assert failing.torn_down is True
 

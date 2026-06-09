@@ -3,13 +3,9 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any
-
-import pytest
+from typing import TYPE_CHECKING, Any
 
 from camas import Parallel, Sequential, Task
-from camas.core.task import TaskNode
 from camas.main.format import (
 	first_line_doc,
 	format_annotation,
@@ -24,6 +20,14 @@ from camas.main.format import (
 	task_summary,
 )
 from camas.main.mypyc import MISSING
+
+if TYPE_CHECKING:
+	from collections.abc import Mapping
+	from pathlib import Path
+
+	import pytest
+
+	from camas.core.task import TaskNode
 
 
 def test_task_summary_leaf_str_cmd() -> None:
@@ -215,7 +219,6 @@ def test_format_available_effects_no_color() -> None:
 
 
 def test_format_available_effects_empty(monkeypatch: pytest.MonkeyPatch) -> None:
-	from collections.abc import Mapping
 
 	from camas.main import effects as effects_mod
 

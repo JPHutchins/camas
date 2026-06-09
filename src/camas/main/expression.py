@@ -1,13 +1,14 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
+"""AST-evaluate the CLI task-expression mini-language into a task tree."""
+
 from __future__ import annotations
 
 import ast
 import re
 import sys
-from collections.abc import Mapping
-from typing import Final, NamedTuple, cast
+from typing import TYPE_CHECKING, Final, NamedTuple, cast
 
 if sys.version_info >= (3, 11):
 	from typing import assert_never
@@ -15,6 +16,9 @@ else:  # pragma: no cover
 	from typing_extensions import assert_never
 
 from ..core.task import Parallel, Sequential, Task, TaskNode
+
+if TYPE_CHECKING:
+	from collections.abc import Mapping
 
 
 class Ref(NamedTuple):
@@ -136,8 +140,9 @@ def eval_matrix(node: ast.expr | None) -> dict[str, tuple[str, ...]] | None:
 
 def children(elts: list[ast.expr], allow_refs: bool) -> tuple[TaskNode, ...]:
 	"""Evaluate task-position children. ``Ref``s pass through here at the type level
-	via ``cast`` — they're resolved later by ``resolve_refs``."""
-	return cast(tuple[TaskNode, ...], tuple(eval_task_pos(e, allow_refs) for e in elts))
+	via ``cast`` — they're resolved later by ``resolve_refs``.
+	"""
+	return cast("tuple[TaskNode, ...]", tuple(eval_task_pos(e, allow_refs) for e in elts))
 
 
 def eval_task_pos(node: ast.expr, allow_refs: bool) -> TaskNode | Ref:
@@ -171,6 +176,9 @@ def eval_node(
 	allow_refs: bool = False,
 ) -> TaskNode | Ref:
 	"""Walk an AST node and construct the corresponding TaskNode or Ref safely (no eval).
+
+	Raises:
+		ValueError: on names or call shapes outside the expression language.
 
 	>>> import ast
 	>>> eval_node(ast.parse('Task("echo hi")', mode="eval").body)
@@ -265,17 +273,20 @@ def parse_expression(expr: str, tasks: Mapping[str, TaskNode] | None = None) -> 
 
 
 def parse_task_value(raw: str) -> TaskNode | Ref:
-	"""Parse a single pyproject.toml task value. Bare strings become Task(cmd).
+	r"""Parse a single pyproject.toml task value. Bare strings become Task(cmd).
 
 	A leading ``Task``/``Sequential``/``Parallel``/``Ref`` call, ``(``, or ``{`` triggers
 	AST-based parsing — letting users use the fluent ``(a, b)`` (Sequential) and
 	``{a, b}`` (Parallel) literals as well as explicit constructor calls.
 
+	Raises:
+		ValueError: when an expression-like value fails to parse.
+
 	>>> parse_task_value("ruff check .")
 	Task(cmd='ruff check .', name=None, env={}, cwd=None)
 	>>> parse_task_value('Task("pytest")')
 	Task(cmd='pytest', name=None, env={}, cwd=None)
-	>>> parse_task_value("Ref(\\"lint\\")")
+	>>> parse_task_value("Ref(\"lint\")")
 	Ref(name='lint')
 	>>> parse_task_value("(a, b)")
 	Sequential(tasks=(Ref(name='a'), Ref(name='b')), name=None, matrix=None, env={}, cwd=None)
@@ -297,6 +308,9 @@ def resolve_refs(
 	visiting: frozenset[str],
 ) -> TaskNode:
 	"""Recursively substitute Ref(name) with its defined TaskNode. Detects cycles.
+
+	Raises:
+		ValueError: on an unknown ref or a reference cycle.
 
 	>>> resolve_refs(Task("x"), {}, frozenset())
 	Task(cmd='x', name=None, env={}, cwd=None)

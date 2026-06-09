@@ -8,9 +8,9 @@ import inspect
 import pkgutil
 import sys
 import types
-from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pkgutil import ModuleInfo
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -23,6 +23,9 @@ from camas.main.effects import (
 	signature_fields,
 )
 from camas.main.mypyc import MISSING
+
+if TYPE_CHECKING:
+	from collections.abc import Iterator
 
 
 def test_parse_effects_rejects_invalid_syntax() -> None:
@@ -113,7 +116,7 @@ def test_isinstance_effect_branch_in_discovery(monkeypatch: pytest.MonkeyPatch) 
 	from camas.effect.summary import Summary
 
 	plugin = types.ModuleType("camas.effect._test_plugin")
-	setattr(plugin, "my_effect", Summary())
+	setattr(plugin, "my_effect", Summary())  # noqa: B010
 	monkeypatch.setitem(sys.modules, "camas.effect._test_plugin", plugin)
 
 	real_iter = pkgutil.iter_modules

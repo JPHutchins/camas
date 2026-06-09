@@ -1,13 +1,17 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
+"""The ``camas`` console-script entry point."""
+
 from __future__ import annotations
 
-import io
 import sys
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from .dispatch import dispatch, resolve_tasks_source
+
+if TYPE_CHECKING:
+	import io
 
 
 def main() -> None:
@@ -17,7 +21,7 @@ def main() -> None:
 	render the box-drawing characters used in the tree output.
 	"""
 	for stream in (sys.stdout, sys.stderr):
-		cast(io.TextIOWrapper, stream).reconfigure(encoding="utf-8", errors="replace")
+		cast("io.TextIOWrapper", stream).reconfigure(encoding="utf-8", errors="replace")
 	dispatch(*resolve_tasks_source(sys.argv[1:]))
 
 

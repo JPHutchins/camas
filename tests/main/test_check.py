@@ -402,6 +402,7 @@ def _camas(*args: str, cwd: Path) -> subprocess.CompletedProcess[str]:
 		text=True,
 		encoding="utf-8",
 		env={**os.environ, "NO_COLOR": "1"},
+		check=False,
 	)
 
 
@@ -486,9 +487,8 @@ def test_camas_check_via_dispatch_run_cli_path(
 	(tmp_path / "tasks.py").write_text("from camas import Task\nhi = Task('echo hi')\n")
 	scope: dict[str, object] = {"__file__": str(tmp_path / "tasks.py"), "hi": object()}
 	monkeypatch.setattr(check_mod, "run_typecheck", _stub_ok)
-	with pytest.raises(SystemExit, match="0"):
-		with patch("sys.argv", ["tasks.py", "--check"]):
-			run_cli(scope)
+	with pytest.raises(SystemExit, match="0"), patch("sys.argv", ["tasks.py", "--check"]):
+		run_cli(scope)
 
 
 def test_dispatch_check_with_load_error_runs_report_eval_error(
@@ -574,9 +574,8 @@ def test_run_cli_accepts_path_for_file(tmp_path: Path, monkeypatch: pytest.Monke
 	(tmp_path / "tasks.py").write_text("from camas import Task\nhi = Task('echo hi')\n")
 	scope: dict[str, object] = {"__file__": tmp_path / "tasks.py", "hi": object()}
 	monkeypatch.setattr(check_mod, "run_typecheck", _stub_ok)
-	with pytest.raises(SystemExit, match="0"):
-		with patch("sys.argv", ["tasks.py", "--check"]):
-			run_cli(scope)
+	with pytest.raises(SystemExit, match="0"), patch("sys.argv", ["tasks.py", "--check"]):
+		run_cli(scope)
 
 
 def test_empty_state_is_immutable() -> None:
