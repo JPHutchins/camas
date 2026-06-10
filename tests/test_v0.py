@@ -3,10 +3,10 @@
 
 """Pin the ``camas.v0`` contract: the exact export list and re-export identity.
 
-``camas.v0`` is the frozen public surface — names are added, never removed or
-changed. These tests make the freeze mechanical: an accidental addition,
-removal, or re-binding fails here and forces a deliberate edit of
-``V0_CONTRACT``.
+``camas.v0`` is the public surface, semver-zero loose until 1.0 — it may
+change, but only on purpose. These tests make that intent mechanical: an
+accidental addition, removal, or re-binding fails here and forces a
+deliberate edit of ``V0_CONTRACT``.
 """
 
 from __future__ import annotations

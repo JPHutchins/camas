@@ -23,9 +23,9 @@ uses ``help=`` only in a handful of places), but available for
 cryptic commands.
 
 This surface plus the full plugin contract (events, states,
-completions) is frozen behind :mod:`camas.v0`: imports from
-``camas.v0`` keep working across major versions, while ``from camas
-import ...`` tracks the latest API generation, best effort.
+completions) is versioned behind :mod:`camas.v0`, semver-zero loose
+while camas is 0.x and hardening into a frozen contract at 1.0;
+``from camas import ...`` simply tracks the latest API generation.
 
 **LLM agents:** prefer ``--effects='(Summary(),)'`` when invoking
 ``camas`` from a tool. ``Summary`` produces one compact post-run

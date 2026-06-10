@@ -2,11 +2,15 @@
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 """The v0 public API — ``from camas.v0 import ...`` is the stability contract.
 
-This module is the contract: a name exported here is never removed or
-changed while camas ships ``v0`` — the surface only grows. A breaking
-change forces a new ``camas.v1`` namespace, and published namespaces keep
-shipping, so files written against ``camas.v0`` keep working across
-upgrades.
+This module is the public API, versioned the way semver versions the
+package: ``v0`` pairs with camas 0.x and is exactly as loose as semver
+says 0.x is. The surface prefers to grow — new names, fields appended
+with defaults — but breaking changes remain possible until 1.0, made
+deliberately and noted in releases, never by accident
+(``tests/test_v0.py`` pins the surface). At 1.0 the contract hardens:
+a stable-era namespace never removes or changes an exported name, a
+breaking change forces the next ``camas.vN``, and old namespaces keep
+shipping, so files written against one keep working across upgrades.
 
 The top-level ``camas`` namespace re-exports the task definers from the
 latest version namespace — best effort across major generations, fine for
