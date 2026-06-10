@@ -86,6 +86,8 @@ dev = [
 "tomli>=2",
 "typing_extensions>=4.12",
 "httpx>=0.28,<1",
+"jsonschema>=4,<5; python_version < '3.15'",
+"types-jsonschema; python_version < '3.15'",
 ]
 
 [tool.pytest.ini_options]

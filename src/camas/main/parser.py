@@ -124,10 +124,16 @@ def build_parser(state: TasksState = EMPTY_STATE) -> argparse.ArgumentParser:
 		action="version",
 		version=f"camas {importlib.metadata.version('camas')}",
 	)
-	parser.add_argument(
+	preview = parser.add_mutually_exclusive_group()
+	preview.add_argument(
 		"--dry-run",
 		action="store_true",
 		help="print the task tree without executing",
+	)
+	preview.add_argument(
+		"--github-matrix",
+		action="store_true",
+		help="emit GitHub Actions matrix JSON for the task's axes (consume via fromJSON)",
 	)
 	parser.add_argument(
 		"--list",
@@ -163,8 +169,13 @@ def build_parser(state: TasksState = EMPTY_STATE) -> argparse.ArgumentParser:
 
 
 RESERVED_FLAGS: Final = frozenset(
-	{"help", "version", "dry-run", "list", "tree", "check", "effects", "matrix"}
+	{"help", "version", "dry-run", "github-matrix", "list", "tree", "check", "effects", "matrix"}
 )
+
+RESERVED_DESTS: Final = frozenset(f.replace("-", "_") for f in RESERVED_FLAGS)
+"""argparse derives ``dest`` by replacing ``-`` with ``_``; matrix axis names whose
+normalized form collides with a built-in flag's dest must be filtered out (an
+axis literally named ``github_matrix`` would silently overwrite ``args.github_matrix``)."""
 
 
 def expression_metavar(tasks: Mapping[str, TaskNode] | None) -> str:
