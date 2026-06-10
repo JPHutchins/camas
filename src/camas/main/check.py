@@ -116,16 +116,16 @@ def find_typechecker() -> FoundChecker | None:
 
 
 def run_eval(tasks_py: Path) -> EvalResult:
-	"""Execute ``tasks_py`` via :mod:`runpy`; capture any :class:`Exception`.
+	r"""Execute ``tasks_py`` via :mod:`runpy`; capture any :class:`Exception`.
 
 	>>> import tempfile
 	>>> with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
-	...     _ = f.write("x = 1\\n")
+	...     _ = f.write("x = 1\n")
 	...     ok = Path(f.name)
 	>>> isinstance(run_eval(ok), EvalOk)
 	True
 	>>> with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
-	...     _ = f.write("raise ValueError('boom')\\n")
+	...     _ = f.write("raise ValueError('boom')\n")
 	...     bad = Path(f.name)
 	>>> r = run_eval(bad)
 	>>> isinstance(r, EvalErr) and isinstance(r.exception, ValueError)
@@ -166,6 +166,7 @@ def run_typecheck(tasks_py: Path) -> TypeCheckResult:
 		text=True,
 		encoding="utf-8",
 		errors="replace",
+		check=False,
 	)
 	if proc.returncode == 0:
 		return CheckerOk(name=found.name)
@@ -236,7 +237,7 @@ def format_minimal_trace(exc: Exception, tasks_py: Path) -> str:
 
 
 def format_checker_output(result: TypeCheckResult, *, after_trace: bool) -> str:
-	"""Format ``result`` for stderr.
+	r"""Format ``result`` for stderr.
 
 	``after_trace`` flips two behaviours used to merge typechecker output with
 	a preceding eval trace: it prepends a blank-line separator before a
@@ -246,7 +247,7 @@ def format_checker_output(result: TypeCheckResult, *, after_trace: bool) -> str:
 	>>> format_checker_output(CheckerOk(name="ty"), after_trace=False)
 	''
 	>>> format_checker_output(CheckerErr("ty", "msg"), after_trace=True)
-	'\\nty:\\nmsg'
+	'\nty:\nmsg'
 	"""
 	match result:
 		case CheckerErr(name=name, output=out):

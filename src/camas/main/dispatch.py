@@ -1,14 +1,15 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
+"""CLI dispatch: resolve the tasks source, parse argv, then run or print."""
+
 from __future__ import annotations
 
 import ast
 import asyncio
 import sys
-from collections.abc import Mapping
 from pathlib import Path
-from typing import Final
+from typing import TYPE_CHECKING, Final
 
 if sys.version_info >= (3, 11):
 	from typing import assert_never
@@ -18,7 +19,6 @@ else:  # pragma: no cover
 from ..core.execution import run
 from ..core.matrix import matrix_axes, override_matrix
 from ..core.render import color_on
-from ..core.task import TaskNode
 from .argv import apply_passthrough, parse_axis_values, parse_matrix_kv, split_passthrough
 from .effects import parse_effects
 from .expression import parse_expression
@@ -35,6 +35,11 @@ from .format import (
 from .parser import RESERVED_FLAGS, build_parser
 from .state import EMPTY_STATE, LoadErr, LoadOk, TasksState
 from .tasks import load_tasks, load_tasks_from_py, name_scope_bindings, name_scope_effects
+
+if TYPE_CHECKING:
+	from collections.abc import Mapping
+
+	from ..core.task import TaskNode
 
 
 def dispatch_arg(arg: str, tasks: Mapping[str, TaskNode]) -> TaskNode:

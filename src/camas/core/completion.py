@@ -1,10 +1,14 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
+"""Completion outcomes (``Finished`` | ``Skipped``) and the per-run result aggregates."""
+
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import NamedTuple, TypeAlias
+from typing import TYPE_CHECKING, NamedTuple, TypeAlias
+
+if TYPE_CHECKING:
+	from collections.abc import Sequence
 
 
 class Finished(NamedTuple):

@@ -1,13 +1,13 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
+"""Load task definitions from ``[tool.camas.tasks]`` or a ``tasks.py`` scope."""
+
 from __future__ import annotations
 
 import runpy
 import sys
-from collections.abc import Mapping
-from pathlib import Path
-from typing import Any, Final, TypeGuard, cast
+from typing import TYPE_CHECKING, Any, Final, TypeGuard, cast
 
 if sys.version_info >= (3, 11):
 	from typing import assert_never
@@ -20,6 +20,10 @@ else:  # pragma: no cover
 from ..core.effect import Effect
 from ..core.task import Parallel, Sequential, Task, TaskNode
 from .expression import Ref, parse_task_value, resolve_refs
+
+if TYPE_CHECKING:
+	from collections.abc import Mapping
+	from pathlib import Path
 
 
 def find_pyproject(start: Path) -> Path | None:
@@ -65,6 +69,10 @@ def load_tasks(path: Path) -> tuple[dict[str, TaskNode], dict[str, type[Effect[A
 	Returns ``(tasks, scope_effects)``; ``scope_effects`` is always empty for
 	pyproject sources (TOML can't host Python classes) — the pair shape is
 	for symmetry with :func:`load_tasks_from_py`.
+
+	Raises:
+		ValueError: when the table or a task value has the wrong type, or a
+			task fails to parse or resolve.
 	"""
 	parsed: dict[str, Any] = tomllib.loads(path.read_text())
 	raw: Any = dig(dig(dig(parsed, "tool"), "camas"), "tasks")

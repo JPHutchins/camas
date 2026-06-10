@@ -14,13 +14,15 @@ the types without a cycle.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Final, NamedTuple, TypeAlias
+from typing import TYPE_CHECKING, Any, Final, NamedTuple, TypeAlias
 
-from ..core.effect import Effect
-from ..core.task import TaskNode
+if TYPE_CHECKING:
+	from collections.abc import Mapping
+	from pathlib import Path
+
+	from ..core.effect import Effect
+	from ..core.task import TaskNode
 
 
 class LoadOk(NamedTuple):

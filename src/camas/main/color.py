@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
+"""ANSI codes and helpers for CLI output (listings and help, not Effects)."""
+
 from typing import Final
 
 from ..core.render import RESET
@@ -13,7 +15,8 @@ BOLD_YELLOW: Final = "\033[1;33m"
 
 def wrap_ansi(text: str, code: str) -> str:
 	"""Unconditionally wrap ``text`` in ``code``...``RESET``. Callers gate via
-	``maybe_color`` (or by checking ``color_on()`` themselves)."""
+	``maybe_color`` (or by checking ``color_on()`` themselves).
+	"""
 	return f"{code}{text}{RESET}" if text else text
 
 

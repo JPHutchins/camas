@@ -1,13 +1,17 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
+"""Task-tree AST: ``Task`` leaves composed by ``Sequential`` and ``Parallel`` groups."""
+
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import NamedTuple, TypeAlias
+from typing import TYPE_CHECKING, NamedTuple, TypeAlias
+
+if TYPE_CHECKING:
+	from collections.abc import Mapping
 
 
 class VarBinding(NamedTuple):

@@ -1,16 +1,20 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
+"""Discover Effect classes and evaluate the ``--effects`` mini-language."""
+
 from __future__ import annotations
 
 import ast
 import functools
-from collections.abc import Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..core.effect import Effect
 from .expression import format_syntax_error
 from .mypyc import MISSING, signature_fields_from_source
+
+if TYPE_CHECKING:
+	from collections.abc import Mapping
 
 
 @functools.cache
@@ -183,6 +187,10 @@ def parse_effects(
 	``scope_effects`` is a mapping of user-defined Effect classes
 	(typically from a ``tasks.py`` scope) merged with the built-in registry.
 
+	Raises:
+		ValueError: on syntax errors, non-tuple expressions, unknown names,
+			or elements that are not Effect instances.
+
 	>>> [type(e).__name__ for e in parse_effects("(Summary(),)")]
 	['Summary']
 	>>> [type(e).__name__ for e in parse_effects("(Termtree(), Summary())")]
@@ -205,7 +213,11 @@ def parse_effects(
 def eval_value(node: ast.expr, constructors: Mapping[str, Any]) -> Any:
 	"""Evaluate a node in the --effects mini-language. Returns Any since the
 	concrete type depends on the AST shape; ``expect_effect`` validates at the
-	tuple level."""
+	tuple level.
+
+	Raises:
+		ValueError: on syntax outside the mini-language.
+	"""
 	match node:
 		case ast.Constant(value=val):
 			return val

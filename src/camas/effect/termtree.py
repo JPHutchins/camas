@@ -1,7 +1,10 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
+"""Effect: live terminal tree that repaints leaf states in place each frame."""
+
 import asyncio
+import contextlib
 import shutil
 import sys
 import time
@@ -204,9 +207,9 @@ def render_progress_bar(states: Sequence[LeafState], width: int) -> str:
 
 
 def decode_line(line: bytes) -> str:
-	"""Decode a captured output line (stripped of trailing whitespace).
+	r"""Decode a captured output line (stripped of trailing whitespace).
 
-	>>> decode_line(b"hello\\n")
+	>>> decode_line(b"hello\n")
 	'hello'
 	>>> decode_line(b"")
 	''
@@ -215,13 +218,13 @@ def decode_line(line: bytes) -> str:
 
 
 def last_line_display(output: Sequence[bytes]) -> str:
-	"""Decode the final non-empty output line for inline display.
+	r"""Decode the final non-empty output line for inline display.
 
-	>>> last_line_display([b"first\\n", b"last\\n"])
+	>>> last_line_display([b"first\n", b"last\n"])
 	'last'
 	>>> last_line_display([])
 	''
-	>>> last_line_display([b"\\n", b"  \\n"])
+	>>> last_line_display([b"\n", b"  \n"])
 	''
 	"""
 	for line in reversed(output):
@@ -327,11 +330,11 @@ def render_frame(
 	now: datetime,
 	wall_elapsed: float,
 ) -> str:
-	"""Render one positioned frame as an ANSI string, for live animation.
+	r"""Render one positioned frame as an ANSI string, for live animation.
 
-	Starts with CPL (`\\033[NF`) to move the cursor up N lines to column 1,
+	Starts with CPL (`\033[NF`) to move the cursor up N lines to column 1,
 	then writes the frame. Callers must first reserve N+1 rows of vertical
-	space (via `"\\n" * N`) so the frame has room to render inline without
+	space (via `"\n" * N`) so the frame has room to render inline without
 	scrolling the viewport.
 	"""
 	lines: Final = render_lines(rows, states, term_width, display_width, now, wall_elapsed)
@@ -465,10 +468,8 @@ class Termtree:
 		ctx: Final = ctxs[0]  # zuban: ignore[misc] # zuban defies PEP591
 		if ctx.state.tick_task is not None:  # pragma: no branch
 			ctx.state.tick_task.cancel()
-			try:
+			with contextlib.suppress(asyncio.CancelledError):
 				await ctx.state.tick_task
-			except asyncio.CancelledError:
-				pass
 		draw(ctx)
 		sys.stdout.write("\n")
 		sys.stdout.flush()

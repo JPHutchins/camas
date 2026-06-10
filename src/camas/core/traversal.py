@@ -1,11 +1,12 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
+"""Depth-first tree walks and leaf-index bookkeeping."""
+
 from __future__ import annotations
 
 import sys
-from collections.abc import Iterator
-from typing import Final
+from typing import TYPE_CHECKING, Final
 
 if sys.version_info >= (3, 11):
 	from typing import assert_never
@@ -14,6 +15,9 @@ else:  # pragma: no cover
 
 from .leaf_state import ChainLink, LeafInfo
 from .task import Parallel, Sequential, Task, TaskNode
+
+if TYPE_CHECKING:
+	from collections.abc import Iterator
 
 
 def iter_leaves(

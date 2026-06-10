@@ -20,6 +20,7 @@ def _camas(*args: str) -> subprocess.CompletedProcess[str]:
 		text=True,
 		encoding="utf-8",
 		env={**os.environ, "NO_COLOR": "1"},
+		check=False,
 	)
 
 

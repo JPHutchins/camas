@@ -1,16 +1,17 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
+"""Async tree execution: leaves run as subprocesses, events fan out to Effects."""
+
 from __future__ import annotations
 
 import asyncio
 import os
 import sys
 import time
-from collections.abc import Iterable, Sequence
 from datetime import datetime
 from subprocess import STDOUT
-from typing import Any, Final
+from typing import TYPE_CHECKING, Any, Final
 
 if sys.version_info >= (3, 11):
 	from asyncio import TaskGroup
@@ -22,12 +23,16 @@ else:  # pragma: no cover
 	from typing_extensions import assert_never
 
 from .completion import Finished, RunResult, Skipped, TaskResult
-from .effect import Effect, EventSink
 from .leaf_state import LeafState, Waiting, next_state
 from .matrix import expand_matrix, resolve_cmd
 from .task import Parallel, Sequential, Task, TaskNode, task_label
 from .task_event import CompletedEvent, OutputEvent, StartedEvent, TaskEvent
 from .traversal import flatten_leaves, subtree_leaf_indices
+
+if TYPE_CHECKING:
+	from collections.abc import Iterable, Sequence
+
+	from .effect import Effect, EventSink
 
 
 def subprocess_env(merged: dict[str, str]) -> dict[str, str]:
@@ -126,6 +131,10 @@ async def execute(
 
 async def run(task: TaskNode, effects: Sequence[Effect[Any]] = ()) -> RunResult:
 	"""Execute a task tree, dispatching events to every effect.
+
+	Raises:
+		BaseExceptionGroup: every error raised by Effects during setup,
+			on_event, or teardown, collected per phase.
 
 	>>> import asyncio
 	>>> asyncio.run(run(Task(("python", "-c", "pass")))).returncode

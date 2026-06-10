@@ -1,14 +1,18 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
+"""The ``Effect`` protocol: observers over a run's event stream with per-leaf contexts."""
+
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
-from typing import Protocol, TypeAlias, TypeVar, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, TypeAlias, TypeVar, runtime_checkable
 
-from .leaf_state import LeafState
-from .task import TaskNode
 from .task_event import TaskEvent
+
+if TYPE_CHECKING:
+	from .leaf_state import LeafState
+	from .task import TaskNode
 
 EventSink: TypeAlias = Callable[[int, TaskEvent], Awaitable[None]]
 """Per-leaf event dispatcher: await sink(leaf_idx, event)."""

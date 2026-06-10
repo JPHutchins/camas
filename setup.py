@@ -1,6 +1,8 @@
-import glob
+"""Optionally compile the hot modules with mypyc (CAMAS_USE_MYPYC=1)."""
+
 import os
 import sys
+from pathlib import Path
 
 from setuptools import setup
 
@@ -19,15 +21,11 @@ if use_mypyc:
 	_main_excluded = {"check.py", "state.py"}
 	ext_modules = mypycify(
 		[
+			*(str(p) for p in Path("src/camas/main").glob("*.py") if p.name not in _main_excluded),
 			*(
-				p
-				for p in glob.glob("src/camas/main/*.py")
-				if os.path.basename(p) not in _main_excluded
-			),
-			*(
-				p
-				for p in glob.glob("src/camas/effect/[!_]*.py")
-				if os.path.basename(p) != "github_checks.py"
+				str(p)
+				for p in Path("src/camas/effect").glob("[!_]*.py")
+				if p.name != "github_checks.py"
 			),
 		],
 		opt_level="3",

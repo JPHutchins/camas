@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
+"""Effect: silent during the run, then one final tree render at teardown."""
+
 import shutil
 import sys
 import time

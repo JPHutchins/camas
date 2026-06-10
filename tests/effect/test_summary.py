@@ -4,18 +4,21 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
 from datetime import datetime
-from typing import TypeVar
-
-import pytest
+from typing import TYPE_CHECKING, TypeVar
 
 from camas import Parallel, Sequential, Task
 from camas.core.completion import Finished, Skipped
-from camas.core.effect import Effect
 from camas.core.leaf_state import LeafState, Waiting
 from camas.core.task_event import CompletedEvent, StartedEvent, TaskEvent
 from camas.effect.summary import Fixed, Summary, SummaryOptions
+
+if TYPE_CHECKING:
+	from collections.abc import Callable
+
+	import pytest
+
+	from camas.core.effect import Effect
 
 TS = datetime(2026, 5, 21, 14, 30, 0)
 

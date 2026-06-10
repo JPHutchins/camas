@@ -1,26 +1,31 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
+"""Plain-text formatting for task listings, summaries, and load-error hints."""
+
 from __future__ import annotations
 
 import re
 import sys
-from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 if sys.version_info >= (3, 11):
 	from typing import assert_never
 else:  # pragma: no cover
 	from typing_extensions import assert_never
 
-from ..core.effect import Effect
 from ..core.matrix import matrix_axes
 from ..core.render import GREY, RESET, color_on, render_tree_lines
 from ..core.task import Parallel, Sequential, Task, TaskNode
 from .color import BLUE, BOLD_BLUE, BOLD_CYAN, BOLD_YELLOW, maybe_color, wrap_ansi
 from .effects import available_effects, flatten_annotation, signature_fields
 from .mypyc import MISSING
+
+if TYPE_CHECKING:
+	from collections.abc import Mapping
+
+	from ..core.effect import Effect
 
 
 def is_named_ref(node: TaskNode, names: frozenset[str]) -> bool:
@@ -29,7 +34,8 @@ def is_named_ref(node: TaskNode, names: frozenset[str]) -> bool:
 
 def par_child_summary(node: TaskNode, names: frozenset[str]) -> str:
 	"""Render a Parallel child, parenthesising an anonymous Sequential because
-	``,`` binds looser than ``|``."""
+	``,`` binds looser than ``|``.
+	"""
 	rendered = task_summary(node, names, is_root=False)
 	if isinstance(node, Sequential) and not is_named_ref(node, names) and len(node.tasks) > 1:
 		return f"({rendered})"
@@ -209,7 +215,8 @@ def format_matrix_axes_help(axes: Mapping[str, tuple[str, ...]], color: bool) ->
 
 def print_task_help(name: str, task: TaskNode) -> None:
 	"""Print subcommand help for a single task: its expanded tree and any
-	matrix axes the user can override from the CLI."""
+	matrix axes the user can override from the CLI.
+	"""
 	axes = matrix_axes(task)
 	axis_flags = "".join(f" [--{k} VAL[,VAL...]]" for k in axes)
 	print(f"usage: camas {name} [-h] [--dry-run] [--effects EFFECTS]{axis_flags}")
@@ -245,7 +252,8 @@ def format_default(default: Any, color: bool) -> str:
 
 def format_signature(cls: Any, indent: str, color: bool) -> list[str]:
 	"""Render ``cls(field: Type = default, …)`` plus nested signatures of any
-	camas.effect classes appearing in the field annotations."""
+	camas.effect classes appearing in the field annotations.
+	"""
 	import inspect
 
 	fields = signature_fields(cls)
@@ -353,8 +361,4 @@ def print_available_effects(
 
 def first_line_doc(obj: Any) -> str:
 	doc = getattr(obj, "__doc__", None) or ""
-	for line in doc.splitlines():
-		line = line.strip()
-		if line:
-			return line
-	return ""
+	return next((stripped for line in doc.splitlines() if (stripped := line.strip())), "")

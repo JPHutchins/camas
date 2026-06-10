@@ -16,9 +16,7 @@ from __future__ import annotations
 
 import secrets
 import sys
-from collections.abc import Sequence
-from datetime import datetime
-from typing import Final, Literal, NamedTuple, TypeAlias
+from typing import TYPE_CHECKING, Final, Literal, NamedTuple, TypeAlias
 
 if sys.version_info >= (3, 11):
 	from typing import assert_never
@@ -26,7 +24,6 @@ else:  # pragma: no cover
 	from typing_extensions import assert_never
 
 from ..core.completion import Completion, Finished, Skipped
-from ..core.leaf_state import LeafState
 from ..core.render import GREEN, GREY, RED, RESET, VIOLET, strip_ansi
 from ..core.task import Task, TaskNode, task_label
 from ..core.task_event import (
@@ -35,6 +32,12 @@ from ..core.task_event import (
 	StartedEvent,
 	TaskEvent,
 )
+
+if TYPE_CHECKING:
+	from collections.abc import Sequence
+	from datetime import datetime
+
+	from ..core.leaf_state import LeafState
 
 OutputMode: TypeAlias = Literal["quiet", "all", "errors", "stream", "github"]
 
@@ -81,10 +84,10 @@ class Idle(NamedTuple):
 
 
 class Active(NamedTuple):
-	"""Per-leaf ctx: leaf is running.
+	r"""Per-leaf ctx: leaf is running.
 
-	>>> Active(b"hello\\n").output
-	b'hello\\n'
+	>>> Active(b"hello\n").output
+	b'hello\n'
 	"""
 
 	output: bytes
@@ -113,11 +116,12 @@ def cmd_str(task: Task) -> str:
 
 
 def fmt_started(opts: StatusOptions, task: Task, ts: datetime) -> str | None:
-	"""Render the started-line, or ``None`` when ``started_fmt`` is empty.
+	r"""Render the started-line, or ``None`` when ``started_fmt`` is empty.
 
+	>>> from datetime import datetime
 	>>> t0 = datetime(2026, 5, 21, 14, 30, 0, 123000)
 	>>> fmt_started(StatusOptions(), Task("echo hi", name="greet"), t0)
-	'\\x1b[90m[2026-05-21 14:30:00.123]\\x1b[0m \\x1b[95m▶ [greet] started\\x1b[0m'
+	'\x1b[90m[2026-05-21 14:30:00.123]\x1b[0m \x1b[95m▶ [greet] started\x1b[0m'
 	>>> fmt_started(StatusOptions(started_fmt=""), Task("echo hi"), t0) is None
 	True
 	>>> fmt_started(
@@ -134,15 +138,16 @@ def fmt_started(opts: StatusOptions, task: Task, ts: datetime) -> str | None:
 
 
 def fmt_completed(opts: StatusOptions, task: Task, c: Completion, ts: datetime) -> str | None:
-	"""Render the completion line, or ``None`` when the matching template is empty.
+	r"""Render the completion line, or ``None`` when the matching template is empty.
 
+	>>> from datetime import datetime
 	>>> t0 = datetime(2026, 5, 21, 14, 30, 0, 123000)
 	>>> fmt_completed(StatusOptions(), Task("a", name="lint"), Finished(0, 1.5, ()), t0)
-	'\\x1b[90m[2026-05-21 14:30:00.123]\\x1b[0m \\x1b[32m✓ [lint] success\\x1b[0m (1.500s)'
+	'\x1b[90m[2026-05-21 14:30:00.123]\x1b[0m \x1b[32m✓ [lint] success\x1b[0m (1.500s)'
 	>>> fmt_completed(StatusOptions(), Task("a", name="lint"), Finished(2, 0.5, ()), t0)
-	'\\x1b[90m[2026-05-21 14:30:00.123]\\x1b[0m \\x1b[31m✗ [lint] error\\x1b[0m exit=2 (0.500s)'
+	'\x1b[90m[2026-05-21 14:30:00.123]\x1b[0m \x1b[31m✗ [lint] error\x1b[0m exit=2 (0.500s)'
 	>>> fmt_completed(StatusOptions(), Task("a", name="follow"), Skipped(2), t0)
-	'\\x1b[90m[2026-05-21 14:30:00.123]\\x1b[0m \\x1b[90m⏭ [follow] skipped\\x1b[0m (prior rc=2)'
+	'\x1b[90m[2026-05-21 14:30:00.123]\x1b[0m \x1b[90m⏭ [follow] skipped\x1b[0m (prior rc=2)'
 	>>> fmt_completed(
 	...     StatusOptions(finished_fmt=""), Task("a"), Finished(0, 1.0, ()), t0,
 	... ) is None
@@ -171,14 +176,15 @@ def fmt_completed(opts: StatusOptions, task: Task, c: Completion, ts: datetime) 
 
 
 def fmt_output(opts: StatusOptions, task: Task, line: bytes, ts: datetime) -> str | None:
-	"""Render a stream-mode output line (ANSI-stripped, trailing newline removed).
+	r"""Render a stream-mode output line (ANSI-stripped, trailing newline removed).
 
+	>>> from datetime import datetime
 	>>> t0 = datetime(2026, 5, 21, 14, 30, 0, 123000)
-	>>> fmt_output(StatusOptions(), Task("a", name="lint"), b"hello\\n", t0)
-	'\\x1b[90m[2026-05-21 14:30:00.123] · [lint]\\x1b[0m hello'
-	>>> fmt_output(StatusOptions(), Task("a", name="lint"), b"\\x1b[31mred\\x1b[0m\\n", t0)
-	'\\x1b[90m[2026-05-21 14:30:00.123] · [lint]\\x1b[0m red'
-	>>> fmt_output(StatusOptions(output_fmt=""), Task("a"), b"x\\n", t0) is None
+	>>> fmt_output(StatusOptions(), Task("a", name="lint"), b"hello\n", t0)
+	'\x1b[90m[2026-05-21 14:30:00.123] · [lint]\x1b[0m hello'
+	>>> fmt_output(StatusOptions(), Task("a", name="lint"), b"\x1b[31mred\x1b[0m\n", t0)
+	'\x1b[90m[2026-05-21 14:30:00.123] · [lint]\x1b[0m red'
+	>>> fmt_output(StatusOptions(output_fmt=""), Task("a"), b"x\n", t0) is None
 	True
 	"""
 	if not opts.output_fmt:
@@ -193,20 +199,23 @@ def fmt_output(opts: StatusOptions, task: Task, line: bytes, ts: datetime) -> st
 
 
 def _github_safe_title(label: str) -> str:
-	"""Strip newlines/CRs so a ``::group::`` title stays on one line.
+	r"""Strip newlines/CRs so a ``::group::`` title stays on one line.
 
 	>>> _github_safe_title("normal")
 	'normal'
-	>>> _github_safe_title("a\\nb\\rc")
+	>>> _github_safe_title("a\nb\rc")
 	'a b c'
 	"""
 	return label.replace("\r", " ").replace("\n", " ")
 
 
 def _github_stop_token(body: str) -> str:
-	"""Pick a stop-commands token that does not appear as ``::{token}::`` in ``body``.
+	r"""Pick a stop-commands token that does not appear as ``::{token}::`` in ``body``.
 
-	>>> tok = _github_stop_token("plain body\\n")
+	Raises:
+		RuntimeError: if 32 random tokens all collide (practically unreachable).
+
+	>>> tok = _github_stop_token("plain body\n")
 	>>> len(tok) >= 8 and tok.isalnum()
 	True
 	"""
@@ -218,22 +227,22 @@ def _github_stop_token(body: str) -> str:
 
 
 def _format_github_group(title: str, body: str, token: str) -> str:
-	"""Wrap ``body`` in a GitHub ``::group::`` with ``::stop-commands::`` neutralization.
+	r"""Wrap ``body`` in a GitHub ``::group::`` with ``::stop-commands::`` neutralization.
 
 	The stop-commands bracket disables workflow-command parsing for the body
 	so output lines like ``::endgroup::`` or ``::add-mask::`` are emitted
 	verbatim instead of being interpreted by Actions.
 
-	>>> _format_github_group("x", "ok\\n", "T")
-	'::group::x\\n::stop-commands::T\\nok\\n::T::\\n::endgroup::\\n'
-	>>> _format_github_group("x", "::endgroup::\\n", "T")
-	'::group::x\\n::stop-commands::T\\n::endgroup::\\n::T::\\n::endgroup::\\n'
+	>>> _format_github_group("x", "ok\n", "T")
+	'::group::x\n::stop-commands::T\nok\n::T::\n::endgroup::\n'
+	>>> _format_github_group("x", "::endgroup::\n", "T")
+	'::group::x\n::stop-commands::T\n::endgroup::\n::T::\n::endgroup::\n'
 	"""
 	return f"::group::{title}\n::stop-commands::{token}\n{body}::{token}::\n::endgroup::\n"
 
 
 def block_for(mode: OutputMode, task: Task, c: Completion, output: bytes) -> str:
-	"""Return the completion-block text for ``mode`` (empty when nothing to dump).
+	r"""Return the completion-block text for ``mode`` (empty when nothing to dump).
 
 	Output bytes are passed through verbatim — ANSI escapes are preserved so
 	downstream viewers (terminals, Actions logs) render the original colors.
@@ -242,22 +251,22 @@ def block_for(mode: OutputMode, task: Task, c: Completion, output: bytes) -> str
 	``::endgroup::`` or ``::warning::``) cannot prematurely close the group
 	or inject workflow commands.
 
-	>>> block_for("all", Task("a", name="x"), Finished(0, 1.0, ()), b"ok\\n")
-	'ok\\n'
-	>>> block_for("all", Task("a"), Finished(0, 1.0, ()), b"\\x1b[32mgreen\\x1b[0m\\n")
-	'\\x1b[32mgreen\\x1b[0m\\n'
-	>>> block_for("errors", Task("a", name="x"), Finished(0, 1.0, ()), b"ok\\n")
+	>>> block_for("all", Task("a", name="x"), Finished(0, 1.0, ()), b"ok\n")
+	'ok\n'
+	>>> block_for("all", Task("a"), Finished(0, 1.0, ()), b"\x1b[32mgreen\x1b[0m\n")
+	'\x1b[32mgreen\x1b[0m\n'
+	>>> block_for("errors", Task("a", name="x"), Finished(0, 1.0, ()), b"ok\n")
 	''
-	>>> block_for("errors", Task("a", name="x"), Finished(2, 1.0, ()), b"boom\\n")
-	'boom\\n'
-	>>> out = block_for("github", Task("a", name="x"), Finished(0, 1.0, ()), b"ok\\n")
-	>>> out.startswith("::group::x\\n::stop-commands::") and out.endswith("::\\n::endgroup::\\n")
+	>>> block_for("errors", Task("a", name="x"), Finished(2, 1.0, ()), b"boom\n")
+	'boom\n'
+	>>> out = block_for("github", Task("a", name="x"), Finished(0, 1.0, ()), b"ok\n")
+	>>> out.startswith("::group::x\n::stop-commands::") and out.endswith("::\n::endgroup::\n")
 	True
-	>>> "ok\\n" in out
+	>>> "ok\n" in out
 	True
-	>>> block_for("quiet", Task("a"), Finished(0, 1.0, ()), b"ok\\n")
+	>>> block_for("quiet", Task("a"), Finished(0, 1.0, ()), b"ok\n")
 	''
-	>>> block_for("stream", Task("a"), Finished(0, 1.0, ()), b"ok\\n")
+	>>> block_for("stream", Task("a"), Finished(0, 1.0, ()), b"ok\n")
 	''
 	>>> block_for("all", Task("a"), Finished(0, 1.0, ()), b"")
 	''
@@ -294,7 +303,7 @@ def emit(text: str) -> None:
 
 
 def emit_line(text: str | None) -> None:
-	"""Write ``text`` + ``\\n`` when non-empty; no-op for ``None``/empty string."""
+	r"""Write ``text`` + ``\n`` when non-empty; no-op for ``None``/empty string."""
 	if not text:
 		return
 	emit(text + "\n")
@@ -320,6 +329,11 @@ def next_ctx_on_output(mode: OutputMode, ctx: Active, line: bytes) -> Active:
 
 
 class Status:
+	"""Line-oriented status Effect; behavior is selected by ``StatusOptions.output_mode``.
+
+	See the module docstring for how it relates to ``Termtree`` and ``Summary``.
+	"""
+
 	def __init__(self, options: StatusOptions = StatusOptions()) -> None:
 		self.options: Final = options
 
