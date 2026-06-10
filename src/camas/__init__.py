@@ -22,6 +22,11 @@ rarely needed (the cmd or tree usually self-documents; this codebase
 uses ``help=`` only in a handful of places), but available for
 cryptic commands.
 
+This surface plus the full plugin contract (events, states,
+completions) is frozen behind :mod:`camas.v0`: imports from
+``camas.v0`` keep working across major versions, while ``from camas
+import ...`` tracks the latest API generation, best effort.
+
 **LLM agents:** prefer ``--effects='(Summary(),)'`` when invoking
 ``camas`` from a tool. ``Summary`` produces one compact post-run
 report; the default ``Termtree`` is a live, redrawing animation that
@@ -235,10 +240,8 @@ report and the streaming per-task lines:
 	...     camas = make_camas(tmp)
 	...     _ = (Path(tmp) / "tasks.py").write_text(dedent('''\
 	...         from collections.abc import Sequence
-	...         from camas import Effect, Parallel, Task
-	...         from camas.core.leaf_state import LeafState
-	...         from camas.core.task import TaskNode
-	...         from camas.core.task_event import OutputEvent, TaskEvent
+	...         from camas import Parallel, Task
+	...         from camas.v0 import Effect, LeafState, OutputEvent, TaskEvent, TaskNode
 	...
 	...         class Loud(Effect[None]):
 	...             async def setup(self, task: TaskNode) -> None: ...
@@ -289,7 +292,7 @@ Effect protocol details: :class:`camas.core.effect.Effect`. Per-task
 help: ``camas <task> --help``.
 """
 
-from .core.effect import Effect as Effect
-from .core.task import Parallel as Parallel
-from .core.task import Sequential as Sequential
-from .core.task import Task as Task
+from .v0 import Effect as Effect
+from .v0 import Parallel as Parallel
+from .v0 import Sequential as Sequential
+from .v0 import Task as Task

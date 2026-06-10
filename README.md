@@ -137,6 +137,14 @@ The downside is that fork PRs get a read-only `GITHUB_TOKEN` from GitHub and can
 
 Define an `Effect` in your `tasks.py` and it's discovered automatically — usable by name from `--effects` and listed under `camas --effects`. See [examples/effect-plugin/](https://github.com/JPHutchins/camas/tree/main/tests/fixtures/effect-plugin) for a typed `Tail` effect that streams per-task output as it arrives.
 
+## Versioning
+
+`from camas.v0 import ...` is the stability contract. A name exported by [`camas.v0`](https://github.com/JPHutchins/camas/blob/main/src/camas/v0/__init__.py) is never removed or changed while v0 ships — the namespace only grows. A breaking change forces a new `camas.v1`, and published namespaces keep shipping, so a `tasks.py` or effect plugin written against `camas.v0` keeps working across upgrades.
+
+The top-level surface (`from camas import Task, Sequential, Parallel, Effect`) re-exports the definers from the latest version namespace — best effort across major generations, fine for a `tasks.py` that lives next to its dev environment. The full plugin contract — `TaskNode`, the `TaskEvent` stream, `LeafState`, `Completion` — lives only in `camas.v0`. Everything else (`camas.core.*`, `camas.main.*`) is internal: importable today, but with no stability promise.
+
+To pin a minimum camas *feature* level, use your dependency declaration (`camas>=0.x` in `pyproject.toml`, or PEP 723 inline metadata) — the import path covers API shape; the package pin covers feature availability.
+
 ## Reference
 
 - **[examples/](https://github.com/JPHutchins/camas/tree/main/tests/fixtures)** — full project layouts under test coverage. The canonical reference for how to structure `tasks.py`, use `[tool.camas.tasks]` in `pyproject.toml`, drive a matrix from `.python-version`, or scope a 2-axis matrix from the CLI.
