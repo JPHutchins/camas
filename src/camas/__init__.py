@@ -288,7 +288,7 @@ And advanced granular lib usage:
 
 https://github.com/JPHutchins/camas/blob/main/tests
 
-Effect protocol details: :class:`camas.core.effect.Effect`. Per-task
+Effect protocol details: :class:`camas.v0.effect.Effect`. Per-task
 help: ``camas <task> --help``.
 """
 

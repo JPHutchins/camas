@@ -1,25 +1,33 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""Per-leaf state machine: ``Waiting`` → ``Running`` → ``Completed``."""
+"""Engine-side leaf machinery: tree-position display info and the pure state
+machine over the :mod:`camas.v0` states.
+"""
 
 from __future__ import annotations
 
 import sys
-from typing import TYPE_CHECKING, NamedTuple, TypeAlias
+from typing import TYPE_CHECKING, NamedTuple
 
 if sys.version_info >= (3, 11):
 	from typing import assert_never
 else:  # pragma: no cover
 	from typing_extensions import assert_never
 
-from .task_event import CompletedEvent, OutputEvent, StartedEvent, TaskEvent
+from ..v0 import (
+	Completed,
+	CompletedEvent,
+	LeafState,
+	OutputEvent,
+	Running,
+	StartedEvent,
+	TaskEvent,
+	Waiting,
+)
 
 if TYPE_CHECKING:
-	from datetime import datetime
-
-	from .completion import Completion
-	from .task import Task
+	from ..v0 import Task
 
 
 class ChainLink(NamedTuple):
@@ -38,7 +46,7 @@ class ChainLink(NamedTuple):
 class LeafInfo(NamedTuple):
 	"""A leaf's position in the task tree: depth and chain of ancestor links.
 
-	>>> from camas.core.task import Task
+	>>> from camas.v0 import Task
 	>>> LeafInfo(Task("echo hi"), 0, ())
 	LeafInfo(task=Task(cmd='echo hi', name=None, env={}, cwd=None), depth=0, is_last_chain=())
 	"""
@@ -48,58 +56,11 @@ class LeafInfo(NamedTuple):
 	is_last_chain: tuple[ChainLink, ...]
 
 
-class Waiting(NamedTuple):
-	"""Leaf state: task has not started yet.
-
-	>>> from camas.core.task import Task
-	>>> Waiting(Task("echo hi"))
-	Waiting(task=Task(cmd='echo hi', name=None, env={}, cwd=None))
-	"""
-
-	task: Task
-
-
-class Running(NamedTuple):
-	"""Leaf state: task is currently executing.
-
-	>>> from datetime import datetime
-	>>> from camas.core.task import Task
-	>>> Running(Task("echo hi"), datetime(2026, 1, 1, 12, 0, 0), b"output")
-	Running(task=Task(cmd='echo hi', name=None, env={}, cwd=None), start_time=datetime.datetime(2026, 1, 1, 12, 0), last_line=b'output')
-	"""
-
-	task: Task
-	start_time: datetime
-	last_line: bytes
-
-
-class Completed(NamedTuple):
-	"""Leaf state: task is done — either ran to exit or was skipped.
-
-	The `completion` payload is a sum type: pattern-match on `Finished(...)`
-	vs `Skipped(...)` to distinguish the two cases.
-
-	>>> from camas.core.completion import Finished, Skipped
-	>>> from camas.core.task import Task
-	>>> Completed(Task("echo hi"), Finished(0, 0.5, ()))
-	Completed(task=Task(cmd='echo hi', name=None, env={}, cwd=None), completion=Finished(returncode=0, elapsed=0.5, output=()))
-	>>> Completed(Task("echo hi"), Skipped(1))
-	Completed(task=Task(cmd='echo hi', name=None, env={}, cwd=None), completion=Skipped(returncode=1))
-	"""
-
-	task: Task
-	completion: Completion
-
-
-LeafState: TypeAlias = Waiting | Running | Completed
-
-
 def next_state(state: LeafState, event: TaskEvent) -> LeafState:
 	"""Pure state machine: apply a TaskEvent to a LeafState to produce the next state.
 
 	>>> from datetime import datetime
-	>>> from camas.core.completion import Finished, Skipped
-	>>> from camas.core.task import Task
+	>>> from camas.v0 import Finished, Skipped, Task
 	>>> t = Task("echo hi")
 	>>> t0 = datetime(2026, 1, 1, 12, 0, 0)
 	>>> t1 = datetime(2026, 1, 1, 12, 0, 1)

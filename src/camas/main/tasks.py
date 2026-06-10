@@ -17,8 +17,7 @@ else:  # pragma: no cover
 	import tomli as tomllib
 	from typing_extensions import assert_never
 
-from ..core.effect import Effect
-from ..core.task import Parallel, Sequential, Task, TaskNode
+from ..v0 import Effect, Parallel, Sequential, Task, TaskNode
 from .expression import Ref, parse_task_value, resolve_refs
 
 if TYPE_CHECKING:

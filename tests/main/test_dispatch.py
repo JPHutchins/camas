@@ -14,8 +14,7 @@ from camas.main.state import LoadOk
 if TYPE_CHECKING:
 	from collections.abc import Mapping
 
-	from camas.core.effect import Effect
-	from camas.core.task import TaskNode
+	from camas.v0 import Effect, TaskNode
 
 
 def _state(tasks: Mapping[str, TaskNode]) -> LoadOk:

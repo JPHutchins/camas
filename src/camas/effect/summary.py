@@ -16,11 +16,9 @@ if sys.version_info >= (3, 11):
 else:
 	from typing_extensions import assert_never
 
-from ..core.leaf_state import LeafState, Waiting
 from ..core.render import DisplayRow, flatten_rows
-from ..core.task import TaskNode
-from ..core.task_event import TaskEvent
 from ..core.traversal import flatten_leaves
+from ..v0 import LeafState, TaskEvent, TaskNode, Waiting
 from .termtree import (
 	CLEAR_LINE,
 	STATUS_COL_WIDTH,

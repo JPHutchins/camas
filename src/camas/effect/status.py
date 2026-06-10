@@ -23,21 +23,25 @@ if sys.version_info >= (3, 11):
 else:  # pragma: no cover
 	from typing_extensions import assert_never
 
-from ..core.completion import Completion, Finished, Skipped
 from ..core.render import GREEN, GREY, RED, RESET, VIOLET, strip_ansi
-from ..core.task import Task, TaskNode, task_label
-from ..core.task_event import (
+from ..core.task import task_label
+from ..v0 import (
 	CompletedEvent,
+	Completion,
+	Finished,
 	OutputEvent,
+	Skipped,
 	StartedEvent,
+	Task,
 	TaskEvent,
+	TaskNode,
 )
 
 if TYPE_CHECKING:
 	from collections.abc import Sequence
 	from datetime import datetime
 
-	from ..core.leaf_state import LeafState
+	from ..v0 import LeafState
 
 OutputMode: TypeAlias = Literal["quiet", "all", "errors", "stream", "github"]
 

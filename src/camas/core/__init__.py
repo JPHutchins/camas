@@ -1,3 +1,5 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
-"""Engine: the task-tree AST, matrix expansion, async execution, and the Effect protocol."""
+"""Engine: matrix expansion, async execution, traversal, and rendering over the
+:mod:`camas.v0` types.
+"""

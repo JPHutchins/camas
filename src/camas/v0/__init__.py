@@ -12,6 +12,10 @@ a stable-era namespace never removes or changes an exported name, a
 breaking change forces the next ``camas.vN``, and old namespaces keep
 shipping, so files written against one keep working across upgrades.
 
+The types are *defined* in this package — ``camas.core`` and
+``camas.main`` consume them, never the reverse — so the diff history of
+``src/camas/v0/`` is the complete history of the public API.
+
 The top-level ``camas`` namespace re-exports the task definers from the
 latest version namespace — best effort across major generations, fine for
 a ``tasks.py`` that lives next to its dev environment. Import from
@@ -20,9 +24,12 @@ distribute, a standalone task file, a ``tasks.py`` nobody revisits.
 
 The task definers:
 
-	>>> from camas.v0 import Parallel, Sequential, Task
-	>>> Sequential(Task("ruff check ."), Parallel("mypy .", "pytest"), name="ci").name
+	>>> from camas.v0 import Group, Parallel, Sequential, Task
+	>>> ci = Sequential(Task("ruff check ."), Parallel("mypy .", "pytest"), name="ci")
+	>>> ci.name
 	'ci'
+	>>> isinstance(ci, Group)
+	True
 
 The plugin contract — what an :class:`Effect` observes: the
 :data:`TaskNode` tree it was set up with, the :data:`TaskEvent` stream
@@ -42,24 +49,25 @@ leaf's :data:`Completion` (``Finished | Skipped``):
 	>>> verdict(Skipped(1))
 	'skipped (prior rc=1)'
 
-See :class:`camas.core.effect.Effect` for the protocol an effect
+See :class:`camas.v0.effect.Effect` for the protocol an effect
 implements, and ``examples/effect-plugin/`` for a complete out-of-tree
 example.
 """
 
-from ..core.completion import Completion as Completion
-from ..core.completion import Finished as Finished
-from ..core.completion import Skipped as Skipped
-from ..core.effect import Effect as Effect
-from ..core.leaf_state import Completed as Completed
-from ..core.leaf_state import LeafState as LeafState
-from ..core.leaf_state import Running as Running
-from ..core.leaf_state import Waiting as Waiting
-from ..core.task import Parallel as Parallel
-from ..core.task import Sequential as Sequential
-from ..core.task import Task as Task
-from ..core.task import TaskNode as TaskNode
-from ..core.task_event import CompletedEvent as CompletedEvent
-from ..core.task_event import OutputEvent as OutputEvent
-from ..core.task_event import StartedEvent as StartedEvent
-from ..core.task_event import TaskEvent as TaskEvent
+from .completion import Completion as Completion
+from .completion import Finished as Finished
+from .completion import Skipped as Skipped
+from .effect import Effect as Effect
+from .leaf_state import Completed as Completed
+from .leaf_state import LeafState as LeafState
+from .leaf_state import Running as Running
+from .leaf_state import Waiting as Waiting
+from .task import Group as Group
+from .task import Parallel as Parallel
+from .task import Sequential as Sequential
+from .task import Task as Task
+from .task import TaskNode as TaskNode
+from .task_event import CompletedEvent as CompletedEvent
+from .task_event import OutputEvent as OutputEvent
+from .task_event import StartedEvent as StartedEvent
+from .task_event import TaskEvent as TaskEvent

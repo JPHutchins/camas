@@ -11,11 +11,12 @@ deliberate edit of ``V0_CONTRACT``.
 
 from __future__ import annotations
 
+from types import ModuleType
 from typing import Final
 
 import camas
 import camas.v0
-from camas.core import completion, effect, leaf_state, task, task_event
+from camas.v0 import completion, effect, leaf_state, task, task_event
 
 V0_CONTRACT: Final = frozenset(
 	{
@@ -24,6 +25,7 @@ V0_CONTRACT: Final = frozenset(
 		"Completion",
 		"Effect",
 		"Finished",
+		"Group",
 		"LeafState",
 		"OutputEvent",
 		"Parallel",
@@ -40,11 +42,15 @@ V0_CONTRACT: Final = frozenset(
 
 
 def test_v0_exports_exactly_the_contract() -> None:
-	assert {name for name in vars(camas.v0) if not name.startswith("_")} == V0_CONTRACT
+	assert {
+		name
+		for name, val in vars(camas.v0).items()
+		if not name.startswith("_") and not isinstance(val, ModuleType)
+	} == V0_CONTRACT
 
 
-def test_v0_reexports_the_canonical_objects() -> None:
-	canonical = {
+def test_v0_reexports_the_defining_modules() -> None:
+	defined = {
 		**vars(completion),
 		**vars(effect),
 		**vars(leaf_state),
@@ -52,7 +58,14 @@ def test_v0_reexports_the_canonical_objects() -> None:
 		**vars(task_event),
 	}
 	for name in sorted(V0_CONTRACT):
-		assert vars(camas.v0)[name] is canonical[name], name
+		assert vars(camas.v0)[name] is defined[name], name
+
+
+def test_contract_types_are_defined_in_v0() -> None:
+	for name in sorted(V0_CONTRACT):
+		obj = vars(camas.v0)[name]
+		if isinstance(obj, type):
+			assert obj.__module__.startswith("camas.v0."), f"{name}: {obj.__module__}"
 
 
 def test_top_level_definers_are_v0_objects() -> None:

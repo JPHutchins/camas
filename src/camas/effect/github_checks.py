@@ -43,16 +43,20 @@ if TYPE_CHECKING:
 
 	import httpx
 
-	from ..core.leaf_state import LeafState
+	from ..v0 import LeafState
 
-from ..core.completion import Completion, Finished, Skipped
 from ..core.render import strip_ansi
-from ..core.task import Task, TaskNode, task_label
-from ..core.task_event import (
+from ..core.task import task_label
+from ..v0 import (
 	CompletedEvent,
+	Completion,
+	Finished,
 	OutputEvent,
+	Skipped,
 	StartedEvent,
+	Task,
 	TaskEvent,
+	TaskNode,
 )
 
 GH_API_VERSION: Final = "2022-11-28"

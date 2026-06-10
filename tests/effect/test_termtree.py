@@ -12,10 +12,7 @@ from typing import TYPE_CHECKING, TypeVar
 import pytest
 
 from camas import Parallel, Sequential, Task
-from camas.core.completion import Finished, Skipped
-from camas.core.leaf_state import Completed, LeafState, Running, Waiting
 from camas.core.render import flatten_rows, strip_ansi
-from camas.core.task_event import CompletedEvent, OutputEvent, StartedEvent, TaskEvent
 from camas.effect.termtree import (
 	STATUS_COL_WIDTH,
 	Termtree,
@@ -25,9 +22,21 @@ from camas.effect.termtree import (
 	render_frame,
 	render_lines,
 )
+from camas.v0 import (
+	Completed,
+	CompletedEvent,
+	Finished,
+	LeafState,
+	OutputEvent,
+	Running,
+	Skipped,
+	StartedEvent,
+	TaskEvent,
+	Waiting,
+)
 
 if TYPE_CHECKING:
-	from camas.core.effect import Effect
+	from camas.v0 import Effect
 
 TS = datetime(2026, 5, 21, 14, 30, 0)
 
