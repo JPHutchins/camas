@@ -126,6 +126,17 @@ def test_parse_explicit_none_name() -> None:
 	assert parse_expression('Task("hi", name=None)') == Task("hi", name=None)
 
 
+def test_parse_expression_threads_cwd_and_help() -> None:
+	"""``cwd`` / ``help`` reach the constructors from the expression mini-language,
+	at parity with ``tasks.py`` — not silently dropped (#25)."""
+	assert parse_expression('Task("cargo build", cwd="src-tauri", help="Build")') == Task(
+		"cargo build", cwd="src-tauri", help="Build"
+	)
+	assert parse_expression('Parallel(Task("a"), cwd="work", help="grp")') == Parallel(
+		Task("a"), cwd="work", help="grp"
+	)
+
+
 # Parser-side fluent syntax: strings inside literals and the README one-liner.
 
 
