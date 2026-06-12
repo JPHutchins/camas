@@ -7,8 +7,8 @@ import pytest
 
 from camas import Parallel, Sequential, Task
 from camas.core.leaf_state import ChainLink
+from camas.core.render import print_tree
 from camas.core.traversal import flatten_leaves
-from camas.effect.termtree import print_tree
 
 
 def test_single_cmd() -> None:

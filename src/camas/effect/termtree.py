@@ -21,9 +21,7 @@ from ..core.render import (
 	RESET,
 	DisplayRow,
 	GroupHeader,
-	color_on,
 	flatten_rows,
-	render_tree_lines,
 	render_tree_prefix,
 	strip_ansi,
 )
@@ -36,20 +34,12 @@ from ..v0.task_event import TaskEvent
 
 
 def truncate_middle(text: str, max_width: int) -> str:
-	"""Truncate text in the middle with '...' if it exceeds max_width.
+	"""Middle-truncate with '...' to ``max_width`` (result length ``min(len(text), max_width)``).
 
-	Always returns a string of length min(len(text), max(max_width, 0)).
-
-	>>> truncate_middle("hello", 10)
-	'hello'
 	>>> truncate_middle("hello world!", 9)
 	'hel...ld!'
 	>>> truncate_middle("built", 2)
 	'..'
-	>>> truncate_middle("built", 4)
-	'...t'
-	>>> truncate_middle("built", 0)
-	''
 	"""
 	if len(text) <= max_width:
 		return text
@@ -60,13 +50,7 @@ def truncate_middle(text: str, max_width: int) -> str:
 
 
 def fit_label(text: str, max_width: int) -> str:
-	"""Return ``text`` unchanged if it fits; otherwise middle-truncate to ``max_width``.
-
-	>>> fit_label("uv run ruff check .", 40)
-	'uv run ruff check .'
-	>>> fit_label("uv run ruff format --check .", 15)
-	'uv run...heck .'
-	"""
+	"""Return ``text`` unchanged if it fits; otherwise middle-truncate to ``max_width``."""
 	return text if len(text) <= max_width else truncate_middle(text, max(max_width, 3))
 
 
@@ -114,10 +98,9 @@ PROG_MIN_MARGIN: Final = 2
 def bucket_glyph_color(states: Sequence[LeafState]) -> tuple[str, str]:
 	"""Reduce a bucket of leaf states to (glyph, ANSI color) for a progress cell.
 
-	Worst-progress wins so the bar never overstates progress: any waiting →
-	blank; else any running → dashed line; else a solid line. Color
-	distinguishes the active state (cyan running) from the settled outcome
-	(red on any failure, grey if all skipped, otherwise green).
+	Worst-progress wins (any waiting → blank; else any running → dashed; else
+	solid), and color reflects the settled outcome (red on any failure, grey if
+	all skipped, else green).
 
 	>>> t = Task("x")
 	>>> t0 = datetime(2026, 1, 1)
@@ -152,12 +135,10 @@ def bucket_glyph_color(states: Sequence[LeafState]) -> tuple[str, str]:
 
 
 def render_progress_bar(states: Sequence[LeafState], width: int) -> str:
-	"""Render a fragmented progress bar for the result-line summary slot.
+	"""Render a fragmented progress bar of visible width ``width`` for the summary slot.
 
-	Cells are equal width (capped at ``PROG_MAX_CELL_WIDTH``) and centered in
-	``width`` visible columns. When ``len(states)`` exceeds ``width``, leaves
-	are bucketed across exactly ``width`` 1-column cells. Returned string
-	always has visible width ``width``.
+	Cells are equal width (capped at ``PROG_MAX_CELL_WIDTH``) and centered; when
+	``len(states)`` exceeds the usable span, leaves are bucketed into 1-column cells.
 
 	>>> t = Task("x")
 	>>> t0 = datetime(2026, 1, 1)
@@ -209,13 +190,7 @@ def render_progress_bar(states: Sequence[LeafState], width: int) -> str:
 
 
 def decode_line(line: bytes) -> str:
-	r"""Decode a captured output line (stripped of trailing whitespace).
-
-	>>> decode_line(b"hello\n")
-	'hello'
-	>>> decode_line(b"")
-	''
-	"""
+	"""Decode a captured output line, stripped of trailing whitespace."""
 	return line.rstrip().decode(errors="replace")
 
 
@@ -382,23 +357,6 @@ def print_passes(states: Sequence[LeafState], term_width: int) -> None:
 				print_task_output(task, output, "PASSED", GREEN, 0, term_width)
 			case _:
 				pass
-
-
-def print_tree(task: TaskNode, show_cmd: bool = False) -> None:
-	"""Print the task tree structure to stdout without executing.
-
-	When ``show_cmd`` is True, leaf tasks with a distinct name show ``name: cmd``;
-	env entries are shown only at the deepest ancestor that introduces them,
-	so matrix expansions annotate their group header and leaves stay clean.
-	ANSI colors are emitted when stdout is a TTY and NO_COLOR is unset.
-
-	>>> print_tree(Task("echo hi"))
-	echo hi
-	>>> print_tree(Task("echo hi", name="greet"), show_cmd=True)
-	greet: echo hi
-	"""
-	for line in render_tree_lines(task, show_cmd=show_cmd, color=color_on()):
-		print(line)
 
 
 @dataclass

@@ -18,7 +18,7 @@ else:  # pragma: no cover
 
 from ..core.execution import run
 from ..core.matrix import matrix_axes, override_matrix
-from ..core.render import color_on
+from ..core.render import color_on, print_tree
 from .argv import apply_passthrough, parse_axis_values, parse_matrix_kv, split_passthrough
 from .effects import parse_effects
 from .expression import parse_expression
@@ -30,7 +30,6 @@ from .format import (
 	print_task_help,
 	print_task_summary_listing,
 	print_task_trees,
-	print_tree,
 )
 from .parser import RESERVED_FLAGS, build_parser
 from .state import EMPTY_STATE, LoadErr, LoadOk, TasksState
@@ -59,16 +58,9 @@ def dispatch_arg(arg: str, tasks: Mapping[str, TaskNode]) -> TaskNode:
 
 
 def run_cli(scope: Mapping[str, object]) -> None:
-	"""Collect Task/Sequential/Parallel values from ``scope`` and dispatch CLI args.
-
-	Names starting with ``_`` and non-task values are skipped. Public bindings
-	are named by their binding identifier, and nested references inherit those
-	names (consistent with ``[tool.camas.tasks]`` in pyproject.toml). Public
-	Effect classes in ``scope`` are also picked up so users can pass them to
-	``--effects`` and see them under ``camas --effects``.
-
-	Propagates ``scope['__file__']`` as the :class:`LoadOk` ``source`` so per-task
-	help cites the right path and ``--check`` knows which file to type-check.
+	"""Collect Task/Sequential/Parallel and Effect bindings from ``scope`` (skipping
+	``_``-prefixed names) and dispatch CLI args, citing ``scope['__file__']`` as the
+	:class:`LoadOk` ``source`` for per-task help and ``--check``.
 	"""
 	source_obj = scope.get("__file__")
 	source = Path(source_obj) if isinstance(source_obj, (str, Path)) else None
@@ -222,21 +214,6 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 			assert_never(state)
 
 
-def looks_like_py_file(arg: str) -> bool:
-	"""A CLI arg refers to a tasks file when it ends in ``.py`` — expressions always end in ``)``.
-
-	>>> looks_like_py_file("tasks.py")
-	True
-	>>> looks_like_py_file("./sub/my_tasks.py")
-	True
-	>>> looks_like_py_file('Task("pytest x.py")')
-	False
-	>>> looks_like_py_file("lint")
-	False
-	"""
-	return arg.endswith(".py")
-
-
 def _load_py(path: Path) -> TasksState:
 	"""Evaluate ``path`` and return a :class:`LoadOk` / :class:`LoadErr`."""
 	try:
@@ -255,7 +232,7 @@ def resolve_tasks_source(argv: list[str]) -> tuple[TasksState, list[str]]:
 	the walk going. A ``tasks.py`` whose evaluation raises returns
 	:class:`LoadErr` so meta operations (``--help``, ``--list``) still work.
 	"""
-	if argv and looks_like_py_file(argv[0]):
+	if argv and argv[0].endswith(".py"):
 		path = Path(argv[0])
 		if not path.is_file():
 			print(f"error: {path}: no such file", file=sys.stderr)

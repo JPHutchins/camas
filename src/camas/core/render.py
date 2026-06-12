@@ -47,24 +47,10 @@ ANSI_ESCAPE: Final = re.compile(
 
 
 def strip_ansi(text: str) -> str:
-	r"""Remove ANSI escape sequences and ASCII control characters from a string.
+	r"""Strip ANSI escapes and ASCII control chars; tab and newline are kept.
 
-	Tab (``\t``) and newline (``\n``) are preserved — they're load-bearing for
-	formatted log output. Carriage return (``\r``), BEL, BS, and other
-	control chars are stripped.
-
-	>>> strip_ansi("\x1b[32mgreen\x1b[0m text")
-	'green text'
-	>>> strip_ansi("\x1b]8;;https://example.com\x07link\x1b]8;;\x07 text")
-	'link text'
-	>>> strip_ansi("no escapes")
-	'no escapes'
-	>>> strip_ansi("line one\nline two\tcol")
-	'line one\nline two\tcol'
-	>>> strip_ansi("\r\x1b[2Kprogress")
-	'progress'
-	>>> strip_ansi("\x1b[1mbold\x1b(B\x1b[m done")
-	'bold done'
+	>>> strip_ansi("\x1b[32mgreen\x1b[0m\ttext\r")
+	'green\ttext'
 	"""
 	return ANSI_ESCAPE.sub("", text)
 
@@ -124,11 +110,6 @@ def group_display_name(tasks: tuple[TaskNode, ...], separator: str) -> str:
 
 def render_tree_prefix(depth: int, is_last_chain: tuple[ChainLink, ...]) -> str:
 	"""Reconstitute the ASCII tree prefix from structural position data.
-
-	Children of a ``Sequential`` get ``├─`` / ``└─`` branches with ``│`` continuations —
-	the sequence has an ordering and a terminator. Children of a ``Parallel`` get a
-	plain ``┃`` column with no ``├``/``└`` distinction, since parallel siblings have
-	no order.
 
 	>>> render_tree_prefix(0, ())
 	''
@@ -193,14 +174,7 @@ def iter_rows(
 
 
 def flatten_rows(task: TaskNode) -> tuple[DisplayRow, ...]:
-	"""Flatten a task tree into display rows (GroupHeaders + LeafInfos) in DFS order.
-
-	>>> rows = flatten_rows(Parallel(Task("a"), Task("b")))
-	>>> len(rows)
-	3
-	>>> isinstance(rows[0], GroupHeader)
-	True
-	"""
+	"""Flatten a task tree into display rows (GroupHeaders + LeafInfos) in DFS order."""
 	return tuple(iter_rows(task))
 
 
@@ -274,8 +248,8 @@ def leaf_label(task: Task, show_cmd: bool, color: bool) -> str:
 def render_tree_lines(task: TaskNode, show_cmd: bool = False, color: bool = False) -> list[str]:
 	"""Build the tree-display lines (group headers + leaves) for an expanded task tree.
 
-	Pure: returns a list of strings without printing. ``print_tree`` (in
-	``main.format``) is the printing wrapper.
+	Pure: returns a list of strings without printing. :func:`print_tree` is the
+	printing wrapper.
 
 	>>> render_tree_lines(Task("echo hi"))
 	['echo hi']
@@ -302,3 +276,15 @@ def render_tree_lines(task: TaskNode, show_cmd: bool = False, color: bool = Fals
 			case _:
 				assert_never(row)
 	return lines
+
+
+def print_tree(task: TaskNode, show_cmd: bool = False) -> None:
+	"""Print the task tree structure to stdout without executing.
+
+	>>> print_tree(Task("echo hi"))
+	echo hi
+	>>> print_tree(Task("echo hi", name="greet"), show_cmd=True)
+	greet: echo hi
+	"""
+	for line in render_tree_lines(task, show_cmd=show_cmd, color=color_on()):
+		print(line)

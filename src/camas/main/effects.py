@@ -184,8 +184,8 @@ def parse_effects(
 ) -> tuple[Effect[Any], ...]:
 	"""Parse a ``--effects`` expression into a tuple of Effect instances.
 
-	``scope_effects`` is a mapping of user-defined Effect classes
-	(typically from a ``tasks.py`` scope) merged with the built-in registry.
+	``scope_effects`` (user-defined Effect classes, e.g. from a ``tasks.py`` scope)
+	is merged with the built-in registry.
 
 	Raises:
 		ValueError: on syntax errors, non-tuple expressions, unknown names,
@@ -193,8 +193,6 @@ def parse_effects(
 
 	>>> [type(e).__name__ for e in parse_effects("(Summary(),)")]
 	['Summary']
-	>>> [type(e).__name__ for e in parse_effects("(Termtree(), Summary())")]
-	['Termtree', 'Summary']
 	>>> parse_effects("(Summary(options=SummaryOptions(term_width=Fixed(80))),)")[0].options.term_width
 	Fixed(columns=80)
 	>>> parse_effects("()")

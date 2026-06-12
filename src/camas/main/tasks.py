@@ -26,14 +26,6 @@ if TYPE_CHECKING:
 	from pathlib import Path
 
 
-def find_pyproject(start: Path) -> Path | None:
-	"""Walk upward from ``start`` looking for a pyproject.toml."""
-	for candidate in (start, *start.parents):
-		if (pyproject := candidate / "pyproject.toml").is_file():
-			return pyproject
-	return None
-
-
 def is_str_dict(value: Any) -> TypeGuard[dict[str, Any]]:
 	return isinstance(value, dict) and all(isinstance(k, str) for k in value)  # pyright: ignore[reportUnknownVariableType]
 
@@ -87,14 +79,6 @@ def load_tasks(path: Path) -> tuple[dict[str, TaskNode], dict[str, type[Effect[A
 		except ValueError as e:
 			raise ValueError(f"task {name!r}: {e}") from e
 	return {name: resolve_refs(tree, pre, frozenset({name})) for name, tree in pre.items()}, {}
-
-
-def find_tasks_py(start: Path) -> Path | None:
-	"""Walk upward from ``start`` looking for a ``tasks.py``."""
-	for candidate in (start, *start.parents):
-		if (tasks_py := candidate / "tasks.py").is_file():
-			return tasks_py
-	return None
 
 
 def name_scope_bindings(scope: Mapping[str, object]) -> dict[str, TaskNode]:

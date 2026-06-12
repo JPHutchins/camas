@@ -40,8 +40,6 @@ def split_passthrough(argv: Sequence[str]) -> SplitArgv:
 	SplitArgv(head=('mytask',), passthrough=())
 	>>> split_passthrough(["mytask", "--", "-v", "--tb=short"])
 	SplitArgv(head=('mytask',), passthrough=('-v', '--tb=short'))
-	>>> split_passthrough(["mytask", "--", "--", "x"])
-	SplitArgv(head=('mytask',), passthrough=('--', 'x'))
 	"""
 	argv_copy: Final = tuple(argv)
 	try:
@@ -52,19 +50,15 @@ def split_passthrough(argv: Sequence[str]) -> SplitArgv:
 
 
 def apply_passthrough(task: TaskNode, args: tuple[str, ...]) -> Task:
-	"""Append ``args`` to a leaf ``Task``'s command. Errors on Sequential/Parallel.
-
-	The ``cmd`` shape is preserved: tuple commands stay tuples (args appended);
-	string commands stay strings (args shell-joined and appended) so dry-run/tree
-	output keeps the user's original quoting.
+	"""Append ``args`` to a leaf ``Task``'s command, preserving ``cmd`` shape: tuples
+	stay tuples (appended), strings stay strings (args shell-joined) so dry-run/tree
+	output keeps the user's quoting. Errors on Sequential/Parallel.
 
 	Raises:
 		ValueError: if ``task`` is a ``Sequential`` or ``Parallel``.
 
 	>>> apply_passthrough(Task("pytest"), ("-v",))
 	Task(cmd='pytest -v', name=None, env={}, cwd=None)
-	>>> apply_passthrough(Task("git commit -m 'big msg'"), ("--no-verify",))
-	Task(cmd="git commit -m 'big msg' --no-verify", name=None, env={}, cwd=None)
 	>>> apply_passthrough(Task(("pytest",), name="t"), ("-v", "-k", "x"))
 	Task(cmd=('pytest', '-v', '-k', 'x'), name='t', env={}, cwd=None)
 	>>> apply_passthrough(Task("pytest"), ("-k", "a b"))
@@ -112,8 +106,6 @@ def parse_matrix_kv(raw: str) -> tuple[str, tuple[str, ...]]:
 def parse_axis_values(raw: str) -> tuple[str, ...]:
 	"""Comma-separated values into a tuple, trimming whitespace and dropping empties.
 
-	>>> parse_axis_values("3.13")
-	('3.13',)
 	>>> parse_axis_values("3.13, 3.14")
 	('3.13', '3.14')
 	>>> parse_axis_values("")

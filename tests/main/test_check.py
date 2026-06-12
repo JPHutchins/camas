@@ -19,8 +19,6 @@ from camas.main.check import (
 	CheckerErr,
 	CheckerNotFound,
 	CheckerOk,
-	EvalErr,
-	EvalOk,
 	FoundChecker,
 	checker_argv,
 	deepest_user_frame,
@@ -28,10 +26,10 @@ from camas.main.check import (
 	find_typechecker,
 	format_minimal_trace,
 	report_eval_error,
-	run_eval,
 	run_typecheck,
 	run_typecheck_only,
 )
+from camas.main.tasks import load_tasks_from_py
 
 FIXTURES: Final = Path(__file__).parents[1] / "fixtures" / "check"
 
@@ -168,21 +166,6 @@ def test_find_typechecker_win32_uses_exe_suffix(
 	assert find_typechecker() == FoundChecker(name="ty", path=tmp_path / "ty.exe")
 
 
-def test_run_eval_pass(tmp_path: Path) -> None:
-	p = tmp_path / "ok.py"
-	p.write_text("x = 1\n")
-	assert isinstance(run_eval(p), EvalOk)
-
-
-def test_run_eval_captures_exception(tmp_path: Path) -> None:
-	p = tmp_path / "bad.py"
-	p.write_text("raise ValueError('boom')\n")
-	result = run_eval(p)
-	assert isinstance(result, EvalErr)
-	assert isinstance(result.exception, ValueError)
-	assert str(result.exception) == "boom"
-
-
 @requires_checker
 def test_run_typecheck_passes(tmp_path: Path) -> None:
 	p = tmp_path / "clean.py"
@@ -211,9 +194,9 @@ def test_run_typecheck_no_checker(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
 def test_deepest_user_frame_finds_tasks_py(tmp_path: Path) -> None:
 	p = tmp_path / "tasks.py"
 	p.write_text("raise RuntimeError('boom')\n")
-	r = run_eval(p)
-	assert isinstance(r, EvalErr)
-	frame = deepest_user_frame(r.exception, p)
+	with pytest.raises(RuntimeError) as caught:
+		load_tasks_from_py(p)
+	frame = deepest_user_frame(caught.value, p)
 	assert frame is not None
 	assert Path(frame.filename).resolve() == p.resolve()
 	assert frame.lineno == 1
@@ -228,9 +211,9 @@ def test_deepest_user_frame_none_when_no_match(tmp_path: Path) -> None:
 def test_format_minimal_trace_simple_error(tmp_path: Path) -> None:
 	p = tmp_path / "tasks.py"
 	p.write_text("raise RuntimeError('boom')\n")
-	r = run_eval(p)
-	assert isinstance(r, EvalErr)
-	out = format_minimal_trace(r.exception, p)
+	with pytest.raises(RuntimeError) as caught:
+		load_tasks_from_py(p)
+	out = format_minimal_trace(caught.value, p)
 	assert f"error: {p}:1" in out
 	assert "raise RuntimeError('boom')" in out
 	assert "RuntimeError: boom" in out
@@ -242,9 +225,9 @@ def test_format_minimal_trace_simple_error(tmp_path: Path) -> None:
 def test_format_minimal_trace_includes_caret(tmp_path: Path) -> None:
 	p = tmp_path / "tasks.py"
 	p.write_text("x = undefined_thing\n")
-	r = run_eval(p)
-	assert isinstance(r, EvalErr)
-	out = format_minimal_trace(r.exception, p)
+	with pytest.raises(NameError) as caught:
+		load_tasks_from_py(p)
+	out = format_minimal_trace(caught.value, p)
 	assert "^^^^^^^^^^^^^^^" in out
 	assert "NameError" in out
 	assert "undefined_thing" in out
@@ -309,9 +292,9 @@ def test_report_eval_error_prints_trace_and_silent_checker_ok(
 	monkeypatch.setattr(check_mod, "run_typecheck", _stub_ok)
 	p = tmp_path / "tasks.py"
 	p.write_text("raise RuntimeError('boom')\n")
-	r = run_eval(p)
-	assert isinstance(r, EvalErr)
-	assert report_eval_error(p, r.exception) == 1
+	with pytest.raises(RuntimeError) as caught:
+		load_tasks_from_py(p)
+	assert report_eval_error(p, caught.value) == 1
 	err = capsys.readouterr().err
 	assert "RuntimeError: boom" in err
 	assert "ty:" not in err
@@ -323,9 +306,9 @@ def test_report_eval_error_appends_checker_output_with_header(
 	monkeypatch.setattr(check_mod, "run_typecheck", _stub_err)
 	p = tmp_path / "tasks.py"
 	p.write_text("raise RuntimeError('boom')\n")
-	r = run_eval(p)
-	assert isinstance(r, EvalErr)
-	assert report_eval_error(p, r.exception) == 1
+	with pytest.raises(RuntimeError) as caught:
+		load_tasks_from_py(p)
+	assert report_eval_error(p, caught.value) == 1
 	err = capsys.readouterr().err
 	assert "RuntimeError: boom" in err
 	assert "\nty:\nTYPE_FAIL_MARKER" in err
@@ -338,9 +321,9 @@ def test_report_eval_error_silent_on_no_checker(
 	monkeypatch.setattr(check_mod, "run_typecheck", _stub_not_found)
 	p = tmp_path / "tasks.py"
 	p.write_text("raise RuntimeError('boom')\n")
-	r = run_eval(p)
-	assert isinstance(r, EvalErr)
-	assert report_eval_error(p, r.exception) == 1
+	with pytest.raises(RuntimeError) as caught:
+		load_tasks_from_py(p)
+	assert report_eval_error(p, caught.value) == 1
 	err = capsys.readouterr().err
 	assert "RuntimeError: boom" in err
 	assert INSTALL_HINT not in err

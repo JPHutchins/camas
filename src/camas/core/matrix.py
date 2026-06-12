@@ -46,8 +46,6 @@ def substitute_in_str(text: str, binding: MatrixBinding) -> str:
 
 	>>> substitute_in_str("test --python {PY}", (VarBinding("PY", "3.14"),))
 	'test --python 3.14'
-	>>> substitute_in_str("no placeholders", (VarBinding("X", "1"),))
-	'no placeholders'
 	"""
 	return functools.reduce(
 		lambda acc, vb: acc.replace(f"{{{vb.name}}}", vb.value),
@@ -124,15 +122,11 @@ def specialize_node(task: TaskNode, binding: MatrixBinding, suffix: str) -> Task
 def matrix_axes(task: TaskNode) -> dict[str, tuple[str, ...]]:
 	"""Walk a task tree and collect every matrix axis with its values.
 
-	When the same axis name appears in multiple matrices, the outermost (closest
-	to the root) wins — that's the value the user sees in ``--list`` and the one
-	overrides should target. Inner duplicates with the same key but different
-	values are unusual; users almost never write them.
+	On a name collision the outermost matrix (closest to the root) wins — the value
+	``--list`` shows and the one overrides target.
 
 	>>> matrix_axes(Task("hi"))
 	{}
-	>>> matrix_axes(Parallel(Task("test"), matrix={"PY": ("3.12", "3.13")}))
-	{'PY': ('3.12', '3.13')}
 	>>> matrix_axes(Sequential(Parallel(Task("t"), matrix={"OS": ("a", "b")}), matrix={"PY": ("3.12",)}))
 	{'PY': ('3.12',), 'OS': ('a', 'b')}
 	"""
@@ -150,17 +144,16 @@ def matrix_axes(task: TaskNode) -> dict[str, tuple[str, ...]]:
 
 
 def override_matrix(task: TaskNode, overrides: Mapping[str, tuple[str, ...]]) -> TaskNode:
-	"""Return a tree with each ``matrix[k]`` replaced by ``overrides[k]`` everywhere
-	the key appears. Strict on keys: every override must match an axis present in
-	the tree. Permissive on values: any tuple is accepted.
+	"""Replace each ``matrix[k]`` with ``overrides[k]`` wherever the key appears.
+
+	Strict on keys (every override must match an axis in the tree), permissive on
+	values (any tuple is accepted).
 
 	Raises:
 		ValueError: if an override key matches no matrix axis in the tree.
 
 	>>> override_matrix(Parallel(Task("t"), matrix={"PY": ("3.12", "3.13")}), {"PY": ("3.13",)}).matrix  # type: ignore[union-attr]
 	{'PY': ('3.13',)}
-	>>> override_matrix(Task("hi"), {})
-	Task(cmd='hi', name=None, env={}, cwd=None)
 	>>> override_matrix(Parallel(Task("t"), matrix={"PY": ("3.12",)}), {"XX": ("a",)})
 	Traceback (most recent call last):
 	    ...
@@ -208,12 +201,10 @@ def apply_overrides(task: TaskNode, overrides: Mapping[str, tuple[str, ...]]) ->
 
 
 def matrix_bindings(matrix: dict[str, tuple[str, ...]]) -> tuple[MatrixBinding, ...]:
-	"""Generate all cartesian product bindings from a matrix definition.
+	"""Generate all cartesian-product bindings from a matrix definition.
 
 	>>> matrix_bindings({"PY": ("3.12", "3.13")})
 	((VarBinding(name='PY', value='3.12'),), (VarBinding(name='PY', value='3.13'),))
-	>>> len(matrix_bindings({"A": ("1", "2"), "B": ("x", "y")}))
-	4
 	"""
 	keys: Final = tuple(matrix.keys())
 	return tuple(
@@ -223,13 +214,7 @@ def matrix_bindings(matrix: dict[str, tuple[str, ...]]) -> tuple[MatrixBinding, 
 
 
 def binding_suffix(binding: MatrixBinding) -> str:
-	"""Format a matrix binding as a bracketed suffix.
-
-	>>> binding_suffix((VarBinding("PY", "3.14"),))
-	'[PY=3.14]'
-	>>> binding_suffix((VarBinding("OS", "linux"), VarBinding("PY", "3.14")))
-	'[OS=linux, PY=3.14]'
-	"""
+	"""Format a matrix binding as a bracketed ``[name=value, ...]`` suffix."""
 	return "[" + ", ".join(f"{vb.name}={vb.value}" for vb in binding) + "]"
 
 

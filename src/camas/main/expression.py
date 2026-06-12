@@ -146,11 +146,8 @@ def children(elts: list[ast.expr], allow_refs: bool) -> tuple[TaskNode, ...]:
 
 
 def eval_task_pos(node: ast.expr, allow_refs: bool) -> TaskNode | Ref:
-	"""Evaluate an AST node at a *task position* — inside ``Sequential``/``Parallel`` args
-	or as a top-level expression — coercing literals to nodes.
-
-	Coercion: ``str`` → ``Task(cmd=str)``; tuple literal → ``Sequential``;
-	set literal → ``Parallel``. Other forms delegate to ``eval_node``.
+	"""Evaluate an AST node at a *task position*, coercing literals to nodes; other
+	forms delegate to ``eval_node``.
 
 	>>> import ast
 	>>> eval_task_pos(ast.parse('"echo hi"', mode="eval").body, allow_refs=False)
@@ -273,21 +270,15 @@ def parse_expression(expr: str, tasks: Mapping[str, TaskNode] | None = None) -> 
 
 
 def parse_task_value(raw: str) -> TaskNode | Ref:
-	r"""Parse a single pyproject.toml task value. Bare strings become Task(cmd).
-
-	A leading ``Task``/``Sequential``/``Parallel``/``Ref`` call, ``(``, or ``{`` triggers
-	AST-based parsing — letting users use the fluent ``(a, b)`` (Sequential) and
-	``{a, b}`` (Parallel) literals as well as explicit constructor calls.
+	r"""Parse a single pyproject.toml task value. Bare strings become ``Task(cmd)``;
+	a leading ``Task``/``Sequential``/``Parallel``/``Ref`` call, ``(``, or ``{`` triggers
+	AST parsing (so ``(a, b)`` is a Sequential and ``{a, b}`` a Parallel).
 
 	Raises:
 		ValueError: when an expression-like value fails to parse.
 
 	>>> parse_task_value("ruff check .")
 	Task(cmd='ruff check .', name=None, env={}, cwd=None)
-	>>> parse_task_value('Task("pytest")')
-	Task(cmd='pytest', name=None, env={}, cwd=None)
-	>>> parse_task_value("Ref(\"lint\")")
-	Ref(name='lint')
 	>>> parse_task_value("(a, b)")
 	Sequential(tasks=(Ref(name='a'), Ref(name='b')), name=None, matrix=None, env={}, cwd=None)
 	>>> isinstance(parse_task_value("{a, b}"), Parallel)

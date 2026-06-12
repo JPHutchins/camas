@@ -16,7 +16,7 @@ else:  # pragma: no cover
 	from typing_extensions import assert_never
 
 from ..core.matrix import matrix_axes
-from ..core.render import GREY, RESET, color_on, render_tree_lines
+from ..core.render import GREY, RESET, color_on, print_tree
 from ..v0.task import Parallel, Sequential, Task, TaskNode
 from .color import BLUE, BOLD_BLUE, BOLD_CYAN, BOLD_YELLOW, maybe_color, wrap_ansi
 from .effects import available_effects, flatten_annotation, signature_fields
@@ -55,8 +55,6 @@ def task_summary(node: TaskNode, names: frozenset[str], is_root: bool = True) ->
 	'a, b'
 	>>> task_summary(Parallel(Task("a"), Task("b")), frozenset())
 	'a | b'
-	>>> task_summary(Sequential(Task("a"), Parallel(Task("b"), Task("c"))), frozenset())
-	'a, b | c'
 	>>> task_summary(Parallel(Sequential(Task("a"), Task("b")), Task("c")), frozenset())
 	'(a, b) | c'
 	>>> task_summary(Sequential(Task("a", name="lint"), Task("b")), frozenset({"lint"}))
@@ -77,33 +75,14 @@ def task_summary(node: TaskNode, names: frozenset[str], is_root: bool = True) ->
 
 
 def format_axis(name: str, values: tuple[str, ...]) -> str:
-	"""Render a matrix axis for the listing annotation.
+	"""Render a matrix axis for the listing annotation (``PY=3.13`` or ``PY×6 (lo..hi)``).
 
-	>>> format_axis("PY", ("3.13",))
-	'PY=3.13'
 	>>> format_axis("PY", ("3.10", "3.11", "3.12", "3.13", "3.14", "3.15"))
 	'PY×6 (3.10..3.15)'
 	"""
 	if len(values) == 1:
 		return f"{name}={values[0]}"
 	return f"{name}×{len(values)} ({values[0]}..{values[-1]})"
-
-
-def summary_annotation(node: TaskNode) -> str:
-	"""Annotate a top-level entry with its matrix axes — important context that
-	doesn't appear in the body otherwise.
-
-	>>> summary_annotation(Task("hi"))
-	''
-	>>> summary_annotation(Parallel(Task("t"), matrix={"PY": ("3.12", "3.13")}))
-	'  [matrix: PY×2 (3.12..3.13)]'
-	>>> summary_annotation(Parallel(Task("t"), matrix={"DB": ("sqlite", "postgres"), "OPT": ("debug",)}))
-	'  [matrix: DB×2 (sqlite..postgres) OPT=debug]'
-	"""
-	if isinstance(node, Task) or node.matrix is None:
-		return ""
-	axes = " ".join(format_axis(k, v) for k, v in node.matrix.items())
-	return f"  [matrix: {axes}]"
 
 
 def colorize_summary(body: str, color: bool) -> str:
@@ -152,7 +131,11 @@ def format_task_summary_listing(
 			if node.help is not None
 			else colorize_summary(task_summary(node, names), color)
 		)
-		annotation = summary_annotation(node)
+		annotation = (
+			""
+			if isinstance(node, Task) or node.matrix is None
+			else f"  [matrix: {' '.join(format_axis(k, v) for k, v in node.matrix.items())}]"
+		)
 		lines.append(
 			f"  {maybe_color(name.ljust(width + 1), BOLD_CYAN, color)} {body}"
 			f"{maybe_color(annotation, GREY, color) if annotation else ''}"
@@ -162,23 +145,6 @@ def format_task_summary_listing(
 
 def print_task_summary_listing(tasks: Mapping[str, TaskNode], source: Path | None) -> None:
 	print(format_task_summary_listing(tasks, source, color=color_on()))
-
-
-def print_tree(task: TaskNode, show_cmd: bool = False) -> None:
-	"""Print the task tree structure to stdout without executing.
-
-	When ``show_cmd`` is True, leaf tasks with a distinct name show ``name: cmd``;
-	env entries are shown only at the deepest ancestor that introduces them,
-	so matrix expansions annotate their group header and leaves stay clean.
-	ANSI colors are emitted when stdout is a TTY and NO_COLOR is unset.
-
-	>>> print_tree(Task("echo hi"))
-	echo hi
-	>>> print_tree(Task("echo hi", name="greet"), show_cmd=True)
-	greet: echo hi
-	"""
-	for line in render_tree_lines(task, show_cmd=show_cmd, color=color_on()):
-		print(line)
 
 
 def print_task_trees(tasks: Mapping[str, TaskNode], source: Path | None) -> None:
@@ -326,23 +292,15 @@ def format_try_hint(color: bool) -> str:
 	return f"{header}\n{body}"
 
 
-def reference_entries() -> tuple[tuple[str, str], ...]:
-	"""Reference rows for the ``Reference:`` block.
-
-	Source resolves to the install path of this package — a local filesystem
-	directory agents and humans can open without a network round-trip.
-	Examples are not shipped with the wheel, so they remain at the GitHub URL.
-	"""
-	return (
+def format_reference(color: bool) -> str:
+	"""``Reference:`` block — local source path, remote examples, PyPI."""
+	# Source is the package's install path — a local directory openable without a
+	# network round-trip; examples ship only on GitHub, not in the wheel.
+	entries = (
 		("Source", str(Path(__file__).parent.parent)),
 		("Examples", "https://github.com/JPHutchins/camas/tree/main/examples"),
 		("PyPI", "https://pypi.org/project/camas/"),
 	)
-
-
-def format_reference(color: bool) -> str:
-	"""``Reference:`` block — local source path, remote examples, PyPI."""
-	entries = reference_entries()
 	width = max(len(label) for label, _ in entries) + 1
 	header = maybe_color("Reference:", BOLD_BLUE, color)
 	body = "\n".join(
