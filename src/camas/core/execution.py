@@ -151,6 +151,8 @@ async def run(
 	a run more parallel than it already is.
 
 	Raises:
+		ValueError: when ``jobs`` is provided but less than 1 (``0`` would
+			deadlock on an empty semaphore; negatives are meaningless).
 		BaseExceptionGroup: every error raised by Effects during setup,
 			on_event, or teardown, collected per phase.
 
@@ -160,6 +162,8 @@ async def run(
 	>>> asyncio.run(run(Task(("python", "-c", "raise SystemExit(1)")))).returncode
 	1
 	"""
+	if jobs is not None and jobs < 1:
+		raise ValueError(f"jobs must be >= 1, got {jobs}")
 	limiter: Final[Limiter] = asyncio.Semaphore(jobs) if jobs is not None else nullcontext()
 	expanded: Final = expand_matrix(task)
 	leaf_infos: Final = flatten_leaves(expanded)

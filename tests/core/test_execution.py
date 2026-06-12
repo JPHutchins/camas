@@ -187,6 +187,13 @@ def test_jobs_cap_preserves_results() -> None:
 	assert len(result.results) == 3
 
 
+@pytest.mark.parametrize("bad", [0, -1])
+def test_jobs_below_one_rejected(bad: int) -> None:
+	# jobs=0 would block forever on an empty Semaphore; reject it up front.
+	with pytest.raises(ValueError, match="jobs must be >= 1"):
+		asyncio.run(run(Task(("python", "-c", "pass")), jobs=bad))
+
+
 def test_sequential_ordering() -> None:
 	task = Sequential(
 		Task(("python", "-c", "import time; time.sleep(0.1)"), name="a"),
