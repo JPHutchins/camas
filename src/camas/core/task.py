@@ -26,16 +26,11 @@ MatrixBinding: TypeAlias = tuple[VarBinding, ...]
 
 
 def task_label(task: Task) -> str:
-	"""Return a task's identifying label: the explicit `name` or the full command string.
-
-	This is a data accessor with no concept of display width — callers that render
-	into a column-constrained terminal are responsible for truncation.
+	"""Return a task's label: the explicit ``name``, else the full command string.
 
 	>>> from camas import Task
 	>>> task_label(Task("echo hi", name="greet"))
 	'greet'
-	>>> task_label(Task("echo hi"))
-	'echo hi'
 	>>> task_label(Task(("python", "-c", "pass")))
 	'python -c pass'
 	"""

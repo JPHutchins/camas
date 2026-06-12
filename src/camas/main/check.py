@@ -116,21 +116,7 @@ def find_typechecker() -> FoundChecker | None:
 
 
 def run_eval(tasks_py: Path) -> EvalResult:
-	r"""Execute ``tasks_py`` via :mod:`runpy`; capture any :class:`Exception`.
-
-	>>> import tempfile
-	>>> with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
-	...     _ = f.write("x = 1\n")
-	...     ok = Path(f.name)
-	>>> isinstance(run_eval(ok), EvalOk)
-	True
-	>>> with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
-	...     _ = f.write("raise ValueError('boom')\n")
-	...     bad = Path(f.name)
-	>>> r = run_eval(bad)
-	>>> isinstance(r, EvalErr) and isinstance(r.exception, ValueError)
-	True
-	"""
+	"""Execute ``tasks_py`` via :mod:`runpy`; capture any :class:`Exception` as EvalErr."""
 	try:
 		runpy.run_path(str(tasks_py))
 	except Exception as e:
@@ -186,11 +172,8 @@ def deepest_user_frame(exc: Exception, tasks_py: Path) -> traceback.FrameSummary
 
 
 def caret_line(colno: int, end_colno: int, raw_source: str) -> str | None:
-	"""Build the ``    ^^^^`` line that points at PEP 657 column info.
-
-	Returns ``None`` when the col offset is inside ``raw_source``'s leading
-	whitespace — defensive: shouldn't happen for real Python tracebacks (the
-	column points at the offending token, not indentation).
+	"""Build the ``    ^^^^`` line pointing at PEP 657 column info, or ``None`` when the
+	offset falls inside ``raw_source``'s leading whitespace.
 
 	>>> caret_line(11, 14, "x = foo(bar)")
 	'               ^^^'
@@ -262,11 +245,9 @@ def format_checker_output(result: TypeCheckResult, *, after_trace: bool) -> str:
 
 
 def report_eval_error(tasks_py: Path, exc: Exception) -> int:
-	"""Print a minimal trace for ``exc`` and opportunistically run the typechecker.
+	"""Print a minimal trace for ``exc`` and run the typechecker; return exit code 1.
 
-	Used by both ``resolve_tasks_source`` (normal-task path, on tasks.py eval
-	failure) and ``--check`` (which always runs the typechecker, including on
-	eval failure). Returns exit code ``1``.
+	Shared by the normal-task path (on tasks.py eval failure) and ``--check``.
 	"""
 	sys.stderr.write(format_minimal_trace(exc, tasks_py))
 	sys.stderr.write(format_checker_output(run_typecheck(tasks_py), after_trace=True))

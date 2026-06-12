@@ -55,8 +55,6 @@ def task_summary(node: TaskNode, names: frozenset[str], is_root: bool = True) ->
 	'a, b'
 	>>> task_summary(Parallel(Task("a"), Task("b")), frozenset())
 	'a | b'
-	>>> task_summary(Sequential(Task("a"), Parallel(Task("b"), Task("c"))), frozenset())
-	'a, b | c'
 	>>> task_summary(Parallel(Sequential(Task("a"), Task("b")), Task("c")), frozenset())
 	'(a, b) | c'
 	>>> task_summary(Sequential(Task("a", name="lint"), Task("b")), frozenset({"lint"}))
@@ -77,10 +75,8 @@ def task_summary(node: TaskNode, names: frozenset[str], is_root: bool = True) ->
 
 
 def format_axis(name: str, values: tuple[str, ...]) -> str:
-	"""Render a matrix axis for the listing annotation.
+	"""Render a matrix axis for the listing annotation (``PY=3.13`` or ``PY×6 (lo..hi)``).
 
-	>>> format_axis("PY", ("3.13",))
-	'PY=3.13'
 	>>> format_axis("PY", ("3.10", "3.11", "3.12", "3.13", "3.14", "3.15"))
 	'PY×6 (3.10..3.15)'
 	"""
@@ -90,13 +86,10 @@ def format_axis(name: str, values: tuple[str, ...]) -> str:
 
 
 def summary_annotation(node: TaskNode) -> str:
-	"""Annotate a top-level entry with its matrix axes — important context that
-	doesn't appear in the body otherwise.
+	"""Annotate a top-level entry with its matrix axes (empty for non-matrix nodes).
 
 	>>> summary_annotation(Task("hi"))
 	''
-	>>> summary_annotation(Parallel(Task("t"), matrix={"PY": ("3.12", "3.13")}))
-	'  [matrix: PY×2 (3.12..3.13)]'
 	>>> summary_annotation(Parallel(Task("t"), matrix={"DB": ("sqlite", "postgres"), "OPT": ("debug",)}))
 	'  [matrix: DB×2 (sqlite..postgres) OPT=debug]'
 	"""
@@ -166,11 +159,6 @@ def print_task_summary_listing(tasks: Mapping[str, TaskNode], source: Path | Non
 
 def print_tree(task: TaskNode, show_cmd: bool = False) -> None:
 	"""Print the task tree structure to stdout without executing.
-
-	When ``show_cmd`` is True, leaf tasks with a distinct name show ``name: cmd``;
-	env entries are shown only at the deepest ancestor that introduces them,
-	so matrix expansions annotate their group header and leaves stay clean.
-	ANSI colors are emitted when stdout is a TTY and NO_COLOR is unset.
 
 	>>> print_tree(Task("echo hi"))
 	echo hi

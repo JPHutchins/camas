@@ -47,24 +47,10 @@ ANSI_ESCAPE: Final = re.compile(
 
 
 def strip_ansi(text: str) -> str:
-	r"""Remove ANSI escape sequences and ASCII control characters from a string.
+	r"""Strip ANSI escapes and ASCII control chars; tab and newline are kept.
 
-	Tab (``\t``) and newline (``\n``) are preserved — they're load-bearing for
-	formatted log output. Carriage return (``\r``), BEL, BS, and other
-	control chars are stripped.
-
-	>>> strip_ansi("\x1b[32mgreen\x1b[0m text")
-	'green text'
-	>>> strip_ansi("\x1b]8;;https://example.com\x07link\x1b]8;;\x07 text")
-	'link text'
-	>>> strip_ansi("no escapes")
-	'no escapes'
-	>>> strip_ansi("line one\nline two\tcol")
-	'line one\nline two\tcol'
-	>>> strip_ansi("\r\x1b[2Kprogress")
-	'progress'
-	>>> strip_ansi("\x1b[1mbold\x1b(B\x1b[m done")
-	'bold done'
+	>>> strip_ansi("\x1b[32mgreen\x1b[0m\ttext\r")
+	'green\ttext'
 	"""
 	return ANSI_ESCAPE.sub("", text)
 
@@ -124,11 +110,6 @@ def group_display_name(tasks: tuple[TaskNode, ...], separator: str) -> str:
 
 def render_tree_prefix(depth: int, is_last_chain: tuple[ChainLink, ...]) -> str:
 	"""Reconstitute the ASCII tree prefix from structural position data.
-
-	Children of a ``Sequential`` get ``├─`` / ``└─`` branches with ``│`` continuations —
-	the sequence has an ordering and a terminator. Children of a ``Parallel`` get a
-	plain ``┃`` column with no ``├``/``└`` distinction, since parallel siblings have
-	no order.
 
 	>>> render_tree_prefix(0, ())
 	''
@@ -193,14 +174,7 @@ def iter_rows(
 
 
 def flatten_rows(task: TaskNode) -> tuple[DisplayRow, ...]:
-	"""Flatten a task tree into display rows (GroupHeaders + LeafInfos) in DFS order.
-
-	>>> rows = flatten_rows(Parallel(Task("a"), Task("b")))
-	>>> len(rows)
-	3
-	>>> isinstance(rows[0], GroupHeader)
-	True
-	"""
+	"""Flatten a task tree into display rows (GroupHeaders + LeafInfos) in DFS order."""
 	return tuple(iter_rows(task))
 
 

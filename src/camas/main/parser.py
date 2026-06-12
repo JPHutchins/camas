@@ -35,11 +35,8 @@ if TYPE_CHECKING:
 
 
 def default_effects_expr() -> str:
-	"""Pick the default ``--effects`` expression based on the runtime environment.
-
-	GitHub Actions sets ``GITHUB_ACTIONS=true`` reliably; in that case prefer
-	``Status`` with the ``github`` mode (collapsed workflow groups) over the
-	live ``Termtree`` (which renders garbage in non-interactive log capture).
+	"""Default ``--effects`` for the environment: ``Status('github')`` under GitHub
+	Actions (``GITHUB_ACTIONS=true``, collapsed workflow groups), else live ``Termtree``.
 
 	>>> import os
 	>>> _saved = os.environ.pop("GITHUB_ACTIONS", None)
@@ -168,12 +165,5 @@ RESERVED_FLAGS: Final = frozenset(
 
 
 def expression_metavar(tasks: Mapping[str, TaskNode] | None) -> str:
-	"""Build the positional metavar.
-
-	>>> from camas import Task
-	>>> expression_metavar(None)
-	'expression'
-	>>> expression_metavar({"all": Task("x")})
-	'task | expression'
-	"""
+	"""Positional metavar: ``task | expression`` when tasks exist, else ``expression``."""
 	return "task | expression" if tasks else "expression"

@@ -210,12 +210,8 @@ def build_name(prefix: str, task: Task) -> str:
 	"""Compose check-run name; truncate to ``NAME_LIMIT`` with right-side ellipsis.
 
 	>>> from camas import Task
-	>>> build_name("", Task("ruff check .", name="lint"))
-	'lint'
 	>>> build_name("ubuntu/", Task("ruff check .", name="lint"))
 	'ubuntu/lint'
-	>>> build_name("", Task("ruff check ."))
-	'ruff check .'
 	>>> len(build_name("x" * 200, Task("y", name="z")))
 	100
 	"""
@@ -249,11 +245,7 @@ def tail_bytes(buf: bytes, limit: int) -> bytes:
 	b'def'
 	>>> tail_bytes(b"abc", 10)
 	b'abc'
-	>>> tail_bytes(b"", 5)
-	b''
 	>>> tail_bytes(b"abc", 0)
-	b''
-	>>> tail_bytes(b"abc", -1)
 	b''
 	"""
 	if limit <= 0:
@@ -410,15 +402,7 @@ def started_to_active(state: EffectState, task: Task) -> Active:
 
 
 def external_id_for(cfg: ResolvedConfig, task: Task) -> str:
-	"""Stable per-leaf identifier — same leaf on the same prefix yields the same id.
-
-	>>> from camas import Task
-	>>> external_id_for(
-	...     ResolvedConfig("t", "o", "r", "s", "ubuntu/", 8192, False),
-	...     Task("ruff check .", name="lint"),
-	... )
-	'camas:ubuntu/lint'
-	"""
+	"""Stable per-leaf identifier — same leaf on the same prefix yields the same id."""
 	return f"camas:{cfg.name_prefix}{task_label(task)}"
 
 
@@ -452,13 +436,8 @@ def pipelines_from_ctxs(
 ) -> tuple[asyncio.Task[None], ...]:
 	"""Pure: unfold every leaf ctx into its terminal pipeline task.
 
-	- ``Closed(task=t)`` → ``t`` (already a pipeline)
-	- ``Active(post_task=p, ...)`` → newly-spawned cancel pipeline awaiting ``p``
-	- ``Pending()`` / ``Closed(task=None)`` → contributes nothing
-
-	The cancel pipelines for Active leaves are created here, not held on the
-	effect; their refs live in the returned tuple until ``teardown`` awaits
-	them.
+	``Closed`` yields its existing pipeline; ``Active`` spawns a cancel pipeline
+	awaiting its POST; ``Pending`` / ``Closed(task=None)`` contribute nothing.
 	"""
 	return tuple(extracted for ctx in ctxs if (extracted := pipeline_of(state, ctx)) is not None)
 

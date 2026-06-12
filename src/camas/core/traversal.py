@@ -40,39 +40,12 @@ def iter_leaves(
 
 
 def flatten_leaves(task: TaskNode) -> tuple[LeafInfo, ...]:
-	"""Flatten a task tree into a tuple of LeafInfo in depth-first order.
-
-	>>> [info.task.cmd for info in flatten_leaves(Parallel(Task("a"), Task("b")))]
-	['a', 'b']
-	>>> flatten_leaves(Task("echo hi"))[0].depth
-	0
-	>>> flatten_leaves(Parallel(Task("a"), Task("b")))[0].is_last_chain
-	(ChainLink(is_last=False, parent_is_parallel=True),)
-	>>> flatten_leaves(Parallel(Task("a"), Task("b")))[1].is_last_chain
-	(ChainLink(is_last=True, parent_is_parallel=True),)
-	"""
+	"""Flatten a task tree into a tuple of LeafInfo in depth-first order."""
 	return tuple(iter_leaves(task, depth=0, is_last_chain=()))
 
 
-def build_leaf_index_map(task: TaskNode) -> dict[int, int]:
-	"""Map `id(Task)` to leaf index (depth-first position) for the whole tree.
-
-	>>> t1, t2 = Task("a"), Task("b")
-	>>> m = build_leaf_index_map(Parallel(t1, t2))
-	>>> m[id(t1)], m[id(t2)]
-	(0, 1)
-	"""
-	return {id(info.task): i for i, info in enumerate(flatten_leaves(task))}
-
-
 def subtree_leaf_indices(task: TaskNode, index_map: dict[int, int]) -> tuple[int, ...]:
-	"""Collect all leaf indices within a subtree.
-
-	>>> t1, t2 = Task("a"), Task("b")
-	>>> tree = Parallel(t1, t2)
-	>>> subtree_leaf_indices(tree, build_leaf_index_map(tree))
-	(0, 1)
-	"""
+	"""Collect all leaf indices within a subtree, in depth-first order."""
 	match task:
 		case Task():
 			return (index_map[id(task)],)

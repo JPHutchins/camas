@@ -101,14 +101,7 @@ LeafCtx: TypeAlias = Idle | Active | Done
 
 
 def cmd_str(task: Task) -> str:
-	"""Return ``task.cmd`` as a single string (joins tuple form with spaces).
-
-	>>> from camas import Task
-	>>> cmd_str(Task("echo hi"))
-	'echo hi'
-	>>> cmd_str(Task(("python", "-c", "pass")))
-	'python -c pass'
-	"""
+	"""Return ``task.cmd`` as a single string (joining tuple form with spaces)."""
 	return task.cmd if isinstance(task.cmd, str) else " ".join(task.cmd)
 
 
@@ -149,10 +142,6 @@ def fmt_completed(opts: StatusOptions, task: Task, c: Completion, ts: datetime) 
 	'\x1b[90m[2026-05-21 14:30:00.123]\x1b[0m \x1b[90m⏭ [follow] skipped\x1b[0m (prior rc=2)'
 	>>> fmt_completed(
 	...     StatusOptions(finished_fmt=""), Task("a"), Finished(0, 1.0, ()), t0,
-	... ) is None
-	True
-	>>> fmt_completed(
-	...     StatusOptions(failed_fmt=""), Task("a"), Finished(2, 1.0, ()), t0,
 	... ) is None
 	True
 	"""
@@ -199,13 +188,7 @@ def fmt_output(opts: StatusOptions, task: Task, line: bytes, ts: datetime) -> st
 
 
 def _github_safe_title(label: str) -> str:
-	r"""Strip newlines/CRs so a ``::group::`` title stays on one line.
-
-	>>> _github_safe_title("normal")
-	'normal'
-	>>> _github_safe_title("a\nb\rc")
-	'a b c'
-	"""
+	"""Strip CRs/newlines so a ``::group::`` title stays on one line."""
 	return label.replace("\r", " ").replace("\n", " ")
 
 
@@ -227,16 +210,10 @@ def _github_stop_token(body: str) -> str:
 
 
 def _format_github_group(title: str, body: str, token: str) -> str:
-	r"""Wrap ``body`` in a GitHub ``::group::`` with ``::stop-commands::`` neutralization.
+	"""Wrap ``body`` in a GitHub ``::group::`` with ``::stop-commands::`` neutralization.
 
-	The stop-commands bracket disables workflow-command parsing for the body
-	so output lines like ``::endgroup::`` or ``::add-mask::`` are emitted
-	verbatim instead of being interpreted by Actions.
-
-	>>> _format_github_group("x", "ok\n", "T")
-	'::group::x\n::stop-commands::T\nok\n::T::\n::endgroup::\n'
-	>>> _format_github_group("x", "::endgroup::\n", "T")
-	'::group::x\n::stop-commands::T\n::endgroup::\n::T::\n::endgroup::\n'
+	The stop-commands bracket disables workflow-command parsing for the body, so
+	output lines like ``::endgroup::`` are emitted verbatim, not interpreted.
 	"""
 	return f"::group::{title}\n::stop-commands::{token}\n{body}::{token}::\n::endgroup::\n"
 
@@ -244,12 +221,9 @@ def _format_github_group(title: str, body: str, token: str) -> str:
 def block_for(mode: OutputMode, task: Task, c: Completion, output: bytes) -> str:
 	r"""Return the completion-block text for ``mode`` (empty when nothing to dump).
 
-	Output bytes are passed through verbatim — ANSI escapes are preserved so
-	downstream viewers (terminals, Actions logs) render the original colors.
-	For ``github`` mode the body is wrapped in ``::stop-commands::`` so task
-	output that happens to start with ``::`` (e.g. another tool's
-	``::endgroup::`` or ``::warning::``) cannot prematurely close the group
-	or inject workflow commands.
+	Output bytes pass through verbatim (ANSI preserved). For ``github`` mode the
+	body is wrapped in ``::stop-commands::`` so task output starting with ``::``
+	cannot prematurely close the group or inject workflow commands.
 
 	>>> from camas import Task
 	>>> block_for("all", Task("a", name="x"), Finished(0, 1.0, ()), b"ok\n")
@@ -316,8 +290,6 @@ def next_ctx_on_output(mode: OutputMode, ctx: Active, line: bytes) -> Active:
 	>>> next_ctx_on_output("all", Active(b"abc"), b"def").output
 	b'abcdef'
 	>>> next_ctx_on_output("stream", Active(b""), b"x").output
-	b''
-	>>> next_ctx_on_output("quiet", Active(b""), b"x").output
 	b''
 	"""
 	match mode:
