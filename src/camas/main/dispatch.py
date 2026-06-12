@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 import sys
 from pathlib import Path
@@ -18,14 +19,12 @@ else:  # pragma: no cover
 
 from ..core.execution import run
 from ..core.matrix import matrix_axes, override_matrix
-from ..core.render import color_on, print_tree
+from ..core.render import print_tree
 from .argv import apply_passthrough, parse_axis_values, parse_matrix_kv, split_passthrough
 from .effects import parse_effects
 from .expression import parse_expression
 from .format import (
 	format_load_error_hint,
-	format_reference,
-	format_try_hint,
 	print_available_effects,
 	print_task_help,
 	print_task_summary_listing,
@@ -33,7 +32,13 @@ from .format import (
 )
 from .parser import RESERVED_FLAGS, build_parser, resolve_jobs
 from .state import EMPTY_STATE, LoadErr, LoadOk, TasksState
-from .tasks import load_tasks, load_tasks_from_py, name_scope_bindings, name_scope_effects
+from .tasks import (
+	load_tasks,
+	load_tasks_from_py,
+	name_scope_bindings,
+	name_scope_config,
+	name_scope_effects,
+)
 
 if TYPE_CHECKING:
 	from collections.abc import Mapping
@@ -85,6 +90,7 @@ def run_cli(scope: Mapping[str, object]) -> None:
 			tasks=name_scope_bindings(scope),
 			source=source,
 			scope_effects=name_scope_effects(scope),
+			config=name_scope_config(scope),
 		)
 	)
 
@@ -132,8 +138,13 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 				sys.exit(0)
 			exit_for_load_err(err)
 
-		case LoadOk(tasks=tasks, source=source, scope_effects=scope_effects):
+		case LoadOk(tasks=tasks, source=source, scope_effects=scope_effects, config=config):
 			args, _leftover = parser.parse_known_args(split.head)
+			in_github: Final = os.environ.get("GITHUB_ACTIONS") == "true"
+			default_node: Final = config.bare_task(github=in_github) if config is not None else None
+			# Per-axis --AXIS flags are surfaced only for a named task: bare `camas`
+			# has no positional anchor, so `--PY 3.13` would leak its value into the
+			# expression slot. The default task is still overridable via --matrix.
 			augmented_axes: dict[str, tuple[str, ...]] = {}
 			if isinstance(args.expression, str) and args.expression in tasks:
 				for name, values in matrix_axes(tasks[args.expression]).items():
@@ -167,20 +178,20 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 				print_available_effects(scope_effects)
 				sys.exit(0)
 
+			resolved: TaskNode
 			if args.expression is None:
-				if tasks:
-					print(parser.format_usage().rstrip())
-					print()
-					print_task_summary_listing(tasks, source)
-					print()
-					print(format_try_hint(color_on()))
-					print()
-					print(format_reference(color_on()))
-					print()
+				if default_node is None:
+					parser.print_help()
 					sys.stdout.flush()
-					print(f"{parser.prog}: error: task or expression is required", file=sys.stderr)
+					print(
+						f"{parser.prog}: error: task or expression is required "
+						"(define a Config with default_task to set a default)",
+						file=sys.stderr,
+					)
 					sys.exit(2)
-				parser.error("task or expression is required (no tasks defined)")
+				resolved = default_node
+			else:
+				resolved = dispatch_arg(args.expression, tasks)
 
 			try:
 				effects: Final = parse_effects(args.effects, scope_effects)
@@ -205,7 +216,6 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 						sys.exit(2)
 					overrides[axis_name] = values
 
-			resolved = dispatch_arg(args.expression, tasks)
 			if overrides:
 				try:
 					resolved = override_matrix(resolved, overrides)
@@ -238,10 +248,10 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 def _load_py(path: Path) -> TasksState:
 	"""Evaluate ``path`` and return a :class:`LoadOk` / :class:`LoadErr`."""
 	try:
-		tasks, scope_effects = load_tasks_from_py(path)
+		tasks, scope_effects, config = load_tasks_from_py(path)
 	except Exception as e:
 		return LoadErr(source=path, exception=e)
-	return LoadOk(tasks=tasks, source=path, scope_effects=scope_effects)
+	return LoadOk(tasks=tasks, source=path, scope_effects=scope_effects, config=config)
 
 
 def resolve_tasks_source(argv: list[str]) -> tuple[TasksState, list[str]]:

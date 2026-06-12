@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 import pytest
 
-from camas import Parallel, Sequential, Task
+from camas import Config, Parallel, Sequential, Task
 from camas.main import main
 from camas.main.dispatch import dispatch_arg, run_cli
 from camas.main.expression import (
@@ -25,6 +25,7 @@ from camas.main.tasks import (
 	is_str_dict,
 	load_tasks,
 	load_tasks_from_py,
+	name_scope_config,
 	name_scope_effects,
 )
 
@@ -495,7 +496,7 @@ def test_load_tasks_from_py_propagates_names(tmp_path: Path) -> None:
 		"typecheck = Parallel(mypy, pyright)\n"
 		"_private = Task('nope')\n"
 	)
-	tasks, scope_effects = load_tasks_from_py(tasks_py)
+	tasks, scope_effects, _config = load_tasks_from_py(tasks_py)
 	assert scope_effects == {}
 	assert tasks["mypy"] == Task("mypy .", name="mypy")
 	assert tasks["typecheck"] == Parallel(
@@ -562,7 +563,7 @@ def test_load_tasks_from_py_preserves_cwd(tmp_path: Path) -> None:
 		"leaf = Task('cargo test', cwd=Path('src-tauri'))\n"
 		"group = Parallel(Task('cargo check'), cwd=Path('src-tauri'))\n"
 	)
-	tasks, _ = load_tasks_from_py(tasks_py)
+	tasks, _, _ = load_tasks_from_py(tasks_py)
 	assert tasks["leaf"].cwd == Path("src-tauri")
 	assert tasks["group"].cwd == Path("src-tauri")
 
@@ -722,3 +723,51 @@ def test_name_scope_effects_skips_builtins_and_private() -> None:
 		"plain": 42,
 	}
 	assert name_scope_effects(scope) == {}
+
+
+def test_name_scope_config_none_when_absent() -> None:
+	assert name_scope_config({"lint": Task("ruff check .")}) is None
+
+
+def test_name_scope_config_discovered_by_type_under_any_name() -> None:
+	"""Found by ``isinstance``, not a reserved name — ``cfg`` works as well as
+	the conventional ``camas_config``."""
+	cfg = Config(default_task=Task("pytest"))
+	assert name_scope_config({"cfg": cfg}) == cfg
+
+
+def test_name_scope_config_multiple_raises() -> None:
+	scope = {"camas_config": Config(), "other": Config()}
+	with pytest.raises(ValueError, match="multiple Config instances"):
+		name_scope_config(scope)
+
+
+def test_name_scope_config_promotes_aliased_task_fields() -> None:
+	"""A ``Config`` field aliasing a top-level binding runs with that binding's
+	propagated name, matching :func:`name_scope_bindings`."""
+	mypy = Task("mypy .")
+	pyright = Task("pyright .")
+	ci = Parallel(mypy, pyright)
+	scope: dict[str, object] = {
+		"mypy": mypy,
+		"pyright": pyright,
+		"ci": ci,
+		"camas_config": Config(default_task=ci),
+	}
+	resolved = name_scope_config(scope)
+	assert resolved is not None
+	assert resolved.default_task == Parallel(
+		Task("mypy .", name="mypy"), Task("pyright .", name="pyright"), name="ci"
+	)
+
+
+def test_name_scope_config_keeps_inline_task_field() -> None:
+	"""A field bound to an unaliased inline node is returned as-is."""
+	inline = Sequential(Task("a"), Task("b"))
+	resolved = name_scope_config({"camas_config": Config(default_task=inline)})
+	assert resolved is not None
+	assert resolved.default_task is inline
+
+
+def test_name_scope_config_skips_private_binding() -> None:
+	assert name_scope_config({"_camas_config": Config(default_task=Task("x"))}) is None

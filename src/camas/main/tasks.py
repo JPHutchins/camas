@@ -17,6 +17,7 @@ else:  # pragma: no cover
 	import tomli as tomllib
 	from typing_extensions import assert_never
 
+from ..v0.config import Config
 from ..v0.effect import Effect
 from ..v0.task import Parallel, Sequential, Task, TaskNode
 from .expression import Ref, parse_task_value, resolve_refs
@@ -131,14 +132,55 @@ def name_scope_effects(scope: Mapping[str, object]) -> dict[str, type[Effect[Any
 	}
 
 
+def name_scope_config(scope: Mapping[str, object]) -> Config | None:
+	"""The project :class:`Config` discovered in a scope by type — like tasks and
+	Effects, it is found by ``isinstance`` rather than a reserved name, so any
+	binding (conventionally ``camas_config``) works.
+
+	Each task field is resolved to its promoted (named) binding by identity, so a
+	``Config(default_task=ci)`` alias of a top-level ``ci`` runs with ``ci``'s name.
+
+	Raises:
+		ValueError: when more than one ``Config`` is bound in the scope.
+	"""
+	configs: Final = [
+		(name, val)
+		for name, val in scope.items()
+		if not name.startswith("_") and isinstance(val, Config)
+	]
+	if not configs:
+		return None
+	if len(configs) > 1:
+		names = ", ".join(sorted(name for name, _ in configs))
+		raise ValueError(f"multiple Config instances defined ({names}); expected at most one")
+	config: Final = configs[0][1]
+	promoted: Final = name_scope_bindings(scope)
+	name_by_id: Final = {
+		id(val): name
+		for name, val in scope.items()
+		if not name.startswith("_") and isinstance(val, Task | Sequential | Parallel)
+	}
+
+	def promote_field(node: TaskNode | None) -> TaskNode | None:
+		if node is None:
+			return None
+		name = name_by_id.get(id(node))
+		return promoted[name] if name is not None else node
+
+	return Config(
+		default_task=promote_field(config.default_task),
+		github_task=promote_field(config.github_task),
+	)
+
+
 def load_tasks_from_py(
 	path: Path,
-) -> tuple[dict[str, TaskNode], dict[str, type[Effect[Any]]]]:
+) -> tuple[dict[str, TaskNode], dict[str, type[Effect[Any]]], Config | None]:
 	"""Execute a Python task-definition file and collect module-level bindings.
 
-	Returns ``(tasks, scope_effects)`` — the TaskNode bindings (with name
-	propagation) and any Effect classes defined in the file's module-level
-	scope.
+	Returns ``(tasks, scope_effects, config)`` — the TaskNode bindings (with name
+	propagation), any Effect classes, and the project :class:`Config` (if defined)
+	from the file's module-level scope.
 	"""
 	scope: Final = runpy.run_path(str(path))
-	return name_scope_bindings(scope), name_scope_effects(scope)
+	return name_scope_bindings(scope), name_scope_effects(scope), name_scope_config(scope)

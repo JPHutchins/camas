@@ -13,18 +13,20 @@ import pytest
 import camas
 import camas.v0
 from camas.v0.completion import Completion, Finished, Skipped
+from camas.v0.config import Config
 from camas.v0.effect import Effect
 from camas.v0.leaf_state import Completed, LeafState, Running, Waiting
 from camas.v0.task import Group, Parallel, Sequential, Task, TaskNode
 from camas.v0.task_event import CompletedEvent, OutputEvent, StartedEvent, TaskEvent
 
-HEADLINE: Final = frozenset({"Effect", "Parallel", "Sequential", "Task"})
+HEADLINE: Final = frozenset({"Config", "Effect", "Parallel", "Sequential", "Task"})
 """The unversioned definers re-exported by both ``camas`` and ``camas.v0``."""
 
 PUBLIC_API: Final = (
 	Completion,
 	Finished,
 	Skipped,
+	Config,
 	Effect,
 	Completed,
 	LeafState,
