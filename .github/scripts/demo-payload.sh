@@ -19,4 +19,9 @@ sleep 0.4
 printf '\n'
 sleep 0.2
 
-exec camas all
+# Record the live Termtree TUI the demo exists to showcase. Under CI,
+# GITHUB_ACTIONS=true makes camas auto-select Status(output_mode="github") as the
+# default effect, which renders collapsed workflow groups instead of the
+# animation — so scrub it for this one process to get the local experience a user
+# typing `camas all` would actually see.
+exec env -u GITHUB_ACTIONS camas all
