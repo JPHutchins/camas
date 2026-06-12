@@ -42,18 +42,18 @@ if TYPE_CHECKING:
 
 
 _NAME_LIKE: Final = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
-"""A bare task name — possibly hyphenated — as opposed to a camas expression
-(which carries parens, quotes, braces, or operators)."""
+"""A bare task name, hyphens allowed — distinct from a camas expression, which
+carries parens, quotes, or braces. A ``-`` is taken as part of the name (the
+convention alias), never as subtraction."""
 
 
 def dispatch_arg(arg: str, tasks: Mapping[str, TaskNode]) -> TaskNode:
 	"""Interpret a CLI arg: task name ⇒ lookup, else inline expression.
 
 	The name is matched verbatim first (so a hyphenated ``[tool.camas.tasks]``
-	key resolves directly), then with hyphens folded to underscores — so a
+	key resolves directly), then with hyphens folded to underscores — so the
 	``tasks.py`` binding ``test_all`` is reachable as the conventional
-	``camas test-all`` even though ``test-all`` is a subtraction, not a name.
-	Underscore is canonical; the hyphen spelling is the convention-driven alias.
+	``camas test-all``, which would otherwise parse as a subtraction.
 	"""
 	for candidate in (arg, arg.replace("-", "_")):
 		if candidate in tasks:
