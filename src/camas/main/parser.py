@@ -54,6 +54,42 @@ def default_effects_expr() -> str:
 	return "(Termtree(),)"
 
 
+def positive_jobs(raw: str) -> int:
+	"""Validate ``--jobs`` as an argparse ``type``: a positive integer.
+
+	Raises:
+		ArgumentTypeError: when ``raw`` is not an integer ``>= 1``.
+	"""
+	try:
+		n = int(raw)
+	except ValueError:
+		raise argparse.ArgumentTypeError(f"--jobs expects an integer, got {raw!r}") from None
+	if n < 1:
+		raise argparse.ArgumentTypeError(f"--jobs must be >= 1, got {n}")
+	return n
+
+
+def resolve_jobs(cli_jobs: int | None) -> int | None:
+	"""Effective ``--jobs`` cap: the CLI flag wins, else ``CAMAS_JOBS``, else
+	``None`` (unbounded).
+
+	Raises:
+		ValueError: when ``CAMAS_JOBS`` is set but not a positive integer.
+	"""
+	if cli_jobs is not None:
+		return cli_jobs
+	raw = os.environ.get("CAMAS_JOBS")
+	if not raw:
+		return None
+	try:
+		n = int(raw)
+	except ValueError:
+		raise ValueError(f"CAMAS_JOBS expects a positive integer, got {raw!r}") from None
+	if n < 1:
+		raise ValueError(f"CAMAS_JOBS must be >= 1, got {n}")
+	return n
+
+
 class CamasArgumentParser(argparse.ArgumentParser):
 	"""``ArgumentParser`` whose ``--help`` appends the discovered tasks listing
 	(or load-error hint), the Effects listing, and the Try hint after argparse's
@@ -156,11 +192,21 @@ def build_parser(state: TasksState = EMPTY_STATE) -> argparse.ArgumentParser:
 		metavar="KEY=VAL[,VAL...]",
 		help="override a matrix axis (repeatable; e.g. --matrix PY=3.13)",
 	)
+	parser.add_argument(
+		"--jobs",
+		type=positive_jobs,
+		default=None,
+		metavar="N",
+		help="cap concurrently running leaf subprocesses at N (also: CAMAS_JOBS). "
+		"A throttle, not a speedup — the tree never runs wider than its own "
+		"fan-out, so --jobs can only slow a run down; reach for it only when a "
+		"wide matrix oversubscribes the machine (CPU/RAM/disk)",
+	)
 	return parser
 
 
 RESERVED_FLAGS: Final = frozenset(
-	{"help", "version", "dry-run", "list", "tree", "check", "effects", "matrix"}
+	{"help", "version", "dry-run", "list", "tree", "check", "effects", "matrix", "jobs"}
 )
 
 

@@ -92,3 +92,18 @@ def test_dispatch_skips_reserved_axis_name_for_auto_flag(
 	out = capsys.readouterr().out
 	assert "[matrix=b]" in out
 	assert "[matrix=a]" not in out
+
+
+def test_dispatch_jobs_runs_to_completion() -> None:
+	task = Task(("python", "-c", "print('hi')"))
+	with pytest.raises(SystemExit, match="0"):
+		dispatch(_state({"go": task}), ["go", "--jobs", "1", "--effects", "()"])
+
+
+def test_dispatch_bad_camas_jobs_errors(
+	monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	monkeypatch.setenv("CAMAS_JOBS", "nope")
+	with pytest.raises(SystemExit, match="2"):
+		dispatch(_state({"go": Task(("python", "-c", "pass"))}), ["go", "--effects", "()"])
+	assert "CAMAS_JOBS" in capsys.readouterr().err
