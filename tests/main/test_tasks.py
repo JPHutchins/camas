@@ -84,6 +84,15 @@ def test_parse_task_value_explicit_ref() -> None:
 	)
 
 
+def test_parse_task_value_threads_cwd_and_help() -> None:
+	assert parse_task_value('Task("cargo build", cwd="src-tauri", help="Build")') == Task(
+		"cargo build", cwd="src-tauri", help="Build"
+	)
+	assert parse_task_value('Parallel(Task("a"), cwd="work", help="grp")') == Parallel(
+		Task("a"), cwd="work", help="grp"
+	)
+
+
 def test_parse_task_value_matrix_preserved() -> None:
 	assert parse_task_value('Parallel(Task("t {PY}"),matrix={"PY": ("3.12", "3.13")})') == Parallel(
 		Task("t {PY}"), matrix={"PY": ("3.12", "3.13")}
@@ -209,6 +218,24 @@ ci = 'Sequential(Ref("lint"), Ref("typecheck"), Ref("test"))'
 		Parallel(Task("mypy .", name="mypy"), Task("pyright .", name="pyright"), name="typecheck"),
 		Task("pytest", name="test"),
 		name="ci",
+	)
+
+
+def test_load_tasks_threads_cwd_and_help(tmp_path: Path) -> None:
+	"""The [tool.camas.tasks] path applies ``cwd`` / ``help`` instead of silently
+	dropping them (#25) — full parity with the Python ``tasks.py`` constructors."""
+	pyproject = tmp_path / "pyproject.toml"
+	pyproject.write_text(
+		"[tool.camas.tasks]\n"
+		'build = \'Task("cargo build", cwd="src-tauri", help="Build the app")\'\n'
+		'checks = \'Parallel(Task("a"), Task("b"), cwd="work", help="Run checks")\'\n'
+	)
+	tasks, _ = load_tasks(pyproject)
+	assert tasks["build"] == Task(
+		"cargo build", name="build", cwd="src-tauri", help="Build the app"
+	)
+	assert tasks["checks"] == Parallel(
+		Task("a"), Task("b"), name="checks", cwd="work", help="Run checks"
 	)
 
 

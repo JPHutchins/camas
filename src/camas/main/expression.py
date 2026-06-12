@@ -202,6 +202,8 @@ def eval_node(
 						cmd=eval_cmd(cmd_node),
 						name=eval_opt_str(kw.get("name")),
 						env=eval_env(kw.get("env")),
+						cwd=eval_opt_str(kw.get("cwd")),
+						help=eval_opt_str(kw.get("help")),
 					)
 				case "Sequential" | "Parallel":
 					ctor = Sequential if name == "Sequential" else Parallel
@@ -210,6 +212,8 @@ def eval_node(
 						name=eval_opt_str(kw.get("name")),
 						matrix=eval_matrix(kw.get("matrix")),
 						env=eval_env(kw.get("env")),
+						cwd=eval_opt_str(kw.get("cwd")),
+						help=eval_opt_str(kw.get("help")),
 					)
 				case "Ref":
 					ref_name_node = args[0] if args else kw.get("name")

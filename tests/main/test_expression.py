@@ -3,10 +3,14 @@
 
 from __future__ import annotations
 
+import inspect
+from pathlib import Path
+
 import pytest
 
 from camas import Parallel, Sequential, Task
 from camas.main.expression import parse_expression
+from camas.v0.task import Group
 
 
 @pytest.mark.parametrize(
@@ -124,6 +128,39 @@ def test_parse_ref_requires_name() -> None:
 
 def test_parse_explicit_none_name() -> None:
 	assert parse_expression('Task("hi", name=None)') == Task("hi", name=None)
+
+
+def test_parse_expression_threads_cwd_and_help() -> None:
+	"""``cwd`` / ``help`` reach the constructors from the expression mini-language,
+	at parity with ``tasks.py`` — not silently dropped (#25)."""
+	assert parse_expression('Task("cargo build", cwd="src-tauri", help="Build")') == Task(
+		"cargo build", cwd="src-tauri", help="Build"
+	)
+	assert parse_expression('Parallel(Task("a"), cwd="work", help="grp")') == Parallel(
+		Task("a"), cwd="work", help="grp"
+	)
+
+
+def test_eval_node_threads_every_public_constructor_kwarg() -> None:
+	"""Drift guard: a new public kwarg on Task/Sequential/Parallel fails here until
+	it's both wired through ``eval_node`` and given a sentinel below — so a silently
+	dropped kwarg (the #25 bug) can't reappear unnoticed."""
+	# fragment + (attribute, expected value) for each constructor kwarg.
+	samples = {
+		"name": ("name='n'", "name", "n"),
+		"env": ("env={'K': 'v'}", "env", {"K": "v"}),
+		"cwd": ("cwd='d'", "cwd", Path("d")),
+		"help": ("help='h'", "help", "h"),
+		"matrix": ("matrix={'X': ('1',)}", "matrix", {"X": ("1",)}),
+	}
+	for cls, prefix, variadic in (
+		(Task, "Task('c', ", "cmd"),
+		(Group, "Parallel(Task('a'), ", "tasks"),
+	):
+		for kw in set(inspect.signature(cls).parameters) - {variadic}:
+			frag, attr, expected = samples[kw]  # KeyError flags an unsampled new kwarg
+			node = parse_expression(prefix + frag + ")")
+			assert getattr(node, attr) == expected, (cls.__name__, kw)
 
 
 # Parser-side fluent syntax: strings inside literals and the README one-liner.
