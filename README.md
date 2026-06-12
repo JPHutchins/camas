@@ -145,6 +145,37 @@ The top-level `camas` namespace is the unversioned alias for the latest generati
 
 To pin a minimum camas *feature* level, use your dependency declaration (`camas>=0.x` in `pyproject.toml`, or PEP 723 inline metadata) — the import path covers API shape; the package pin covers feature availability.
 
+## Standalone `tasks.py` (PEP 723)
+
+For a non-Python project that wants a single-file task runner — no `pyproject.toml`, no venv to manage — give `tasks.py` a [PEP 723](https://peps.python.org/pep-0723/) header and a `run_cli(globals())` entry point, then run it with any PEP 723-aware tool:
+
+```python
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["camas>=0.1.8"]
+# ///
+"""Build tasks for my project."""
+
+from camas import Parallel, Task, run_cli
+
+lint = Task("ruff check .")
+test = Task("pytest")
+check = Parallel(lint, test)
+
+if __name__ == "__main__":
+    run_cli(globals())
+```
+
+```bash
+uv run tasks.py check     # uv reads the header, builds an ephemeral env, runs
+uv run tasks.py --list    # every camas flag still works
+pipx run tasks.py test
+```
+
+`run_cli(globals())` introspects the module for `Task` / `Sequential` / `Parallel` and `Effect` bindings — exactly what camas does when it auto-discovers a `tasks.py` — so the standalone file behaves identically to a discovered one: `camas <task> --help`, `--dry-run`, matrix overrides, and `--check` all work and cite the file. `run_cli` is part of the stable surface (`from camas import run_cli`, or `from camas.v0 import run_cli` to pin the generation); it's imported lazily, so a plain `from camas import Task` doesn't pull it in.
+
+The header owns version pinning (`dependencies = ["camas>=0.1.8"]`) and the interpreter floor (`requires-python`); it's inert to `camas --check` and to auto-discovery, which read the module the same way with or without it.
+
 ## Reference
 
 - **[examples/](https://github.com/JPHutchins/camas/tree/main/tests/fixtures)** — full project layouts under test coverage. The canonical reference for how to structure `tasks.py`, use `[tool.camas.tasks]` in `pyproject.toml`, drive a matrix from `.python-version`, or scope a 2-axis matrix from the CLI.
