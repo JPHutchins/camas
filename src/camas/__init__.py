@@ -293,7 +293,27 @@ Effect protocol: subclass ``Effect`` (see ``examples/effect-plugin/``). Per-task
 help: ``camas <task> --help``.
 """
 
+import typing
+
 from .v0 import Effect as Effect
 from .v0 import Parallel as Parallel
 from .v0 import Sequential as Sequential
 from .v0 import Task as Task
+
+if typing.TYPE_CHECKING:
+	from .main.dispatch import run_cli as run_cli
+
+
+def __getattr__(name: str) -> object:
+	"""Lazily expose ``run_cli`` — the standalone ``run_cli(globals())`` entry point
+	— without importing the engine at package load, so ``from camas import Task``
+	stays light and the type layer keeps not depending on ``camas.main``.
+
+	Raises:
+		AttributeError: for any name other than ``run_cli``.
+	"""
+	if name == "run_cli":
+		from .main.dispatch import run_cli
+
+		return run_cli
+	raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

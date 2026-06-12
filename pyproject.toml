@@ -233,7 +233,7 @@ exclude_lines = [
 "case _:",
 "pragma: no cover",
 "if __name__ == .__main__.:",
-"if TYPE_CHECKING",
+"if (typing\\.)?TYPE_CHECKING",
 ':\s*\.\.\.\s*$',
 '^\s*\.\.\.\s*$',
 "raise AssertionError",

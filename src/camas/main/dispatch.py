@@ -61,6 +61,14 @@ def run_cli(scope: Mapping[str, object]) -> None:
 	"""Collect Task/Sequential/Parallel and Effect bindings from ``scope`` (skipping
 	``_``-prefixed names) and dispatch CLI args, citing ``scope['__file__']`` as the
 	:class:`LoadOk` ``source`` for per-task help and ``--check``.
+
+	The standalone entry point for a PEP 723 ``tasks.py`` run via ``python tasks.py``
+	or ``uv run --script tasks.py`` — hand it the module globals::
+
+	    if __name__ == "__main__":
+	        from camas import run_cli
+
+	        run_cli(globals())
 	"""
 	source_obj = scope.get("__file__")
 	source = Path(source_obj) if isinstance(source_obj, (str, Path)) else None
