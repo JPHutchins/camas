@@ -31,7 +31,7 @@ from .format import (
 	print_task_summary_listing,
 	print_task_trees,
 )
-from .parser import RESERVED_FLAGS, build_parser
+from .parser import RESERVED_FLAGS, build_parser, resolve_jobs
 from .state import EMPTY_STATE, LoadErr, LoadOk, TasksState
 from .tasks import load_tasks, load_tasks_from_py, name_scope_bindings, name_scope_effects
 
@@ -208,7 +208,12 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 			if args.dry_run:
 				print_tree(task, show_cmd=True)
 				sys.exit(0)
-			sys.exit(asyncio.run(run(task, effects=effects)).returncode)
+			try:
+				jobs: Final = resolve_jobs(args.jobs)
+			except ValueError as e:
+				print(f"error: {e}", file=sys.stderr)
+				sys.exit(2)
+			sys.exit(asyncio.run(run(task, effects=effects, jobs=jobs)).returncode)
 
 		case _:
 			assert_never(state)

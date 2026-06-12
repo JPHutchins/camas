@@ -9,9 +9,10 @@ import asyncio
 import os
 import sys
 import time
+from contextlib import nullcontext
 from datetime import datetime
 from subprocess import STDOUT
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Any, Final, TypeAlias
 
 if sys.version_info >= (3, 11):
 	from asyncio import TaskGroup
@@ -39,6 +40,11 @@ if TYPE_CHECKING:
 	from .effect import EventSink
 
 
+Limiter: TypeAlias = "asyncio.Semaphore | nullcontext[None]"
+"""What bounds concurrent leaf subprocesses: an ``asyncio.Semaphore(jobs)`` for a
+``--jobs`` cap, or a no-op ``nullcontext`` when unbounded (the default)."""
+
+
 def subprocess_env(merged: dict[str, str]) -> dict[str, str]:
 	"""Leaf-subprocess env: defaults merged underneath ``merged``; ``NO_COLOR`` strips color forces."""
 	base = {"PYTHONUNBUFFERED": "1"} | merged
@@ -47,28 +53,35 @@ def subprocess_env(merged: dict[str, str]) -> dict[str, str]:
 	return {"FORCE_COLOR": "1", "CLICOLOR_FORCE": "1"} | base
 
 
-async def run_cmd(task: Task, leaf_index: int, dispatch: EventSink) -> TaskResult:
-	"""Run one leaf as a subprocess, dispatching Started/Output/Completed events."""
-	start_pc: Final = time.perf_counter()
-	await dispatch(leaf_index, StartedEvent(task, leaf_index, datetime.now()))
-	proc: Final = await asyncio.create_subprocess_exec(
-		*resolve_cmd(task.cmd),
-		stdout=asyncio.subprocess.PIPE,
-		stderr=STDOUT,
-		env=subprocess_env({**os.environ, **task.env}),
-		cwd=task.cwd,
-	)
-	output: Final[list[bytes]] = []
-	if proc.stdout is not None:  # pragma: no branch
-		async for line in proc.stdout:
-			output.append(line)
-			await dispatch(leaf_index, OutputEvent(task, leaf_index, line, datetime.now()))
-	await proc.wait()
-	elapsed: Final = time.perf_counter() - start_pc
-	rc: Final = proc.returncode or 0
-	completion: Final = Finished(rc, elapsed, output)
-	await dispatch(leaf_index, CompletedEvent(task, leaf_index, completion, datetime.now()))
-	return TaskResult(task_label(task), completion)
+async def run_cmd(task: Task, leaf_index: int, dispatch: EventSink, limiter: Limiter) -> TaskResult:
+	"""Run one leaf as a subprocess, dispatching Started/Output/Completed events.
+
+	``limiter`` bounds how many leaves hold a live subprocess at once (the
+	``--jobs`` cap); acquired before the leaf starts so a queued leaf stays
+	``Waiting`` and its measured elapsed excludes the wait. It is a no-op
+	``nullcontext`` when unbounded.
+	"""
+	async with limiter:
+		start_pc: Final = time.perf_counter()
+		await dispatch(leaf_index, StartedEvent(task, leaf_index, datetime.now()))
+		proc: Final = await asyncio.create_subprocess_exec(
+			*resolve_cmd(task.cmd),
+			stdout=asyncio.subprocess.PIPE,
+			stderr=STDOUT,
+			env=subprocess_env({**os.environ, **task.env}),
+			cwd=task.cwd,
+		)
+		output: Final[list[bytes]] = []
+		if proc.stdout is not None:  # pragma: no branch
+			async for line in proc.stdout:
+				output.append(line)
+				await dispatch(leaf_index, OutputEvent(task, leaf_index, line, datetime.now()))
+		await proc.wait()
+		elapsed: Final = time.perf_counter() - start_pc
+		rc: Final = proc.returncode or 0
+		completion: Final = Finished(rc, elapsed, output)
+		await dispatch(leaf_index, CompletedEvent(task, leaf_index, completion, datetime.now()))
+		return TaskResult(task_label(task), completion)
 
 
 async def skip_subtree(
@@ -91,15 +104,16 @@ async def execute(
 	dispatch: EventSink,
 	leaves: tuple[Task, ...],
 	index_map: dict[int, int],
+	limiter: Limiter,
 ) -> tuple[TaskResult, ...]:
 	"""Walk a task subtree, returning one TaskResult per leaf in DFS order."""
 	match node:
 		case Task():
-			return (await run_cmd(node, index_map[id(node)], dispatch),)
+			return (await run_cmd(node, index_map[id(node)], dispatch, limiter),)
 		case Parallel(tasks=children):
 			async with TaskGroup() as tg:
 				futures: Final = tuple(
-					tg.create_task(execute(child, dispatch, leaves, index_map))
+					tg.create_task(execute(child, dispatch, leaves, index_map, limiter))
 					for child in children
 				)
 			return tuple(r for f in futures for r in f.result())
@@ -110,7 +124,7 @@ async def execute(
 				child_results = (
 					await skip_subtree(child, Skipped(failed_rc), dispatch, leaves, index_map)
 					if failed_rc is not None
-					else await execute(child, dispatch, leaves, index_map)
+					else await execute(child, dispatch, leaves, index_map, limiter)
 				)
 				seq_results = (*seq_results, *child_results)
 				if failed_rc is None:
@@ -127,19 +141,26 @@ async def execute(
 			assert_never(node)
 
 
-async def run(task: TaskNode, effects: Sequence[Effect[Any]] = ()) -> RunResult:
+async def run(
+	task: TaskNode, effects: Sequence[Effect[Any]] = (), jobs: int | None = None
+) -> RunResult:
 	"""Execute a task tree, dispatching events to every effect.
+
+	``jobs`` caps how many leaf subprocesses run at once; ``None`` (the default)
+	is unbounded. It only ever throttles the tree's own fan-out — it cannot make
+	a run more parallel than it already is.
 
 	Raises:
 		BaseExceptionGroup: every error raised by Effects during setup,
 			on_event, or teardown, collected per phase.
 
 	>>> import asyncio
-	>>> asyncio.run(run(Task(("python", "-c", "pass")))).returncode
+	>>> asyncio.run(run(Task(("python", "-c", "pass")), jobs=1)).returncode
 	0
 	>>> asyncio.run(run(Task(("python", "-c", "raise SystemExit(1)")))).returncode
 	1
 	"""
+	limiter: Final[Limiter] = asyncio.Semaphore(jobs) if jobs is not None else nullcontext()
 	expanded: Final = expand_matrix(task)
 	leaf_infos: Final = flatten_leaves(expanded)
 	leaves: Final = tuple(info.task for info in leaf_infos)
@@ -176,7 +197,7 @@ async def run(task: TaskNode, effects: Sequence[Effect[Any]] = ()) -> RunResult:
 	try:
 		if setup_errors:
 			raise BaseExceptionGroup("setup errors", setup_errors)
-		results = await execute(expanded, dispatch, leaves, index_map)
+		results = await execute(expanded, dispatch, leaves, index_map, limiter)
 	finally:
 		teardown_errors: Final = tuple(
 			r

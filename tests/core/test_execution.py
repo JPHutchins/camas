@@ -165,6 +165,28 @@ def test_parallel_concurrency() -> None:
 	assert elapsed < 2.5
 
 
+def test_jobs_cap_serializes_parallel() -> None:
+	task = Parallel(
+		*(Task(("python", "-c", "import time; time.sleep(0.3)"), name=f"t{i}") for i in range(3))
+	)
+	start = time.perf_counter()
+	asyncio.run(run(task, jobs=1))
+	elapsed = time.perf_counter() - start
+	# jobs=1 serializes the three 0.3s sleeps (~0.9s+); unbounded would be ~0.3s.
+	assert elapsed >= 0.8
+
+
+def test_jobs_cap_preserves_results() -> None:
+	task = Parallel(
+		Task(("python", "-c", "pass"), name="a"),
+		Task(("python", "-c", "raise SystemExit(1)"), name="b"),
+		Task(("python", "-c", "pass"), name="c"),
+	)
+	result = asyncio.run(run(task, jobs=2))
+	assert result.returncode == 1
+	assert len(result.results) == 3
+
+
 def test_sequential_ordering() -> None:
 	task = Sequential(
 		Task(("python", "-c", "import time; time.sleep(0.1)"), name="a"),
