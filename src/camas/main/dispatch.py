@@ -5,8 +5,8 @@
 
 from __future__ import annotations
 
-import ast
 import asyncio
+import re
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
@@ -41,18 +41,26 @@ if TYPE_CHECKING:
 	from ..v0.task import TaskNode
 
 
+_NAME_LIKE: Final = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
+"""A bare task name, hyphens allowed — distinct from a camas expression, which
+carries parens, quotes, or braces. A ``-`` is taken as part of the name (the
+convention alias), never as subtraction."""
+
+
 def dispatch_arg(arg: str, tasks: Mapping[str, TaskNode]) -> TaskNode:
-	"""Interpret a CLI arg: task name (possibly hyphenated) ⇒ lookup, else inline expression."""
-	if arg in tasks:
-		return tasks[arg]
-	try:
-		parsed = ast.parse(arg, mode="eval")
-	except SyntaxError:
-		return parse_expression(arg, tasks=tasks)
-	if isinstance(parsed.body, ast.Name):
-		name = parsed.body.id
+	"""Interpret a CLI arg: task name ⇒ lookup, else inline expression.
+
+	The name is matched verbatim first (so a hyphenated ``[tool.camas.tasks]``
+	key resolves directly), then with hyphens folded to underscores — so the
+	``tasks.py`` binding ``test_all`` is reachable as the conventional
+	``camas test-all``, which would otherwise parse as a subtraction.
+	"""
+	for candidate in (arg, arg.replace("-", "_")):
+		if candidate in tasks:
+			return tasks[candidate]
+	if _NAME_LIKE.match(arg):
 		known = ", ".join(sorted(tasks)) or "none"
-		print(f"error: no task named {name!r} (known: {known})", file=sys.stderr)
+		print(f"error: no task named {arg!r} (known: {known})", file=sys.stderr)
 		sys.exit(2)
 	return parse_expression(arg, tasks=tasks)
 

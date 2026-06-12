@@ -289,6 +289,20 @@ def test_dispatch_arg_hyphenated_name() -> None:
 	assert dispatch_arg("matrix-ci", tasks) == Task("uv run camas ci")
 
 
+def test_dispatch_arg_hyphen_folds_to_underscore_binding() -> None:
+	# `camas test-all` reaches the underscore-named tasks.py binding `test_all`.
+	tasks = {"test_all": Task("pytest")}
+	assert dispatch_arg("test-all", tasks) == Task("pytest")
+
+
+def test_dispatch_arg_hyphenated_unknown_errors(capsys: pytest.CaptureFixture[str]) -> None:
+	# A hyphenated name with no verbatim or underscore-folded match is a friendly
+	# "no task named" error, not the cryptic ``unsupported syntax: BinOp(...)``.
+	with pytest.raises(SystemExit, match="2"):
+		dispatch_arg("test-all", {"lint": Task("ruff .")})
+	assert "no task named 'test-all'" in capsys.readouterr().err
+
+
 def test_dispatch_arg_unknown_name() -> None:
 	with pytest.raises(SystemExit, match="2"):
 		dispatch_arg("nope", {"a": Task("x")})
@@ -390,6 +404,19 @@ def test_named_task_dry_run(
 	out = capsys.readouterr().out
 	assert "echo a" in out
 	assert "echo b" in out
+
+
+def test_hyphenated_invocation_of_underscore_binding(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	monkeypatch.chdir(tmp_path)
+	(tmp_path / "tasks.py").write_text("from camas import Task\ntest_all = Task('echo ran')\n")
+	with (
+		pytest.raises(SystemExit, match="0"),
+		patch("sys.argv", ["camas", "--dry-run", "test-all"]),
+	):
+		main()
+	assert "echo ran" in capsys.readouterr().out
 
 
 def test_named_task_from_subdirectory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
