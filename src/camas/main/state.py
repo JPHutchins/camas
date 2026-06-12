@@ -39,7 +39,7 @@ class LoadOk(NamedTuple):
 	"""``None`` only when no tasks file exists anywhere up the tree."""
 	scope_effects: Mapping[str, type[Effect[Any]]]
 	config: Config | None = None
-	"""The project :class:`Config` (default task, GitHub task), if one was defined."""
+	"""The project :class:`Config`, if one was defined."""
 
 
 class LoadErr(NamedTuple):

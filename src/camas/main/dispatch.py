@@ -107,8 +107,8 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 
 	Dispatch is structured around the state sum type:
 
-	* :class:`LoadOk` — task-running path. ``camas`` with no expression prints
-	  the listing and exits ``2`` (a la ``just`` / ``task``).
+	* :class:`LoadOk` — task-running path. ``camas`` with no expression runs the
+	  :class:`Config`'s task for the environment, else prints help and exits ``2``.
 	* :class:`LoadErr` — meta actions (``--list`` / ``--tree`` / ``--effects``)
 	  still render; everything else delegates to :func:`exit_for_load_err`.
 	"""
@@ -142,12 +142,14 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 			args, _leftover = parser.parse_known_args(split.head)
 			in_github: Final = os.environ.get("GITHUB_ACTIONS") == "true"
 			default_node: Final = config.bare_task(github=in_github) if config is not None else None
-			# Per-axis --AXIS flags are surfaced only for a named task: bare `camas`
-			# has no positional anchor, so `--PY 3.13` would leak its value into the
-			# expression slot. The default task is still overridable via --matrix.
+			axis_node: Final = (
+				tasks[args.expression]
+				if isinstance(args.expression, str) and args.expression in tasks
+				else default_node
+			)
 			augmented_axes: dict[str, tuple[str, ...]] = {}
-			if isinstance(args.expression, str) and args.expression in tasks:
-				for name, values in matrix_axes(tasks[args.expression]).items():
+			if axis_node is not None:
+				for name, values in matrix_axes(axis_node).items():
 					if name.lower() in RESERVED_FLAGS:
 						continue
 					parser.add_argument(
@@ -248,10 +250,9 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 def _load_py(path: Path) -> TasksState:
 	"""Evaluate ``path`` and return a :class:`LoadOk` / :class:`LoadErr`."""
 	try:
-		tasks, scope_effects, config = load_tasks_from_py(path)
+		return load_tasks_from_py(path)
 	except Exception as e:
 		return LoadErr(source=path, exception=e)
-	return LoadOk(tasks=tasks, source=path, scope_effects=scope_effects, config=config)
 
 
 def resolve_tasks_source(argv: list[str]) -> tuple[TasksState, list[str]]:
@@ -278,11 +279,11 @@ def resolve_tasks_source(argv: list[str]) -> tuple[TasksState, list[str]]:
 		pyproject = candidate / "pyproject.toml"
 		if pyproject.is_file():
 			try:
-				tasks, _ = load_tasks(pyproject)
+				loaded = load_tasks(pyproject)
 			except ValueError as e:
 				print(f"error: {pyproject}: {e}", file=sys.stderr)
 				sys.exit(2)
-			if tasks:
-				return LoadOk(tasks=tasks, source=pyproject, scope_effects={}), argv
+			if loaded.tasks:
+				return loaded, argv
 
 	return EMPTY_STATE, argv

@@ -165,7 +165,7 @@ def build_parser(state: TasksState = EMPTY_STATE) -> argparse.ArgumentParser:
 	parser.add_argument(
 		"--list",
 		action="store_true",
-		help="list all defined tasks and exit (also the default with no args)",
+		help="list all defined tasks and exit",
 	)
 	parser.add_argument(
 		"--tree",

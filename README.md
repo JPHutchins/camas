@@ -133,7 +133,7 @@ The downside is that fork PRs get a read-only `GITHUB_TOKEN` from GitHub and can
 
 **When not to bother.** OSS gets free runners — just GHA-matrix them in parallel for faster wall-clock time. The cost is small: you give up either SSOT (matrix definition moves into YAML) or per-leaf-UI granularity (one PR check entry per runner instead of per leaf) — pick one. What *is* a deal-breaker for OSS is fork PRs: external-contributor PRs return 403 from the Checks API, so per-leaf entries silently don't appear. The `github-checks-demo` job is marked `continue-on-error` so it doesn't block CI when that happens, but `GitHubChecks` isn't a workable OSS solution.
 
-## Default task
+## Config
 
 Bind a `Config` in `tasks.py` and bare `camas` (no arguments) runs its `default_task`:
 
@@ -144,21 +144,21 @@ lint = Task("ruff check .")
 test = Task("pytest")
 ci = Sequential(lint, test, name="ci")
 
-camas_config = Config(default_task=ci)
+_ = Config(default_task=ci)
 ```
 
-Now `camas` runs `ci` and `camas --dry-run` previews it. With no `Config` (or no `default_task`), bare `camas` prints the full help — task listing, effects, hints — and exits non-zero.
+Now `camas` runs `ci`, `camas --dry-run` previews it, and the default's matrix axes stay overridable (`camas --PY 3.13`). With no `Config` (or no `default_task`), bare `camas` prints the full help — task listing, effects, hints — and exits non-zero.
 
 `github_task` is the CI counterpart, falling back to `default_task` when unset; it runs under `GITHUB_ACTIONS=true`. Paired with the [automatic `Status` effect](#ci-integration), one bare `camas` does the right thing in both places:
 
 ```python
-camas_config = Config(
+_ = Config(
   default_task=ci,                            # bare `camas` locally
   github_task=Sequential(ci, "pytest --cov"), # bare `camas` under GitHub Actions
 )
 ```
 
-`Config` is discovered by type, so the binding can be named anything — `camas_config` is convention. Defining two is an error.
+`Config` is discovered by type, so the binding's name never matters — `_` by convention. Defining two is an error.
 
 ## Effects plugins
 
@@ -207,7 +207,7 @@ The header owns version pinning (`dependencies = ["camas>=0.1.8"]`) and the inte
 
 - **[examples/](https://github.com/JPHutchins/camas/tree/main/tests/fixtures)** — full project layouts under test coverage. The canonical reference for how to structure `tasks.py`, use `[tool.camas.tasks]` in `pyproject.toml`, drive a matrix from `.python-version`, or scope a 2-axis matrix from the CLI.
 - **[src/camas/](https://github.com/JPHutchins/camas/tree/main/src/camas)** — typed Python with thorough docstrings. `camas --help` and `camas <task> --help` link back here.
-- **`camas`** with no args lists tasks; `camas <task> --help` shows the expanded tree, matrix axes, and override flags.
+- **`camas`** with no args runs the `Config` default task (or prints the full help when none is defined); `camas <task> --help` shows the expanded tree, matrix axes, and override flags.
 
 ## Walkthrough
 
@@ -219,7 +219,7 @@ The animated tree at the top is generated from this `tasks.py`:
 ```python
 from pathlib import Path
 
-from camas import Parallel, Sequential, Task
+from camas import Config, Parallel, Sequential, Task
 
 src_tauri = Path("src-tauri")
 python_sdk = Path("python-sdk")
@@ -267,6 +267,8 @@ build = Parallel(
     matrix={"FLAG": ("-- --debug", "")},
     help="Debug and release builds (FLAG='-- --debug' debug, FLAG='' release)",
 )
+
+_ = Config(default_task=all)
 ```
 
 </details>

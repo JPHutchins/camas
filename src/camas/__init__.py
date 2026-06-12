@@ -22,9 +22,9 @@ rarely needed (the cmd or tree usually self-documents; this codebase
 uses ``help=`` only in a handful of places), but available for
 cryptic commands.
 
-``Config`` declares a project default: bind
-``camas_config = Config(default_task=...)`` and bare ``camas`` runs it
-(``github_task`` overrides under GitHub Actions).
+``Config`` is project configuration, discovered by type: bind
+``_ = Config(default_task=...)`` and bare ``camas`` runs that task
+(``github_task`` takes over under GitHub Actions).
 
 These five are the unversioned alias for the latest API generation; to
 pin a generation, import from its namespace (``camas.v0``). See the

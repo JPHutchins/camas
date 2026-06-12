@@ -13,4 +13,4 @@ ci_full = Parallel(
 	name="ci_full",
 )
 
-camas_config = Config(default_task=ci, github_task=ci_full)
+_ = Config(default_task=ci, github_task=ci_full)

@@ -34,7 +34,7 @@ def _camas(*args: str, github: bool) -> subprocess.CompletedProcess[str]:
 def test_config_resolves_promoted_default_and_github_tasks() -> None:
 	"""The loader exposes the project ``Config`` with both task fields resolved to
 	their promoted (named) bindings."""
-	_tasks, _effects, config = load_tasks_from_py(FIXTURE)
+	config = load_tasks_from_py(FIXTURE).config
 	assert config is not None
 	assert config.default_task == Sequential(
 		Task(("python", "-c", "print('lint ran')"), name="lint"),

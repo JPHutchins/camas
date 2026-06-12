@@ -162,12 +162,22 @@ def test_bare_default_runs_to_completion(monkeypatch: pytest.MonkeyPatch) -> Non
 def test_bare_default_task_matrix_override(
 	monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-	"""A bare default task is overridable via the general --matrix form (the
-	per-axis --AXIS flag needs a named task to anchor the positional slot)."""
 	monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
 	config = Config(default_task=Parallel(Task("echo {PY}"), matrix={"PY": ("3.12", "3.13")}))
 	with pytest.raises(SystemExit, match="0"):
 		dispatch(_state({}, config), ["--dry-run", "--matrix", "PY=3.13"])
+	out = capsys.readouterr().out
+	assert "[PY=3.13]" in out
+	assert "[PY=3.12]" not in out
+
+
+def test_bare_default_task_per_axis_flag_override(
+	monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+	config = Config(default_task=Parallel(Task("echo {PY}"), matrix={"PY": ("3.12", "3.13")}))
+	with pytest.raises(SystemExit, match="0"):
+		dispatch(_state({}, config), ["--dry-run", "--PY", "3.13"])
 	out = capsys.readouterr().out
 	assert "[PY=3.13]" in out
 	assert "[PY=3.12]" not in out

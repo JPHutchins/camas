@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from camas import Parallel, Sequential, Task
+from camas import Config, Parallel, Sequential, Task
 
 src_tauri = Path("src-tauri")
 python_sdk = Path("python-sdk")
@@ -50,3 +50,5 @@ build = Parallel(
 	matrix={"FLAG": ("-- --debug", "")},
 	help="Debug and release builds (FLAG='-- --debug' debug, FLAG='' release)",
 )
+
+_ = Config(default_task=all)

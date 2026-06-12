@@ -16,9 +16,11 @@ FIXTURE = Path(__file__).parent / "fixtures" / "pep723" / "tasks.py"
 def test_pep723_header_is_inert_to_loader() -> None:
 	"""The PEP 723 header (and the ``__main__`` block) leave the loader's view of
 	the module unchanged — it reads identically to a header-less ``tasks.py``."""
-	tasks, effects, _config = load_tasks_from_py(FIXTURE)
-	assert effects == {}
-	assert tasks["hello"] == Task(("python", "-c", "print('hello from pep723')"), name="hello")
+	loaded = load_tasks_from_py(FIXTURE)
+	assert loaded.scope_effects == {}
+	assert loaded.tasks["hello"] == Task(
+		("python", "-c", "print('hello from pep723')"), name="hello"
+	)
 
 
 def test_pep723_runs_standalone() -> None:

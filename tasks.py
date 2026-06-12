@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from camas import Parallel, Sequential, Task
+from camas import Config, Parallel, Sequential, Task
 
 format = Task("uv run ruff format .")
 format_check = Task("uv run ruff format --check .")
@@ -65,3 +65,5 @@ matrix = Sequential(
 		)
 	},
 )
+
+_ = Config(default_task=check, github_task=coverage)

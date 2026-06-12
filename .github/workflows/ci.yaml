@@ -60,7 +60,8 @@ jobs:
 
       - uses: astral-sh/setup-uv@v6
 
-      - run: uv run camas coverage --effects='(Status(StatusOptions(output_mode="all")),)'
+      # Bare `camas` runs the github_task declared by Config in tasks.py.
+      - run: uv run camas --effects='(Status(StatusOptions(output_mode="all")),)'
 
       - uses: codecov/codecov-action@v5
         if: always()
