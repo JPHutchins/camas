@@ -304,10 +304,15 @@ if typing.TYPE_CHECKING:
 	from .main.dispatch import run_cli as run_cli
 
 
-def __getattr__(name: str) -> object:
+def __getattr__(name: str) -> typing.Any:
 	"""Lazily expose ``run_cli`` — the standalone ``run_cli(globals())`` entry point
 	— without importing the engine at package load, so ``from camas import Task``
 	stays light and the type layer keeps not depending on ``camas.main``.
+
+	Returns ``Any`` (the PEP 562 convention): ``run_cli`` is typed precisely via the
+	``TYPE_CHECKING`` import above, while typing the fallback as ``object`` would
+	mistype real module attributes like ``__file__`` for checkers that route them
+	through ``__getattr__``.
 
 	Raises:
 		AttributeError: for any name other than ``run_cli``.
