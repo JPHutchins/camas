@@ -133,6 +133,33 @@ The downside is that fork PRs get a read-only `GITHUB_TOKEN` from GitHub and can
 
 **When not to bother.** OSS gets free runners — just GHA-matrix them in parallel for faster wall-clock time. The cost is small: you give up either SSOT (matrix definition moves into YAML) or per-leaf-UI granularity (one PR check entry per runner instead of per leaf) — pick one. What *is* a deal-breaker for OSS is fork PRs: external-contributor PRs return 403 from the Checks API, so per-leaf entries silently don't appear. The `github-checks-demo` job is marked `continue-on-error` so it doesn't block CI when that happens, but `GitHubChecks` isn't a workable OSS solution.
 
+## Config
+
+Bind a `Config` in `tasks.py` and bare `camas` (no arguments) runs its `default_task`:
+
+```python
+from camas import Config, Sequential, Task
+
+lint = Task("ruff check .")
+test = Task("pytest")
+ci = Sequential(lint, test, name="ci")
+
+_ = Config(default_task=ci)
+```
+
+Now `camas` runs `ci`, `camas --dry-run` previews it, and the default's matrix axes stay overridable (`camas --PY 3.13`). With no `Config` (or no `default_task`), bare `camas` prints the full help — task listing, effects, hints — and exits non-zero.
+
+`github_task` is the CI counterpart, falling back to `default_task` when unset; it runs under `GITHUB_ACTIONS=true`. Paired with the [automatic `Status` effect](#ci-integration), one bare `camas` does the right thing in both places:
+
+```python
+_ = Config(
+  default_task=ci,                            # bare `camas` locally
+  github_task=Sequential(ci, "pytest --cov"), # bare `camas` under GitHub Actions
+)
+```
+
+`Config` is discovered by type, so the binding's name never matters — `_` by convention. Defining two is an error.
+
 ## Effects plugins
 
 Define an `Effect` in your `tasks.py` and it's discovered automatically — usable by name from `--effects` and listed under `camas --effects`. See [examples/effect-plugin/](https://github.com/JPHutchins/camas/tree/main/tests/fixtures/effect-plugin) for a typed `Tail` effect that streams per-task output as it arrives.
@@ -141,7 +168,7 @@ Define an `Effect` in your `tasks.py` and it's discovered automatically — usab
 
 The public API is published through **versioned namespaces** — [`camas.v0`](https://github.com/JPHutchins/camas/tree/main/src/camas/v0) today, `camas.v1` and beyond later. Import from a generation to pin the API shape: a name a generation exports is never removed or changed within that generation. The scheme tracks semver — `v0` pairs with camas 0.x and is as loose as semver says 0.x is (the surface prefers to grow; breaking changes stay possible until 1.0, made deliberately and noted in releases). At 1.0 a generation freezes: a breaking change forces the next `camas.vN`, and published generations keep shipping, so a `tasks.py` or effect plugin pinned to one keeps working across upgrades.
 
-The top-level `camas` namespace is the unversioned alias for the latest generation: `from camas import Task, Sequential, Parallel, Effect` re-exports that generation's four headline definers and is kept **1:1** with its package surface. The rest of the public API for a generation — `TaskNode`, the `TaskEvent` stream, `LeafState`, `Completion` — lives in that generation's submodules, e.g. `from camas.v0.task_event import TaskEvent`. Everything under `camas.core` / `camas.main` is internal — it consumes whatever generations are installed and carries no stability promise.
+The top-level `camas` namespace is the unversioned alias for the latest generation: `from camas import Task, Sequential, Parallel, Effect, Config` re-exports that generation's five headline definers and is kept **1:1** with its package surface. The rest of the public API for a generation — `TaskNode`, the `TaskEvent` stream, `LeafState`, `Completion` — lives in that generation's submodules, e.g. `from camas.v0.task_event import TaskEvent`. Everything under `camas.core` / `camas.main` is internal — it consumes whatever generations are installed and carries no stability promise.
 
 To pin a minimum camas *feature* level, use your dependency declaration (`camas>=0.x` in `pyproject.toml`, or PEP 723 inline metadata) — the import path covers API shape; the package pin covers feature availability.
 
@@ -180,7 +207,7 @@ The header owns version pinning (`dependencies = ["camas>=0.1.8"]`) and the inte
 
 - **[examples/](https://github.com/JPHutchins/camas/tree/main/tests/fixtures)** — full project layouts under test coverage. The canonical reference for how to structure `tasks.py`, use `[tool.camas.tasks]` in `pyproject.toml`, drive a matrix from `.python-version`, or scope a 2-axis matrix from the CLI.
 - **[src/camas/](https://github.com/JPHutchins/camas/tree/main/src/camas)** — typed Python with thorough docstrings. `camas --help` and `camas <task> --help` link back here.
-- **`camas`** with no args lists tasks; `camas <task> --help` shows the expanded tree, matrix axes, and override flags.
+- **`camas`** with no args runs the `Config` default task (or prints the full help when none is defined); `camas <task> --help` shows the expanded tree, matrix axes, and override flags.
 
 ## Walkthrough
 
@@ -192,7 +219,7 @@ The animated tree at the top is generated from this `tasks.py`:
 ```python
 from pathlib import Path
 
-from camas import Parallel, Sequential, Task
+from camas import Config, Parallel, Sequential, Task
 
 src_tauri = Path("src-tauri")
 python_sdk = Path("python-sdk")
@@ -240,6 +267,8 @@ build = Parallel(
     matrix={"FLAG": ("-- --debug", "")},
     help="Debug and release builds (FLAG='-- --debug' debug, FLAG='' release)",
 )
+
+_ = Config(default_task=all)
 ```
 
 </details>

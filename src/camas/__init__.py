@@ -22,7 +22,11 @@ rarely needed (the cmd or tree usually self-documents; this codebase
 uses ``help=`` only in a handful of places), but available for
 cryptic commands.
 
-These four are the unversioned alias for the latest API generation; to
+``Config`` is project configuration, discovered by type: bind
+``_ = Config(default_task=...)`` and bare ``camas`` runs that task
+(``github_task`` takes over under GitHub Actions).
+
+These five are the unversioned alias for the latest API generation; to
 pin a generation, import from its namespace (``camas.v0``). See the
 README's Versioning section.
 
@@ -295,6 +299,7 @@ help: ``camas <task> --help``.
 
 import typing
 
+from .v0 import Config as Config
 from .v0 import Effect as Effect
 from .v0 import Parallel as Parallel
 from .v0 import Sequential as Sequential

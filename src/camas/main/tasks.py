@@ -17,9 +17,11 @@ else:  # pragma: no cover
 	import tomli as tomllib
 	from typing_extensions import assert_never
 
+from ..v0.config import Config
 from ..v0.effect import Effect
 from ..v0.task import Parallel, Sequential, Task, TaskNode
 from .expression import Ref, parse_task_value, resolve_refs
+from .state import LoadOk
 
 if TYPE_CHECKING:
 	from collections.abc import Mapping
@@ -55,12 +57,8 @@ def assign_key_name(node: TaskNode | Ref, key: str) -> TaskNode | Ref:
 			return node
 
 
-def load_tasks(path: Path) -> tuple[dict[str, TaskNode], dict[str, type[Effect[Any]]]]:
+def load_tasks(path: Path) -> LoadOk:
 	"""Read [tool.camas.tasks] from a pyproject.toml and resolve all refs.
-
-	Returns ``(tasks, scope_effects)``; ``scope_effects`` is always empty for
-	pyproject sources (TOML can't host Python classes) — the pair shape is
-	for symmetry with :func:`load_tasks_from_py`.
 
 	Raises:
 		ValueError: when the table or a task value has the wrong type, or a
@@ -78,7 +76,11 @@ def load_tasks(path: Path) -> tuple[dict[str, TaskNode], dict[str, type[Effect[A
 			pre[name] = assign_key_name(parse_task_value(value), name)
 		except ValueError as e:
 			raise ValueError(f"task {name!r}: {e}") from e
-	return {name: resolve_refs(tree, pre, frozenset({name})) for name, tree in pre.items()}, {}
+	return LoadOk(
+		tasks={name: resolve_refs(tree, pre, frozenset({name})) for name, tree in pre.items()},
+		source=path,
+		scope_effects={},
+	)
 
 
 def name_scope_bindings(scope: Mapping[str, object]) -> dict[str, TaskNode]:
@@ -131,14 +133,45 @@ def name_scope_effects(scope: Mapping[str, object]) -> dict[str, type[Effect[Any
 	}
 
 
-def load_tasks_from_py(
-	path: Path,
-) -> tuple[dict[str, TaskNode], dict[str, type[Effect[Any]]]]:
-	"""Execute a Python task-definition file and collect module-level bindings.
+def name_scope_config(scope: Mapping[str, object]) -> Config | None:
+	"""The scope's :class:`Config`, found by ``isinstance`` under any binding name,
+	its task fields resolved to their promoted bindings.
 
-	Returns ``(tasks, scope_effects)`` — the TaskNode bindings (with name
-	propagation) and any Effect classes defined in the file's module-level
-	scope.
+	Raises:
+		ValueError: when more than one ``Config`` is bound in the scope.
 	"""
+	configs: Final = [(name, val) for name, val in scope.items() if isinstance(val, Config)]
+	if not configs:
+		return None
+	if len(configs) > 1:
+		names = ", ".join(sorted(name for name, _ in configs))
+		raise ValueError(f"multiple Config instances defined ({names}); expected at most one")
+	config: Final = configs[0][1]
+	promoted: Final = name_scope_bindings(scope)
+	name_by_id: Final = {
+		id(val): name
+		for name, val in scope.items()
+		if not name.startswith("_") and isinstance(val, Task | Sequential | Parallel)
+	}
+
+	def promote_field(node: TaskNode | None) -> TaskNode | None:
+		if node is None:
+			return None
+		name = name_by_id.get(id(node))
+		return promoted[name] if name is not None else node
+
+	return Config(
+		default_task=promote_field(config.default_task),
+		github_task=promote_field(config.github_task),
+	)
+
+
+def load_tasks_from_py(path: Path) -> LoadOk:
+	"""Execute a Python task-definition file and collect its module-level bindings."""
 	scope: Final = runpy.run_path(str(path))
-	return name_scope_bindings(scope), name_scope_effects(scope)
+	return LoadOk(
+		tasks=name_scope_bindings(scope),
+		source=path,
+		scope_effects=name_scope_effects(scope),
+		config=name_scope_config(scope),
+	)

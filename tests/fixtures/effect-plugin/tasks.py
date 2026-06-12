@@ -9,6 +9,7 @@ from typing import Final
 
 from tail import Tail as Tail
 
+from camas.v0.config import Config
 from camas.v0.effect import Effect
 from camas.v0.leaf_state import LeafState
 from camas.v0.task import Parallel, Sequential, Task, TaskNode
@@ -77,3 +78,5 @@ build = Parallel(
 	matrix={"STAGE": ("compile", "link")},
 	name="build",
 )
+
+_ = Config(default_task=check)

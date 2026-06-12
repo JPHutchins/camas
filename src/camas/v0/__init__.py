@@ -4,6 +4,7 @@
 
 import typing
 
+from .config import Config as Config
 from .effect import Effect as Effect
 from .task import Parallel as Parallel
 from .task import Sequential as Sequential

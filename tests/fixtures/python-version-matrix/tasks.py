@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from camas import Sequential, Task
+from camas import Config, Sequential, Task
 
 
 def read_python_versions(path: Path) -> tuple[str, ...]:
@@ -21,3 +21,5 @@ check = Sequential(
 	env={"UV_PROJECT_ENVIRONMENT": ".venv-{PY}", "UV_PYTHON": "{PY}"},
 	matrix={"PY": PYTHON_VERSIONS},
 )
+
+_ = Config(default_task=check)

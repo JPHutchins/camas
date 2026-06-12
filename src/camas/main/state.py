@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 	from collections.abc import Mapping
 	from pathlib import Path
 
+	from ..v0.config import Config
 	from ..v0.effect import Effect
 	from ..v0.task import TaskNode
 
@@ -37,6 +38,7 @@ class LoadOk(NamedTuple):
 	source: Path | None
 	"""``None`` only when no tasks file exists anywhere up the tree."""
 	scope_effects: Mapping[str, type[Effect[Any]]]
+	config: Config | None = None
 
 
 class LoadErr(NamedTuple):

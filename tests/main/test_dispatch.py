@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from camas import Parallel, Task
+from camas import Config, Parallel, Task
 from camas.main.dispatch import dispatch
 from camas.main.state import LoadOk
 
@@ -18,10 +18,10 @@ if TYPE_CHECKING:
 	from camas.v0.task import TaskNode
 
 
-def _state(tasks: Mapping[str, TaskNode]) -> LoadOk:
+def _state(tasks: Mapping[str, TaskNode], config: Config | None = None) -> LoadOk:
 	loaded: dict[str, TaskNode] = dict(tasks)
 	effects: dict[str, type[Effect[Any]]] = {}
-	return LoadOk(tasks=loaded, source=None, scope_effects=effects)
+	return LoadOk(tasks=loaded, source=None, scope_effects=effects, config=config)
 
 
 def test_print_task_help_with_axes(capsys: pytest.CaptureFixture[str]) -> None:
@@ -107,3 +107,77 @@ def test_dispatch_bad_camas_jobs_errors(
 	with pytest.raises(SystemExit, match="2"):
 		dispatch(_state({"go": Task(("python", "-c", "pass"))}), ["go", "--effects", "()"])
 	assert "CAMAS_JOBS" in capsys.readouterr().err
+
+
+def test_bare_runs_default_task_locally(
+	monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+	config = Config(default_task=Task("echo DEFAULT", name="default"))
+	with pytest.raises(SystemExit, match="0"):
+		dispatch(_state({}, config), ["--dry-run"])
+	assert "echo DEFAULT" in capsys.readouterr().out
+
+
+def test_bare_runs_github_task_under_actions(
+	monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	monkeypatch.setenv("GITHUB_ACTIONS", "true")
+	config = Config(default_task=Task("echo DEFAULT"), github_task=Task("echo GH"))
+	with pytest.raises(SystemExit, match="0"):
+		dispatch(_state({}, config), ["--dry-run"])
+	out = capsys.readouterr().out
+	assert "echo GH" in out
+	assert "echo DEFAULT" not in out
+
+
+def test_bare_github_falls_back_to_default(
+	monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	monkeypatch.setenv("GITHUB_ACTIONS", "true")
+	config = Config(default_task=Task("echo DEFAULT"))
+	with pytest.raises(SystemExit, match="0"):
+		dispatch(_state({}, config), ["--dry-run"])
+	assert "echo DEFAULT" in capsys.readouterr().out
+
+
+def test_bare_no_config_prints_help_and_errors(
+	monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+	with pytest.raises(SystemExit, match="2"):
+		dispatch(_state({"lint": Task("ruff check .")}), [])
+	captured = capsys.readouterr()
+	assert "task or expression is required" in captured.err
+	assert "Reference:" in captured.out
+
+
+def test_bare_default_runs_to_completion(monkeypatch: pytest.MonkeyPatch) -> None:
+	monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+	config = Config(default_task=Task(("python", "-c", "pass")))
+	with pytest.raises(SystemExit, match="0"):
+		dispatch(_state({}, config), ["--effects", "()"])
+
+
+def test_bare_default_task_matrix_override(
+	monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+	config = Config(default_task=Parallel(Task("echo {PY}"), matrix={"PY": ("3.12", "3.13")}))
+	with pytest.raises(SystemExit, match="0"):
+		dispatch(_state({}, config), ["--dry-run", "--matrix", "PY=3.13"])
+	out = capsys.readouterr().out
+	assert "[PY=3.13]" in out
+	assert "[PY=3.12]" not in out
+
+
+def test_bare_default_task_per_axis_flag_override(
+	monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+	config = Config(default_task=Parallel(Task("echo {PY}"), matrix={"PY": ("3.12", "3.13")}))
+	with pytest.raises(SystemExit, match="0"):
+		dispatch(_state({}, config), ["--dry-run", "--PY", "3.13"])
+	out = capsys.readouterr().out
+	assert "[PY=3.13]" in out
+	assert "[PY=3.12]" not in out

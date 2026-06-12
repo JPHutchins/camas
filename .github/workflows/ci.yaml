@@ -47,7 +47,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@v6
 
-      - run: uv run camas check
+      - run: uv run camas
         env:
           UV_PYTHON: ${{ matrix.python }}
 

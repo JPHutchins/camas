@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 import sys
 from pathlib import Path
@@ -18,14 +19,12 @@ else:  # pragma: no cover
 
 from ..core.execution import run
 from ..core.matrix import matrix_axes, override_matrix
-from ..core.render import color_on, print_tree
+from ..core.render import print_tree
 from .argv import apply_passthrough, parse_axis_values, parse_matrix_kv, split_passthrough
 from .effects import parse_effects
 from .expression import parse_expression
 from .format import (
 	format_load_error_hint,
-	format_reference,
-	format_try_hint,
 	print_available_effects,
 	print_task_help,
 	print_task_summary_listing,
@@ -33,7 +32,13 @@ from .format import (
 )
 from .parser import RESERVED_FLAGS, build_parser, resolve_jobs
 from .state import EMPTY_STATE, LoadErr, LoadOk, TasksState
-from .tasks import load_tasks, load_tasks_from_py, name_scope_bindings, name_scope_effects
+from .tasks import (
+	load_tasks,
+	load_tasks_from_py,
+	name_scope_bindings,
+	name_scope_config,
+	name_scope_effects,
+)
 
 if TYPE_CHECKING:
 	from collections.abc import Mapping
@@ -85,6 +90,7 @@ def run_cli(scope: Mapping[str, object]) -> None:
 			tasks=name_scope_bindings(scope),
 			source=source,
 			scope_effects=name_scope_effects(scope),
+			config=name_scope_config(scope),
 		)
 	)
 
@@ -101,8 +107,8 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 
 	Dispatch is structured around the state sum type:
 
-	* :class:`LoadOk` — task-running path. ``camas`` with no expression prints
-	  the listing and exits ``2`` (a la ``just`` / ``task``).
+	* :class:`LoadOk` — task-running path. ``camas`` with no expression runs the
+	  :class:`Config`'s task for the environment, else prints help and exits ``2``.
 	* :class:`LoadErr` — meta actions (``--list`` / ``--tree`` / ``--effects``)
 	  still render; everything else delegates to :func:`exit_for_load_err`.
 	"""
@@ -132,11 +138,18 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 				sys.exit(0)
 			exit_for_load_err(err)
 
-		case LoadOk(tasks=tasks, source=source, scope_effects=scope_effects):
+		case LoadOk(tasks=tasks, source=source, scope_effects=scope_effects, config=config):
 			args, _leftover = parser.parse_known_args(split.head)
+			in_github: Final = os.environ.get("GITHUB_ACTIONS") == "true"
+			default_node: Final = config.bare_task(github=in_github) if config is not None else None
+			axis_node: Final = (
+				tasks[args.expression]
+				if isinstance(args.expression, str) and args.expression in tasks
+				else default_node
+			)
 			augmented_axes: dict[str, tuple[str, ...]] = {}
-			if isinstance(args.expression, str) and args.expression in tasks:
-				for name, values in matrix_axes(tasks[args.expression]).items():
+			if axis_node is not None:
+				for name, values in matrix_axes(axis_node).items():
 					if name.lower() in RESERVED_FLAGS:
 						continue
 					parser.add_argument(
@@ -167,20 +180,20 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 				print_available_effects(scope_effects)
 				sys.exit(0)
 
+			resolved: TaskNode
 			if args.expression is None:
-				if tasks:
-					print(parser.format_usage().rstrip())
-					print()
-					print_task_summary_listing(tasks, source)
-					print()
-					print(format_try_hint(color_on()))
-					print()
-					print(format_reference(color_on()))
-					print()
+				if default_node is None:
+					parser.print_help()
 					sys.stdout.flush()
-					print(f"{parser.prog}: error: task or expression is required", file=sys.stderr)
+					print(
+						f"{parser.prog}: error: task or expression is required "
+						"(define a Config with default_task to set a default)",
+						file=sys.stderr,
+					)
 					sys.exit(2)
-				parser.error("task or expression is required (no tasks defined)")
+				resolved = default_node
+			else:
+				resolved = dispatch_arg(args.expression, tasks)
 
 			try:
 				effects: Final = parse_effects(args.effects, scope_effects)
@@ -205,7 +218,6 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 						sys.exit(2)
 					overrides[axis_name] = values
 
-			resolved = dispatch_arg(args.expression, tasks)
 			if overrides:
 				try:
 					resolved = override_matrix(resolved, overrides)
@@ -238,10 +250,9 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 def _load_py(path: Path) -> TasksState:
 	"""Evaluate ``path`` and return a :class:`LoadOk` / :class:`LoadErr`."""
 	try:
-		tasks, scope_effects = load_tasks_from_py(path)
+		return load_tasks_from_py(path)
 	except Exception as e:
 		return LoadErr(source=path, exception=e)
-	return LoadOk(tasks=tasks, source=path, scope_effects=scope_effects)
 
 
 def resolve_tasks_source(argv: list[str]) -> tuple[TasksState, list[str]]:
@@ -268,11 +279,11 @@ def resolve_tasks_source(argv: list[str]) -> tuple[TasksState, list[str]]:
 		pyproject = candidate / "pyproject.toml"
 		if pyproject.is_file():
 			try:
-				tasks, _ = load_tasks(pyproject)
+				loaded = load_tasks(pyproject)
 			except ValueError as e:
 				print(f"error: {pyproject}: {e}", file=sys.stderr)
 				sys.exit(2)
-			if tasks:
-				return LoadOk(tasks=tasks, source=pyproject, scope_effects={}), argv
+			if loaded.tasks:
+				return loaded, argv
 
 	return EMPTY_STATE, argv
