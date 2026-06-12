@@ -22,8 +22,6 @@ from camas.main.expression import (
 )
 from camas.main.tasks import (
 	assign_key_name,
-	find_pyproject,
-	find_tasks_py,
 	is_str_dict,
 	load_tasks,
 	load_tasks_from_py,
@@ -169,24 +167,6 @@ def test_resolve_refs_transitive_cycle() -> None:
 	}
 	with pytest.raises(ValueError, match="cycle"):
 		resolve_refs(Ref("a"), pre, frozenset())
-
-
-def test_find_pyproject_in_cwd(tmp_path: Path) -> None:
-	(tmp_path / "pyproject.toml").write_text("")
-	assert find_pyproject(tmp_path) == tmp_path / "pyproject.toml"
-
-
-def test_find_pyproject_walks_up(tmp_path: Path) -> None:
-	(tmp_path / "pyproject.toml").write_text("")
-	sub = tmp_path / "a" / "b" / "c"
-	sub.mkdir(parents=True)
-	assert find_pyproject(sub) == tmp_path / "pyproject.toml"
-
-
-def test_find_pyproject_none(tmp_path: Path) -> None:
-	sub = tmp_path / "nested"
-	sub.mkdir()
-	assert find_pyproject(sub) is None
 
 
 def test_run_cli_collects_tasks_from_scope(capsys: pytest.CaptureFixture[str]) -> None:
@@ -450,22 +430,6 @@ def test_named_task_end_to_end(tmp_path: Path) -> None:
 		check=False,
 	)
 	assert result.returncode == 0
-
-
-def test_find_tasks_py_in_cwd(tmp_path: Path) -> None:
-	(tmp_path / "tasks.py").write_text("")
-	assert find_tasks_py(tmp_path) == tmp_path / "tasks.py"
-
-
-def test_find_tasks_py_walks_up(tmp_path: Path) -> None:
-	(tmp_path / "tasks.py").write_text("")
-	sub = tmp_path / "a" / "b"
-	sub.mkdir(parents=True)
-	assert find_tasks_py(sub) == tmp_path / "tasks.py"
-
-
-def test_find_tasks_py_none(tmp_path: Path) -> None:
-	assert find_tasks_py(tmp_path) is None
 
 
 def test_load_tasks_from_py_propagates_names(tmp_path: Path) -> None:

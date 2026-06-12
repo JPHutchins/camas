@@ -11,7 +11,6 @@ explicitly requests it.
 from __future__ import annotations
 
 import linecache
-import runpy
 import shutil
 import subprocess
 import sys
@@ -26,20 +25,6 @@ else:  # pragma: no cover
 
 
 CheckerName: TypeAlias = Literal["ty", "mypy"]
-
-
-class EvalOk(NamedTuple):
-	"""Eval outcome: the tasks file executed without raising ``Exception``."""
-
-
-class EvalErr(NamedTuple):
-	"""Eval outcome: the tasks file raised an ``Exception`` during execution."""
-
-	exception: Exception
-	"""The captured exception, still attached to its traceback."""
-
-
-EvalResult: TypeAlias = EvalOk | EvalErr
 
 
 class FoundChecker(NamedTuple):
@@ -113,15 +98,6 @@ def find_typechecker() -> FoundChecker | None:
 		if (found := shutil.which(name)) is not None:
 			return FoundChecker(name=name, path=Path(found))
 	return None
-
-
-def run_eval(tasks_py: Path) -> EvalResult:
-	"""Execute ``tasks_py`` via :mod:`runpy`; capture any :class:`Exception` as EvalErr."""
-	try:
-		runpy.run_path(str(tasks_py))
-	except Exception as e:
-		return EvalErr(exception=e)
-	return EvalOk()
 
 
 def checker_argv(found: FoundChecker, tasks_py: Path) -> list[str]:

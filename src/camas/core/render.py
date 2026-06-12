@@ -248,8 +248,8 @@ def leaf_label(task: Task, show_cmd: bool, color: bool) -> str:
 def render_tree_lines(task: TaskNode, show_cmd: bool = False, color: bool = False) -> list[str]:
 	"""Build the tree-display lines (group headers + leaves) for an expanded task tree.
 
-	Pure: returns a list of strings without printing. ``print_tree`` (in
-	``main.format``) is the printing wrapper.
+	Pure: returns a list of strings without printing. :func:`print_tree` is the
+	printing wrapper.
 
 	>>> render_tree_lines(Task("echo hi"))
 	['echo hi']
@@ -276,3 +276,15 @@ def render_tree_lines(task: TaskNode, show_cmd: bool = False, color: bool = Fals
 			case _:
 				assert_never(row)
 	return lines
+
+
+def print_tree(task: TaskNode, show_cmd: bool = False) -> None:
+	"""Print the task tree structure to stdout without executing.
+
+	>>> print_tree(Task("echo hi"))
+	echo hi
+	>>> print_tree(Task("echo hi", name="greet"), show_cmd=True)
+	greet: echo hi
+	"""
+	for line in render_tree_lines(task, show_cmd=show_cmd, color=color_on()):
+		print(line)

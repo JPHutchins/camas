@@ -21,9 +21,7 @@ from ..core.render import (
 	RESET,
 	DisplayRow,
 	GroupHeader,
-	color_on,
 	flatten_rows,
-	render_tree_lines,
 	render_tree_prefix,
 	strip_ansi,
 )
@@ -359,18 +357,6 @@ def print_passes(states: Sequence[LeafState], term_width: int) -> None:
 				print_task_output(task, output, "PASSED", GREEN, 0, term_width)
 			case _:
 				pass
-
-
-def print_tree(task: TaskNode, show_cmd: bool = False) -> None:
-	"""Print the task tree structure to stdout without executing.
-
-	>>> print_tree(Task("echo hi"))
-	echo hi
-	>>> print_tree(Task("echo hi", name="greet"), show_cmd=True)
-	greet: echo hi
-	"""
-	for line in render_tree_lines(task, show_cmd=show_cmd, color=color_on()):
-		print(line)
 
 
 @dataclass

@@ -18,7 +18,7 @@ else:  # pragma: no cover
 
 from ..core.execution import run
 from ..core.matrix import matrix_axes, override_matrix
-from ..core.render import color_on
+from ..core.render import color_on, print_tree
 from .argv import apply_passthrough, parse_axis_values, parse_matrix_kv, split_passthrough
 from .effects import parse_effects
 from .expression import parse_expression
@@ -30,7 +30,6 @@ from .format import (
 	print_task_help,
 	print_task_summary_listing,
 	print_task_trees,
-	print_tree,
 )
 from .parser import RESERVED_FLAGS, build_parser
 from .state import EMPTY_STATE, LoadErr, LoadOk, TasksState
@@ -215,11 +214,6 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 			assert_never(state)
 
 
-def looks_like_py_file(arg: str) -> bool:
-	"""A CLI arg is a tasks file when it ends in ``.py`` (expressions end in ``)``)."""
-	return arg.endswith(".py")
-
-
 def _load_py(path: Path) -> TasksState:
 	"""Evaluate ``path`` and return a :class:`LoadOk` / :class:`LoadErr`."""
 	try:
@@ -238,7 +232,7 @@ def resolve_tasks_source(argv: list[str]) -> tuple[TasksState, list[str]]:
 	the walk going. A ``tasks.py`` whose evaluation raises returns
 	:class:`LoadErr` so meta operations (``--help``, ``--list``) still work.
 	"""
-	if argv and looks_like_py_file(argv[0]):
+	if argv and argv[0].endswith(".py"):
 		path = Path(argv[0])
 		if not path.is_file():
 			print(f"error: {path}: no such file", file=sys.stderr)

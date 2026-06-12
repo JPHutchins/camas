@@ -33,7 +33,7 @@ from .task import task_label
 from .traversal import flatten_leaves, subtree_leaf_indices
 
 if TYPE_CHECKING:
-	from collections.abc import Iterable, Sequence
+	from collections.abc import Sequence
 
 	from ..v0.effect import Effect
 	from .effect import EventSink
@@ -86,19 +86,6 @@ async def skip_subtree(
 	return results
 
 
-def first_failure_rc(results: Iterable[TaskResult]) -> int | None:
-	"""Return the first non-zero returncode in ``results``, or ``None`` if all are zero.
-
-	>>> first_failure_rc((TaskResult("a", Finished(0, 0.1, ())),))
-	>>> first_failure_rc((TaskResult("a", Finished(0, 0.1, ())), TaskResult("b", Finished(2, 0.1, ()))))
-	2
-	"""
-	return next(
-		(r.completion.returncode for r in results if r.completion.returncode != 0),
-		None,
-	)
-
-
 async def execute(
 	node: TaskNode,
 	dispatch: EventSink,
@@ -127,7 +114,14 @@ async def execute(
 				)
 				seq_results = (*seq_results, *child_results)
 				if failed_rc is None:
-					failed_rc = first_failure_rc(child_results)
+					failed_rc = next(
+						(
+							r.completion.returncode
+							for r in child_results
+							if r.completion.returncode != 0
+						),
+						None,
+					)
 			return seq_results
 		case _:
 			assert_never(node)
