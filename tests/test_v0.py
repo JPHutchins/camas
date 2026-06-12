@@ -1,16 +1,6 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""Pin the public-API surface.
-
-The top-level ``camas`` namespace and the current versioned namespace
-(``camas.v0``) expose the identical four headline definers, kept 1:1; the
-rest of the public surface for writing effects lives in that generation's
-submodules. The version namespaces are semver-zero loose until 1.0 — they
-may change, but only on purpose, so an accidental addition, removal, or
-re-binding of the headline surface fails here.
-"""
-
 from __future__ import annotations
 
 import subprocess

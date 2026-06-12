@@ -9,10 +9,9 @@ from typing import Final
 
 from tail import Tail as Tail
 
-from camas import Parallel, Sequential, Task
-from camas.v0 import Effect
+from camas.v0.effect import Effect
 from camas.v0.leaf_state import LeafState
-from camas.v0.task import TaskNode
+from camas.v0.task import Parallel, Sequential, Task, TaskNode
 from camas.v0.task_event import OutputEvent, StartedEvent, TaskEvent
 
 

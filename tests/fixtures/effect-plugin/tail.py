@@ -4,7 +4,7 @@ to demonstrate that user effects don't have to live in the task file."""
 from collections.abc import Sequence
 from typing import Final
 
-from camas.v0 import Effect
+from camas.v0.effect import Effect
 from camas.v0.leaf_state import LeafState
 from camas.v0.task import TaskNode
 from camas.v0.task_event import OutputEvent, TaskEvent

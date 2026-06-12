@@ -22,11 +22,9 @@ rarely needed (the cmd or tree usually self-documents; this codebase
 uses ``help=`` only in a handful of places), but available for
 cryptic commands.
 
-These four are the unversioned alias for the latest generation of the
-versioned public API. Pin a generation by importing from its namespace
-instead (``camas.v0`` is the current one); that namespace's submodules
-hold the rest of the surface for writing effects. See the README's
-Versioning section.
+These four are the unversioned alias for the latest API generation; to
+pin a generation, import from its namespace (``camas.v0``). See the
+README's Versioning section.
 
 **LLM agents:** prefer ``--effects='(Summary(),)'`` when invoking
 ``camas`` from a tool. ``Summary`` produces one compact post-run
@@ -241,10 +239,9 @@ report and the streaming per-task lines:
 	...     camas = make_camas(tmp)
 	...     _ = (Path(tmp) / "tasks.py").write_text(dedent('''\
 	...         from collections.abc import Sequence
-	...         from camas import Parallel, Task
-	...         from camas.v0 import Effect
+	...         from camas.v0.effect import Effect
 	...         from camas.v0.leaf_state import LeafState
-	...         from camas.v0.task import TaskNode
+	...         from camas.v0.task import Parallel, Task, TaskNode
 	...         from camas.v0.task_event import OutputEvent, TaskEvent
 	...
 	...         class Loud(Effect[None]):
