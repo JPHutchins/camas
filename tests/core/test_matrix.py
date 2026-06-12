@@ -182,3 +182,43 @@ def test_name_suffix_applied(name_suffix: str) -> None:
 			assert any(name_suffix in (n or "") for n in names)
 		case _:
 			raise AssertionError(f"unexpected: {result}")
+
+
+def test_help_preserved_without_matrix() -> None:
+	task = Sequential(Task("echo hi", help="say hi"), help="greeting")
+	result = expand_matrix(task)
+	match result:
+		case Sequential(tasks=(Task(help="say hi"),), help="greeting"):
+			pass
+		case _:
+			raise AssertionError(f"unexpected: {result}")
+
+
+def test_help_interpolated_on_specialized_leaves() -> None:
+	task = Parallel(
+		Task("test", help="test on {PY}"), matrix={"PY": ("3.12", "3.13")}, help="fan out"
+	)
+	result = expand_matrix(task)
+	match result:
+		case Parallel(tasks=(Task(help="test on 3.12"), Task(help="test on 3.13")), help="fan out"):
+			pass
+		case _:
+			raise AssertionError(f"unexpected: {result}")
+
+
+def test_help_interpolated_on_cloned_sequentials() -> None:
+	task = Sequential(
+		Parallel(Task("a"), help="inner {PY}"),
+		name="ci",
+		matrix={"PY": ("3.12",)},
+		help="ci on {PY}",
+	)
+	result = expand_matrix(task)
+	match result:
+		case Parallel(
+			tasks=(Sequential(tasks=(Parallel(help="inner 3.12"),), help="ci on 3.12"),),
+			help="ci on {PY}",
+		):
+			pass
+		case _:
+			raise AssertionError(f"unexpected: {result}")

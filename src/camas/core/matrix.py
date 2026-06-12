@@ -71,6 +71,10 @@ def substitute_cwd(cwd: Path | None, binding: MatrixBinding) -> Path | None:
 	return Path(substitute_in_str(str(cwd), binding)) if cwd is not None else None
 
 
+def substitute_help(help: str | None, binding: MatrixBinding) -> str | None:
+	return substitute_in_str(help, binding) if help is not None else None
+
+
 def specialize_task(task: Task, binding: MatrixBinding, suffix: str) -> Task:
 	"""Specialize a leaf Task with concrete variable values from a matrix binding.
 
@@ -91,6 +95,7 @@ def specialize_task(task: Task, binding: MatrixBinding, suffix: str) -> Task:
 		name=f"{substitute_in_str(task_label(task), binding)} {suffix}",
 		env={k: substitute_in_str(v, binding) for k, v in task.env.items()} | dict(binding),
 		cwd=substitute_cwd(task.cwd, binding),
+		help=substitute_help(task.help, binding),
 	)
 
 
@@ -103,17 +108,19 @@ def specialize_node(task: TaskNode, binding: MatrixBinding, suffix: str) -> Task
 	match task:
 		case Task():
 			return specialize_task(task, binding, suffix)
-		case Sequential(tasks=tasks, name=name, cwd=cwd):
+		case Sequential(tasks=tasks, name=name, cwd=cwd, help=help):
 			return Sequential(
 				*(specialize_node(t, binding, suffix) for t in tasks),
 				name=f"{name} {suffix}" if name is not None else None,
 				cwd=substitute_cwd(cwd, binding),
+				help=substitute_help(help, binding),
 			)
-		case Parallel(tasks=tasks, name=name, cwd=cwd):
+		case Parallel(tasks=tasks, name=name, cwd=cwd, help=help):
 			return Parallel(
 				*(specialize_node(t, binding, suffix) for t in tasks),
 				name=f"{name} {suffix}" if name is not None else None,
 				cwd=substitute_cwd(cwd, binding),
+				help=substitute_help(help, binding),
 			)
 		case _:
 			assert_never(task)
@@ -224,6 +231,7 @@ def expand_sequential_matrix(
 	name: str | None,
 	container_env: dict[str, str],
 	container_cwd: Path | None,
+	help: str | None,
 ) -> Parallel:
 	"""Expand a Sequential's matrix into a Parallel of cloned Sequentials.
 
@@ -231,7 +239,7 @@ def expand_sequential_matrix(
 	matrix values substituted, plus the binding itself) so the display can show
 	it once at the group header instead of on every leaf.
 
-	>>> result = expand_sequential_matrix((Task("build"), Task("test")), {"X": ("1", "2")}, "ci", {}, None)
+	>>> result = expand_sequential_matrix((Task("build"), Task("test")), {"X": ("1", "2")}, "ci", {}, None, None)
 	>>> len(result.tasks)
 	2
 	>>> all(isinstance(t, Sequential) for t in result.tasks)
@@ -247,10 +255,12 @@ def expand_sequential_matrix(
 				env={k: substitute_in_str(v, binding) for k, v in container_env.items()}
 				| dict(binding),
 				cwd=substitute_cwd(container_cwd, binding),
+				help=substitute_help(help, binding),
 			)
 			for binding in matrix_bindings(matrix)
 		),
 		name=name,
+		help=help,
 	)
 
 
@@ -260,6 +270,7 @@ def expand_parallel_matrix(
 	name: str | None,
 	container_env: dict[str, str],
 	container_cwd: Path | None,
+	help: str | None,
 ) -> Parallel:
 	"""Expand a Parallel's matrix into a flat Parallel of all binding × child products.
 
@@ -267,7 +278,7 @@ def expand_parallel_matrix(
 	same value across every binding; per-binding pieces land on the individual
 	specialized leaves via ``specialize_node``.
 
-	>>> result = expand_parallel_matrix((Task("test"),), {"PY": ("3.12", "3.13")}, None, {}, None)
+	>>> result = expand_parallel_matrix((Task("test"),), {"PY": ("3.12", "3.13")}, None, {}, None, None)
 	>>> len(result.tasks)
 	2
 	"""
@@ -280,6 +291,7 @@ def expand_parallel_matrix(
 		name=name,
 		env={k: v for k, v in container_env.items() if "{" not in v},
 		cwd=container_cwd if container_cwd is not None and "{" not in str(container_cwd) else None,
+		help=help,
 	)
 
 
@@ -312,20 +324,21 @@ def expand_matrix(
 				name=task.name,
 				env={**parent_env, **task.env},
 				cwd=task.cwd if task.cwd is not None else ancestor_cwd,
+				help=task.help,
 			)
 		case Sequential(tasks=tasks, matrix=matrix, env=env, cwd=cwd):
 			seq_env: Final = parent_env | env
 			seq_cwd: Final = cwd if cwd is not None else ancestor_cwd
 			seq_expanded: Final = tuple(expand_matrix(t, seq_env, seq_cwd) for t in tasks)
 			if matrix is None:
-				return Sequential(*seq_expanded, name=task.name, env=env, cwd=cwd)
-			return expand_sequential_matrix(seq_expanded, matrix, task.name, env, cwd)
+				return Sequential(*seq_expanded, name=task.name, env=env, cwd=cwd, help=task.help)
+			return expand_sequential_matrix(seq_expanded, matrix, task.name, env, cwd, task.help)
 		case Parallel(tasks=tasks, matrix=matrix, env=env, cwd=cwd):
 			par_env: Final = parent_env | env
 			par_cwd: Final = cwd if cwd is not None else ancestor_cwd
 			par_expanded: Final = tuple(expand_matrix(t, par_env, par_cwd) for t in tasks)
 			if matrix is None:
-				return Parallel(*par_expanded, name=task.name, env=env, cwd=cwd)
-			return expand_parallel_matrix(par_expanded, matrix, task.name, env, cwd)
+				return Parallel(*par_expanded, name=task.name, env=env, cwd=cwd, help=task.help)
+			return expand_parallel_matrix(par_expanded, matrix, task.name, env, cwd, task.help)
 		case _:
 			assert_never(task)
