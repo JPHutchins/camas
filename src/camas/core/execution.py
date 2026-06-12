@@ -41,8 +41,7 @@ if TYPE_CHECKING:
 
 
 Limiter: TypeAlias = "asyncio.Semaphore | nullcontext[None]"
-"""What bounds concurrent leaf subprocesses: an ``asyncio.Semaphore(jobs)`` for a
-``--jobs`` cap, or a no-op ``nullcontext`` when unbounded (the default)."""
+"""Throttles concurrent leaf subprocesses under ``--jobs``; a no-op when unbounded."""
 
 
 def subprocess_env(merged: dict[str, str]) -> dict[str, str]:
@@ -54,13 +53,7 @@ def subprocess_env(merged: dict[str, str]) -> dict[str, str]:
 
 
 async def run_cmd(task: Task, leaf_index: int, dispatch: EventSink, limiter: Limiter) -> TaskResult:
-	"""Run one leaf as a subprocess, dispatching Started/Output/Completed events.
-
-	``limiter`` bounds how many leaves hold a live subprocess at once (the
-	``--jobs`` cap); acquired before the leaf starts so a queued leaf stays
-	``Waiting`` and its measured elapsed excludes the wait. It is a no-op
-	``nullcontext`` when unbounded.
-	"""
+	"""Run one leaf as a subprocess, dispatching Started/Output/Completed events."""
 	async with limiter:
 		start_pc: Final = time.perf_counter()
 		await dispatch(leaf_index, StartedEvent(task, leaf_index, datetime.now()))
@@ -146,13 +139,8 @@ async def run(
 ) -> RunResult:
 	"""Execute a task tree, dispatching events to every effect.
 
-	``jobs`` caps how many leaf subprocesses run at once; ``None`` (the default)
-	is unbounded. It only ever throttles the tree's own fan-out — it cannot make
-	a run more parallel than it already is.
-
 	Raises:
-		ValueError: when ``jobs`` is provided but less than 1 (``0`` would
-			deadlock on an empty semaphore; negatives are meaningless).
+		ValueError: when ``jobs`` is provided and less than 1.
 		BaseExceptionGroup: every error raised by Effects during setup,
 			on_event, or teardown, collected per phase.
 

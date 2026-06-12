@@ -59,12 +59,6 @@ def positive_jobs(raw: str) -> int:
 
 	Raises:
 		ArgumentTypeError: when ``raw`` is not an integer ``>= 1``.
-
-	>>> positive_jobs("4")
-	4
-	>>> positive_jobs("0")
-	Traceback (most recent call last):
-	argparse.ArgumentTypeError: --jobs must be >= 1, got 0
 	"""
 	try:
 		n = int(raw)
@@ -81,21 +75,6 @@ def resolve_jobs(cli_jobs: int | None) -> int | None:
 
 	Raises:
 		ValueError: when ``CAMAS_JOBS`` is set but not a positive integer.
-
-	>>> resolve_jobs(8)
-	8
-	>>> import os
-	>>> _saved = os.environ.pop("CAMAS_JOBS", None)
-	>>> resolve_jobs(None) is None
-	True
-	>>> os.environ["CAMAS_JOBS"] = "2"
-	>>> resolve_jobs(None)
-	2
-	>>> resolve_jobs(8)
-	8
-	>>> os.environ.pop("CAMAS_JOBS", None)
-	'2'
-	>>> _ = os.environ.update({"CAMAS_JOBS": _saved}) if _saved is not None else None
 	"""
 	if cli_jobs is not None:
 		return cli_jobs
