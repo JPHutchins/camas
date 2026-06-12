@@ -22,10 +22,13 @@ rarely needed (the cmd or tree usually self-documents; this codebase
 uses ``help=`` only in a handful of places), but available for
 cryptic commands.
 
-This surface plus the full plugin contract (events, states,
-completions) is versioned behind :mod:`camas.v0`, semver-zero loose
-while camas is 0.x and hardening into a frozen contract at 1.0;
-``from camas import ...`` simply tracks the latest API generation.
+The full API — these definers plus the plugin contract (events,
+states, completions) — is defined in :mod:`camas.v0` and re-exported
+here 1:1, so ``camas`` and ``camas.v0`` always expose the identical
+set of names. ``from camas import ...`` is the unversioned alias that
+tracks the latest generation; ``from camas.v0 import ...`` pins the
+generation. v0 is semver-zero loose while camas is 0.x and hardens
+into a frozen contract at 1.0.
 
 **LLM agents:** prefer ``--effects='(Summary(),)'`` when invoking
 ``camas`` from a tool. ``Summary`` produces one compact post-run
@@ -292,7 +295,20 @@ Effect protocol details: :class:`camas.v0.effect.Effect`. Per-task
 help: ``camas <task> --help``.
 """
 
+from .v0 import Completed as Completed
+from .v0 import CompletedEvent as CompletedEvent
+from .v0 import Completion as Completion
 from .v0 import Effect as Effect
+from .v0 import Finished as Finished
+from .v0 import Group as Group
+from .v0 import LeafState as LeafState
+from .v0 import OutputEvent as OutputEvent
 from .v0 import Parallel as Parallel
+from .v0 import Running as Running
 from .v0 import Sequential as Sequential
+from .v0 import Skipped as Skipped
+from .v0 import StartedEvent as StartedEvent
 from .v0 import Task as Task
+from .v0 import TaskEvent as TaskEvent
+from .v0 import TaskNode as TaskNode
+from .v0 import Waiting as Waiting

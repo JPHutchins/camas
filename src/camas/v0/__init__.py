@@ -16,11 +16,12 @@ The types are *defined* in this package — ``camas.core`` and
 ``camas.main`` consume them, never the reverse — so the diff history of
 ``src/camas/v0/`` is the complete history of the public API.
 
-The top-level ``camas`` namespace re-exports the task definers from the
-latest version namespace — best effort across major generations, fine for
-a ``tasks.py`` that lives next to its dev environment. Import from
-``camas.v0`` when a file should outlive that: an effect plugin you
-distribute, a standalone task file, a ``tasks.py`` nobody revisits.
+The top-level ``camas`` namespace re-exports this surface 1:1 — the two
+always expose the identical set of names — as the unversioned alias for
+the latest generation, fine for a ``tasks.py`` that lives next to its dev
+environment. Import from ``camas.v0`` when a file should outlive that: an
+effect plugin you distribute, a standalone task file, a ``tasks.py``
+nobody revisits.
 
 The task definers:
 
