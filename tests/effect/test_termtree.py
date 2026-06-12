@@ -22,21 +22,12 @@ from camas.effect.termtree import (
 	render_frame,
 	render_lines,
 )
-from camas.v0 import (
-	Completed,
-	CompletedEvent,
-	Finished,
-	LeafState,
-	OutputEvent,
-	Running,
-	Skipped,
-	StartedEvent,
-	TaskEvent,
-	Waiting,
-)
+from camas.v0.completion import Finished, Skipped
+from camas.v0.leaf_state import Completed, LeafState, Running, Waiting
+from camas.v0.task_event import CompletedEvent, OutputEvent, StartedEvent, TaskEvent
 
 if TYPE_CHECKING:
-	from camas.v0 import Effect
+	from camas.v0.effect import Effect
 
 TS = datetime(2026, 5, 21, 14, 30, 0)
 

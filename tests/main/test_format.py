@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 
 	import pytest
 
-	from camas.v0 import TaskNode
+	from camas.v0.task import TaskNode
 
 
 def test_task_summary_leaf_str_cmd() -> None:

@@ -1,44 +1,40 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
-"""The v0 public API — ``from camas.v0 import ...`` is the stability contract.
+"""The v0 generation of the public API.
 
-This module is the public API, versioned the way semver versions the
-package: ``v0`` pairs with camas 0.x and is exactly as loose as semver
-says 0.x is. The surface prefers to grow — new names, fields appended
-with defaults — but breaking changes remain possible until 1.0, made
-deliberately and noted in releases, never by accident
-(``tests/test_v0.py`` pins the surface). At 1.0 the contract hardens:
-a stable-era namespace never removes or changes an exported name, a
-breaking change forces the next ``camas.vN``, and old namespaces keep
-shipping, so files written against one keep working across upgrades.
+This package is the entirety of the public surface for the v0
+generation — everything needed to write a ``tasks.py`` or an effect.
+The four headline definers (:class:`~camas.v0.task.Task`,
+:class:`~camas.v0.task.Sequential`, :class:`~camas.v0.task.Parallel`,
+:class:`~camas.v0.effect.Effect`) are re-exported here and aliased,
+unversioned, as ``camas``; the rest of the surface lives in this
+package's submodules (:mod:`~camas.v0.task`, :mod:`~camas.v0.task_event`,
+:mod:`~camas.v0.leaf_state`, :mod:`~camas.v0.completion`).
 
-The types are *defined* in this package — ``camas.core`` and
-``camas.main`` consume them, never the reverse — so the diff history of
-``src/camas/v0/`` is the complete history of the public API.
+Import from ``camas.v0`` to pin this generation — right for an effect
+plugin you distribute or a ``tasks.py`` you won't revisit. ``v0`` is
+semver-zero loose while camas is 0.x: the surface prefers to grow,
+breaking changes stay possible until 1.0 (deliberate, release-noted),
+and at 1.0 it freezes — a breaking change then forces ``camas.v1``,
+while ``v0`` keeps shipping.
 
-The top-level ``camas`` namespace re-exports this surface 1:1 — the two
-always expose the identical set of names — as the unversioned alias for
-the latest generation, fine for a ``tasks.py`` that lives next to its dev
-environment. Import from ``camas.v0`` when a file should outlive that: an
-effect plugin you distribute, a standalone task file, a ``tasks.py``
-nobody revisits.
+The headline definers:
 
-The task definers:
-
-	>>> from camas.v0 import Group, Parallel, Sequential, Task
+	>>> from camas.v0 import Parallel, Sequential, Task
+	>>> from camas.v0.task import Group
 	>>> ci = Sequential(Task("ruff check ."), Parallel("mypy .", "pytest"), name="ci")
 	>>> ci.name
 	'ci'
 	>>> isinstance(ci, Group)
 	True
 
-The plugin contract — what an :class:`Effect` observes: the
-:data:`TaskNode` tree it was set up with, the :data:`TaskEvent` stream
-(``StartedEvent | OutputEvent | CompletedEvent``), every leaf's
-:data:`LeafState` (``Waiting | Running | Completed``), and each completed
-leaf's :data:`Completion` (``Finished | Skipped``):
+The plugin contract — what an :class:`~camas.v0.effect.Effect` observes:
+the :data:`~camas.v0.task.TaskNode` tree it was set up with, the
+:data:`~camas.v0.task_event.TaskEvent` stream, every leaf's
+:data:`~camas.v0.leaf_state.LeafState`, and each completed leaf's
+:data:`~camas.v0.completion.Completion`:
 
-	>>> from camas.v0 import Completion, Finished, Skipped
+	>>> from camas.v0.completion import Completion, Finished, Skipped
 	>>> def verdict(completion: Completion) -> str:
 	...     match completion:
 	...         case Finished(returncode=rc):
@@ -50,25 +46,10 @@ leaf's :data:`Completion` (``Finished | Skipped``):
 	>>> verdict(Skipped(1))
 	'skipped (prior rc=1)'
 
-See :class:`camas.v0.effect.Effect` for the protocol an effect
-implements, and ``examples/effect-plugin/`` for a complete out-of-tree
-example.
+See ``examples/effect-plugin/`` for a complete out-of-tree effect.
 """
 
-from .completion import Completion as Completion
-from .completion import Finished as Finished
-from .completion import Skipped as Skipped
 from .effect import Effect as Effect
-from .leaf_state import Completed as Completed
-from .leaf_state import LeafState as LeafState
-from .leaf_state import Running as Running
-from .leaf_state import Waiting as Waiting
-from .task import Group as Group
 from .task import Parallel as Parallel
 from .task import Sequential as Sequential
 from .task import Task as Task
-from .task import TaskNode as TaskNode
-from .task_event import CompletedEvent as CompletedEvent
-from .task_event import OutputEvent as OutputEvent
-from .task_event import StartedEvent as StartedEvent
-from .task_event import TaskEvent as TaskEvent

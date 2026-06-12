@@ -39,7 +39,7 @@ from .tasks import load_tasks, load_tasks_from_py, name_scope_bindings, name_sco
 if TYPE_CHECKING:
 	from collections.abc import Mapping
 
-	from ..v0 import TaskNode
+	from ..v0.task import TaskNode
 
 
 def dispatch_arg(arg: str, tasks: Mapping[str, TaskNode]) -> TaskNode:

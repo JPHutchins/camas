@@ -47,7 +47,8 @@ class CompletedEvent(NamedTuple):
 	"""Event: a task finished execution (either ran or was skipped).
 
 	>>> from datetime import datetime
-	>>> from camas.v0 import Finished, Skipped, Task
+	>>> from camas.v0 import Task
+	>>> from camas.v0.completion import Finished, Skipped
 	>>> CompletedEvent(Task("hi"), 0, Finished(0, 1.0, (b"done",)), datetime(2026, 1, 1, 12, 0, 2))
 	CompletedEvent(task=Task(cmd='hi', name=None, env={}, cwd=None), leaf_index=0, completion=Finished(returncode=0, elapsed=1.0, output=(b'done',)), timestamp=datetime.datetime(2026, 1, 1, 12, 0, 2))
 	>>> CompletedEvent(Task("hi"), 0, Skipped(1), datetime(2026, 1, 1, 12, 0, 0))

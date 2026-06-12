@@ -8,7 +8,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from typing import TypeAlias
 
-from ..v0 import TaskEvent
+from ..v0.task_event import TaskEvent
 
 EventSink: TypeAlias = Callable[[int, TaskEvent], Awaitable[None]]
 """Per-leaf event dispatcher: await sink(leaf_idx, event)."""

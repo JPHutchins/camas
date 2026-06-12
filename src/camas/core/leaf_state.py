@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
 """Engine-side leaf machinery: tree-position display info and the pure state
-machine over the :mod:`camas.v0` states.
+machine over the per-leaf states.
 """
 
 from __future__ import annotations
@@ -15,19 +15,11 @@ if sys.version_info >= (3, 11):
 else:  # pragma: no cover
 	from typing_extensions import assert_never
 
-from ..v0 import (
-	Completed,
-	CompletedEvent,
-	LeafState,
-	OutputEvent,
-	Running,
-	StartedEvent,
-	TaskEvent,
-	Waiting,
-)
+from ..v0.leaf_state import Completed, LeafState, Running, Waiting
+from ..v0.task_event import CompletedEvent, OutputEvent, StartedEvent, TaskEvent
 
 if TYPE_CHECKING:
-	from ..v0 import Task
+	from ..v0.task import Task
 
 
 class ChainLink(NamedTuple):
@@ -46,7 +38,7 @@ class ChainLink(NamedTuple):
 class LeafInfo(NamedTuple):
 	"""A leaf's position in the task tree: depth and chain of ancestor links.
 
-	>>> from camas.v0 import Task
+	>>> from camas import Task
 	>>> LeafInfo(Task("echo hi"), 0, ())
 	LeafInfo(task=Task(cmd='echo hi', name=None, env={}, cwd=None), depth=0, is_last_chain=())
 	"""
@@ -60,7 +52,8 @@ def next_state(state: LeafState, event: TaskEvent) -> LeafState:
 	"""Pure state machine: apply a TaskEvent to a LeafState to produce the next state.
 
 	>>> from datetime import datetime
-	>>> from camas.v0 import Finished, Skipped, Task
+	>>> from camas import Task
+	>>> from camas.v0.completion import Finished, Skipped
 	>>> t = Task("echo hi")
 	>>> t0 = datetime(2026, 1, 1, 12, 0, 0)
 	>>> t1 = datetime(2026, 1, 1, 12, 0, 1)

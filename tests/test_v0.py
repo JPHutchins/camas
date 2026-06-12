@@ -1,15 +1,14 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""Pin the ``camas.v0`` contract: the export list, re-export identity, and the
-1:1 relationship with the top-level ``camas`` namespace.
+"""Pin the public-API surface.
 
-``camas.v0`` is the public surface, semver-zero loose until 1.0 — it may
-change, but only on purpose. These tests make that intent mechanical: an
-accidental addition, removal, or re-binding fails here and forces a
-deliberate edit of ``V0_CONTRACT``. The top-level ``camas`` namespace is
-the unversioned alias for the latest generation and must expose the
-identical set, bound to the identical objects.
+The top-level ``camas`` namespace and the current versioned namespace
+(``camas.v0``) expose the identical four headline definers, kept 1:1; the
+rest of the public surface for writing effects lives in that generation's
+submodules. The version namespaces are semver-zero loose until 1.0 — they
+may change, but only on purpose, so an accidental addition, removal, or
+re-binding of the headline surface fails here.
 """
 
 from __future__ import annotations
@@ -21,11 +20,40 @@ from typing import Final
 
 import camas
 import camas.v0
-from camas.v0 import completion, effect, leaf_state, task, task_event
+from camas.v0.completion import Completion, Finished, Skipped
+from camas.v0.effect import Effect
+from camas.v0.leaf_state import Completed, LeafState, Running, Waiting
+from camas.v0.task import Group, Parallel, Sequential, Task, TaskNode
+from camas.v0.task_event import CompletedEvent, OutputEvent, StartedEvent, TaskEvent
+
+HEADLINE: Final = frozenset({"Effect", "Parallel", "Sequential", "Task"})
+"""The unversioned definers re-exported by both ``camas`` and ``camas.v0``."""
+
+PUBLIC_API: Final = (
+	Completion,
+	Finished,
+	Skipped,
+	Effect,
+	Completed,
+	LeafState,
+	Running,
+	Waiting,
+	Group,
+	Parallel,
+	Sequential,
+	Task,
+	TaskNode,
+	CompletedEvent,
+	OutputEvent,
+	StartedEvent,
+	TaskEvent,
+)
+"""Every public type, imported above from its canonical ``camas.v0`` submodule
+— this module failing to import is the signal a public type moved or vanished."""
 
 
 def public_names(module: object) -> set[str]:
-	"""Exported names of a namespace module: public, non-submodule bindings."""
+	"""Exported names of a namespace package: public, non-submodule bindings."""
 	return {
 		name
 		for name, val in vars(module).items()
@@ -33,56 +61,26 @@ def public_names(module: object) -> set[str]:
 	}
 
 
-V0_CONTRACT: Final = frozenset(
-	{
-		"Completed",
-		"CompletedEvent",
-		"Completion",
-		"Effect",
-		"Finished",
-		"Group",
-		"LeafState",
-		"OutputEvent",
-		"Parallel",
-		"Running",
-		"Sequential",
-		"Skipped",
-		"StartedEvent",
-		"Task",
-		"TaskEvent",
-		"TaskNode",
-		"Waiting",
-	}
-)
+def test_top_level_and_v0_expose_the_same_headline() -> None:
+	assert public_names(camas) == HEADLINE
+	assert public_names(camas.v0) == HEADLINE
 
 
-def test_v0_exports_exactly_the_contract() -> None:
-	assert public_names(camas.v0) == V0_CONTRACT
+def test_headline_names_are_the_same_objects() -> None:
+	for name in sorted(HEADLINE):
+		assert vars(camas)[name] is vars(camas.v0)[name], name
 
 
-def test_v0_reexports_the_defining_modules() -> None:
-	defined = {
-		**vars(completion),
-		**vars(effect),
-		**vars(leaf_state),
-		**vars(task),
-		**vars(task_event),
-	}
-	for name in sorted(V0_CONTRACT):
-		assert vars(camas.v0)[name] is defined[name], name
-
-
-def test_contract_types_are_defined_in_v0() -> None:
-	for name in sorted(V0_CONTRACT):
-		obj = vars(camas.v0)[name]
+def test_public_types_are_defined_in_the_version_package() -> None:
+	for obj in PUBLIC_API:
 		if isinstance(obj, type):
-			assert obj.__module__.startswith("camas.v0."), f"{name}: {obj.__module__}"
+			assert obj.__module__.startswith("camas.v0."), obj
 
 
 def test_importing_v0_does_not_load_the_engine() -> None:
-	"""``camas.core`` / ``camas.main`` / ``camas.effect`` consume the v0 types,
-	never the reverse, so importing ``camas.v0`` must not drag the engine in.
-	Pins the one-directional layering the module docstring and README assert.
+	"""The version namespace defines the public types; the engine consumes them,
+	never the reverse — so importing ``camas.v0`` must not pull ``camas.core`` /
+	``camas.main`` / ``camas.effect`` in. Pins the one-directional layering.
 	"""
 	probe = (
 		"import sys, camas.v0\n"
@@ -101,9 +99,3 @@ def test_importing_v0_does_not_load_the_engine() -> None:
 		check=False,
 	)
 	assert result.returncode == 0, f"importing camas.v0 loaded the engine: {result.stdout}"
-
-
-def test_top_level_namespace_is_one_to_one_with_v0() -> None:
-	assert public_names(camas) == public_names(camas.v0)
-	for name in sorted(V0_CONTRACT):
-		assert vars(camas)[name] is vars(camas.v0)[name], name

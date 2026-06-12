@@ -10,7 +10,10 @@ from typing import Final
 from tail import Tail as Tail
 
 from camas import Parallel, Sequential, Task
-from camas.v0 import Effect, LeafState, OutputEvent, StartedEvent, TaskEvent, TaskNode
+from camas.v0 import Effect
+from camas.v0.leaf_state import LeafState
+from camas.v0.task import TaskNode
+from camas.v0.task_event import OutputEvent, StartedEvent, TaskEvent
 
 
 def _safe(name: str) -> str:

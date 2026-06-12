@@ -1,14 +1,14 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""Engine-side task helpers over the :mod:`camas.v0` AST: matrix bindings and labeling."""
+"""Engine-side task helpers: matrix bindings and the task display label."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, NamedTuple, TypeAlias
 
 if TYPE_CHECKING:
-	from ..v0 import Task
+	from ..v0.task import Task
 
 
 class VarBinding(NamedTuple):
@@ -31,7 +31,7 @@ def task_label(task: Task) -> str:
 	This is a data accessor with no concept of display width — callers that render
 	into a column-constrained terminal are responsible for truncation.
 
-	>>> from camas.v0 import Task
+	>>> from camas import Task
 	>>> task_label(Task("echo hi", name="greet"))
 	'greet'
 	>>> task_label(Task("echo hi"))

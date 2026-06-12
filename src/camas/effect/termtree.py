@@ -29,17 +29,10 @@ from ..core.render import (
 )
 from ..core.task import task_label
 from ..core.traversal import flatten_leaves
-from ..v0 import (
-	Completed,
-	Finished,
-	LeafState,
-	Running,
-	Skipped,
-	Task,
-	TaskEvent,
-	TaskNode,
-	Waiting,
-)
+from ..v0.completion import Finished, Skipped
+from ..v0.leaf_state import Completed, LeafState, Running, Waiting
+from ..v0.task import Task, TaskNode
+from ..v0.task_event import TaskEvent
 
 
 def truncate_middle(text: str, max_width: int) -> str:

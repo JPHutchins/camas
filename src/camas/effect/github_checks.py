@@ -43,21 +43,13 @@ if TYPE_CHECKING:
 
 	import httpx
 
-	from ..v0 import LeafState
+	from ..v0.leaf_state import LeafState
+	from ..v0.task import Task, TaskNode
 
 from ..core.render import strip_ansi
 from ..core.task import task_label
-from ..v0 import (
-	CompletedEvent,
-	Completion,
-	Finished,
-	OutputEvent,
-	Skipped,
-	StartedEvent,
-	Task,
-	TaskEvent,
-	TaskNode,
-)
+from ..v0.completion import Completion, Finished, Skipped
+from ..v0.task_event import CompletedEvent, OutputEvent, StartedEvent, TaskEvent
 
 GH_API_VERSION: Final = "2022-11-28"
 GH_API_HOST: Final = "api.github.com"
@@ -217,6 +209,7 @@ def auth_headers(cfg: ResolvedConfig) -> dict[str, str]:
 def build_name(prefix: str, task: Task) -> str:
 	"""Compose check-run name; truncate to ``NAME_LIMIT`` with right-side ellipsis.
 
+	>>> from camas import Task
 	>>> build_name("", Task("ruff check .", name="lint"))
 	'lint'
 	>>> build_name("ubuntu/", Task("ruff check .", name="lint"))
@@ -419,6 +412,7 @@ def started_to_active(state: EffectState, task: Task) -> Active:
 def external_id_for(cfg: ResolvedConfig, task: Task) -> str:
 	"""Stable per-leaf identifier — same leaf on the same prefix yields the same id.
 
+	>>> from camas import Task
 	>>> external_id_for(
 	...     ResolvedConfig("t", "o", "r", "s", "ubuntu/", 8192, False),
 	...     Task("ruff check .", name="lint"),

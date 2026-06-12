@@ -18,7 +18,9 @@ else:
 
 from ..core.render import DisplayRow, flatten_rows
 from ..core.traversal import flatten_leaves
-from ..v0 import LeafState, TaskEvent, TaskNode, Waiting
+from ..v0.leaf_state import LeafState, Waiting
+from ..v0.task import TaskNode
+from ..v0.task_event import TaskEvent
 from .termtree import (
 	CLEAR_LINE,
 	STATUS_COL_WIDTH,

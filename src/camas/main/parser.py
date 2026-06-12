@@ -30,7 +30,8 @@ from .state import EMPTY_STATE, LoadErr, LoadOk, TasksState
 if TYPE_CHECKING:
 	from collections.abc import Mapping
 
-	from ..v0 import Effect, TaskNode
+	from ..v0.effect import Effect
+	from ..v0.task import TaskNode
 
 
 def default_effects_expr() -> str:
@@ -94,7 +95,7 @@ def build_parser(state: TasksState = EMPTY_STATE) -> argparse.ArgumentParser:
 	When ``state`` is :class:`LoadOk` with tasks, known task names appear in the
 	positional metavar so the usage line reads like a list of subcommands.
 
-	>>> from camas.v0 import Task
+	>>> from camas import Task
 	>>> from camas.main.state import LoadOk
 	>>> parser = build_parser()
 	>>> parser.parse_args(['Task("echo hi")']).expression
@@ -169,7 +170,7 @@ RESERVED_FLAGS: Final = frozenset(
 def expression_metavar(tasks: Mapping[str, TaskNode] | None) -> str:
 	"""Build the positional metavar.
 
-	>>> from camas.v0 import Task
+	>>> from camas import Task
 	>>> expression_metavar(None)
 	'expression'
 	>>> expression_metavar({"all": Task("x")})

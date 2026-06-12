@@ -10,7 +10,7 @@ import pytest
 
 from camas import Parallel, Sequential, Task
 from camas.core.execution import run
-from camas.v0 import Finished
+from camas.v0.completion import Finished
 
 
 def test_force_color_injected_in_subprocess(monkeypatch: pytest.MonkeyPatch) -> None:

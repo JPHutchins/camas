@@ -45,7 +45,8 @@ class Completed(NamedTuple):
 	The `completion` payload is a sum type: pattern-match on `Finished(...)`
 	vs `Skipped(...)` to distinguish the two cases.
 
-	>>> from camas.v0 import Finished, Skipped, Task
+	>>> from camas.v0 import Task
+	>>> from camas.v0.completion import Finished, Skipped
 	>>> Completed(Task("echo hi"), Finished(0, 0.5, ()))
 	Completed(task=Task(cmd='echo hi', name=None, env={}, cwd=None), completion=Finished(returncode=0, elapsed=0.5, output=()))
 	>>> Completed(Task("echo hi"), Skipped(1))

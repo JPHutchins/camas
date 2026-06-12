@@ -37,7 +37,8 @@ from camas.effect.github_checks import (
 	render_body,
 	resolve_config,
 )
-from camas.v0 import CompletedEvent, Finished, OutputEvent, Skipped, StartedEvent
+from camas.v0.completion import Finished, Skipped
+from camas.v0.task_event import CompletedEvent, OutputEvent, StartedEvent
 
 if TYPE_CHECKING:
 	from collections.abc import Callable

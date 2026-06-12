@@ -17,7 +17,7 @@ else:  # pragma: no cover
 
 from ..core.matrix import matrix_axes
 from ..core.render import GREY, RESET, color_on, render_tree_lines
-from ..v0 import Parallel, Sequential, Task, TaskNode
+from ..v0.task import Parallel, Sequential, Task, TaskNode
 from .color import BLUE, BOLD_BLUE, BOLD_CYAN, BOLD_YELLOW, maybe_color, wrap_ansi
 from .effects import available_effects, flatten_annotation, signature_fields
 from .mypyc import MISSING
@@ -25,7 +25,7 @@ from .mypyc import MISSING
 if TYPE_CHECKING:
 	from collections.abc import Mapping
 
-	from ..v0 import Effect
+	from ..v0.effect import Effect
 
 
 def is_named_ref(node: TaskNode, names: frozenset[str]) -> bool:
