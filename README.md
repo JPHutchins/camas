@@ -137,6 +137,14 @@ The downside is that fork PRs get a read-only `GITHUB_TOKEN` from GitHub and can
 
 Define an `Effect` in your `tasks.py` and it's discovered automatically — usable by name from `--effects` and listed under `camas --effects`. See [examples/effect-plugin/](https://github.com/JPHutchins/camas/tree/main/tests/fixtures/effect-plugin) for a typed `Tail` effect that streams per-task output as it arrives.
 
+## Versioning
+
+The public API is published through **versioned namespaces** — [`camas.v0`](https://github.com/JPHutchins/camas/tree/main/src/camas/v0) today, `camas.v1` and beyond later. Import from a generation to pin the API shape: a name a generation exports is never removed or changed within that generation. The scheme tracks semver — `v0` pairs with camas 0.x and is as loose as semver says 0.x is (the surface prefers to grow; breaking changes stay possible until 1.0, made deliberately and noted in releases). At 1.0 a generation freezes: a breaking change forces the next `camas.vN`, and published generations keep shipping, so a `tasks.py` or effect plugin pinned to one keeps working across upgrades.
+
+The top-level `camas` namespace is the unversioned alias for the latest generation: `from camas import Task, Sequential, Parallel, Effect` re-exports that generation's four headline definers and is kept **1:1** with its package surface. The rest of the public API for a generation — `TaskNode`, the `TaskEvent` stream, `LeafState`, `Completion` — lives in that generation's submodules, e.g. `from camas.v0.task_event import TaskEvent`. Everything under `camas.core` / `camas.main` is internal — it consumes whatever generations are installed and carries no stability promise.
+
+To pin a minimum camas *feature* level, use your dependency declaration (`camas>=0.x` in `pyproject.toml`, or PEP 723 inline metadata) — the import path covers API shape; the package pin covers feature availability.
+
 ## Reference
 
 - **[examples/](https://github.com/JPHutchins/camas/tree/main/tests/fixtures)** — full project layouts under test coverage. The canonical reference for how to structure `tasks.py`, use `[tool.camas.tasks]` in `pyproject.toml`, drive a matrix from `.python-version`, or scope a 2-axis matrix from the CLI.

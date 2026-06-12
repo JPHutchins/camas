@@ -23,21 +23,17 @@ if sys.version_info >= (3, 11):
 else:  # pragma: no cover
 	from typing_extensions import assert_never
 
-from ..core.completion import Completion, Finished, Skipped
 from ..core.render import GREEN, GREY, RED, RESET, VIOLET, strip_ansi
-from ..core.task import Task, TaskNode, task_label
-from ..core.task_event import (
-	CompletedEvent,
-	OutputEvent,
-	StartedEvent,
-	TaskEvent,
-)
+from ..core.task import task_label
+from ..v0.completion import Completion, Finished, Skipped
+from ..v0.task_event import CompletedEvent, OutputEvent, StartedEvent, TaskEvent
 
 if TYPE_CHECKING:
 	from collections.abc import Sequence
 	from datetime import datetime
 
-	from ..core.leaf_state import LeafState
+	from ..v0.leaf_state import LeafState
+	from ..v0.task import Task, TaskNode
 
 OutputMode: TypeAlias = Literal["quiet", "all", "errors", "stream", "github"]
 
@@ -107,6 +103,7 @@ LeafCtx: TypeAlias = Idle | Active | Done
 def cmd_str(task: Task) -> str:
 	"""Return ``task.cmd`` as a single string (joins tuple form with spaces).
 
+	>>> from camas import Task
 	>>> cmd_str(Task("echo hi"))
 	'echo hi'
 	>>> cmd_str(Task(("python", "-c", "pass")))
@@ -119,6 +116,7 @@ def fmt_started(opts: StatusOptions, task: Task, ts: datetime) -> str | None:
 	r"""Render the started-line, or ``None`` when ``started_fmt`` is empty.
 
 	>>> from datetime import datetime
+	>>> from camas import Task
 	>>> t0 = datetime(2026, 5, 21, 14, 30, 0, 123000)
 	>>> fmt_started(StatusOptions(), Task("echo hi", name="greet"), t0)
 	'\x1b[90m[2026-05-21 14:30:00.123]\x1b[0m \x1b[95m▶ [greet] started\x1b[0m'
@@ -141,6 +139,7 @@ def fmt_completed(opts: StatusOptions, task: Task, c: Completion, ts: datetime) 
 	r"""Render the completion line, or ``None`` when the matching template is empty.
 
 	>>> from datetime import datetime
+	>>> from camas import Task
 	>>> t0 = datetime(2026, 5, 21, 14, 30, 0, 123000)
 	>>> fmt_completed(StatusOptions(), Task("a", name="lint"), Finished(0, 1.5, ()), t0)
 	'\x1b[90m[2026-05-21 14:30:00.123]\x1b[0m \x1b[32m✓ [lint] success\x1b[0m (1.500s)'
@@ -179,6 +178,7 @@ def fmt_output(opts: StatusOptions, task: Task, line: bytes, ts: datetime) -> st
 	r"""Render a stream-mode output line (ANSI-stripped, trailing newline removed).
 
 	>>> from datetime import datetime
+	>>> from camas import Task
 	>>> t0 = datetime(2026, 5, 21, 14, 30, 0, 123000)
 	>>> fmt_output(StatusOptions(), Task("a", name="lint"), b"hello\n", t0)
 	'\x1b[90m[2026-05-21 14:30:00.123] · [lint]\x1b[0m hello'
@@ -251,6 +251,7 @@ def block_for(mode: OutputMode, task: Task, c: Completion, output: bytes) -> str
 	``::endgroup::`` or ``::warning::``) cannot prematurely close the group
 	or inject workflow commands.
 
+	>>> from camas import Task
 	>>> block_for("all", Task("a", name="x"), Finished(0, 1.0, ()), b"ok\n")
 	'ok\n'
 	>>> block_for("all", Task("a"), Finished(0, 1.0, ()), b"\x1b[32mgreen\x1b[0m\n")

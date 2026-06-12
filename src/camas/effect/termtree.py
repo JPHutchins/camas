@@ -13,8 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Final, NamedTuple
 
-from ..core.completion import Finished, Skipped
-from ..core.leaf_state import Completed, LeafInfo, LeafState, Running, Waiting
+from ..core.leaf_state import LeafInfo
 from ..core.render import (
 	BOLD,
 	CYAN,
@@ -28,9 +27,12 @@ from ..core.render import (
 	render_tree_prefix,
 	strip_ansi,
 )
-from ..core.task import Task, TaskNode, task_label
-from ..core.task_event import TaskEvent
+from ..core.task import task_label
 from ..core.traversal import flatten_leaves
+from ..v0.completion import Finished, Skipped
+from ..v0.leaf_state import Completed, LeafState, Running, Waiting
+from ..v0.task import Task, TaskNode
+from ..v0.task_event import TaskEvent
 
 
 def truncate_middle(text: str, max_width: int) -> str:

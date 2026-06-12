@@ -21,8 +21,8 @@ if TYPE_CHECKING:
 	from collections.abc import Mapping
 	from pathlib import Path
 
-	from ..core.effect import Effect
-	from ..core.task import TaskNode
+	from ..v0.effect import Effect
+	from ..v0.task import TaskNode
 
 
 class LoadOk(NamedTuple):

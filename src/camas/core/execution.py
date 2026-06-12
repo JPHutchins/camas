@@ -22,17 +22,21 @@ else:  # pragma: no cover
 	from taskgroup import TaskGroup
 	from typing_extensions import assert_never
 
-from .completion import Finished, RunResult, Skipped, TaskResult
-from .leaf_state import LeafState, Waiting, next_state
+from ..v0.completion import Finished, Skipped
+from ..v0.leaf_state import LeafState, Waiting
+from ..v0.task import Parallel, Sequential, Task, TaskNode
+from ..v0.task_event import CompletedEvent, OutputEvent, StartedEvent, TaskEvent
+from .completion import RunResult, TaskResult
+from .leaf_state import next_state
 from .matrix import expand_matrix, resolve_cmd
-from .task import Parallel, Sequential, Task, TaskNode, task_label
-from .task_event import CompletedEvent, OutputEvent, StartedEvent, TaskEvent
+from .task import task_label
 from .traversal import flatten_leaves, subtree_leaf_indices
 
 if TYPE_CHECKING:
 	from collections.abc import Iterable, Sequence
 
-	from .effect import Effect, EventSink
+	from ..v0.effect import Effect
+	from .effect import EventSink
 
 
 def subprocess_env(merged: dict[str, str]) -> dict[str, str]:

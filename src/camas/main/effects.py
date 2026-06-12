@@ -9,7 +9,7 @@ import ast
 import functools
 from typing import TYPE_CHECKING, Any
 
-from ..core.effect import Effect
+from ..v0.effect import Effect
 from .expression import format_syntax_error
 from .mypyc import MISSING, signature_fields_from_source
 

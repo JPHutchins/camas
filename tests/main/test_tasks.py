@@ -33,9 +33,9 @@ from camas.main.tasks import (
 if TYPE_CHECKING:
 	from collections.abc import Sequence
 
-	from camas.core.leaf_state import LeafState
-	from camas.core.task import TaskNode
-	from camas.core.task_event import TaskEvent
+	from camas.v0.leaf_state import LeafState
+	from camas.v0.task import TaskNode
+	from camas.v0.task_event import TaskEvent
 
 
 def _par(
@@ -688,8 +688,8 @@ def test_name_scope_effects_skips_builtins_and_private() -> None:
 	"""Names starting with ``_``, ``Effect`` itself, things not satisfying the
 	Effect protocol, and re-exported built-ins (module starts with
 	``camas.effect``) are all excluded from the returned scope."""
-	from camas.core.effect import Effect
 	from camas.effect.summary import Summary
+	from camas.v0.effect import Effect
 
 	class NotAnEffect:
 		"""Has only some of the protocol methods."""

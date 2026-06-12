@@ -19,9 +19,7 @@ import httpx
 import pytest
 
 from camas import Parallel, Task
-from camas.core.completion import Finished, Skipped
 from camas.core.execution import run
-from camas.core.task_event import CompletedEvent, OutputEvent, StartedEvent
 from camas.effect.github_checks import (
 	Active,
 	Closed,
@@ -39,6 +37,8 @@ from camas.effect.github_checks import (
 	render_body,
 	resolve_config,
 )
+from camas.v0.completion import Finished, Skipped
+from camas.v0.task_event import CompletedEvent, OutputEvent, StartedEvent
 
 if TYPE_CHECKING:
 	from collections.abc import Callable

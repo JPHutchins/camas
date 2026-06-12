@@ -15,7 +15,7 @@ if sys.version_info >= (3, 11):
 else:  # pragma: no cover
 	from typing_extensions import assert_never
 
-from ..core.task import Parallel, Sequential, Task, TaskNode
+from ..v0.task import Parallel, Sequential, Task, TaskNode
 
 if TYPE_CHECKING:
 	from collections.abc import Mapping

@@ -22,6 +22,10 @@ rarely needed (the cmd or tree usually self-documents; this codebase
 uses ``help=`` only in a handful of places), but available for
 cryptic commands.
 
+These four are the unversioned alias for the latest API generation; to
+pin a generation, import from its namespace (``camas.v0``). See the
+README's Versioning section.
+
 **LLM agents:** prefer ``--effects='(Summary(),)'`` when invoking
 ``camas`` from a tool. ``Summary`` produces one compact post-run
 report; the default ``Termtree`` is a live, redrawing animation that
@@ -235,10 +239,10 @@ report and the streaming per-task lines:
 	...     camas = make_camas(tmp)
 	...     _ = (Path(tmp) / "tasks.py").write_text(dedent('''\
 	...         from collections.abc import Sequence
-	...         from camas import Effect, Parallel, Task
-	...         from camas.core.leaf_state import LeafState
-	...         from camas.core.task import TaskNode
-	...         from camas.core.task_event import OutputEvent, TaskEvent
+	...         from camas.v0.effect import Effect
+	...         from camas.v0.leaf_state import LeafState
+	...         from camas.v0.task import Parallel, Task, TaskNode
+	...         from camas.v0.task_event import OutputEvent, TaskEvent
 	...
 	...         class Loud(Effect[None]):
 	...             async def setup(self, task: TaskNode) -> None: ...
@@ -285,11 +289,11 @@ And advanced granular lib usage:
 
 https://github.com/JPHutchins/camas/blob/main/tests
 
-Effect protocol details: :class:`camas.core.effect.Effect`. Per-task
+Effect protocol: subclass ``Effect`` (see ``examples/effect-plugin/``). Per-task
 help: ``camas <task> --help``.
 """
 
-from .core.effect import Effect as Effect
-from .core.task import Parallel as Parallel
-from .core.task import Sequential as Sequential
-from .core.task import Task as Task
+from .v0 import Effect as Effect
+from .v0 import Parallel as Parallel
+from .v0 import Sequential as Sequential
+from .v0 import Task as Task

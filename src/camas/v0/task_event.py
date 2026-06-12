@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""Internal event sum type emitted by execution: started, output, completed."""
+"""Event sum type emitted by execution: started, output, completed."""
 
 from __future__ import annotations
 
@@ -15,10 +15,10 @@ if TYPE_CHECKING:
 
 
 class StartedEvent(NamedTuple):
-	"""Internal event: a task has started execution.
+	"""Event: a task has started execution.
 
 	>>> from datetime import datetime
-	>>> from camas.core.task import Task
+	>>> from camas.v0 import Task
 	>>> StartedEvent(Task("hi"), 0, datetime(2026, 1, 1, 12, 0, 0))
 	StartedEvent(task=Task(cmd='hi', name=None, env={}, cwd=None), leaf_index=0, timestamp=datetime.datetime(2026, 1, 1, 12, 0))
 	"""
@@ -29,10 +29,10 @@ class StartedEvent(NamedTuple):
 
 
 class OutputEvent(NamedTuple):
-	"""Internal event: a task produced an output line.
+	"""Event: a task produced an output line.
 
 	>>> from datetime import datetime
-	>>> from camas.core.task import Task
+	>>> from camas.v0 import Task
 	>>> OutputEvent(Task("hi"), 0, b"hello", datetime(2026, 1, 1, 12, 0, 1))
 	OutputEvent(task=Task(cmd='hi', name=None, env={}, cwd=None), leaf_index=0, line=b'hello', timestamp=datetime.datetime(2026, 1, 1, 12, 0, 1))
 	"""
@@ -44,11 +44,11 @@ class OutputEvent(NamedTuple):
 
 
 class CompletedEvent(NamedTuple):
-	"""Internal event: a task finished execution (either ran or was skipped).
+	"""Event: a task finished execution (either ran or was skipped).
 
 	>>> from datetime import datetime
-	>>> from camas.core.completion import Finished, Skipped
-	>>> from camas.core.task import Task
+	>>> from camas.v0 import Task
+	>>> from camas.v0.completion import Finished, Skipped
 	>>> CompletedEvent(Task("hi"), 0, Finished(0, 1.0, (b"done",)), datetime(2026, 1, 1, 12, 0, 2))
 	CompletedEvent(task=Task(cmd='hi', name=None, env={}, cwd=None), leaf_index=0, completion=Finished(returncode=0, elapsed=1.0, output=(b'done',)), timestamp=datetime.datetime(2026, 1, 1, 12, 0, 2))
 	>>> CompletedEvent(Task("hi"), 0, Skipped(1), datetime(2026, 1, 1, 12, 0, 0))
