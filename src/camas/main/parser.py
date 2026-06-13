@@ -141,7 +141,7 @@ def build_parser(state: TasksState = EMPTY_STATE) -> argparse.ArgumentParser:
 	tasks_for_metavar: Mapping[str, TaskNode] = state.tasks if isinstance(state, LoadOk) else {}
 	parser: Final = CamasArgumentParser(
 		prog="camas",
-		description="Generic parallel/sequential task runner with TUI output.",
+		description="A task runner with parallel execution, matrix expansion, and pluggable output effects.",
 		formatter_class=argparse.RawDescriptionHelpFormatter,
 	)
 	parser.state = state

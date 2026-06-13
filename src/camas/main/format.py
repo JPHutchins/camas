@@ -15,10 +15,11 @@ if sys.version_info >= (3, 11):
 else:  # pragma: no cover
 	from typing_extensions import assert_never
 
+from ..core.color import BOLD_CYAN, CAMAS_LIGHT_PINK, CAMAS_VIOLET, GREY, RESET
 from ..core.matrix import matrix_axes
-from ..core.render import GREY, RESET, color_on, print_tree
+from ..core.render import color_on, print_tree
 from ..v0.task import Parallel, Sequential, Task, TaskNode
-from .color import BLUE, BOLD_BLUE, BOLD_CYAN, BOLD_YELLOW, maybe_color, wrap_ansi
+from .color import maybe_color, wrap_ansi
 from .effects import available_effects, flatten_annotation, signature_fields
 from .mypyc import MISSING
 
@@ -124,7 +125,7 @@ def format_task_summary_listing(
 	items = sorted(tasks.items())
 	width = max(len(n) for n, _ in items)
 	header_text = f"Available tasks from {source}:" if source is not None else "Tasks:"
-	lines = [maybe_color(header_text, BOLD_BLUE, color)]
+	lines = [maybe_color(header_text, CAMAS_VIOLET, color)]
 	for name, node in items:
 		body = (
 			node.help
@@ -153,7 +154,7 @@ def print_task_trees(tasks: Mapping[str, TaskNode], source: Path | None) -> None
 		print_task_summary_listing(tasks, source)
 		return
 	header = f"Available tasks from {source}:" if source is not None else "Tasks:"
-	print(maybe_color(header, BOLD_BLUE, color_on()))
+	print(maybe_color(header, CAMAS_VIOLET, color_on()))
 	print()
 	for _, task in sorted(tasks.items()):
 		print_tree(task, show_cmd=True)
@@ -169,7 +170,7 @@ def format_matrix_axes_help(axes: Mapping[str, tuple[str, ...]], color: bool) ->
 	True
 	"""
 	width = max(len(name) for name in axes)
-	lines = [maybe_color("Matrix axes (override with --AXIS VAL[,VAL...]):", BOLD_BLUE, color)]
+	lines = [maybe_color("Matrix axes (override with --AXIS VAL[,VAL...]):", CAMAS_VIOLET, color)]
 	for name, values in axes.items():
 		flag = f"--{name}".ljust(width + 2)
 		current = ", ".join(values)
@@ -205,7 +206,7 @@ def format_annotation(annotation: Any, color: bool) -> str:
 		text = annotation.__name__
 	else:
 		text = re.sub(r"(?:[\w]+\.)+(\w+)", r"\1", str(annotation))
-	return wrap_ansi(text, BLUE) if color else text
+	return wrap_ansi(text, CAMAS_LIGHT_PINK) if color else text
 
 
 def format_default(default: Any, color: bool) -> str:
@@ -265,12 +266,12 @@ def format_available_effects(
 	if not effects:
 		return ""
 	on = color_on() if color is None else color
-	lines = [maybe_color("Available Effects:", BOLD_BLUE, on)]
+	lines = [maybe_color("Available Effects:", CAMAS_VIOLET, on)]
 	for i, (name, cls) in enumerate(sorted(effects)):
 		if i > 0:
 			lines.append("")
 		doc = first_line_doc(cls)
-		name_str = maybe_color(name, BOLD_YELLOW, on)
+		name_str = maybe_color(name, BOLD_CYAN, on)
 		doc_str = f"  — {maybe_color(doc, GREY, on)}" if doc else ""
 		lines.append(f"  {name_str}{doc_str}")
 		lines.extend(format_signature(cls, "    ", on))
@@ -285,7 +286,7 @@ def format_try_hint(color: bool) -> str:
 		("camas --effects '(Summary(),)' <task>", "post-run summary instead of live tree"),
 	)
 	width = max(len(cmd) for cmd, _ in rows)
-	header = maybe_color("Try:", BOLD_BLUE, color)
+	header = maybe_color("Try:", CAMAS_VIOLET, color)
 	body = "\n".join(
 		f"  {cmd.ljust(width)}  {maybe_color(f'# {note}', GREY, color)}" for cmd, note in rows
 	)
@@ -302,7 +303,7 @@ def format_reference(color: bool) -> str:
 		("PyPI", "https://pypi.org/project/camas/"),
 	)
 	width = max(len(label) for label, _ in entries) + 1
-	header = maybe_color("Reference:", BOLD_BLUE, color)
+	header = maybe_color("Reference:", CAMAS_VIOLET, color)
 	body = "\n".join(
 		f"  {maybe_color((label + ':').ljust(width), BOLD_CYAN, color)}  "
 		f"{maybe_color(value, GREY, color)}"
