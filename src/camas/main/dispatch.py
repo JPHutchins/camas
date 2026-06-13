@@ -30,6 +30,7 @@ from .format import (
 	print_task_summary_listing,
 	print_task_trees,
 )
+from .init import write_starter_tasks_py
 from .parser import RESERVED_FLAGS, build_parser, resolve_jobs
 from .state import EMPTY_STATE, LoadErr, LoadOk, TasksState
 from .tasks import (
@@ -109,8 +110,8 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 
 	* :class:`LoadOk` — task-running path. ``camas`` with no expression runs the
 	  :class:`Config`'s task for the environment, else prints help and exits ``2``.
-	* :class:`LoadErr` — meta actions (``--list`` / ``--tree`` / ``--effects``)
-	  still render; everything else delegates to :func:`exit_for_load_err`.
+	* :class:`LoadErr` — meta actions (``--list`` / ``--tree`` / ``--effects`` /
+	  ``--init``) still work; everything else delegates to :func:`exit_for_load_err`.
 	"""
 	split: Final = split_passthrough(sys.argv[1:] if argv is None else argv)
 	tasks: Mapping[str, TaskNode] = state.tasks if isinstance(state, LoadOk) else {}
@@ -130,6 +131,8 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 			# No per-task matrix axes to augment; parse strictly so typos in
 			# flags surface instead of being silently consumed.
 			args = parser.parse_args(split.head)
+			if args.init:
+				sys.exit(write_starter_tasks_py(Path.cwd()))
 			if args.list or args.tree:
 				print(format_load_error_hint(err.source, err.exception))
 				sys.exit(0)
@@ -162,6 +165,9 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 					)
 					augmented_axes[name] = values
 			args = parser.parse_args(split.head)
+
+			if args.init:
+				sys.exit(write_starter_tasks_py(Path.cwd()))
 
 			if args.list:
 				print_task_summary_listing(tasks, source)

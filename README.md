@@ -59,6 +59,14 @@ nix run github:JPHutchins/camas#with-check          # adds ty for `camas --check
 nix run github:JPHutchins/camas#all                 # both extras
 ```
 
+Then scaffold a starter `tasks.py` in your project root:
+
+```
+camas --init
+```
+
+The starter demonstrates leaf tasks, `Sequential`/`Parallel` composition, a matrix, a [`Config`](#config) default task, and the optional [PEP 723 standalone block](#standalone-taskspy-pep-723) — cross-platform placeholder commands ready to be swapped for your real ones.
+
 ## Why camas?
 
 camas is **not a build system**. camas is for the specific job of running structured trees of shell commands.

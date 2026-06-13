@@ -178,6 +178,11 @@ def build_parser(state: TasksState = EMPTY_STATE) -> argparse.ArgumentParser:
 		help=describe_check_help(),
 	)
 	parser.add_argument(
+		"--init",
+		action="store_true",
+		help="write a commented starter tasks.py into the current directory and exit",
+	)
+	parser.add_argument(
 		"--effects",
 		nargs="?",
 		default=default_effects_expr(),
@@ -206,7 +211,7 @@ def build_parser(state: TasksState = EMPTY_STATE) -> argparse.ArgumentParser:
 
 
 RESERVED_FLAGS: Final = frozenset(
-	{"help", "version", "dry-run", "list", "tree", "check", "effects", "matrix", "jobs"}
+	{"help", "version", "dry-run", "list", "tree", "check", "init", "effects", "matrix", "jobs"}
 )
 
 
