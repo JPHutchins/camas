@@ -13,18 +13,17 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Final, NamedTuple
 
-from ..core.leaf_state import LeafInfo
-from ..core.render import (
+from ..core.color import (
 	BOLD,
+	CAMAS_VIOLET,
 	CYAN,
+	GREEN,
 	GREY,
+	RED,
 	RESET,
-	DisplayRow,
-	GroupHeader,
-	flatten_rows,
-	render_tree_prefix,
-	strip_ansi,
 )
+from ..core.leaf_state import LeafInfo
+from ..core.render import DisplayRow, GroupHeader, flatten_rows, render_tree_prefix, strip_ansi
 from ..core.task import task_label
 from ..core.traversal import flatten_leaves
 from ..v0.completion import Finished, Skipped
@@ -69,9 +68,6 @@ class TermtreeOptions(NamedTuple):
 	show_passing: bool = False
 
 
-GREEN: Final = "\033[32m"
-YELLOW: Final = "\033[33m"
-RED: Final = "\033[31m"
 CLEAR_LINE: Final = "\033[K"
 SPINNER: Final = (
 	" ▌    ",
@@ -106,7 +102,7 @@ def bucket_glyph_color(states: Sequence[LeafState]) -> tuple[str, str]:
 	>>> t0 = datetime(2026, 1, 1)
 	>>> bucket_glyph_color([Waiting(t)]) == (' ', GREY)
 	True
-	>>> bucket_glyph_color([Running(t, t0, b"")]) == ('┄', CYAN)
+	>>> bucket_glyph_color([Running(t, t0, b"")]) == ('┄', CAMAS_VIOLET)
 	True
 	>>> bucket_glyph_color([Completed(t, Finished(0, 0.1, ()))]) == ('─', GREEN)
 	True
@@ -120,7 +116,7 @@ def bucket_glyph_color(states: Sequence[LeafState]) -> tuple[str, str]:
 	if any(isinstance(s, Waiting) for s in states):
 		return PROG_WAITING, GREY
 	if any(isinstance(s, Running) for s in states):
-		return PROG_RUNNING, CYAN
+		return PROG_RUNNING, CAMAS_VIOLET
 	if any(
 		isinstance(s, Completed)
 		and isinstance(s.completion, Finished)
@@ -254,12 +250,12 @@ def render_lines(
 								)
 								padding = " " * max(gap - len(stream), 0)
 								lines.append(
-									f"\r{header}{GREY}{stream}{RESET}{padding} [{color}{status}{RESET}] {elapsed:7.3f}s{CLEAR_LINE}"
+									f"\r{header}{GREY}{stream}{RESET}{padding} {CYAN}|{color}{status}{CYAN}|{RESET} {elapsed:7.3f}s{CLEAR_LINE}"
 								)
 							case Skipped():  # pragma: no branch
 								padding = " " * gap
 								lines.append(
-									f"\r{header}{padding} [{GREY} SKIP {RESET}]{CLEAR_LINE}"
+									f"\r{header}{padding} {CYAN}|{GREY} SKIP {CYAN}|{RESET}{CLEAR_LINE}"
 								)
 					case Running(start_time=start_time, last_line=last_line):
 						elapsed = (now - start_time).total_seconds()
@@ -272,11 +268,13 @@ def render_lines(
 						)
 						padding = " " * max(gap - len(stream), 0)
 						lines.append(
-							f"\r{header}{GREY}{stream}{RESET}{padding} [{CYAN}{spin}{RESET}] {elapsed:7.3f}s{CLEAR_LINE}"
+							f"\r{header}{GREY}{stream}{RESET}{padding} {CYAN}|{CAMAS_VIOLET}{spin}{CYAN}|{RESET} {elapsed:7.3f}s{CLEAR_LINE}"
 						)
 					case Waiting():
 						padding = " " * gap
-						lines.append(f"\r{header}{padding} [{GREY} WAIT {RESET}]{CLEAR_LINE}")
+						lines.append(
+							f"\r{header}{padding} {CYAN}|{GREY} WAIT {CYAN}|{RESET}{CLEAR_LINE}"
+						)
 	alldone: Final = all(isinstance(s, Completed) for s in states)
 	summary_pad: Final = render_progress_bar(states, max(display_width - 6, 0))
 	if alldone:
@@ -289,12 +287,12 @@ def render_lines(
 		summary_color: Final = RED if failed else GREEN
 		summary_label: Final = " FAIL " if failed else " PASS "
 		lines.append(
-			f"\r{BOLD}result{RESET}{summary_pad} [{summary_color}{summary_label}{RESET}] {wall_elapsed:7.3f}s{CLEAR_LINE}"
+			f"\r{BOLD}result{RESET}{summary_pad} {CYAN}|{summary_color}{summary_label}{CYAN}|{RESET} {wall_elapsed:7.3f}s{CLEAR_LINE}"
 		)
 	else:
 		running_spin: Final = SPINNER[int(wall_elapsed * 10) % len(SPINNER)]
 		lines.append(
-			f"\r{BOLD}result{RESET}{summary_pad} [{CYAN}{running_spin}{RESET}] {wall_elapsed:7.3f}s{CLEAR_LINE}"
+			f"\r{BOLD}result{RESET}{summary_pad} {CYAN}|{CAMAS_VIOLET}{running_spin}{CYAN}|{RESET} {wall_elapsed:7.3f}s{CLEAR_LINE}"
 		)
 	return lines
 

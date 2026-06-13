@@ -16,6 +16,7 @@ else:  # pragma: no cover
 	from typing_extensions import assert_never
 
 from ..v0.task import Parallel, Sequential, Task, TaskNode
+from .color import BOLD, CAMAS_VIOLET, GREY, RESET
 from .leaf_state import ChainLink, LeafInfo
 from .matrix import expand_matrix
 from .task import task_label
@@ -24,15 +25,6 @@ if TYPE_CHECKING:
 	from collections.abc import Iterator, Mapping
 	from pathlib import Path
 
-BOLD: Final = "\033[1m"
-CYAN: Final = "\033[36m"
-GREY: Final = "\033[90m"
-GREEN: Final = "\033[32m"
-RED: Final = "\033[31m"
-BLUE: Final = "\033[34m"
-YELLOW: Final = "\033[33m"
-VIOLET: Final = "\033[95m"
-RESET: Final = "\033[0m"
 
 ANSI_ESCAPE: Final = re.compile(
 	r"\x1b(?:"
@@ -241,7 +233,7 @@ def leaf_label(task: Task, show_cmd: bool, color: bool) -> str:
 	if show_cmd and task.name is not None:
 		cmd = task.cmd if isinstance(task.cmd, str) else " ".join(task.cmd)
 		if cmd != task.name:
-			base = f"{base}: {colored(cmd, CYAN, color)}"
+			base = f"{base}: {colored(cmd, CAMAS_VIOLET, color)}"
 	return base
 
 

@@ -23,7 +23,8 @@ if sys.version_info >= (3, 11):
 else:  # pragma: no cover
 	from typing_extensions import assert_never
 
-from ..core.render import GREEN, GREY, RED, RESET, VIOLET, strip_ansi
+from ..core.color import CAMAS_VIOLET, GREEN, GREY, RED, RESET
+from ..core.render import strip_ansi
 from ..core.task import task_label
 from ..v0.completion import Completion, Finished, Skipped
 from ..v0.task_event import CompletedEvent, OutputEvent, StartedEvent, TaskEvent
@@ -52,7 +53,7 @@ class StatusOptions(NamedTuple):
 	output_mode: OutputMode = "errors"
 	started_fmt: str = (
 		f"{GREY}[{{timestamp:%Y-%m-%d %H:%M:%S}}.{{ms:03d}}]{RESET} "
-		f"{VIOLET}▶ [{{name}}] started{RESET}"
+		f"{CAMAS_VIOLET}▶ [{{name}}] started{RESET}"
 	)
 	finished_fmt: str = (
 		f"{GREY}[{{timestamp:%Y-%m-%d %H:%M:%S}}.{{ms:03d}}]{RESET} "
@@ -112,7 +113,7 @@ def fmt_started(opts: StatusOptions, task: Task, ts: datetime) -> str | None:
 	>>> from camas import Task
 	>>> t0 = datetime(2026, 5, 21, 14, 30, 0, 123000)
 	>>> fmt_started(StatusOptions(), Task("echo hi", name="greet"), t0)
-	'\x1b[90m[2026-05-21 14:30:00.123]\x1b[0m \x1b[95m▶ [greet] started\x1b[0m'
+	'\x1b[90m[2026-05-21 14:30:00.123]\x1b[0m \x1b[38;5;135m▶ [greet] started\x1b[0m'
 	>>> fmt_started(StatusOptions(started_fmt=""), Task("echo hi"), t0) is None
 	True
 	>>> fmt_started(
