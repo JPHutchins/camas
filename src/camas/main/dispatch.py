@@ -10,7 +10,7 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, cast
 
 if sys.version_info >= (3, 11):
 	from typing import assert_never
@@ -30,6 +30,7 @@ from .format import (
 	print_task_summary_listing,
 	print_task_trees,
 )
+from .init import write_starter_tasks_py
 from .parser import RESERVED_FLAGS, build_parser, resolve_jobs
 from .state import EMPTY_STATE, LoadErr, LoadOk, TasksState
 from .tasks import (
@@ -41,6 +42,7 @@ from .tasks import (
 )
 
 if TYPE_CHECKING:
+	import io
 	from collections.abc import Mapping
 
 	from ..v0.task import TaskNode
@@ -70,6 +72,15 @@ def dispatch_arg(arg: str, tasks: Mapping[str, TaskNode]) -> TaskNode:
 	return parse_expression(arg, tasks=tasks)
 
 
+def reconfigure_stdio_utf8() -> None:
+	"""UTF-8 with ``errors="replace"`` on stdout/stderr so Windows consoles and
+	pipes (ANSI code page by default before Python 3.15) can carry the
+	box-drawing tree output and ``×`` matrix annotations.
+	"""
+	for stream in (sys.stdout, sys.stderr):
+		cast("io.TextIOWrapper", stream).reconfigure(encoding="utf-8", errors="replace")
+
+
 def run_cli(scope: Mapping[str, object]) -> None:
 	"""Collect Task/Sequential/Parallel and Effect bindings from ``scope`` (skipping
 	``_``-prefixed names) and dispatch CLI args, citing ``scope['__file__']`` as the
@@ -83,6 +94,7 @@ def run_cli(scope: Mapping[str, object]) -> None:
 
 	        run_cli(globals())
 	"""
+	reconfigure_stdio_utf8()
 	source_obj = scope.get("__file__")
 	source = Path(source_obj) if isinstance(source_obj, (str, Path)) else None
 	dispatch(
@@ -109,8 +121,8 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 
 	* :class:`LoadOk` — task-running path. ``camas`` with no expression runs the
 	  :class:`Config`'s task for the environment, else prints help and exits ``2``.
-	* :class:`LoadErr` — meta actions (``--list`` / ``--tree`` / ``--effects``)
-	  still render; everything else delegates to :func:`exit_for_load_err`.
+	* :class:`LoadErr` — meta actions (``--list`` / ``--tree`` / ``--effects`` /
+	  ``--init``) still work; everything else delegates to :func:`exit_for_load_err`.
 	"""
 	split: Final = split_passthrough(sys.argv[1:] if argv is None else argv)
 	tasks: Mapping[str, TaskNode] = state.tasks if isinstance(state, LoadOk) else {}
@@ -130,6 +142,8 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 			# No per-task matrix axes to augment; parse strictly so typos in
 			# flags surface instead of being silently consumed.
 			args = parser.parse_args(split.head)
+			if args.init:
+				sys.exit(write_starter_tasks_py(Path.cwd()))
 			if args.list or args.tree:
 				print(format_load_error_hint(err.source, err.exception))
 				sys.exit(0)
@@ -162,6 +176,9 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 					)
 					augmented_axes[name] = values
 			args = parser.parse_args(split.head)
+
+			if args.init:
+				sys.exit(write_starter_tasks_py(Path.cwd()))
 
 			if args.list:
 				print_task_summary_listing(tasks, source)

@@ -9,3 +9,4 @@ dist/
 src/**/*.so
 src/**/*.c
 result*
+.claude/
