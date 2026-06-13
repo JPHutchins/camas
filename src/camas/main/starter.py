@@ -50,5 +50,8 @@ ci = Sequential(
 # default_task when unset.
 _ = Config(default_task=ci)
 
+# The PEP 723 standalone flow (see the docstring): running this file directly
+# (`uv run tasks.py <task>`) dispatches through camas. Inert when the `camas`
+# command discovers this file itself.
 if __name__ == "__main__":
 	run_cli(globals())
