@@ -26,7 +26,7 @@ done
 
 mkdir -p "$OUT_DIR"
 
-ROWS=$(cd "$FIXTURE" && camas all --dry-run --effects='(Summary(SummaryOptions(Fixed(90))),)' 2>/dev/null | wc -l)
+ROWS=$(cd "$FIXTURE" && camas all --dry-run --effects='(Summary(Fixed(90)),)' 2>/dev/null | wc -l)
 ROWS=$((ROWS + 3))
 
 echo "::group::Record asciicast"

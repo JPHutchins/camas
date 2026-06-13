@@ -17,7 +17,6 @@ from camas.effect.status import (
 	Done,
 	Idle,
 	Status,
-	StatusOptions,
 )
 from camas.v0.completion import Finished, Skipped
 from camas.v0.leaf_state import LeafState, Waiting
@@ -86,7 +85,7 @@ def test_all_mode_dumps_every_block(capsys: pytest.CaptureFixture[str]) -> None:
 		OutputEvent(a, 0, b"hello\n", TS),
 		CompletedEvent(a, 0, Finished(0, 0.1, ()), TS),
 	]
-	asyncio.run(drive(Status(StatusOptions(output_mode="all")), task, events))
+	asyncio.run(drive(Status(output_mode="all"), task, events))
 	out = capsys.readouterr().out
 	assert "✓ [alpha] success" in out
 	assert "hello" in out
@@ -100,7 +99,7 @@ def test_quiet_mode_drops_output(capsys: pytest.CaptureFixture[str]) -> None:
 		OutputEvent(a, 0, b"shhh\n", TS),
 		CompletedEvent(a, 0, Finished(0, 0.1, ()), TS),
 	]
-	ctxs = asyncio.run(drive(Status(StatusOptions(output_mode="quiet")), task, events))
+	ctxs = asyncio.run(drive(Status(output_mode="quiet"), task, events))
 	out = capsys.readouterr().out
 	assert "▶ [alpha] started" in out
 	assert "✓ [alpha] success" in out
@@ -119,7 +118,7 @@ def test_stream_mode_emits_lines_live_and_strips_ansi(
 		OutputEvent(a, 0, b"plain\n", TS),
 		CompletedEvent(a, 0, Finished(0, 0.1, ()), TS),
 	]
-	asyncio.run(drive(Status(StatusOptions(output_mode="stream")), task, events))
+	asyncio.run(drive(Status(output_mode="stream"), task, events))
 	out = capsys.readouterr().out
 	assert "[lint]\x1b[0m red line" in out
 	assert "[lint]\x1b[0m plain" in out
@@ -143,7 +142,7 @@ def test_stream_mode_interleaves_across_parallel_tasks(
 		CompletedEvent(a, 0, Finished(0, 0.1, ()), TS),
 		CompletedEvent(b, 1, Finished(0, 0.2, ()), TS),
 	]
-	asyncio.run(drive(Status(StatusOptions(output_mode="stream")), task, events))
+	asyncio.run(drive(Status(output_mode="stream"), task, events))
 	out = capsys.readouterr().out
 	a1 = out.index("[fast]\x1b[0m a1")
 	b1 = out.index("[slow]\x1b[0m b1")
@@ -162,7 +161,7 @@ def test_github_mode_wraps_blocks_with_workflow_commands(
 		OutputEvent(a, 0, b"PASSED 7 tests\n", TS),
 		CompletedEvent(a, 0, Finished(0, 0.4, ()), TS),
 	]
-	asyncio.run(drive(Status(StatusOptions(output_mode="github")), task, events))
+	asyncio.run(drive(Status(output_mode="github"), task, events))
 	out = capsys.readouterr().out
 	assert "✓ [test] success" in out
 	assert "::group::test\n" in out
@@ -179,7 +178,7 @@ def test_skipped_emits_skip_line_only(capsys: pytest.CaptureFixture[str]) -> Non
 		CompletedEvent(first, 0, Finished(1, 0.1, ()), TS),
 		CompletedEvent(second, 1, Skipped(1), TS),
 	]
-	asyncio.run(drive(Status(StatusOptions(output_mode="all")), task, events))
+	asyncio.run(drive(Status(output_mode="all"), task, events))
 	out = capsys.readouterr().out
 	assert "✗ [first] error" in out
 	assert "exit=1" in out
@@ -197,7 +196,7 @@ def test_empty_template_suppresses_line(capsys: pytest.CaptureFixture[str]) -> N
 	]
 	asyncio.run(
 		drive(
-			Status(StatusOptions(started_fmt="", finished_fmt="✓ {name}")),
+			Status(started_fmt="", finished_fmt="✓ {name}"),
 			task,
 			events,
 		)
@@ -219,10 +218,8 @@ def test_custom_format_string_substitutes_all_fields(
 	asyncio.run(
 		drive(
 			Status(
-				StatusOptions(
-					started_fmt="{timestamp:%H:%M:%S}.{ms:03d} START {name} [{cmd}]",
-					finished_fmt="OK {name} {elapsed:.3f}s rc={rc}",
-				)
+				started_fmt="{timestamp:%H:%M:%S}.{ms:03d} START {name} [{cmd}]",
+				finished_fmt="OK {name} {elapsed:.3f}s rc={rc}",
 			),
 			task,
 			events,
@@ -242,7 +239,7 @@ def test_missing_field_in_template_raises_keyerror() -> None:
 	with pytest.raises(KeyError):
 		asyncio.run(
 			drive(
-				Status(StatusOptions(started_fmt="{name} {elapsed:.2f}")),
+				Status(started_fmt="{name} {elapsed:.2f}"),
 				task,
 				events,
 			)
@@ -264,7 +261,7 @@ def test_block_modes_buffer_into_active_ctx(capsys: pytest.CaptureFixture[str]) 
 		OutputEvent(a, 0, b"one\n", TS),
 		OutputEvent(a, 0, b"two\n", TS),
 	]
-	ctxs = asyncio.run(drive(Status(StatusOptions(output_mode="all")), task, events))
+	ctxs = asyncio.run(drive(Status(output_mode="all"), task, events))
 	assert ctxs == (Active(b"one\ntwo\n"),)
 	out = capsys.readouterr().out
 	assert "▶ [alpha] started" in out
@@ -318,7 +315,7 @@ def test_block_appends_newline_when_output_lacks_one(
 		OutputEvent(a, 0, b"no-trailing-newline", TS),
 		CompletedEvent(a, 0, Finished(2, 0.1, ()), TS),
 	]
-	asyncio.run(drive(Status(StatusOptions(output_mode="errors")), task, events))
+	asyncio.run(drive(Status(output_mode="errors"), task, events))
 	out = capsys.readouterr().out
 	assert "no-trailing-newline\n" in out
 
@@ -331,7 +328,7 @@ def test_errors_mode_skips_block_on_pass(capsys: pytest.CaptureFixture[str]) -> 
 		OutputEvent(a, 0, b"all good\n", TS),
 		CompletedEvent(a, 0, Finished(0, 0.1, ()), TS),
 	]
-	asyncio.run(drive(Status(StatusOptions(output_mode="errors")), task, events))
+	asyncio.run(drive(Status(output_mode="errors"), task, events))
 	out = capsys.readouterr().out
 	assert "✓ [ok] success" in out
 	assert "all good" not in out
@@ -358,5 +355,5 @@ def test_discoverable_via_parse_effects() -> None:
 	effects = parse_effects("(Status(),)")
 	assert len(effects) == 1
 	assert type(effects[0]).__name__ == "Status"
-	effects2 = parse_effects("(Status(StatusOptions(output_mode='github')),)")
+	effects2 = parse_effects("(Status(output_mode='github'),)")
 	assert type(effects2[0]).__name__ == "Status"

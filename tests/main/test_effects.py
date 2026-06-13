@@ -45,26 +45,23 @@ def test_parse_effects_rejects_unknown_effect() -> None:
 
 def test_parse_effects_rejects_non_effect_value() -> None:
 	with pytest.raises(ValueError, match="expected an Effect"):
-		parse_effects("(SummaryOptions(),)")
+		parse_effects("(42,)")
 
 
 def test_discover_effects_returns_builtin_set() -> None:
 	constructors, effects = discover_effects()
 	names = {n for n, _ in effects}
 	assert names == {"Summary", "Termtree", "GitHubChecks", "Status"}
-	assert "SummaryOptions" in constructors
 	assert "Auto" in constructors
 	assert "Fixed" in constructors
-	assert "GitHubChecksOptions" in constructors
 
 
-def test_parse_effects_constructs_github_checks_with_options() -> None:
-	out = parse_effects('(GitHubChecks(GitHubChecksOptions(name_prefix="pfx/")),)')
+def test_parse_effects_constructs_github_checks_with_kwarg() -> None:
+	out = parse_effects('(GitHubChecks(name_prefix="pfx/"),)')
 	assert len(out) == 1
 	from camas.effect.github_checks import GitHubChecks
 
 	assert isinstance(out[0], GitHubChecks)
-	assert out[0].options.name_prefix == "pfx/"
 
 
 def test_available_effects_merges_scope_into_builtins() -> None:
@@ -145,9 +142,9 @@ def test_reachable_classes_seen_short_circuit() -> None:
 
 
 def test_signature_fields_namedtuple_with_defaults() -> None:
-	from camas.effect.summary import SummaryOptions
+	from camas.effect.summary import Summary
 
-	fields = signature_fields(SummaryOptions)
+	fields = signature_fields(Summary)
 	names = [n for n, _, _, _ in fields]
 	assert names == ["term_width", "show_passing"]
 

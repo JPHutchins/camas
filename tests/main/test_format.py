@@ -309,5 +309,4 @@ def test_format_signature_with_fields_and_nested() -> None:
 
 	out = "\n".join(format_signature(Summary, indent="", color=False))
 	assert "Summary(" in out
-	assert "SummaryOptions(" in out
 	assert "Auto()" in out

@@ -7,9 +7,9 @@ cursor-redrawing) and :class:`camas.effect.summary.Summary` (one post-run
 report) — suited for CI logs and any context where cursor control either
 doesn't render or shouldn't.
 
-See :class:`StatusOptions` for the mode and template fields, and the doctests
-on :func:`block_for` / :func:`fmt_started` / :func:`fmt_completed` /
-:func:`fmt_output` for the exact behavior of each.
+See the :class:`Status` constructor for the mode and template arguments, and
+the doctests on :func:`block_for` / :func:`fmt_started` / :func:`fmt_completed`
+/ :func:`fmt_output` for the exact behavior of each.
 """
 
 from __future__ import annotations
@@ -39,37 +39,25 @@ if TYPE_CHECKING:
 OutputMode: TypeAlias = Literal["quiet", "all", "errors", "stream", "github"]
 
 
-class StatusOptions(NamedTuple):
-	"""Configuration for the Status Effect.
-
-	>>> StatusOptions().output_mode
-	'errors'
-	>>> StatusOptions(output_mode="github").output_mode
-	'github'
-	>>> StatusOptions(started_fmt="").started_fmt
-	''
-	"""
-
-	output_mode: OutputMode = "errors"
-	started_fmt: str = (
-		f"{GREY}[{{timestamp:%Y-%m-%d %H:%M:%S}}.{{ms:03d}}]{RESET} "
-		f"{CAMAS_VIOLET}▶ [{{name}}] started{RESET}"
-	)
-	finished_fmt: str = (
-		f"{GREY}[{{timestamp:%Y-%m-%d %H:%M:%S}}.{{ms:03d}}]{RESET} "
-		f"{GREEN}✓ [{{name}}] success{RESET} ({{elapsed:.3f}}s)"
-	)
-	failed_fmt: str = (
-		f"{GREY}[{{timestamp:%Y-%m-%d %H:%M:%S}}.{{ms:03d}}]{RESET} "
-		f"{RED}✗ [{{name}}] error{RESET} exit={{rc}} ({{elapsed:.3f}}s)"
-	)
-	skipped_fmt: str = (
-		f"{GREY}[{{timestamp:%Y-%m-%d %H:%M:%S}}.{{ms:03d}}]{RESET} "
-		f"{GREY}⏭ [{{name}}] skipped{RESET} (prior rc={{rc}})"
-	)
-	output_fmt: str = (
-		f"{GREY}[{{timestamp:%Y-%m-%d %H:%M:%S}}.{{ms:03d}}] · [{{name}}]{RESET} {{line}}"
-	)
+STARTED_FMT: Final = (
+	f"{GREY}[{{timestamp:%Y-%m-%d %H:%M:%S}}.{{ms:03d}}]{RESET} "
+	f"{CAMAS_VIOLET}▶ [{{name}}] started{RESET}"
+)
+FINISHED_FMT: Final = (
+	f"{GREY}[{{timestamp:%Y-%m-%d %H:%M:%S}}.{{ms:03d}}]{RESET} "
+	f"{GREEN}✓ [{{name}}] success{RESET} ({{elapsed:.3f}}s)"
+)
+FAILED_FMT: Final = (
+	f"{GREY}[{{timestamp:%Y-%m-%d %H:%M:%S}}.{{ms:03d}}]{RESET} "
+	f"{RED}✗ [{{name}}] error{RESET} exit={{rc}} ({{elapsed:.3f}}s)"
+)
+SKIPPED_FMT: Final = (
+	f"{GREY}[{{timestamp:%Y-%m-%d %H:%M:%S}}.{{ms:03d}}]{RESET} "
+	f"{GREY}⏭ [{{name}}] skipped{RESET} (prior rc={{rc}})"
+)
+OUTPUT_FMT: Final = (
+	f"{GREY}[{{timestamp:%Y-%m-%d %H:%M:%S}}.{{ms:03d}}] · [{{name}}]{RESET} {{line}}"
+)
 
 
 class Idle(NamedTuple):
@@ -106,44 +94,46 @@ def cmd_str(task: Task) -> str:
 	return task.cmd if isinstance(task.cmd, str) else " ".join(task.cmd)
 
 
-def fmt_started(opts: StatusOptions, task: Task, ts: datetime) -> str | None:
+def fmt_started(started_fmt: str, task: Task, ts: datetime) -> str | None:
 	r"""Render the started-line, or ``None`` when ``started_fmt`` is empty.
 
 	>>> from datetime import datetime
 	>>> from camas import Task
 	>>> t0 = datetime(2026, 5, 21, 14, 30, 0, 123000)
-	>>> fmt_started(StatusOptions(), Task("echo hi", name="greet"), t0)
+	>>> fmt_started(STARTED_FMT, Task("echo hi", name="greet"), t0)
 	'\x1b[90m[2026-05-21 14:30:00.123]\x1b[0m \x1b[38;5;135m▶ [greet] started\x1b[0m'
-	>>> fmt_started(StatusOptions(started_fmt=""), Task("echo hi"), t0) is None
+	>>> fmt_started("", Task("echo hi"), t0) is None
 	True
-	>>> fmt_started(
-	...     StatusOptions(started_fmt="{cmd} @ {timestamp:%H:%M:%S}.{ms:03d}"),
-	...     Task(("python", "-c", "pass")), t0,
-	... )
+	>>> fmt_started("{cmd} @ {timestamp:%H:%M:%S}.{ms:03d}", Task(("python", "-c", "pass")), t0)
 	'python -c pass @ 14:30:00.123'
 	"""
-	if not opts.started_fmt:
+	if not started_fmt:
 		return None
-	return opts.started_fmt.format(
+	return started_fmt.format(
 		name=task_label(task), cmd=cmd_str(task), timestamp=ts, ms=ts.microsecond // 1000
 	)
 
 
-def fmt_completed(opts: StatusOptions, task: Task, c: Completion, ts: datetime) -> str | None:
+def fmt_completed(
+	finished_fmt: str,
+	failed_fmt: str,
+	skipped_fmt: str,
+	task: Task,
+	c: Completion,
+	ts: datetime,
+) -> str | None:
 	r"""Render the completion line, or ``None`` when the matching template is empty.
 
 	>>> from datetime import datetime
 	>>> from camas import Task
 	>>> t0 = datetime(2026, 5, 21, 14, 30, 0, 123000)
-	>>> fmt_completed(StatusOptions(), Task("a", name="lint"), Finished(0, 1.5, ()), t0)
+	>>> fmt_completed(FINISHED_FMT, FAILED_FMT, SKIPPED_FMT, Task("a", name="lint"), Finished(0, 1.5, ()), t0)
 	'\x1b[90m[2026-05-21 14:30:00.123]\x1b[0m \x1b[32m✓ [lint] success\x1b[0m (1.500s)'
-	>>> fmt_completed(StatusOptions(), Task("a", name="lint"), Finished(2, 0.5, ()), t0)
+	>>> fmt_completed(FINISHED_FMT, FAILED_FMT, SKIPPED_FMT, Task("a", name="lint"), Finished(2, 0.5, ()), t0)
 	'\x1b[90m[2026-05-21 14:30:00.123]\x1b[0m \x1b[31m✗ [lint] error\x1b[0m exit=2 (0.500s)'
-	>>> fmt_completed(StatusOptions(), Task("a", name="follow"), Skipped(2), t0)
+	>>> fmt_completed(FINISHED_FMT, FAILED_FMT, SKIPPED_FMT, Task("a", name="follow"), Skipped(2), t0)
 	'\x1b[90m[2026-05-21 14:30:00.123]\x1b[0m \x1b[90m⏭ [follow] skipped\x1b[0m (prior rc=2)'
-	>>> fmt_completed(
-	...     StatusOptions(finished_fmt=""), Task("a"), Finished(0, 1.0, ()), t0,
-	... ) is None
+	>>> fmt_completed("", FAILED_FMT, SKIPPED_FMT, Task("a"), Finished(0, 1.0, ()), t0) is None
 	True
 	"""
 	name = task_label(task)
@@ -151,35 +141,38 @@ def fmt_completed(opts: StatusOptions, task: Task, c: Completion, ts: datetime) 
 	ms = ts.microsecond // 1000
 	match c:
 		case Finished(returncode=rc, elapsed=e):
-			tmpl = opts.finished_fmt if rc == 0 else opts.failed_fmt
+			tmpl = finished_fmt if rc == 0 else failed_fmt
 			return (
 				tmpl.format(name=name, cmd=cmd, rc=rc, elapsed=e, timestamp=ts, ms=ms)
 				if tmpl
 				else None
 			)
 		case Skipped(returncode=rc):
-			tmpl = opts.skipped_fmt
-			return tmpl.format(name=name, cmd=cmd, rc=rc, timestamp=ts, ms=ms) if tmpl else None
+			return (
+				skipped_fmt.format(name=name, cmd=cmd, rc=rc, timestamp=ts, ms=ms)
+				if skipped_fmt
+				else None
+			)
 		case _:
 			assert_never(c)
 
 
-def fmt_output(opts: StatusOptions, task: Task, line: bytes, ts: datetime) -> str | None:
+def fmt_output(output_fmt: str, task: Task, line: bytes, ts: datetime) -> str | None:
 	r"""Render a stream-mode output line (ANSI-stripped, trailing newline removed).
 
 	>>> from datetime import datetime
 	>>> from camas import Task
 	>>> t0 = datetime(2026, 5, 21, 14, 30, 0, 123000)
-	>>> fmt_output(StatusOptions(), Task("a", name="lint"), b"hello\n", t0)
+	>>> fmt_output(OUTPUT_FMT, Task("a", name="lint"), b"hello\n", t0)
 	'\x1b[90m[2026-05-21 14:30:00.123] · [lint]\x1b[0m hello'
-	>>> fmt_output(StatusOptions(), Task("a", name="lint"), b"\x1b[31mred\x1b[0m\n", t0)
+	>>> fmt_output(OUTPUT_FMT, Task("a", name="lint"), b"\x1b[31mred\x1b[0m\n", t0)
 	'\x1b[90m[2026-05-21 14:30:00.123] · [lint]\x1b[0m red'
-	>>> fmt_output(StatusOptions(output_fmt=""), Task("a"), b"x\n", t0) is None
+	>>> fmt_output("", Task("a"), b"x\n", t0) is None
 	True
 	"""
-	if not opts.output_fmt:
+	if not output_fmt:
 		return None
-	return opts.output_fmt.format(
+	return output_fmt.format(
 		name=task_label(task),
 		cmd=cmd_str(task),
 		timestamp=ts,
@@ -303,13 +296,26 @@ def next_ctx_on_output(mode: OutputMode, ctx: Active, line: bytes) -> Active:
 
 
 class Status:
-	"""Line-oriented status Effect; behavior is selected by ``StatusOptions.output_mode``.
+	"""Line-oriented status Effect; behavior is selected by the ``output_mode`` argument.
 
 	See the module docstring for how it relates to ``Termtree`` and ``Summary``.
 	"""
 
-	def __init__(self, options: StatusOptions = StatusOptions()) -> None:
-		self.options: Final = options
+	def __init__(
+		self,
+		output_mode: OutputMode = "errors",
+		started_fmt: str = STARTED_FMT,
+		finished_fmt: str = FINISHED_FMT,
+		failed_fmt: str = FAILED_FMT,
+		skipped_fmt: str = SKIPPED_FMT,
+		output_fmt: str = OUTPUT_FMT,
+	) -> None:
+		self._output_mode: Final = output_mode
+		self._started_fmt: Final = started_fmt
+		self._finished_fmt: Final = finished_fmt
+		self._failed_fmt: Final = failed_fmt
+		self._skipped_fmt: Final = skipped_fmt
+		self._output_fmt: Final = output_fmt
 
 	async def setup(self, task: TaskNode) -> LeafCtx:
 		return Idle()
@@ -317,21 +323,24 @@ class Status:
 	async def on_event(
 		self, event: TaskEvent, states: Sequence[LeafState], ctx: LeafCtx
 	) -> LeafCtx:
-		opts = self.options
 		match event, ctx:
 			case StartedEvent(task=t, timestamp=ts), Idle():
-				emit_line(fmt_started(opts, t, ts))
+				emit_line(fmt_started(self._started_fmt, t, ts))
 				return Active(b"")
 			case OutputEvent(task=t, line=line, timestamp=ts), Active() as active:
-				if opts.output_mode == "stream":
-					emit_line(fmt_output(opts, t, line, ts))
-				return next_ctx_on_output(opts.output_mode, active, line)
+				if self._output_mode == "stream":
+					emit_line(fmt_output(self._output_fmt, t, line, ts))
+				return next_ctx_on_output(self._output_mode, active, line)
 			case CompletedEvent(task=t, completion=c, timestamp=ts), Active(output=buf):
-				emit_line(fmt_completed(opts, t, c, ts))
-				emit(block_for(opts.output_mode, t, c, buf))
+				emit_line(
+					fmt_completed(self._finished_fmt, self._failed_fmt, self._skipped_fmt, t, c, ts)
+				)
+				emit(block_for(self._output_mode, t, c, buf))
 				return Done()
 			case CompletedEvent(task=t, completion=c, timestamp=ts), Idle():
-				emit_line(fmt_completed(opts, t, c, ts))
+				emit_line(
+					fmt_completed(self._finished_fmt, self._failed_fmt, self._skipped_fmt, t, c, ts)
+				)
 				return Done()
 			case _:
 				return ctx

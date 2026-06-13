@@ -68,7 +68,7 @@ those at the shell from ``tmp``.
 	...     return camas
 
 A single leaf — the smallest viable ``tasks.py``. Passing
-``Summary(SummaryOptions(show_passing=True))`` prints every passing
+``Summary(show_passing=True)`` prints every passing
 task's stdout so the leaf's output is verifiable from the run record;
 ``camas --help`` lists the task by name:
 
@@ -79,7 +79,7 @@ task's stdout so the leaf's output is verifiable from the run record;
 	...         hello = Task(("python", "-c", "print('hello world')"))
 	...     '''))
 	...     # Equivalent shell: $ camas --effects='(Summary(...))' hello
-	...     run_ = camas("--effects=(Summary(SummaryOptions(show_passing=True)),)", "hello")
+	...     run_ = camas("--effects=(Summary(show_passing=True),)", "hello")
 	...     helped = camas("--help")
 	>>> run_.returncode, helped.returncode
 	(0, 0)
@@ -123,7 +123,7 @@ the dispatched task's command:
 	...     '''))
 	...     dry = camas("--dry-run", "ci")
 	...     tree = camas("--tree")
-	...     run_ = camas("--effects=(Summary(SummaryOptions(show_passing=True)),)", "ci")
+	...     run_ = camas("--effects=(Summary(show_passing=True),)", "ci")
 	...     fwd = camas("echo", "--", "one", "two", "three")
 	>>> [r.returncode for r in (dry, tree, run_, fwd)]
 	[0, 0, 0, 0]
@@ -202,9 +202,9 @@ axes:
 	...             name="meet",
 	...         )
 	...     '''))
-	...     baseline = camas("--effects=(Summary(SummaryOptions(show_passing=True)),)", "meet")
+	...     baseline = camas("--effects=(Summary(show_passing=True),)", "meet")
 	...     overridden = camas(
-	...         "--effects=(Summary(SummaryOptions(show_passing=True)),)",
+	...         "--effects=(Summary(show_passing=True),)",
 	...         "meet", "--NAME1=Clara,Dolores", "--NAME2=Jane,Ada",
 	...     )
 	...     axes = camas("meet", "--help")

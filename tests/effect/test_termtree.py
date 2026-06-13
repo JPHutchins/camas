@@ -16,7 +16,6 @@ from camas.core.render import flatten_rows, strip_ansi
 from camas.effect.termtree import (
 	STATUS_COL_WIDTH,
 	Termtree,
-	TermtreeOptions,
 	print_failures,
 	print_passes,
 	render_frame,
@@ -145,7 +144,7 @@ def test_termtree_show_passing_prints_passed_output(
 	]
 	asyncio.run(
 		drive(
-			Termtree(TermtreeOptions(frame_interval_ms=50, show_passing=True)),
+			Termtree(frame_interval_ms=50, show_passing=True),
 			task,
 			events,
 		)
@@ -166,7 +165,7 @@ def test_termtree_show_passing_defaults_to_false(
 		StartedEvent(a, 0, TS),
 		CompletedEvent(a, 0, Finished(0, 0.1, (b"quiet\n",)), TS),
 	]
-	asyncio.run(drive(Termtree(TermtreeOptions(frame_interval_ms=50)), task, events))
+	asyncio.run(drive(Termtree(frame_interval_ms=50), task, events))
 	captured = capsys.readouterr()
 	assert "PASSED:" not in captured.out
 
@@ -184,7 +183,7 @@ def test_termtree_effect_consumes_events_and_renders(
 		CompletedEvent(a, 0, Finished(0, 0.1, (b"line from a\n",)), TS),
 		CompletedEvent(b, 1, Finished(1, 0.2, (b"boom\n",)), TS),
 	]
-	asyncio.run(drive(Termtree(TermtreeOptions(frame_interval_ms=50)), task, events))
+	asyncio.run(drive(Termtree(frame_interval_ms=50), task, events))
 	captured = capsys.readouterr()
 	assert "FAILED: b" in captured.out
 
@@ -194,7 +193,7 @@ def test_termtree_frame_tick_keeps_spinner_alive_between_events() -> None:
 	task = make_task("solo")
 
 	async def run_effect() -> bool:
-		effect = Termtree(TermtreeOptions(frame_interval_ms=20))
+		effect = Termtree(frame_interval_ms=20)
 		ctx = await effect.setup(task)
 		# Idle for long enough that several ticks fire while nothing is happening.
 		await asyncio.sleep(0.08)
@@ -223,7 +222,7 @@ def test_termtree_effect_handles_groups_and_skipped(
 		CompletedEvent(a, 0, Finished(1, 0.1, (b"failed\n",)), TS),
 		CompletedEvent(b, 1, Skipped(1), TS),
 	]
-	asyncio.run(drive(Termtree(TermtreeOptions(frame_interval_ms=50)), task, events))
+	asyncio.run(drive(Termtree(frame_interval_ms=50), task, events))
 	captured = capsys.readouterr()
 	assert "pipeline" in captured.out
 	assert "SKIP" in captured.out

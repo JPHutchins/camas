@@ -12,7 +12,7 @@ from camas import Parallel, Sequential, Task
 from camas.main.tasks import load_tasks_from_py
 
 FIXTURE = Path(__file__).parent / "fixtures" / "config" / "tasks.py"
-SUMMARY = "--effects=(Summary(SummaryOptions(show_passing=True)),)"
+SUMMARY = "--effects=(Summary(show_passing=True),)"
 
 
 def _camas(*args: str, github: bool) -> subprocess.CompletedProcess[str]:

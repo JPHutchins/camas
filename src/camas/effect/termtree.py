@@ -53,21 +53,6 @@ def fit_label(text: str, max_width: int) -> str:
 	return text if len(text) <= max_width else truncate_middle(text, max(max_width, 3))
 
 
-class TermtreeOptions(NamedTuple):
-	"""Configuration for the termtree Effect.
-
-	>>> TermtreeOptions()
-	TermtreeOptions(frame_interval_ms=16.667, show_passing=False)
-	>>> TermtreeOptions(frame_interval_ms=50).frame_interval_ms
-	50
-	>>> TermtreeOptions(show_passing=True).show_passing
-	True
-	"""
-
-	frame_interval_ms: float = 16.667
-	show_passing: bool = False
-
-
 CLEAR_LINE: Final = "\033[K"
 SPINNER: Final = (
 	" ▌    ",
@@ -390,8 +375,9 @@ class Termtree:
 	how fast events arrive.
 	"""
 
-	def __init__(self, options: TermtreeOptions = TermtreeOptions()) -> None:
-		self.options: Final = options
+	def __init__(self, frame_interval_ms: float = 16.667, show_passing: bool = False) -> None:
+		self._frame_interval_ms: Final = frame_interval_ms
+		self._show_passing: Final = show_passing
 
 	async def setup(self, task: TaskNode) -> TermtreeContext:
 		term_width: Final = (  # zuban: ignore[misc] # zuban defies PEP591
@@ -411,9 +397,7 @@ class Termtree:
 		sys.stdout.write("\n" * len(rows))
 		sys.stdout.flush()
 		draw(ctx)
-		ctx.state.tick_task = asyncio.create_task(
-			tick_loop(ctx, self.options.frame_interval_ms / 1000)
-		)
+		ctx.state.tick_task = asyncio.create_task(tick_loop(ctx, self._frame_interval_ms / 1000))
 		return ctx
 
 	async def on_event(
@@ -432,7 +416,7 @@ class Termtree:
 		sys.stdout.write("\n")
 		sys.stdout.flush()
 		print_failures(ctx.state.states, ctx.term_width)
-		if self.options.show_passing:
+		if self._show_passing:
 			print_passes(ctx.state.states, ctx.term_width)
 
 

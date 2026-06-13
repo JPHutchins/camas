@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, TypeVar
 
 from camas import Parallel, Sequential, Task
-from camas.effect.summary import Fixed, Summary, SummaryOptions
+from camas.effect.summary import Fixed, Summary
 from camas.v0.completion import Finished, Skipped
 from camas.v0.leaf_state import LeafState, Waiting
 from camas.v0.task_event import CompletedEvent, StartedEvent, TaskEvent
@@ -62,7 +62,7 @@ def test_summary_renders_only_at_teardown(capsys: pytest.CaptureFixture[str]) ->
 	]
 
 	async def run_and_capture() -> tuple[str, str]:
-		effect = Summary(SummaryOptions())
+		effect = Summary()
 		from camas.core.leaf_state import next_state
 		from camas.core.traversal import flatten_leaves
 
@@ -92,7 +92,7 @@ def test_summary_failure_prints_details(capsys: pytest.CaptureFixture[str]) -> N
 		StartedEvent(a, 0, TS),
 		CompletedEvent(a, 0, Finished(1, 0.1, (b"error details\n",)), TS),
 	]
-	asyncio.run(drive(Summary(SummaryOptions()), task, events))
+	asyncio.run(drive(Summary(), task, events))
 	out = capsys.readouterr().out
 	assert "FAIL" in out
 	assert "FAILED: boom" in out
@@ -108,7 +108,7 @@ def test_summary_sequential_skipped(capsys: pytest.CaptureFixture[str]) -> None:
 		CompletedEvent(a, 0, Finished(1, 0.1, (b"failed\n",)), TS),
 		CompletedEvent(b, 1, Skipped(1), TS),
 	]
-	asyncio.run(drive(Summary(SummaryOptions()), task, events))
+	asyncio.run(drive(Summary(), task, events))
 	out = capsys.readouterr().out
 	assert "pipeline" in out
 	assert "SKIP" in out
@@ -117,7 +117,7 @@ def test_summary_sequential_skipped(capsys: pytest.CaptureFixture[str]) -> None:
 
 def test_summary_fixed_width_overrides_terminal_detection() -> None:
 	async def capture_width() -> int:
-		effect = Summary(SummaryOptions(term_width=Fixed(160)))
+		effect = Summary(term_width=Fixed(160))
 		ctx = await effect.setup(make_task("solo"))
 		return ctx.term_width
 
@@ -134,7 +134,7 @@ def test_summary_show_passing_prints_passed_output(capsys: pytest.CaptureFixture
 		CompletedEvent(a, 0, Finished(0, 0.1, (b"alpha output\n",)), TS),
 		CompletedEvent(b, 1, Finished(1, 0.2, (b"beta error\n",)), TS),
 	]
-	asyncio.run(drive(Summary(SummaryOptions(show_passing=True)), task, events))
+	asyncio.run(drive(Summary(show_passing=True), task, events))
 	out = capsys.readouterr().out
 	assert "FAILED: beta" in out
 	assert "beta error" in out
@@ -149,7 +149,7 @@ def test_summary_show_passing_defaults_to_false(capsys: pytest.CaptureFixture[st
 		StartedEvent(a, 0, TS),
 		CompletedEvent(a, 0, Finished(0, 0.1, (b"alpha output\n",)), TS),
 	]
-	asyncio.run(drive(Summary(SummaryOptions()), task, events))
+	asyncio.run(drive(Summary(), task, events))
 	out = capsys.readouterr().out
 	assert "PASSED:" not in out
 
@@ -164,7 +164,7 @@ def test_summary_creates_no_background_tasks() -> None:
 	async def count_tasks_after_teardown() -> int:
 		before: Callable[[], set[asyncio.Task[object]]] = asyncio.all_tasks
 		baseline = before()
-		await drive(Summary(SummaryOptions()), task, events)
+		await drive(Summary(), task, events)
 		return len(asyncio.all_tasks() - baseline)
 
 	assert asyncio.run(count_tasks_after_teardown()) == 0

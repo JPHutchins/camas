@@ -77,7 +77,7 @@ def test_starter_runs_to_completion(tmp_path: Path) -> None:
 	"""Bare ``camas`` in a freshly scaffolded directory runs the whole default
 	tree green — the placeholder tasks must be infallible cross-platform."""
 	write_starter_tasks_py(tmp_path)
-	result = _camas("--effects=(Summary(SummaryOptions(show_passing=True)),)", cwd=tmp_path)
+	result = _camas("--effects=(Summary(show_passing=True),)", cwd=tmp_path)
 	assert result.returncode == 0, result.stderr
 	assert "hello from camas" in result.stdout
 	assert "hello, Ada!" in result.stdout
