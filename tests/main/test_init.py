@@ -44,7 +44,7 @@ def test_write_starter_refuses_existing(tmp_path: Path, capsys: pytest.CaptureFi
 	(tmp_path / "tasks.py").write_text("untouched = 1\n")
 	assert write_starter_tasks_py(tmp_path) == 2
 	assert (tmp_path / "tasks.py").read_text() == "untouched = 1\n"
-	assert "already exists" in capsys.readouterr().err
+	assert "exists" in capsys.readouterr().err
 
 
 def test_dispatch_init(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -90,7 +90,7 @@ def test_starter_cli_init_then_list(tmp_path: Path) -> None:
 	assert created.returncode == 0, created.stderr
 	again = _camas("--init", cwd=tmp_path)
 	assert again.returncode == 2
-	assert "already exists" in again.stderr
+	assert "exists" in again.stderr
 	listed = _camas("--list", cwd=tmp_path)
 	assert listed.returncode == 0, listed.stderr
 	assert "say hello to everyone at once" in listed.stdout

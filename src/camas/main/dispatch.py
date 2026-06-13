@@ -10,7 +10,7 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, cast
 
 if sys.version_info >= (3, 11):
 	from typing import assert_never
@@ -42,6 +42,7 @@ from .tasks import (
 )
 
 if TYPE_CHECKING:
+	import io
 	from collections.abc import Mapping
 
 	from ..v0.task import TaskNode
@@ -71,6 +72,15 @@ def dispatch_arg(arg: str, tasks: Mapping[str, TaskNode]) -> TaskNode:
 	return parse_expression(arg, tasks=tasks)
 
 
+def reconfigure_stdio_utf8() -> None:
+	"""UTF-8 with ``errors="replace"`` on stdout/stderr so Windows consoles and
+	pipes (ANSI code page by default before Python 3.15) can carry the
+	box-drawing tree output and ``×`` matrix annotations.
+	"""
+	for stream in (sys.stdout, sys.stderr):
+		cast("io.TextIOWrapper", stream).reconfigure(encoding="utf-8", errors="replace")
+
+
 def run_cli(scope: Mapping[str, object]) -> None:
 	"""Collect Task/Sequential/Parallel and Effect bindings from ``scope`` (skipping
 	``_``-prefixed names) and dispatch CLI args, citing ``scope['__file__']`` as the
@@ -84,6 +94,7 @@ def run_cli(scope: Mapping[str, object]) -> None:
 
 	        run_cli(globals())
 	"""
+	reconfigure_stdio_utf8()
 	source_obj = scope.get("__file__")
 	source = Path(source_obj) if isinstance(source_obj, (str, Path)) else None
 	dispatch(

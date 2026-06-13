@@ -18,7 +18,9 @@ if use_mypyc:
 	# in the isolated build env, so mypy/mypyc compilation can't resolve it.
 	# check.py and state.py stay interpreted: mypyc's NamedTuple codegen rejects
 	# the built-in ``Exception`` as a field type (KeyError: 'Exception' at import).
-	_main_excluded = {"check.py", "state.py"}
+	# starter.py stays interpreted: it is the --init template, shipped as plain
+	# source and read back as text by init.py.
+	_main_excluded = {"check.py", "state.py", "starter.py"}
 	ext_modules = mypycify(
 		[
 			*(str(p) for p in Path("src/camas/main").glob("*.py") if p.name not in _main_excluded),
