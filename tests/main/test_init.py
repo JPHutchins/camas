@@ -12,7 +12,7 @@ import pytest
 
 from camas import Sequential
 from camas.main.dispatch import dispatch
-from camas.main.init import STARTER, write_starter_tasks_py
+from camas.main.init import starter_text, write_starter_tasks_py
 from camas.main.state import EMPTY_STATE, LoadErr
 from camas.main.tasks import load_tasks_from_py
 
@@ -36,7 +36,7 @@ def _camas(*args: str, cwd: Path) -> subprocess.CompletedProcess[str]:
 
 def test_write_starter(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
 	assert write_starter_tasks_py(tmp_path) == 0
-	assert (tmp_path / "tasks.py").read_text(encoding="utf-8") == STARTER
+	assert (tmp_path / "tasks.py").read_text(encoding="utf-8") == starter_text()
 	assert "Wrote" in capsys.readouterr().out
 
 
