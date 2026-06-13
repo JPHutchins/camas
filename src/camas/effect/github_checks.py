@@ -16,7 +16,7 @@ In ``pull_request`` events ``GITHUB_SHA`` points at the **merge commit**, not
 the PR's head — checks attached to it don't render in the PR Checks panel.
 Pass the head SHA explicitly::
 
-	GitHubChecks(GitHubChecksOptions(sha="${{ github.event.pull_request.head.sha || github.sha }}"))
+	GitHubChecks(sha="${{ github.event.pull_request.head.sha || github.sha }}")
 
 HTTP is fired-and-forgotten in ``on_event`` (``asyncio.create_task``) and
 awaited only in ``teardown``, so the run isn't slowed by network latency.
@@ -55,29 +55,6 @@ GH_API_VERSION: Final = "2022-11-28"
 GH_API_HOST: Final = "api.github.com"
 OUTPUT_TEXT_LIMIT: Final = 65_000
 NAME_LIMIT: Final = 100
-
-
-class GitHubChecksOptions(NamedTuple):
-	"""Configuration for the GitHubChecks Effect.
-
-	>>> GitHubChecksOptions()
-	GitHubChecksOptions(token=None, repository=None, sha=None, name_prefix='', tail_bytes=8192, fail_on_api_error=False)
-	>>> GitHubChecksOptions(name_prefix="ubuntu/").name_prefix
-	'ubuntu/'
-	"""
-
-	token: str | None = None
-	"""Auth token. None → reads ``GITHUB_TOKEN`` env var at setup time."""
-	repository: str | None = None
-	"""``owner/repo`` slug. None → reads ``GITHUB_REPOSITORY``."""
-	sha: str | None = None
-	"""Commit SHA. None → reads ``GITHUB_SHA`` (see module docstring caveat)."""
-	name_prefix: str = ""
-	"""Prepended to each check-run name (use for matrix-cell discrimination)."""
-	tail_bytes: int = 8192
-	"""Max bytes of stdout/stderr included in the check-run output text."""
-	fail_on_api_error: bool = False
-	"""If True, HTTP failures surface in teardown as a BaseExceptionGroup."""
 
 
 class ResolvedConfig(NamedTuple):
@@ -156,42 +133,54 @@ def require_httpx() -> ModuleType:
 	return httpx
 
 
-def resolve_config(opts: GitHubChecksOptions) -> ResolvedConfig:
-	"""Resolve options + env vars into a fully-specified ResolvedConfig.
+def resolve_config(
+	token: str | None,
+	repository: str | None,
+	sha: str | None,
+	name_prefix: str,
+	tail_bytes: int,
+	fail_on_api_error: bool,
+) -> ResolvedConfig:
+	"""Resolve the identity arguments + env vars into a fully-specified ResolvedConfig.
+
+	``token`` / ``repository`` / ``sha`` fall back to ``GITHUB_TOKEN`` /
+	``GITHUB_REPOSITORY`` / ``GITHUB_SHA`` when ``None``; the rest pass through.
 
 	Raises:
 		RuntimeError: when token, repository, or sha is unset, or repository
 			is not ``owner/repo``.
 
-	>>> resolve_config(GitHubChecksOptions(token="t", repository="o/r", sha="s")).repo
+	>>> resolve_config("t", "o/r", "s", "", 8192, False).repo
 	'r'
 	"""
-	token: Final = opts.token or os.environ.get("GITHUB_TOKEN") or ""
-	repository: Final = opts.repository or os.environ.get("GITHUB_REPOSITORY") or ""
-	sha: Final = opts.sha or os.environ.get("GITHUB_SHA") or ""
+	resolved_token: Final = token or os.environ.get("GITHUB_TOKEN") or ""
+	resolved_repository: Final = repository or os.environ.get("GITHUB_REPOSITORY") or ""
+	resolved_sha: Final = sha or os.environ.get("GITHUB_SHA") or ""
 	missing: Final = tuple(
 		name
 		for name, value in (
-			("GITHUB_TOKEN (or options.token)", token),
-			("GITHUB_REPOSITORY (or options.repository)", repository),
-			("GITHUB_SHA (or options.sha)", sha),
+			("GITHUB_TOKEN (or the token argument)", resolved_token),
+			("GITHUB_REPOSITORY (or the repository argument)", resolved_repository),
+			("GITHUB_SHA (or the sha argument)", resolved_sha),
 		)
 		if not value
 	)
 	if missing:
 		raise RuntimeError(f"GitHubChecks: missing required configuration: {', '.join(missing)}")
-	parts: Final = repository.split("/")
+	parts: Final = resolved_repository.split("/")
 	if len(parts) != 2 or not parts[0] or not parts[1]:
-		raise RuntimeError(f"GitHubChecks: repository must be 'owner/repo', got {repository!r}")
+		raise RuntimeError(
+			f"GitHubChecks: repository must be 'owner/repo', got {resolved_repository!r}"
+		)
 	owner, repo = parts
 	return ResolvedConfig(
-		token=token,
+		token=resolved_token,
 		owner=owner,
 		repo=repo,
-		sha=sha,
-		name_prefix=opts.name_prefix,
-		tail_bytes=opts.tail_bytes,
-		fail_on_api_error=opts.fail_on_api_error,
+		sha=resolved_sha,
+		name_prefix=name_prefix,
+		tail_bytes=tail_bytes,
+		fail_on_api_error=fail_on_api_error,
 	)
 
 
@@ -463,13 +452,33 @@ class GitHubChecks:
 	required ``checks: write`` workflow permission.
 	"""
 
-	def __init__(self, options: GitHubChecksOptions = GitHubChecksOptions()) -> None:
-		self.options: Final = options
+	def __init__(
+		self,
+		token: str | None = None,
+		repository: str | None = None,
+		sha: str | None = None,
+		name_prefix: str = "",
+		tail_bytes: int = 8192,
+		fail_on_api_error: bool = False,
+	) -> None:
+		self._token: Final = token
+		self._repository: Final = repository
+		self._sha: Final = sha
+		self._name_prefix: Final = name_prefix
+		self._tail_bytes: Final = tail_bytes
+		self._fail_on_api_error: Final = fail_on_api_error
 		self.state: EffectState | None = None
 
 	async def setup(self, task: TaskNode) -> LeafCtx:
 		httpx_mod: Final = require_httpx()  # zuban: ignore[misc] # zuban defies PEP591
-		cfg: Final = resolve_config(self.options)  # zuban: ignore[misc] # zuban defies PEP591
+		cfg: Final = resolve_config(  # zuban: ignore[misc] # zuban defies PEP591
+			self._token,
+			self._repository,
+			self._sha,
+			self._name_prefix,
+			self._tail_bytes,
+			self._fail_on_api_error,
+		)
 		self.state = EffectState(
 			http=httpx_mod.AsyncClient(timeout=5.0, headers=auth_headers(cfg)),
 			cfg=cfg,

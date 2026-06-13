@@ -60,7 +60,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@v6
 
-      - run: uv run camas coverage --effects='(Status(StatusOptions(output_mode="all")),)'
+      - run: uv run camas coverage --effects='(Status(output_mode="all"),)'
 
       - uses: codecov/codecov-action@v5
         if: always()
@@ -82,10 +82,8 @@ jobs:
 
       - run: |
           uv run --extra github_checks camas matrix --effects='(
-            Status(StatusOptions(output_mode="github")),
-            GitHubChecks(GitHubChecksOptions(
-              sha="${{ github.event.pull_request.head.sha || github.sha }}",
-            )),
+            Status(output_mode="github"),
+            GitHubChecks(sha="${{ github.event.pull_request.head.sha || github.sha }}"),
           )'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -104,7 +102,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@v6
 
-      - run: uv run camas check --effects='(Status(StatusOptions(output_mode="${{ matrix.mode }}")),)'
+      - run: uv run camas check --effects='(Status(output_mode="${{ matrix.mode }}"),)'
 
   nix:
     strategy:

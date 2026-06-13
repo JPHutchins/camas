@@ -18,25 +18,24 @@ if TYPE_CHECKING:
 
 
 def test_signature_fields_from_source_namedtuple() -> None:
-	from camas.effect.summary import SummaryOptions
+	from camas.effect.summary import Fixed
 
-	out = signature_fields_from_source(SummaryOptions)
+	out = signature_fields_from_source(Fixed)
 	assert out is not None
 	names = [n for n, _, _, _ in out]
-	assert names == ["term_width", "show_passing"]
+	assert names == ["columns"]
 
 
 def test_signature_fields_from_source_regular_class() -> None:
-	from camas.effect.summary import Summary, SummaryOptions
+	from camas.effect.summary import Auto, Summary
 
 	out = signature_fields_from_source(Summary)
 	assert out is not None
-	assert len(out) == 1
-	name, _kind, annot, default = out[0]
-	assert name == "options"
-	assert "SummaryOptions" in str(annot)
-	assert SummaryOptions.__name__ in str(annot)
-	assert default == SummaryOptions()
+	names = [n for n, _, _, _ in out]
+	assert names == ["term_width", "show_passing"]
+	defaults = {n: d for n, _, _, d in out}
+	assert defaults["term_width"] == Auto()
+	assert defaults["show_passing"] is False
 
 
 def test_signature_fields_from_source_module_not_loaded() -> None:
@@ -150,15 +149,15 @@ def test_signature_fields_falls_back_for_compiled_namedtuple(
 	source-parse path."""
 	import typing as _typing
 
-	from camas.effect.summary import SummaryOptions
+	from camas.effect.summary import Fixed
 
 	def fake_hints(_obj: object) -> dict[str, object]:
-		return {"term_width": type, "show_passing": bool}
+		return {"columns": type}
 
 	monkeypatch.setattr(_typing, "get_type_hints", fake_hints)
-	out = signature_fields(SummaryOptions)
-	annot_term = next(annot for n, _, annot, _ in out if n == "term_width")
-	assert "Auto" in str(annot_term) or "Fixed" in str(annot_term)
+	out = signature_fields(Fixed)
+	annot_cols = next(annot for n, _, annot, _ in out if n == "columns")
+	assert "int" in str(annot_cols)
 
 
 def test_signature_fields_falls_back_for_compiled_class(
@@ -175,15 +174,15 @@ def test_signature_fields_falls_back_for_compiled_class(
 		return _inspect.Signature(
 			parameters=[
 				_inspect.Parameter(
-					"options", _inspect.Parameter.POSITIONAL_OR_KEYWORD, default=None
+					"term_width", _inspect.Parameter.POSITIONAL_OR_KEYWORD, default=None
 				)
 			]
 		)
 
 	monkeypatch.setattr(_inspect, "signature", fake_signature)
 	out = signature_fields(Summary)
-	annot = next(annot for n, _, annot, _ in out if n == "options")
-	assert "SummaryOptions" in str(annot)
+	annot = next(annot for n, _, annot, _ in out if n == "term_width")
+	assert "Auto" in str(annot) or "Fixed" in str(annot)
 
 
 def test_signature_fields_namedtuple_fallback_returns_none(
@@ -251,8 +250,8 @@ def test_signature_fields_falls_back_when_inspect_signature_raises(
 
 	monkeypatch.setattr(_inspect, "signature", boom)
 	out = signature_fields(Summary)
-	annot = next(annot for n, _, annot, _ in out if n == "options")
-	assert "SummaryOptions" in str(annot)
+	annot = next(annot for n, _, annot, _ in out if n == "term_width")
+	assert "Auto" in str(annot) or "Fixed" in str(annot)
 
 
 def test_signature_fields_namedtuple_unresolvable_hints(

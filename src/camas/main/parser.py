@@ -44,13 +44,13 @@ def default_effects_expr() -> str:
 	'(Termtree(),)'
 	>>> os.environ["GITHUB_ACTIONS"] = "true"
 	>>> default_effects_expr()
-	'(Status(StatusOptions(output_mode="github")),)'
+	'(Status(output_mode="github"),)'
 	>>> os.environ.pop("GITHUB_ACTIONS", None)
 	'true'
 	>>> _ = os.environ.update({"GITHUB_ACTIONS": _saved}) if _saved is not None else None
 	"""
 	if os.environ.get("GITHUB_ACTIONS") == "true":
-		return '(Status(StatusOptions(output_mode="github")),)'
+		return '(Status(output_mode="github"),)'
 	return "(Termtree(),)"
 
 

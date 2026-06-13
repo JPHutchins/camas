@@ -105,45 +105,45 @@ exclude = ["tests/fixtures/"]
 preview = true
 explicit-preview-rules = true
 select = [
-"ASYNC", # flake8-async
-"B", # flake8-bugbear
-"C4", # flake8-comprehensions
-"D", # pydocstyle
+"ASYNC",  # flake8-async
+"B",      # flake8-bugbear
+"C4",     # flake8-comprehensions
+"D",      # pydocstyle
 "DOC102", # pydoclint (preview): documented params that don't exist
 "DOC202", # pydoclint (preview): documented returns that don't exist
 "DOC403", # pydoclint (preview): documented yields that don't exist
 "DOC501", # pydoclint (preview): raised exceptions must be documented
 "DOC502", # pydoclint (preview): documented exceptions that aren't raised
-"E", # pycodestyle errors
-"F", # pyflakes
-"FA", # flake8-future-annotations
-"FLY", # flynt
-"FURB", # refurb
-"G", # flake8-logging-format
-"I", # isort
-"ICN", # flake8-import-conventions
-"INP", # flake8-no-pep420
-"ISC", # flake8-implicit-str-concat
-"LOG", # flake8-logging
-"N", # pep8-naming
-"PERF", # perflint
-"PGH", # pygrep-hooks
-"PIE", # flake8-pie
-"PL", # pylint
-"PT", # flake8-pytest-style
-"PTH", # flake8-use-pathlib
-"PYI", # flake8-pyi
-"RET", # flake8-return
-"RSE", # flake8-raise
-"RUF", # ruff-specific
-"SIM", # flake8-simplify
-"SLF", # flake8-self
-"SLOT", # flake8-slots
-"TC", # flake8-type-checking
-"TRY", # tryceratops
-"UP", # pyupgrade
-"W", # pycodestyle warnings
-"YTT", # flake8-2020
+"E",      # pycodestyle errors
+"F",      # pyflakes
+"FA",     # flake8-future-annotations
+"FLY",    # flynt
+"FURB",   # refurb
+"G",      # flake8-logging-format
+"I",      # isort
+"ICN",    # flake8-import-conventions
+"INP",    # flake8-no-pep420
+"ISC",    # flake8-implicit-str-concat
+"LOG",    # flake8-logging
+"N",      # pep8-naming
+"PERF",   # perflint
+"PGH",    # pygrep-hooks
+"PIE",    # flake8-pie
+"PL",     # pylint
+"PT",     # flake8-pytest-style
+"PTH",    # flake8-use-pathlib
+"PYI",    # flake8-pyi
+"RET",    # flake8-return
+"RSE",    # flake8-raise
+"RUF",    # ruff-specific
+"SIM",    # flake8-simplify
+"SLF",    # flake8-self
+"SLOT",   # flake8-slots
+"TC",     # flake8-type-checking
+"TRY",    # tryceratops
+"UP",     # pyupgrade
+"W",      # pycodestyle warnings
+"YTT",    # flake8-2020
 ]
 # DOC201/DOC402 (missing returns/yields sections) are deliberately absent:
 # annotations are the single source of truth for parameter and return types,
@@ -160,21 +160,21 @@ ignore = [
 "D300",
 "ISC001",
 "ISC002",
-"E501", # the formatter owns line length; the rest is unbreakable doctest output
-"D102", # effect methods implement the documented Effect protocol contract
-"D103", # code should document itself; a needed comment is a symptom
-"D105", # magic method contracts are defined by the data model, not prose
-"D107", # __init__ is documented by its class
-"D205", # summaries here are flowing paragraphs, not one-liners
-"D417", # params belong to the type system, not prose (see DOC201/DOC402 above)
+"E501",    # the formatter owns line length; the rest is unbreakable doctest output
+"D102",    # effect methods implement the documented Effect protocol contract
+"D103",    # code should document itself; a needed comment is a symptom
+"D105",    # magic method contracts are defined by the data model, not prose
+"D107",    # __init__ is documented by its class
+"D205",    # summaries here are flowing paragraphs, not one-liners
+"D417",    # params belong to the type system, not prose (see DOC201/DOC402 above)
 "PLC0415", # imports are scoped as narrowly as possible, by design
 "PLR0911", # complexity thresholds reward fragmentation over clarity
 "PLR0912",
 "PLR0913",
 "PLR0915",
 "PLR2004", # renderer geometry is full of honest small numbers
-"TRY003", # messages live in the raise; no exception-class zoo
-"TRY004", # ValueError is the CLI's user-error channel (dispatch catches it)
+"TRY003",  # messages live in the raise; no exception-class zoo
+"TRY004",  # ValueError is the CLI's user-error channel (dispatch catches it)
 ]
 allowed-confusables = ["×"] # matrix axes render as PY×6
 
@@ -182,13 +182,8 @@ allowed-confusables = ["×"] # matrix axes render as PY×6
 convention = "google"
 
 [tool.ruff.lint.flake8-bugbear]
-# Options are immutable NamedTuples; constructing defaults in signatures is safe.
-extend-immutable-calls = [
-"camas.effect.github_checks.GitHubChecksOptions",
-"camas.effect.status.StatusOptions",
-"camas.effect.summary.SummaryOptions",
-"camas.effect.termtree.TermtreeOptions",
-]
+# Auto() is an immutable NamedTuple; constructing it as Summary's term_width default is safe.
+extend-immutable-calls = ["camas.effect.summary.Auto"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["D"] # test functions document themselves by name

@@ -193,7 +193,7 @@ def parse_effects(
 
 	>>> [type(e).__name__ for e in parse_effects("(Summary(),)")]
 	['Summary']
-	>>> parse_effects("(Summary(options=SummaryOptions(term_width=Fixed(80))),)")[0].options.term_width
+	>>> parse_effects("(Summary(term_width=Fixed(80)),)")[0]._term_width
 	Fixed(columns=80)
 	>>> parse_effects("()")
 	()

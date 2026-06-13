@@ -33,7 +33,7 @@ def test_pep723_runs_standalone() -> None:
 			str(FIXTURE),
 			"hello",
 			"--effects",
-			"(Summary(SummaryOptions(show_passing=True)),)",
+			"(Summary(show_passing=True),)",
 		],
 		capture_output=True,
 		text=True,

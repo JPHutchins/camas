@@ -24,7 +24,6 @@ from camas.effect.github_checks import (
 	Active,
 	Closed,
 	GitHubChecks,
-	GitHubChecksOptions,
 	PatchPayload,
 	Pending,
 	ResolvedConfig,
@@ -86,17 +85,24 @@ async def wrap_raise_none(exc: BaseException) -> None:
 	raise exc
 
 
-def test_options_defaults() -> None:
-	o = GitHubChecksOptions()
-	assert (o.token, o.repository, o.sha) == (None, None, None)
-	assert (o.name_prefix, o.tail_bytes, o.fail_on_api_error) == ("", 8192, False)
+async def test_default_construction_resolves_config_defaults(
+	monkeypatch: pytest.MonkeyPatch,
+) -> None:
+	"""Bare ``GitHubChecks()`` resolves identity from env and applies the
+	name_prefix/tail_bytes/fail_on_api_error constructor defaults."""
+	set_gh_env(monkeypatch)
+	effect = GitHubChecks()
+	await effect.setup(Task("x"))
+	assert effect.state is not None
+	assert effect.state.cfg == ResolvedConfig("t", "o", "r", "sha", "", 8192, False)
+	await effect.state.http.aclose()
 
 
 def test_resolve_config_reads_env_when_options_none(monkeypatch: pytest.MonkeyPatch) -> None:
 	monkeypatch.setenv("GITHUB_TOKEN", "env-token")
 	monkeypatch.setenv("GITHUB_REPOSITORY", "env-owner/env-repo")
 	monkeypatch.setenv("GITHUB_SHA", "env-sha")
-	cfg = resolve_config(GitHubChecksOptions())
+	cfg = resolve_config(None, None, None, "", 8192, False)
 	assert cfg == ResolvedConfig("env-token", "env-owner", "env-repo", "env-sha", "", 8192, False)
 
 
@@ -104,11 +110,7 @@ def test_resolve_config_explicit_overrides_env(monkeypatch: pytest.MonkeyPatch) 
 	monkeypatch.setenv("GITHUB_TOKEN", "env-token")
 	monkeypatch.setenv("GITHUB_REPOSITORY", "env-o/env-r")
 	monkeypatch.setenv("GITHUB_SHA", "env-sha")
-	cfg = resolve_config(
-		GitHubChecksOptions(
-			token="explicit", repository="o/r", sha="s", name_prefix="p/", tail_bytes=10
-		)
-	)
+	cfg = resolve_config("explicit", "o/r", "s", "p/", 10, False)
 	assert cfg.token == "explicit"
 	assert (cfg.owner, cfg.repo) == ("o", "r")
 	assert cfg.sha == "s"
@@ -119,19 +121,19 @@ def test_resolve_config_explicit_overrides_env(monkeypatch: pytest.MonkeyPatch) 
 def test_resolve_config_missing_token_raises(monkeypatch: pytest.MonkeyPatch) -> None:
 	clear_gh_env(monkeypatch)
 	with pytest.raises(RuntimeError, match="GITHUB_TOKEN"):
-		resolve_config(GitHubChecksOptions(repository="o/r", sha="s"))
+		resolve_config(None, "o/r", "s", "", 8192, False)
 
 
 def test_resolve_config_missing_repository_raises(monkeypatch: pytest.MonkeyPatch) -> None:
 	clear_gh_env(monkeypatch)
 	with pytest.raises(RuntimeError, match="GITHUB_REPOSITORY"):
-		resolve_config(GitHubChecksOptions(token="t", sha="s"))
+		resolve_config("t", None, "s", "", 8192, False)
 
 
 def test_resolve_config_missing_sha_raises(monkeypatch: pytest.MonkeyPatch) -> None:
 	clear_gh_env(monkeypatch)
 	with pytest.raises(RuntimeError, match="GITHUB_SHA"):
-		resolve_config(GitHubChecksOptions(token="t", repository="o/r"))
+		resolve_config("t", "o/r", None, "", 8192, False)
 
 
 @pytest.mark.parametrize("repo", ["no-slash", "o/", "/r", "o/r/extra", "/", ""])
@@ -140,7 +142,7 @@ def test_resolve_config_malformed_repository_raises(
 ) -> None:
 	clear_gh_env(monkeypatch)
 	with pytest.raises(RuntimeError):
-		resolve_config(GitHubChecksOptions(token="t", repository=repo, sha="s"))
+		resolve_config("t", repo, "s", "", 8192, False)
 
 
 def test_auth_headers_format() -> None:
@@ -417,7 +419,7 @@ async def test_on_event_started_spawns_post_task(monkeypatch: pytest.MonkeyPatch
 
 	monkeypatch.setattr("camas.effect.github_checks.post_check_run", fake_post)
 
-	effect = GitHubChecks(GitHubChecksOptions(name_prefix="pfx/"))
+	effect = GitHubChecks(name_prefix="pfx/")
 	ctx = await effect.setup(Task("x"))
 	t = Task("cmd", name="lint")
 	ctx = await effect.on_event(StartedEvent(t, 0, TS), [], ctx)
@@ -438,7 +440,7 @@ async def test_on_event_output_accumulates_and_trims_tail(
 
 	monkeypatch.setattr("camas.effect.github_checks.post_check_run", fake_post)
 
-	effect = GitHubChecks(GitHubChecksOptions(tail_bytes=5))
+	effect = GitHubChecks(tail_bytes=5)
 	ctx = await effect.setup(Task("x"))
 	t = Task("cmd", name="t")
 	ctx = await effect.on_event(StartedEvent(t, 0, TS), [], ctx)
@@ -521,7 +523,7 @@ async def test_teardown_fail_on_api_error_raises_exceptiongroup(
 	monkeypatch: pytest.MonkeyPatch,
 ) -> None:
 	set_gh_env(monkeypatch)
-	effect = GitHubChecks(GitHubChecksOptions(fail_on_api_error=True))
+	effect = GitHubChecks(fail_on_api_error=True)
 	await effect.setup(Task("x"))
 	bad = asyncio.create_task(wrap_raise_none(RuntimeError("boom")))
 	with pytest.raises(BaseExceptionGroup) as ei:

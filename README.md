@@ -102,7 +102,7 @@ camas is **not a build system**. camas is for the specific job of running struct
 
 The renderer is swappable, not the tree. Run the same `tasks.py` locally with the live `Termtree` and in CI with `Status` — one flag changes the output, the pipeline definition is unchanged.
 
-**On GitHub Actions, no flag is needed.** Camas detects `GITHUB_ACTIONS=true` and defaults `--effects` to `(Status(StatusOptions(output_mode="github")),)` — collapsed workflow groups, ISO timestamps with millisecond precision, ANSI colors preserved.
+**On GitHub Actions, no flag is needed.** Camas detects `GITHUB_ACTIONS=true` and defaults `--effects` to `(Status(output_mode="github"),)` — collapsed workflow groups, ISO timestamps with millisecond precision, ANSI colors preserved.
 
 ```yaml
 - run: uv run camas check
@@ -111,7 +111,7 @@ The renderer is swappable, not the tree. Run the same `tasks.py` locally with th
 On other CI providers (or to opt into a specific mode), spell it out:
 
 ```yaml
-- run: uv run camas check --effects='(Status(StatusOptions(output_mode="errors")),)'
+- run: uv run camas check --effects='(Status(output_mode="errors"),)'
 ```
 
 See the [`OutputMode`](https://github.com/JPHutchins/camas/blob/main/src/camas/effect/status.py) literal and `block_for` doctests for the per-mode behavior. The [`status-modes-demo` job](https://github.com/JPHutchins/camas/blob/main/.github/workflows/ci.yaml) renders one CI run per mode for visual comparison.
@@ -121,10 +121,8 @@ For per-leaf visibility in the PR Checks panel, add the `GitHubChecks` effect al
 ```yaml
 - run: |
     uv run --extra github_checks camas matrix --effects='(
-      Status(StatusOptions(output_mode="github")),
-      GitHubChecks(GitHubChecksOptions(
-        sha="${{ github.event.pull_request.head.sha || github.sha }}",
-      )),
+      Status(output_mode="github"),
+      GitHubChecks(sha="${{ github.event.pull_request.head.sha || github.sha }}"),
     )'
   env:
     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

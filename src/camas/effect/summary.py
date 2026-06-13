@@ -51,21 +51,6 @@ class Fixed(NamedTuple):
 TermWidth: TypeAlias = Auto | Fixed
 
 
-class SummaryOptions(NamedTuple):
-	"""Configuration for the summary Effect.
-
-	>>> SummaryOptions()
-	SummaryOptions(term_width=Auto(), show_passing=False)
-	>>> SummaryOptions(term_width=Fixed(120)).term_width
-	Fixed(columns=120)
-	>>> SummaryOptions(show_passing=True).show_passing
-	True
-	"""
-
-	term_width: TermWidth = Auto()
-	show_passing: bool = False
-
-
 @dataclass
 class SummaryState:
 	"""Mutable slot holding the latest states view for the Summary effect."""
@@ -98,17 +83,18 @@ class Summary:
 	produces garbage. End-state output matches ``Termtree``'s final frame.
 	"""
 
-	def __init__(self, options: SummaryOptions = SummaryOptions()) -> None:
-		self.options: Final = options
+	def __init__(self, term_width: TermWidth = Auto(), show_passing: bool = False) -> None:
+		self._term_width: Final = term_width
+		self._show_passing: Final = show_passing
 
 	async def setup(self, task: TaskNode) -> SummaryContext:
-		match self.options.term_width:
+		match self._term_width:
 			case Auto():
 				term_width = shutil.get_terminal_size().columns
 			case Fixed(columns=columns):
 				term_width = columns
 			case _:
-				assert_never(self.options.term_width)
+				assert_never(self._term_width)
 		return SummaryContext(
 			rows=flatten_rows(task),
 			term_width=term_width,
@@ -142,5 +128,5 @@ class Summary:
 		sys.stdout.buffer.write(("\n".join(cleaned) + "\n").encode("utf-8", errors="replace"))
 		sys.stdout.flush()
 		print_failures(ctx.state.states, ctx.term_width)
-		if self.options.show_passing:
+		if self._show_passing:
 			print_passes(ctx.state.states, ctx.term_width)
