@@ -14,7 +14,7 @@ from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime
 from subprocess import STDOUT
-from typing import TYPE_CHECKING, Any, Final, Protocol, TypeAlias
+from typing import TYPE_CHECKING, Any, Final, NamedTuple, Protocol, TypeAlias
 
 if sys.version_info >= (3, 11):
 	from asyncio import TaskGroup
@@ -61,6 +61,17 @@ class Interrupts:
 	"""Live leaf subprocesses by leaf index; populated/popped by ``run_cmd``."""
 	count: int = 0
 	main_task: asyncio.Task[tuple[TaskResult, ...]] | None = None
+
+
+class RunContext(NamedTuple):
+	"""Run-invariant context threaded through the ``execute`` recursion."""
+
+	dispatch: EventSink
+	leaves: tuple[Task, ...]
+	index_map: dict[int, int]
+	limiter: Limiter
+	interrupts: Interrupts
+	states: Sequence[LeafState]
 
 
 if sys.platform != "win32":
@@ -138,22 +149,17 @@ def subprocess_env(merged: dict[str, str]) -> dict[str, str]:
 	return {"FORCE_COLOR": "1", "CLICOLOR_FORCE": "1"} | base
 
 
-async def run_cmd(
-	task: Task,
-	leaf_index: int,
-	dispatch: EventSink,
-	limiter: Limiter,
-	interrupts: Interrupts,
-	states: Sequence[LeafState],
-) -> TaskResult:
+async def run_cmd(task: Task, leaf_index: int, ctx: RunContext) -> TaskResult:
 	"""Run one leaf as a subprocess, dispatching Started/Output/Completed events."""
-	async with limiter:
-		if interrupts.count:
+	async with ctx.limiter:
+		if ctx.interrupts.count:
 			stopped: Final = Stopped(INTERRUPT_RC, 0.0, ())
-			await dispatch(leaf_index, CompletedEvent(task, leaf_index, stopped, datetime.now()))
+			await ctx.dispatch(
+				leaf_index, CompletedEvent(task, leaf_index, stopped, datetime.now())
+			)
 			return TaskResult(task_label(task), stopped)
 		start_pc: Final = time.perf_counter()
-		await dispatch(leaf_index, StartedEvent(task, leaf_index, datetime.now()))
+		await ctx.dispatch(leaf_index, StartedEvent(task, leaf_index, datetime.now()))
 		proc: Final = await asyncio.create_subprocess_exec(
 			*resolve_cmd(task.cmd),
 			stdout=asyncio.subprocess.PIPE,
@@ -161,76 +167,55 @@ async def run_cmd(
 			env=subprocess_env({**os.environ, **task.env}),
 			cwd=task.cwd,
 		)
-		interrupts.procs[leaf_index] = proc
+		ctx.interrupts.procs[leaf_index] = proc
 		output: Final[list[bytes]] = []
 		try:
 			if proc.stdout is not None:  # pragma: no branch
 				async for line in proc.stdout:
 					output.append(line)
-					await dispatch(leaf_index, OutputEvent(task, leaf_index, line, datetime.now()))
+					await ctx.dispatch(
+						leaf_index, OutputEvent(task, leaf_index, line, datetime.now())
+					)
 			await proc.wait()
 		finally:
-			interrupts.procs.pop(leaf_index, None)
+			ctx.interrupts.procs.pop(leaf_index, None)
 		elapsed: Final = time.perf_counter() - start_pc
 		rc: Final = proc.returncode or 0
 		completion: Final = (
 			Stopped(rc, elapsed, output)
-			if isinstance(states[leaf_index], Interrupting)
+			if isinstance(ctx.states[leaf_index], Interrupting)
 			else Finished(rc, elapsed, output)
 		)
-		await dispatch(leaf_index, CompletedEvent(task, leaf_index, completion, datetime.now()))
+		await ctx.dispatch(leaf_index, CompletedEvent(task, leaf_index, completion, datetime.now()))
 		return TaskResult(task_label(task), completion)
 
 
-async def skip_subtree(
-	child: TaskNode,
-	skip: Skipped,
-	dispatch: EventSink,
-	leaves: tuple[Task, ...],
-	index_map: dict[int, int],
-) -> tuple[TaskResult, ...]:
+async def skip_subtree(child: TaskNode, skip: Skipped, ctx: RunContext) -> tuple[TaskResult, ...]:
 	"""Dispatch a Skipped completion for every leaf in a subtree, in DFS order."""
 	results: tuple[TaskResult, ...] = ()
-	for idx in subtree_leaf_indices(child, index_map):
-		await dispatch(idx, CompletedEvent(leaves[idx], idx, skip, datetime.now()))
-		results = (*results, TaskResult(task_label(leaves[idx]), skip))
+	for idx in subtree_leaf_indices(child, ctx.index_map):
+		await ctx.dispatch(idx, CompletedEvent(ctx.leaves[idx], idx, skip, datetime.now()))
+		results = (*results, TaskResult(task_label(ctx.leaves[idx]), skip))
 	return results
 
 
-async def execute(
-	node: TaskNode,
-	dispatch: EventSink,
-	leaves: tuple[Task, ...],
-	index_map: dict[int, int],
-	limiter: Limiter,
-	interrupts: Interrupts,
-	states: Sequence[LeafState],
-) -> tuple[TaskResult, ...]:
+async def execute(node: TaskNode, ctx: RunContext) -> tuple[TaskResult, ...]:
 	"""Walk a task subtree, returning one TaskResult per leaf in DFS order."""
 	match node:
 		case Task():
-			return (
-				await run_cmd(node, index_map[id(node)], dispatch, limiter, interrupts, states),
-			)
+			return (await run_cmd(node, ctx.index_map[id(node)], ctx),)
 		case Parallel(tasks=children):
 			async with TaskGroup() as tg:
-				futures: Final = tuple(
-					tg.create_task(
-						execute(child, dispatch, leaves, index_map, limiter, interrupts, states)
-					)
-					for child in children
-				)
+				futures: Final = tuple(tg.create_task(execute(child, ctx)) for child in children)
 			return tuple(r for f in futures for r in f.result())
 		case Sequential(tasks=children):
 			seq_results: tuple[TaskResult, ...] = ()
 			failed_rc: int | None = None
 			for child in children:
 				child_results = (
-					await skip_subtree(child, Skipped(failed_rc), dispatch, leaves, index_map)
+					await skip_subtree(child, Skipped(failed_rc), ctx)
 					if failed_rc is not None
-					else await execute(
-						child, dispatch, leaves, index_map, limiter, interrupts, states
-					)
+					else await execute(child, ctx)
 				)
 				seq_results = (*seq_results, *child_results)
 				if failed_rc is None:
@@ -299,6 +284,7 @@ async def run(
 			slot[effect_idx] = effect_ctx
 
 	interrupts: Final = Interrupts(procs={})
+	ctx: Final = RunContext(dispatch, leaves, index_map, limiter, interrupts, states)
 	loop: Final = asyncio.get_running_loop()
 
 	def on_sigint() -> None:
@@ -316,9 +302,7 @@ async def run(
 	try:
 		if setup_errors:
 			raise BaseExceptionGroup("setup errors", setup_errors)
-		main_task: Final = loop.create_task(
-			execute(expanded, dispatch, leaves, index_map, limiter, interrupts, states)
-		)
+		main_task: Final = loop.create_task(execute(expanded, ctx))
 		interrupts.main_task = main_task
 		results = await await_run(main_task, interrupts)
 	finally:
