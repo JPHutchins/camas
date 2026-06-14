@@ -15,8 +15,16 @@ if sys.version_info >= (3, 11):
 else:  # pragma: no cover
 	from typing_extensions import assert_never
 
-from ..v0.leaf_state import Completed, LeafState, Running, Waiting
-from ..v0.task_event import CompletedEvent, OutputEvent, StartedEvent, TaskEvent
+from ..v0.completion import INTERRUPT_RC, Stopped
+from ..v0.leaf_state import Completed, Interrupting, LeafState, Running, Waiting
+from ..v0.task_event import (
+	AbortedEvent,
+	CompletedEvent,
+	InterruptedEvent,
+	OutputEvent,
+	StartedEvent,
+	TaskEvent,
+)
 
 if TYPE_CHECKING:
 	from ..v0.task import Task
@@ -65,6 +73,8 @@ def next_state(state: LeafState, event: TaskEvent) -> LeafState:
 	Completed(task=Task(cmd='echo hi', name=None, env={}, cwd=None), completion=Finished(returncode=0, elapsed=0.5, output=(b'done',)))
 	>>> next_state(Waiting(t), CompletedEvent(t, 0, Skipped(1), t0))
 	Completed(task=Task(cmd='echo hi', name=None, env={}, cwd=None), completion=Skipped(returncode=1))
+	>>> next_state(Running(t, t0, b""), InterruptedEvent(t, 0, t1))
+	Interrupting(task=Task(cmd='echo hi', name=None, env={}, cwd=None), start_time=datetime.datetime(2026, 1, 1, 12, 0), last_line=b'')
 	"""
 	match state:
 		case Waiting(task=task):
@@ -75,14 +85,34 @@ def next_state(state: LeafState, event: TaskEvent) -> LeafState:
 					return Running(task, ts, line)
 				case CompletedEvent(completion=completion):
 					return Completed(task, completion)
+				case InterruptedEvent() | AbortedEvent():
+					return Completed(task, Stopped(INTERRUPT_RC, 0.0, ()))
 				case _:
 					assert_never(event)
-		case Running(task=task, start_time=start):
+		case Running(task=task, start_time=start, last_line=last):
 			match event:
+				case InterruptedEvent():
+					return Interrupting(task, start, last)
 				case OutputEvent(line=line):
 					return Running(task, start, line)
 				case CompletedEvent(completion=completion):
 					return Completed(task, completion)
+				case AbortedEvent(timestamp=ts):
+					return Completed(task, Stopped(INTERRUPT_RC, (ts - start).total_seconds(), ()))
+				case StartedEvent():  # pragma: no cover
+					return state
+				case _:
+					assert_never(event)
+		case Interrupting(task=task, start_time=start):
+			match event:
+				case OutputEvent(line=line):
+					return Interrupting(task, start, line)
+				case CompletedEvent(completion=completion):
+					return Completed(task, completion)
+				case AbortedEvent(timestamp=ts):
+					return Completed(task, Stopped(INTERRUPT_RC, (ts - start).total_seconds(), ()))
+				case InterruptedEvent():
+					return state
 				case StartedEvent():  # pragma: no cover
 					return state
 				case _:

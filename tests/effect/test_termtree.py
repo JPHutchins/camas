@@ -21,9 +21,16 @@ from camas.effect.termtree import (
 	render_frame,
 	render_lines,
 )
-from camas.v0.completion import Finished, Skipped
-from camas.v0.leaf_state import Completed, LeafState, Running, Waiting
-from camas.v0.task_event import CompletedEvent, OutputEvent, StartedEvent, TaskEvent
+from camas.v0.completion import INTERRUPT_RC, Finished, Skipped, Stopped
+from camas.v0.leaf_state import Completed, Interrupting, LeafState, Running, Waiting
+from camas.v0.task_event import (
+	AbortedEvent,
+	CompletedEvent,
+	InterruptedEvent,
+	OutputEvent,
+	StartedEvent,
+	TaskEvent,
+)
 
 if TYPE_CHECKING:
 	from camas.v0.effect import Effect
@@ -106,6 +113,47 @@ def test_render_frame_failure_summary() -> None:
 		rows, states, term_width=80, term_height=24, now=TS, wall_elapsed=0.0, prev_visible=0
 	)
 	assert "FAIL" in frame.text
+
+
+def test_render_frame_interrupting_shows_sigint_and_summary() -> None:
+	a, b = make_task("a"), make_task("b")
+	rows = flatten_rows(Parallel(a, b))
+	states: tuple[LeafState, ...] = (
+		Interrupting(a, TS, b"working..."),
+		Interrupting(b, TS, b""),
+	)
+	frame = render_frame(
+		rows, states, term_width=80, term_height=24, now=TS, wall_elapsed=0.0, prev_visible=0
+	)
+	assert "SIGINT" in frame.text
+	assert "working" in frame.text
+	assert "PASS" not in frame.text
+
+
+def test_render_frame_stopped_shows_stop_and_summary() -> None:
+	a, b = make_task("a"), make_task("b")
+	rows = flatten_rows(Parallel(a, b))
+	states: tuple[LeafState, ...] = (
+		Completed(a, Stopped(130, 0.2, (b"bye\n",))),
+		Completed(b, Stopped(INTERRUPT_RC, 0.0, ())),
+	)
+	frame = render_frame(
+		rows, states, term_width=80, term_height=24, now=TS, wall_elapsed=0.0, prev_visible=0
+	)
+	assert "STOP" in frame.text
+	assert "bye" in frame.text
+
+
+def test_termtree_aborted_event_prints_kill_banner(capsys: pytest.CaptureFixture[str]) -> None:
+	a = make_task("a")
+	events: list[TaskEvent] = [
+		StartedEvent(a, 0, TS),
+		InterruptedEvent(a, 0, TS),
+		AbortedEvent(a, 0, TS),
+		CompletedEvent(a, 0, Stopped(INTERRUPT_RC, 0.1, ()), TS),
+	]
+	asyncio.run(drive(Termtree(), Parallel(a), events))
+	assert "killing all tasks" in capsys.readouterr().out
 
 
 def _wide_tree(leaves: int) -> Parallel:

@@ -5,10 +5,14 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, NamedTuple, TypeAlias
+from typing import TYPE_CHECKING, Final, NamedTuple, TypeAlias
 
 if TYPE_CHECKING:
 	from collections.abc import Sequence
+
+
+INTERRUPT_RC: Final = 130
+"""Exit code for a signal-interrupted run (128 + SIGINT)."""
 
 
 class Finished(NamedTuple):
@@ -37,4 +41,16 @@ class Skipped(NamedTuple):
 	returncode: int
 
 
-Completion: TypeAlias = Finished | Skipped
+class Stopped(NamedTuple):
+	"""Completion outcome: the runner forwarded the task a signal while it ran.
+
+	>>> Stopped(130, 0.5, (b"caught SIGINT",))
+	Stopped(returncode=130, elapsed=0.5, output=(b'caught SIGINT',))
+	"""
+
+	returncode: int
+	elapsed: float
+	output: Sequence[bytes]
+
+
+Completion: TypeAlias = Finished | Skipped | Stopped

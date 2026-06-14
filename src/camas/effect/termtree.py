@@ -21,15 +21,16 @@ from ..core.color import (
 	GREY,
 	RED,
 	RESET,
+	YELLOW,
 )
 from ..core.leaf_state import LeafInfo
 from ..core.render import DisplayRow, GroupHeader, flatten_rows, render_tree_prefix, strip_ansi
 from ..core.task import task_label
 from ..core.traversal import flatten_leaves
-from ..v0.completion import Finished, Skipped
-from ..v0.leaf_state import Completed, LeafState, Running, Waiting
+from ..v0.completion import Finished, Skipped, Stopped
+from ..v0.leaf_state import Completed, Interrupting, LeafState, Running, Waiting
 from ..v0.task import Task, TaskNode
-from ..v0.task_event import TaskEvent
+from ..v0.task_event import AbortedEvent, TaskEvent
 
 
 def truncate_middle(text: str, max_width: int) -> str:
@@ -97,9 +98,15 @@ def bucket_glyph_color(states: Sequence[LeafState]) -> tuple[str, str]:
 	True
 	>>> bucket_glyph_color([Waiting(t), Running(t, t0, b"")]) == (' ', GREY)
 	True
+	>>> bucket_glyph_color([Interrupting(t, t0, b"")]) == ('┄', YELLOW)
+	True
+	>>> bucket_glyph_color([Completed(t, Stopped(130, 0.1, ()))]) == ('─', YELLOW)
+	True
 	"""
 	if any(isinstance(s, Waiting) for s in states):
 		return PROG_WAITING, GREY
+	if any(isinstance(s, Interrupting) for s in states):
+		return PROG_RUNNING, YELLOW
 	if any(isinstance(s, Running) for s in states):
 		return PROG_RUNNING, CAMAS_VIOLET
 	if any(
@@ -109,6 +116,8 @@ def bucket_glyph_color(states: Sequence[LeafState]) -> tuple[str, str]:
 		for s in states
 	):
 		return PROG_DONE, RED
+	if any(isinstance(s, Completed) and isinstance(s.completion, Stopped) for s in states):
+		return PROG_DONE, YELLOW
 	all_skipped: Final = all(
 		isinstance(s, Completed) and isinstance(s.completion, Skipped) for s in states
 	)
@@ -237,10 +246,21 @@ def render_lines(
 								lines.append(
 									f"\r{header}{GREY}{stream}{RESET}{padding} {CYAN}|{color}{status}{CYAN}|{RESET} {elapsed:7.3f}s{CLEAR_LINE}"
 								)
-							case Skipped():  # pragma: no branch
+							case Skipped():
 								padding = " " * gap
 								lines.append(
 									f"\r{header}{padding} {CYAN}|{GREY} SKIP {CYAN}|{RESET}{CLEAR_LINE}"
+								)
+							case Stopped(elapsed=elapsed, output=output):  # pragma: no branch
+								stream_line = strip_ansi(last_line_display(output))
+								stream = (
+									f"  {truncate_middle(stream_line, gap - 2)}"
+									if gap > 2 and stream_line
+									else ""
+								)
+								padding = " " * max(gap - len(stream), 0)
+								lines.append(
+									f"\r{header}{GREY}{stream}{RESET}{padding} {CYAN}|{YELLOW} STOP {CYAN}|{RESET} {elapsed:7.3f}s{CLEAR_LINE}"
 								)
 					case Running(start_time=start_time, last_line=last_line):
 						elapsed = (now - start_time).total_seconds()
@@ -255,6 +275,18 @@ def render_lines(
 						lines.append(
 							f"\r{header}{GREY}{stream}{RESET}{padding} {CYAN}|{CAMAS_VIOLET}{spin}{CYAN}|{RESET} {elapsed:7.3f}s{CLEAR_LINE}"
 						)
+					case Interrupting(start_time=start_time, last_line=last_line):
+						elapsed = (now - start_time).total_seconds()
+						stream_line = strip_ansi(decode_line(last_line)) if last_line else ""
+						stream = (
+							f"  {truncate_middle(stream_line, gap - 2)}"
+							if gap > 2 and stream_line
+							else ""
+						)
+						padding = " " * max(gap - len(stream), 0)
+						lines.append(
+							f"\r{header}{GREY}{stream}{RESET}{padding} {CYAN}|{YELLOW}SIGINT{CYAN}|{RESET} {elapsed:7.3f}s{CLEAR_LINE}"
+						)
 					case Waiting():
 						padding = " " * gap
 						lines.append(
@@ -263,16 +295,23 @@ def render_lines(
 	alldone: Final = all(isinstance(s, Completed) for s in states)
 	summary_pad: Final = render_progress_bar(states, max(display_width - 6, 0))
 	if alldone:
+		stopped: Final = any(
+			isinstance(s, Completed) and isinstance(s.completion, Stopped) for s in states
+		)
 		failed: Final = any(
 			isinstance(s, Completed)
 			and isinstance(s.completion, Finished)
 			and s.completion.returncode != 0
 			for s in states
 		)
-		summary_color: Final = RED if failed else GREEN
-		summary_label: Final = " FAIL " if failed else " PASS "
+		summary_color: Final = YELLOW if stopped else (RED if failed else GREEN)
+		summary_label: Final = " STOP " if stopped else (" FAIL " if failed else " PASS ")
 		lines.append(
 			f"\r{BOLD}result{RESET}{summary_pad} {CYAN}|{summary_color}{summary_label}{CYAN}|{RESET} {wall_elapsed:7.3f}s{CLEAR_LINE}"
+		)
+	elif any(isinstance(s, Interrupting) for s in states):
+		lines.append(
+			f"\r{BOLD}result{RESET}{summary_pad} {CYAN}|{YELLOW}SIGINT{CYAN}|{RESET} {wall_elapsed:7.3f}s{CLEAR_LINE}"
 		)
 	else:
 		running_spin: Final = SPINNER[int(wall_elapsed * 10) % len(SPINNER)]
@@ -409,6 +448,8 @@ class TermtreeState:
 	tick_task: asyncio.Task[None] | None = None
 	visible: int = 0
 	"""Lines the previous frame occupied; :func:`draw` reads it to reposition, then writes it back."""
+	aborted: bool = False
+	"""Set on a force-kill (3rd Ctrl-C) so teardown prints the kill banner."""
 
 
 class TermtreeContext(NamedTuple):
@@ -456,6 +497,8 @@ class Termtree:
 		self, event: TaskEvent, states: Sequence[LeafState], ctx: TermtreeContext
 	) -> TermtreeContext:
 		ctx.state.states = states
+		if isinstance(event, AbortedEvent):
+			ctx.state.aborted = True
 		return ctx
 
 	async def teardown(self, ctxs: tuple[TermtreeContext, ...]) -> None:
@@ -466,6 +509,8 @@ class Termtree:
 				await ctx.state.tick_task
 		draw(ctx, final=True)
 		sys.stdout.write("\n")
+		if ctx.state.aborted:
+			sys.stdout.write(f"{YELLOW}Ctrl-C received — killing all tasks{RESET}\n")
 		sys.stdout.flush()
 		term_width: Final = (  # zuban: ignore[misc] # zuban defies PEP591
 			shutil.get_terminal_size().columns

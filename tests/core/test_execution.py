@@ -4,13 +4,22 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import signal
+import sys
 import time
+from datetime import datetime
+from typing import TYPE_CHECKING
 
 import pytest
 
 from camas import Parallel, Sequential, Task
-from camas.core.execution import run
-from camas.v0.completion import Finished
+from camas.core.execution import Interrupts, Signalable, await_run, run, step_interrupt
+from camas.v0.completion import INTERRUPT_RC, Finished, Stopped
+from camas.v0.task_event import AbortedEvent, InterruptedEvent, TaskEvent
+
+if TYPE_CHECKING:
+	from camas.core.completion import RunResult, TaskResult
 
 
 def test_force_color_injected_in_subprocess(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -251,3 +260,101 @@ def test_run_result_has_structured_results() -> None:
 	assert result.elapsed > 0
 	names = {r.name for r in result.results}
 	assert names == {"a", "b"}
+
+
+class FakeProc:
+	"""Records the signals an interrupt escalation would send to a leaf subprocess."""
+
+	def __init__(self) -> None:
+		self.signals: list[int] = []
+		self.killed = False
+
+	def send_signal(self, sig: int, /) -> None:
+		self.signals.append(sig)
+
+	def kill(self) -> None:
+		self.killed = True
+
+
+def _ignore_event(_idx: int, _event: TaskEvent) -> None:
+	pass
+
+
+async def _forever() -> tuple[TaskResult, ...]:
+	pending: asyncio.Future[tuple[TaskResult, ...]] = asyncio.get_running_loop().create_future()
+	return await pending
+
+
+def test_step_interrupt_forwards_twice_then_kills() -> None:
+	leaves = (Task("a"), Task("b"))
+	p0, p1 = FakeProc(), FakeProc()
+	procs: dict[int, Signalable] = {0: p0, 1: p1}
+	events: list[tuple[int, TaskEvent]] = []
+	interrupts = Interrupts(procs=procs, signaled=set(), pending=[])
+	now = datetime(2026, 1, 1)
+
+	step_interrupt(interrupts, leaves, now, lambda i, e: events.append((i, e)))
+	assert p0.signals == [signal.SIGINT]
+	assert p1.signals == [signal.SIGINT]
+	assert interrupts.signaled == {0, 1}
+	assert [type(e) for _, e in events] == [InterruptedEvent, InterruptedEvent]
+
+	step_interrupt(interrupts, leaves, now, lambda i, e: events.append((i, e)))
+	assert p0.signals == [signal.SIGINT, signal.SIGINT]
+	assert len(events) == 2  # 2nd press forwards only — no new events
+
+	step_interrupt(interrupts, leaves, now, lambda i, e: events.append((i, e)))
+	assert p0.killed
+	assert p1.killed
+	assert [type(e) for _, e in events[2:]] == [AbortedEvent, AbortedEvent]
+
+
+def test_fourth_press_cancels_run_and_await_run_returns_empty() -> None:
+	async def scenario() -> tuple[bool, tuple[TaskResult, ...]]:
+		main = asyncio.ensure_future(_forever())
+		await asyncio.sleep(0)  # let the run task suspend before we interrupt it
+		procs: dict[int, Signalable] = {0: FakeProc()}
+		interrupts = Interrupts(procs=procs, signaled=set(), pending=[], main_task=main)
+		for _ in range(4):
+			step_interrupt(interrupts, (Task("x"),), datetime(2026, 1, 1), _ignore_event)
+		results = await await_run(main, interrupts)
+		return main.cancelled(), results
+
+	cancelled, results = asyncio.run(scenario())
+	assert cancelled is True
+	assert results == ()
+
+
+def _raise_sigint() -> None:
+	os.kill(os.getpid(), signal.SIGINT)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal handling only")
+def test_ctrl_c_forwards_sigint_and_exits_130() -> None:
+	async def scenario() -> RunResult:
+		asyncio.get_running_loop().call_later(0.3, _raise_sigint)
+		task = Parallel(
+			Task(("python", "-c", "import time; time.sleep(5)"), name="a"),
+			Task(("python", "-c", "import time; time.sleep(5)"), name="b"),
+		)
+		return await run(task)
+
+	result = asyncio.run(scenario())
+	assert result.returncode == INTERRUPT_RC
+	assert result.results
+	assert all(isinstance(r.completion, Stopped) for r in result.results)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal handling only")
+def test_ctrl_c_resolves_jobs_queued_leaves_as_stopped() -> None:
+	async def scenario() -> RunResult:
+		asyncio.get_running_loop().call_later(0.3, _raise_sigint)
+		task = Parallel(
+			*(Task(("python", "-c", "import time; time.sleep(5)"), name=f"t{i}") for i in range(4))
+		)
+		return await run(task, jobs=1)
+
+	result = asyncio.run(scenario())
+	assert result.returncode == INTERRUPT_RC
+	assert len(result.results) == 4
+	assert all(isinstance(r.completion, Stopped) for r in result.results)
