@@ -10,12 +10,11 @@ import os
 import signal
 import sys
 import time
-from contextlib import nullcontext, suppress
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime
-from functools import partial
 from subprocess import STDOUT
-from typing import TYPE_CHECKING, Any, Final, Protocol, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, Final, Protocol, TypeAlias
 
 if sys.version_info >= (3, 11):
 	from asyncio import TaskGroup
@@ -75,42 +74,40 @@ class Interrupts:
 	main_task: asyncio.Task[tuple[TaskResult, ...]] | None = None
 
 
-def silence_dead(action: Callable[[], None]) -> None:
-	"""Run ``action`` (a signal/kill call), ignoring the race where the process already exited."""
-	with suppress(ProcessLookupError):
-		action()
-
-
-def suppress_ctrl_c_echo() -> object | None:
-	"""Clear ``ECHOCTL`` on the controlling tty for the run; return prior attrs to restore.
-
-	A tty echoes the interrupt char as ``^C`` at the cursor when Ctrl-C is pressed;
-	on some terminals (notably the WSL pty under Windows Terminal) that echo carries
-	a newline, which slides the live tree's repaint anchor down and strands rows.
-	Returns ``None`` (a no-op) off a tty or where ``termios`` is unavailable (Windows).
-	"""
-	try:
-		import termios
-	except ModuleNotFoundError:  # pragma: no cover  (Windows has no termios)
-		return None
-	try:
-		fd = sys.stdin.fileno()
-		saved: list[Any] = termios.tcgetattr(fd)
-	except (OSError, ValueError, termios.error):
-		return None  # not a tty (piped / captured)
-	updated: list[Any] = termios.tcgetattr(fd)
-	updated[3] &= ~termios.ECHOCTL
-	termios.tcsetattr(fd, termios.TCSADRAIN, updated)
-	return saved
-
-
-def restore_tty(saved: object | None) -> None:
-	"""Restore tty attributes captured by :func:`suppress_ctrl_c_echo`."""
-	if saved is None:
-		return
+if sys.platform != "win32":
 	import termios
 
-	termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, cast("list[Any]", saved))
+	def suppress_ctrl_c_echo() -> list[Any] | None:
+		"""Clear ``ECHOCTL`` on the controlling tty for the run; return prior attrs to restore.
+
+		A tty echoes the interrupt char as ``^C`` at the cursor when Ctrl-C is pressed;
+		on some terminals (notably the WSL pty under Windows Terminal) that echo carries
+		a newline, which slides the live tree's repaint anchor down and strands rows.
+		Returns ``None`` (a no-op) off a tty (piped / captured).
+		"""
+		try:
+			fd = sys.stdin.fileno()
+			saved = termios.tcgetattr(fd)
+		except (OSError, ValueError, termios.error):
+			return None
+		updated = termios.tcgetattr(fd)
+		updated[3] &= ~termios.ECHOCTL
+		termios.tcsetattr(fd, termios.TCSADRAIN, updated)
+		return saved
+
+	def restore_tty(saved: list[Any] | None) -> None:
+		"""Restore tty attributes captured by :func:`suppress_ctrl_c_echo`."""
+		if saved is not None:
+			termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, saved)
+
+else:  # pragma: no cover  (Windows has no termios)
+
+	def suppress_ctrl_c_echo() -> list[Any] | None:
+		"""Ctrl-C echo suppression is POSIX-only; a no-op on Windows."""
+		return None
+
+	def restore_tty(saved: list[Any] | None) -> None:
+		"""No tty state to restore on Windows."""
 
 
 def step_interrupt(
@@ -125,12 +122,12 @@ def step_interrupt(
 	match interrupts.count:
 		case 1 | 2:
 			for idx, proc in running:
-				silence_dead(partial(proc.send_signal, signal.SIGINT))
+				proc.send_signal(signal.SIGINT)
 				interrupts.signaled.add(idx)
 				dispatch_event(idx, InterruptedEvent(leaves[idx], idx, now))
 		case 3:
 			for idx, proc in running:
-				silence_dead(proc.kill)
+				proc.kill()
 				dispatch_event(idx, AbortedEvent(leaves[idx], idx, now))
 		case _:
 			if interrupts.main_task is not None:  # pragma: no branch
@@ -148,7 +145,7 @@ async def await_run(
 	except KeyboardInterrupt:  # pragma: no cover  (Windows single-stage fallback)
 		interrupts.count += 1
 		for proc in tuple(interrupts.procs.values()):
-			silence_dead(proc.kill)
+			proc.kill()
 		return ()
 
 

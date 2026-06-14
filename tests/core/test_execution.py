@@ -377,23 +377,23 @@ class _FakeStdin:
 		return self._fd
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="POSIX termios only")
 def test_suppress_and_restore_ctrl_c_echo(monkeypatch: pytest.MonkeyPatch) -> None:
-	import termios
+	if sys.platform != "win32":  # pragma: no branch  (POSIX termios only)
+		import termios
 
-	master, slave = os.openpty()
-	try:
-		on = termios.tcgetattr(slave)
-		on[3] |= termios.ECHOCTL  # ensure it starts enabled
-		termios.tcsetattr(slave, termios.TCSANOW, on)
-		monkeypatch.setattr(sys, "stdin", _FakeStdin(slave))
+		master, slave = os.openpty()
+		try:
+			on = termios.tcgetattr(slave)
+			on[3] |= termios.ECHOCTL  # ensure it starts enabled
+			termios.tcsetattr(slave, termios.TCSANOW, on)
+			monkeypatch.setattr(sys, "stdin", _FakeStdin(slave))
 
-		saved = suppress_ctrl_c_echo()
-		assert saved is not None
-		assert not termios.tcgetattr(slave)[3] & termios.ECHOCTL  # cleared while live
+			saved = suppress_ctrl_c_echo()
+			assert saved is not None
+			assert not termios.tcgetattr(slave)[3] & termios.ECHOCTL  # cleared while live
 
-		restore_tty(saved)
-		assert termios.tcgetattr(slave)[3] & termios.ECHOCTL  # restored on teardown
-	finally:
-		os.close(master)
-		os.close(slave)
+			restore_tty(saved)
+			assert termios.tcgetattr(slave)[3] & termios.ECHOCTL  # restored on teardown
+		finally:
+			os.close(master)
+			os.close(slave)
