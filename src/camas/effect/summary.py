@@ -16,12 +16,11 @@ if sys.version_info >= (3, 11):
 else:
 	from typing_extensions import assert_never
 
-from ..core.color import RESET, YELLOW
 from ..core.render import DisplayRow, flatten_rows
 from ..core.traversal import flatten_leaves
 from ..v0.leaf_state import LeafState, Waiting
 from ..v0.task import TaskNode
-from ..v0.task_event import AbortedEvent, TaskEvent
+from ..v0.task_event import TaskEvent
 from .termtree import (
 	CLEAR_LINE,
 	STATUS_COL_WIDTH,
@@ -57,8 +56,6 @@ class SummaryState:
 	"""Mutable slot holding the latest states view for the Summary effect."""
 
 	states: Sequence[LeafState]
-	aborted: bool = False
-	"""Set on a force-kill (3rd Ctrl-C) so teardown prints the kill banner."""
 
 
 class SummaryContext(NamedTuple):
@@ -113,8 +110,6 @@ class Summary:
 		self, event: TaskEvent, states: Sequence[LeafState], ctx: SummaryContext
 	) -> SummaryContext:
 		ctx.state.states = states
-		if isinstance(event, AbortedEvent):
-			ctx.state.aborted = True
 		return ctx
 
 	async def teardown(self, ctxs: tuple[SummaryContext, ...]) -> None:
@@ -131,8 +126,6 @@ class Summary:
 			line.removeprefix("\r").replace(CLEAR_LINE, "") for line in lines
 		)
 		sys.stdout.buffer.write(("\n".join(cleaned) + "\n").encode("utf-8", errors="replace"))
-		if ctx.state.aborted:
-			sys.stdout.write(f"{YELLOW}Ctrl-C received — killing all tasks{RESET}\n")
 		sys.stdout.flush()
 		print_failures(ctx.state.states, ctx.term_width)
 		if self._show_passing:

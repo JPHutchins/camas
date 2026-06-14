@@ -11,7 +11,7 @@ from camas import Parallel, Sequential, Task
 from camas.effect.summary import Fixed, Summary
 from camas.v0.completion import INTERRUPT_RC, Finished, Skipped, Stopped
 from camas.v0.leaf_state import LeafState, Waiting
-from camas.v0.task_event import AbortedEvent, CompletedEvent, StartedEvent, TaskEvent
+from camas.v0.task_event import CompletedEvent, StartedEvent, TaskEvent
 
 if TYPE_CHECKING:
 	from collections.abc import Callable
@@ -115,17 +115,14 @@ def test_summary_sequential_skipped(capsys: pytest.CaptureFixture[str]) -> None:
 	assert "FAIL" in out
 
 
-def test_summary_aborted_event_prints_kill_banner(capsys: pytest.CaptureFixture[str]) -> None:
+def test_summary_stopped_renders_stop(capsys: pytest.CaptureFixture[str]) -> None:
 	a = make_task("a")
 	events: list[TaskEvent] = [
 		StartedEvent(a, 0, TS),
-		AbortedEvent(a, 0, TS),
 		CompletedEvent(a, 0, Stopped(INTERRUPT_RC, 0.1, ()), TS),
 	]
 	asyncio.run(drive(Summary(), Parallel(a), events))
-	out = capsys.readouterr().out
-	assert "STOP" in out
-	assert "killing all tasks" in out
+	assert "STOP" in capsys.readouterr().out
 
 
 def test_summary_fixed_width_overrides_terminal_detection() -> None:

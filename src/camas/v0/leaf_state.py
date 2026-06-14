@@ -44,13 +44,15 @@ class Interrupting(NamedTuple):
 
 	>>> from datetime import datetime
 	>>> from camas.v0 import Task
-	>>> Interrupting(Task("echo hi"), datetime(2026, 1, 1, 12, 0, 0), b"output")
-	Interrupting(task=Task(cmd='echo hi', name=None, env={}, cwd=None), start_time=datetime.datetime(2026, 1, 1, 12, 0), last_line=b'output')
+	>>> Interrupting(Task("echo hi"), datetime(2026, 1, 1, 12, 0, 0), b"output", 1)
+	Interrupting(task=Task(cmd='echo hi', name=None, env={}, cwd=None), start_time=datetime.datetime(2026, 1, 1, 12, 0), last_line=b'output', presses=1)
 	"""
 
 	task: Task
 	start_time: datetime
 	last_line: bytes
+	presses: int
+	"""Ctrl-C presses this leaf has absorbed: 1/2 forwarded SIGINT, 3+ force-killed."""
 
 
 class Completed(NamedTuple):

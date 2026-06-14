@@ -6,9 +6,10 @@
     cd tests/fixtures/ctrl-c && camas        # runs `demo`: all five behaviors at once
     camas polite                             # or run one behavior in isolation
 
-Then press Ctrl-C and watch the rows: 1st/2nd forward SIGINT (rows show SIGINT),
-3rd force-kills survivors (STOP + kill banner), 4th cancels if camas is left
-hanging on a leaked pipe. See sigint_app.py for what each behavior does.
+Then press Ctrl-C and watch the rows: 1st/2nd forward SIGINT (rows read ^C, then
+^C^C), 3rd force-kills survivors (KILL, then STOP as they die), 4th cancels if
+camas is left hanging on a leaked pipe. Each exit prints a white
+``Ctrl-C (N) received - exiting``. See sigint_app.py for what each behavior does.
 """
 
 from pathlib import Path

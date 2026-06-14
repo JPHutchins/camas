@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from camas import Config, Parallel, Task
-from camas.main.dispatch import dispatch
+from camas.main.dispatch import dispatch, print_interrupt_banner
 from camas.main.state import LoadOk
 
 if TYPE_CHECKING:
@@ -181,3 +181,26 @@ def test_bare_default_task_per_axis_flag_override(
 	out = capsys.readouterr().out
 	assert "[PY=3.13]" in out
 	assert "[PY=3.12]" not in out
+
+
+def test_interrupt_banner_silent_when_uninterrupted(capsys: pytest.CaptureFixture[str]) -> None:
+	print_interrupt_banner(0)
+	assert capsys.readouterr().out == ""
+
+
+def test_interrupt_banner_colored(
+	capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+	monkeypatch.setattr("camas.core.render.color_on", lambda: True)
+	print_interrupt_banner(4)
+	out = capsys.readouterr().out
+	assert "Ctrl-C (4) received - exiting" in out
+	assert "\x1b[97m" in out  # WHITE
+
+
+def test_interrupt_banner_plain_without_color(
+	capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+	monkeypatch.setattr("camas.core.render.color_on", lambda: False)
+	print_interrupt_banner(2)
+	assert capsys.readouterr().out.strip() == "Ctrl-C (2) received - exiting"

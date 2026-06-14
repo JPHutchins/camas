@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, TypeVar
 import pytest
 
 from camas import Parallel, Sequential, Task
+from camas.core.leaf_state import KILL_PRESSES
 from camas.core.render import flatten_rows, strip_ansi
 from camas.effect.termtree import (
 	STATUS_COL_WIDTH,
@@ -24,9 +25,7 @@ from camas.effect.termtree import (
 from camas.v0.completion import INTERRUPT_RC, Finished, Skipped, Stopped
 from camas.v0.leaf_state import Completed, Interrupting, LeafState, Running, Waiting
 from camas.v0.task_event import (
-	AbortedEvent,
 	CompletedEvent,
-	InterruptedEvent,
 	OutputEvent,
 	StartedEvent,
 	TaskEvent,
@@ -115,17 +114,19 @@ def test_render_frame_failure_summary() -> None:
 	assert "FAIL" in frame.text
 
 
-def test_render_frame_interrupting_shows_sigint_and_summary() -> None:
-	a, b = make_task("a"), make_task("b")
-	rows = flatten_rows(Parallel(a, b))
+def test_render_frame_interrupting_shows_press_count_labels() -> None:
+	a, b, c = make_task("a"), make_task("b"), make_task("c")
+	rows = flatten_rows(Parallel(a, b, c))
 	states: tuple[LeafState, ...] = (
-		Interrupting(a, TS, b"working..."),
-		Interrupting(b, TS, b""),
+		Interrupting(a, TS, b"working...", 1),
+		Interrupting(b, TS, b"", 2),
+		Interrupting(c, TS, b"", KILL_PRESSES),
 	)
 	frame = render_frame(
 		rows, states, term_width=80, term_height=24, now=TS, wall_elapsed=0.0, prev_visible=0
 	)
-	assert "SIGINT" in frame.text
+	assert "^C^C" in frame.text  # second press
+	assert "KILL" in frame.text  # third press, also the summary (max presses)
 	assert "working" in frame.text
 	assert "PASS" not in frame.text
 
@@ -144,16 +145,28 @@ def test_render_frame_stopped_shows_stop_and_summary() -> None:
 	assert "bye" in frame.text
 
 
-def test_termtree_aborted_event_prints_kill_banner(capsys: pytest.CaptureFixture[str]) -> None:
-	a = make_task("a")
-	events: list[TaskEvent] = [
-		StartedEvent(a, 0, TS),
-		InterruptedEvent(a, 0, TS),
-		AbortedEvent(a, 0, TS),
-		CompletedEvent(a, 0, Stopped(INTERRUPT_RC, 0.1, ()), TS),
-	]
-	asyncio.run(drive(Termtree(), Parallel(a), events))
-	assert "killing all tasks" in capsys.readouterr().out
+_STOPPED_EVENTS: list[TaskEvent] = [
+	StartedEvent(make_task("a"), 0, TS),
+	CompletedEvent(
+		make_task("a"), 0, Stopped(INTERRUPT_RC, 0.1, (b"line one\n", b"line two\n")), TS
+	),
+]
+
+
+def test_termtree_output_ctrl_c_dumps_stopped_output(capsys: pytest.CaptureFixture[str]) -> None:
+	asyncio.run(
+		drive(Termtree(output_ctrl_c=True), Parallel(make_task("a")), list(_STOPPED_EVENTS))
+	)
+	out = capsys.readouterr().out
+	assert "STOPPED" in out
+	assert "line one" in out  # full dump, not just the inline last line
+
+
+def test_termtree_default_does_not_dump_stopped_output(capsys: pytest.CaptureFixture[str]) -> None:
+	asyncio.run(drive(Termtree(), Parallel(make_task("a")), list(_STOPPED_EVENTS)))
+	out = capsys.readouterr().out
+	assert "STOPPED" not in out
+	assert "line one" not in out  # only the inline "line two" survives in the row
 
 
 def _wide_tree(leaves: int) -> Parallel:
@@ -204,7 +217,7 @@ def test_render_frame_repositions_with_previous_height() -> None:
 		wall_elapsed=0.0,
 		prev_visible=first.visible,
 	)
-	assert repaint.text.startswith(f"\x1b[{first.visible - 1}F")
+	assert repaint.text.startswith(f"\r\x1b[{first.visible - 1}A")
 
 
 def test_render_frame_erases_leftover_rows_when_shrinking() -> None:

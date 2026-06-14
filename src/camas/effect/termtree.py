@@ -15,22 +15,24 @@ from typing import Final, NamedTuple
 
 from ..core.color import (
 	BOLD,
+	BOLD_YELLOW,
 	CAMAS_VIOLET,
 	CYAN,
+	DARK_RED,
 	GREEN,
 	GREY,
 	RED,
 	RESET,
 	YELLOW,
 )
-from ..core.leaf_state import LeafInfo
+from ..core.leaf_state import KILL_PRESSES, LeafInfo
 from ..core.render import DisplayRow, GroupHeader, flatten_rows, render_tree_prefix, strip_ansi
 from ..core.task import task_label
 from ..core.traversal import flatten_leaves
 from ..v0.completion import Finished, Skipped, Stopped
 from ..v0.leaf_state import Completed, Interrupting, LeafState, Running, Waiting
 from ..v0.task import Task, TaskNode
-from ..v0.task_event import AbortedEvent, TaskEvent
+from ..v0.task_event import TaskEvent
 
 
 def truncate_middle(text: str, max_width: int) -> str:
@@ -77,6 +79,24 @@ PROG_MAX_CELL_WIDTH: Final = 12
 PROG_MIN_MARGIN: Final = 2
 
 
+def interrupt_label(presses: int) -> str:
+	"""6-col status for an interrupting row, by Ctrl-C count.
+
+	>>> interrupt_label(1), interrupt_label(2), interrupt_label(3)
+	('  ^C  ', ' ^C^C ', ' KILL ')
+	"""
+	if presses == 1:
+		return "  ^C  "
+	if presses < KILL_PRESSES:
+		return " ^C^C "
+	return " KILL "
+
+
+def interrupt_color(presses: int) -> str:
+	"""Yellow while forwarding SIGINT, bold yellow once force-killing."""
+	return BOLD_YELLOW if presses >= KILL_PRESSES else YELLOW
+
+
 def bucket_glyph_color(states: Sequence[LeafState]) -> tuple[str, str]:
 	"""Reduce a bucket of leaf states to (glyph, ANSI color) for a progress cell.
 
@@ -98,7 +118,7 @@ def bucket_glyph_color(states: Sequence[LeafState]) -> tuple[str, str]:
 	True
 	>>> bucket_glyph_color([Waiting(t), Running(t, t0, b"")]) == (' ', GREY)
 	True
-	>>> bucket_glyph_color([Interrupting(t, t0, b"")]) == ('┄', YELLOW)
+	>>> bucket_glyph_color([Interrupting(t, t0, b"", 1)]) == ('┄', YELLOW)
 	True
 	>>> bucket_glyph_color([Completed(t, Stopped(130, 0.1, ()))]) == ('─', YELLOW)
 	True
@@ -260,7 +280,7 @@ def render_lines(
 								)
 								padding = " " * max(gap - len(stream), 0)
 								lines.append(
-									f"\r{header}{GREY}{stream}{RESET}{padding} {CYAN}|{YELLOW} STOP {CYAN}|{RESET} {elapsed:7.3f}s{CLEAR_LINE}"
+									f"\r{header}{GREY}{stream}{RESET}{padding} {CYAN}|{DARK_RED} STOP {CYAN}|{RESET} {elapsed:7.3f}s{CLEAR_LINE}"
 								)
 					case Running(start_time=start_time, last_line=last_line):
 						elapsed = (now - start_time).total_seconds()
@@ -275,7 +295,7 @@ def render_lines(
 						lines.append(
 							f"\r{header}{GREY}{stream}{RESET}{padding} {CYAN}|{CAMAS_VIOLET}{spin}{CYAN}|{RESET} {elapsed:7.3f}s{CLEAR_LINE}"
 						)
-					case Interrupting(start_time=start_time, last_line=last_line):
+					case Interrupting(start_time=start_time, last_line=last_line, presses=presses):
 						elapsed = (now - start_time).total_seconds()
 						stream_line = strip_ansi(decode_line(last_line)) if last_line else ""
 						stream = (
@@ -285,7 +305,7 @@ def render_lines(
 						)
 						padding = " " * max(gap - len(stream), 0)
 						lines.append(
-							f"\r{header}{GREY}{stream}{RESET}{padding} {CYAN}|{YELLOW}SIGINT{CYAN}|{RESET} {elapsed:7.3f}s{CLEAR_LINE}"
+							f"\r{header}{GREY}{stream}{RESET}{padding} {CYAN}|{interrupt_color(presses)}{interrupt_label(presses)}{CYAN}|{RESET} {elapsed:7.3f}s{CLEAR_LINE}"
 						)
 					case Waiting():
 						padding = " " * gap
@@ -304,14 +324,15 @@ def render_lines(
 			and s.completion.returncode != 0
 			for s in states
 		)
-		summary_color: Final = YELLOW if stopped else (RED if failed else GREEN)
+		summary_color: Final = DARK_RED if stopped else (RED if failed else GREEN)
 		summary_label: Final = " STOP " if stopped else (" FAIL " if failed else " PASS ")
 		lines.append(
 			f"\r{BOLD}result{RESET}{summary_pad} {CYAN}|{summary_color}{summary_label}{CYAN}|{RESET} {wall_elapsed:7.3f}s{CLEAR_LINE}"
 		)
-	elif any(isinstance(s, Interrupting) for s in states):
+	elif interrupting := [s.presses for s in states if isinstance(s, Interrupting)]:
+		max_presses: Final = max(interrupting)
 		lines.append(
-			f"\r{BOLD}result{RESET}{summary_pad} {CYAN}|{YELLOW}SIGINT{CYAN}|{RESET} {wall_elapsed:7.3f}s{CLEAR_LINE}"
+			f"\r{BOLD}result{RESET}{summary_pad} {CYAN}|{interrupt_color(max_presses)}{interrupt_label(max_presses)}{CYAN}|{RESET} {wall_elapsed:7.3f}s{CLEAR_LINE}"
 		)
 	else:
 		running_spin: Final = SPINNER[int(wall_elapsed * 10) % len(SPINNER)]
@@ -338,7 +359,7 @@ def clamp_lines(lines: tuple[str, ...], height: int) -> tuple[str, ...]:
 	The summary is the most information-dense line (aggregate progress + total
 	elapsed), so it survives; the overflowing leaf rows above it collapse into one
 	elision marker. Bounding the live region to the viewport is what stops the
-	repaint from scrolling: cursor-up (``\033[NF``) clamps at the top of the
+	repaint from scrolling: cursor-up (``\033[NA``) clamps at the top of the
 	screen, so a frame taller than the window can never be rewritten in place.
 
 	>>> clamp_lines(("a", "b", "sum"), 5)
@@ -379,13 +400,15 @@ def render_frame(
 ) -> FrameResult:
 	r"""Render one positioned frame for live animation, clamped to ``term_height``.
 
-	Repaints in place by moving the cursor up ``prev_visible - 1`` lines (CPL,
-	``\033[NF``) to the top of the previously-drawn region, then rewriting it.
-	``prev_visible`` is the height the *previous* frame occupied (0 on the first
-	frame, which just writes where the cursor is and lets the terminal scroll to
-	make room) — tracking that, not the current frame's height, keeps the cursor
-	math right when the line count changes across a resize, and lets a now-shorter
-	frame erase the rows the previous one left behind (``\033[0J``).
+	Repaints in place with ``\r`` + cursor-up (CUU, ``\033[NA``) to the top of the
+	previously-drawn region, then rewrites it. CUU is preferred over cursor-previous-
+	line (CPL, ``\033[NF``): both clamp at the top of the screen, but Windows Terminal
+	strands the top row each frame under CPL, so the live tree stacks instead of
+	repainting. ``prev_visible`` is the height the *previous* frame occupied (0 on the
+	first frame, which just writes where the cursor is and lets the terminal scroll to
+	make room) — tracking that, not the current frame's height, keeps the cursor math
+	right when the line count changes across a resize, and lets a now-shorter frame
+	erase the rows the previous one left behind (``\033[0J``).
 
 	``final`` skips the clamp to emit the whole tree once at teardown so the
 	completed run persists in the scrollback.
@@ -394,7 +417,7 @@ def render_frame(
 		render_lines(rows, states, term_width, term_width - STATUS_COL_WIDTH - 1, now, wall_elapsed)
 	)
 	lines: Final = full if final else clamp_lines(full, term_height)
-	reposition: Final = f"\033[{prev_visible - 1}F" if prev_visible > 1 else ""
+	reposition: Final = f"\r\033[{prev_visible - 1}A" if prev_visible > 1 else ""
 	erase: Final = "\033[0J" if len(lines) < prev_visible else ""
 	return FrameResult(reposition + "\n".join(lines) + erase, len(lines))
 
@@ -440,6 +463,16 @@ def print_passes(states: Sequence[LeafState], term_width: int) -> None:
 				pass
 
 
+def print_stops(states: Sequence[LeafState], term_width: int) -> None:
+	"""Print captured output for each task stopped by a forwarded signal."""
+	for state in states:
+		match state:
+			case Completed(task=task, completion=Stopped(returncode=rc, output=output)):
+				print_task_output(task, output, "STOPPED", DARK_RED, rc, term_width)
+			case _:
+				pass
+
+
 @dataclass
 class TermtreeState:
 	"""Mutable slots of a termtree run: the latest states view and the tick task handle."""
@@ -448,8 +481,6 @@ class TermtreeState:
 	tick_task: asyncio.Task[None] | None = None
 	visible: int = 0
 	"""Lines the previous frame occupied; :func:`draw` reads it to reposition, then writes it back."""
-	aborted: bool = False
-	"""Set on a force-kill (3rd Ctrl-C) so teardown prints the kill banner."""
 
 
 class TermtreeContext(NamedTuple):
@@ -476,9 +507,15 @@ class Termtree:
 	how fast events arrive.
 	"""
 
-	def __init__(self, frame_interval_ms: float = 16.667, show_passing: bool = False) -> None:
+	def __init__(
+		self,
+		frame_interval_ms: float = 16.667,
+		show_passing: bool = False,
+		output_ctrl_c: bool = False,
+	) -> None:
 		self._frame_interval_ms: Final = frame_interval_ms
 		self._show_passing: Final = show_passing
+		self._output_ctrl_c: Final = output_ctrl_c
 
 	async def setup(self, task: TaskNode) -> TermtreeContext:
 		ctx: Final = TermtreeContext(  # zuban: ignore[misc] # zuban defies PEP591
@@ -497,8 +534,6 @@ class Termtree:
 		self, event: TaskEvent, states: Sequence[LeafState], ctx: TermtreeContext
 	) -> TermtreeContext:
 		ctx.state.states = states
-		if isinstance(event, AbortedEvent):
-			ctx.state.aborted = True
 		return ctx
 
 	async def teardown(self, ctxs: tuple[TermtreeContext, ...]) -> None:
@@ -509,13 +544,13 @@ class Termtree:
 				await ctx.state.tick_task
 		draw(ctx, final=True)
 		sys.stdout.write("\n")
-		if ctx.state.aborted:
-			sys.stdout.write(f"{YELLOW}Ctrl-C received — killing all tasks{RESET}\n")
 		sys.stdout.flush()
 		term_width: Final = (  # zuban: ignore[misc] # zuban defies PEP591
 			shutil.get_terminal_size().columns
 		)
 		print_failures(ctx.state.states, term_width)
+		if self._output_ctrl_c:
+			print_stops(ctx.state.states, term_width)
 		if self._show_passing:
 			print_passes(ctx.state.states, term_width)
 

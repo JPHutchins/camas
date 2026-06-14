@@ -15,10 +15,12 @@ Then press **Ctrl-C** and watch the rows:
 
 | Press | camas does | what you see |
 |---|---|---|
-| 1st | forward `SIGINT` to every running leaf | `polite` settles `STOP`; others flip to `SIGINT` |
-| 2nd | forward `SIGINT` again | `stubborn` settles `STOP`; `cleanup` finishes its ~2s exit |
-| 3rd | `SIGKILL` the survivors | `ignore` settles `STOP`; the kill banner prints |
+| 1st | forward `SIGINT` to every running leaf | `polite` settles `STOP`; others flip to `^C` |
+| 2nd | forward `SIGINT` again | `stubborn` settles `STOP`; survivors read `^C^C`; `cleanup` finishes its ~2s exit |
+| 3rd | `SIGKILL` the survivors | `ignore` reads `KILL` then settles `STOP` |
 | 4th | gracefully cancel the run | `leaker` had left camas hanging on a held-open pipe — this unwinds it; exit `130` |
+
+Every interrupted exit prints a white `Ctrl-C (N) received - exiting` final line (N = total presses). `STOP` is a dark red, `KILL` a bold yellow.
 
 Run `demo` to the end and you exercise all four presses: the `leaker` keeps camas
 alive after the kill (a detached grandchild holds its stdout open, so the read

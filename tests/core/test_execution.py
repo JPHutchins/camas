@@ -301,12 +301,13 @@ def test_step_interrupt_forwards_twice_then_kills() -> None:
 
 	step_interrupt(interrupts, leaves, now, lambda i, e: events.append((i, e)))
 	assert p0.signals == [signal.SIGINT, signal.SIGINT]
-	assert len(events) == 2  # 2nd press forwards only — no new events
+	# 2nd press forwards again and re-dispatches so rows advance to ^C^C
+	assert [type(e) for _, e in events[2:]] == [InterruptedEvent, InterruptedEvent]
 
 	step_interrupt(interrupts, leaves, now, lambda i, e: events.append((i, e)))
 	assert p0.killed
 	assert p1.killed
-	assert [type(e) for _, e in events[2:]] == [AbortedEvent, AbortedEvent]
+	assert [type(e) for _, e in events[4:]] == [AbortedEvent, AbortedEvent]
 
 
 def test_fourth_press_cancels_run_and_await_run_returns_empty() -> None:

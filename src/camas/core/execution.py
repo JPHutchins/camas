@@ -91,14 +91,11 @@ def step_interrupt(
 	interrupts.count += 1
 	running: Final = tuple(interrupts.procs.items())
 	match interrupts.count:
-		case 1:
+		case 1 | 2:
 			for idx, proc in running:
 				silence_dead(partial(proc.send_signal, signal.SIGINT))
 				interrupts.signaled.add(idx)
 				dispatch_event(idx, InterruptedEvent(leaves[idx], idx, now))
-		case 2:
-			for _idx, proc in running:
-				silence_dead(partial(proc.send_signal, signal.SIGINT))
 		case 3:
 			for idx, proc in running:
 				silence_dead(proc.kill)
@@ -328,4 +325,5 @@ async def run(
 		else (1 if any(r.completion.returncode != 0 for r in results) else 0),
 		results=results,
 		elapsed=time.perf_counter() - wall_start,
+		interrupt_count=interrupts.count,
 	)

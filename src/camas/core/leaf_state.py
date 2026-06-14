@@ -8,7 +8,7 @@ machine over the per-leaf states.
 from __future__ import annotations
 
 import sys
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, Final, NamedTuple
 
 if sys.version_info >= (3, 11):
 	from typing import assert_never
@@ -28,6 +28,10 @@ from ..v0.task_event import (
 
 if TYPE_CHECKING:
 	from ..v0.task import Task
+
+
+KILL_PRESSES: Final = 3
+"""Ctrl-C count at which a leaf is force-killed; its row reads ``KILL`` until it dies."""
 
 
 class ChainLink(NamedTuple):
@@ -74,7 +78,7 @@ def next_state(state: LeafState, event: TaskEvent) -> LeafState:
 	>>> next_state(Waiting(t), CompletedEvent(t, 0, Skipped(1), t0))
 	Completed(task=Task(cmd='echo hi', name=None, env={}, cwd=None), completion=Skipped(returncode=1))
 	>>> next_state(Running(t, t0, b""), InterruptedEvent(t, 0, t1))
-	Interrupting(task=Task(cmd='echo hi', name=None, env={}, cwd=None), start_time=datetime.datetime(2026, 1, 1, 12, 0), last_line=b'')
+	Interrupting(task=Task(cmd='echo hi', name=None, env={}, cwd=None), start_time=datetime.datetime(2026, 1, 1, 12, 0), last_line=b'', presses=1)
 	"""
 	match state:
 		case Waiting(task=task):
@@ -92,27 +96,27 @@ def next_state(state: LeafState, event: TaskEvent) -> LeafState:
 		case Running(task=task, start_time=start, last_line=last):
 			match event:
 				case InterruptedEvent():
-					return Interrupting(task, start, last)
+					return Interrupting(task, start, last, 1)
 				case OutputEvent(line=line):
 					return Running(task, start, line)
 				case CompletedEvent(completion=completion):
 					return Completed(task, completion)
-				case AbortedEvent(timestamp=ts):
-					return Completed(task, Stopped(INTERRUPT_RC, (ts - start).total_seconds(), ()))
+				case AbortedEvent():
+					return Interrupting(task, start, last, KILL_PRESSES)
 				case StartedEvent():  # pragma: no cover
 					return state
 				case _:
 					assert_never(event)
-		case Interrupting(task=task, start_time=start):
+		case Interrupting(task=task, start_time=start, last_line=last, presses=presses):
 			match event:
+				case InterruptedEvent():
+					return Interrupting(task, start, last, presses + 1)
 				case OutputEvent(line=line):
-					return Interrupting(task, start, line)
+					return Interrupting(task, start, line, presses)
 				case CompletedEvent(completion=completion):
 					return Completed(task, completion)
-				case AbortedEvent(timestamp=ts):
-					return Completed(task, Stopped(INTERRUPT_RC, (ts - start).total_seconds(), ()))
-				case InterruptedEvent():
-					return state
+				case AbortedEvent():
+					return Interrupting(task, start, last, KILL_PRESSES)
 				case StartedEvent():  # pragma: no cover
 					return state
 				case _:
