@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from camas import Config, Parallel, Task
+from camas.core.color import WHITE
+from camas.core.completion import RunResult
 from camas.main.dispatch import dispatch, print_interrupt_banner
 from camas.main.state import LoadOk
 
@@ -183,11 +185,6 @@ def test_bare_default_task_per_axis_flag_override(
 	assert "[PY=3.12]" not in out
 
 
-def test_interrupt_banner_silent_when_uninterrupted(capsys: pytest.CaptureFixture[str]) -> None:
-	print_interrupt_banner(0)
-	assert capsys.readouterr().out == ""
-
-
 def test_interrupt_banner_colored(
 	capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -195,12 +192,16 @@ def test_interrupt_banner_colored(
 	print_interrupt_banner(4)
 	out = capsys.readouterr().out
 	assert "Ctrl-C (4) received - exiting" in out
-	assert "\x1b[97m" in out  # WHITE
+	assert WHITE in out
 
 
-def test_interrupt_banner_plain_without_color(
+def test_interrupted_run_prints_banner_and_exits_130(
 	capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-	monkeypatch.setattr("camas.core.render.color_on", lambda: False)
-	print_interrupt_banner(2)
-	assert capsys.readouterr().out.strip() == "Ctrl-C (2) received - exiting"
+	async def fake_run(task: TaskNode, effects: object = (), jobs: object = None) -> RunResult:
+		return RunResult(returncode=130, results=(), elapsed=0.0, interrupt_count=3)
+
+	monkeypatch.setattr("camas.main.dispatch.run", fake_run)
+	with pytest.raises(SystemExit, match="130"):
+		dispatch(_state({}, Config(default_task=Task("true"))), [])
+	assert "Ctrl-C (3) received - exiting" in capsys.readouterr().out

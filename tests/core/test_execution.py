@@ -309,7 +309,6 @@ def test_step_interrupt_forwards_twice_then_kills() -> None:
 
 	step_interrupt(interrupts, leaves, now, lambda i, e: events.append((i, e)))
 	assert p0.signals == [signal.SIGINT, signal.SIGINT]
-	# 2nd press forwards again and re-dispatches so rows advance to ^C^C
 	assert [type(e) for _, e in events[2:]] == [InterruptedEvent, InterruptedEvent]
 
 	step_interrupt(interrupts, leaves, now, lambda i, e: events.append((i, e)))
@@ -321,7 +320,7 @@ def test_step_interrupt_forwards_twice_then_kills() -> None:
 def test_fourth_press_cancels_run_and_await_run_returns_empty() -> None:
 	async def scenario() -> tuple[bool, tuple[TaskResult, ...]]:
 		main = asyncio.ensure_future(_forever())
-		await asyncio.sleep(0)  # let the run task suspend before we interrupt it
+		await asyncio.sleep(0)
 		procs: dict[int, Signalable] = {0: FakeProc()}
 		interrupts = Interrupts(procs=procs, signaled=set(), pending=[], main_task=main)
 		for _ in range(4):
@@ -378,22 +377,22 @@ class _FakeStdin:
 
 
 def test_suppress_and_restore_ctrl_c_echo(monkeypatch: pytest.MonkeyPatch) -> None:
-	if sys.platform != "win32":  # pragma: no branch  (POSIX termios only)
+	if sys.platform != "win32":  # pragma: no branch
 		import termios
 
 		master, slave = os.openpty()
 		try:
 			on = termios.tcgetattr(slave)
-			on[3] |= termios.ECHOCTL  # ensure it starts enabled
+			on[3] |= termios.ECHOCTL
 			termios.tcsetattr(slave, termios.TCSANOW, on)
 			monkeypatch.setattr(sys, "stdin", _FakeStdin(slave))
 
 			saved = suppress_ctrl_c_echo()
 			assert saved is not None
-			assert not termios.tcgetattr(slave)[3] & termios.ECHOCTL  # cleared while live
+			assert not termios.tcgetattr(slave)[3] & termios.ECHOCTL
 
 			restore_tty(saved)
-			assert termios.tcgetattr(slave)[3] & termios.ECHOCTL  # restored on teardown
+			assert termios.tcgetattr(slave)[3] & termios.ECHOCTL
 		finally:
 			os.close(master)
 			os.close(slave)

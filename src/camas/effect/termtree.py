@@ -79,22 +79,21 @@ PROG_MAX_CELL_WIDTH: Final = 12
 PROG_MIN_MARGIN: Final = 2
 
 
-def interrupt_label(presses: int) -> str:
-	"""6-col status for an interrupting row, by Ctrl-C count.
+def interrupt_status(presses: int) -> str:
+	"""Colored 6-col status for an interrupting row, by Ctrl-C count.
 
-	>>> interrupt_label(1), interrupt_label(2), interrupt_label(3)
-	('  ^C  ', ' ^C^C ', ' KILL ')
+	>>> interrupt_status(1) == f"{YELLOW}  ^C  "
+	True
+	>>> interrupt_status(2) == f"{YELLOW} ^C^C "
+	True
+	>>> interrupt_status(3) == f"{BOLD_YELLOW} KILL "
+	True
 	"""
 	if presses == 1:
-		return "  ^C  "
+		return f"{YELLOW}  ^C  "
 	if presses < KILL_PRESSES:
-		return " ^C^C "
-	return " KILL "
-
-
-def interrupt_color(presses: int) -> str:
-	"""Yellow while forwarding SIGINT, bold yellow once force-killing."""
-	return BOLD_YELLOW if presses >= KILL_PRESSES else YELLOW
+		return f"{YELLOW} ^C^C "
+	return f"{BOLD_YELLOW} KILL "
 
 
 def bucket_glyph_color(states: Sequence[LeafState]) -> tuple[str, str]:
@@ -305,7 +304,7 @@ def render_lines(
 						)
 						padding = " " * max(gap - len(stream), 0)
 						lines.append(
-							f"\r{header}{GREY}{stream}{RESET}{padding} {CYAN}|{interrupt_color(presses)}{interrupt_label(presses)}{CYAN}|{RESET} {elapsed:7.3f}s{CLEAR_LINE}"
+							f"\r{header}{GREY}{stream}{RESET}{padding} {CYAN}|{interrupt_status(presses)}{CYAN}|{RESET} {elapsed:7.3f}s{CLEAR_LINE}"
 						)
 					case Waiting():
 						padding = " " * gap
@@ -330,9 +329,8 @@ def render_lines(
 			f"\r{BOLD}result{RESET}{summary_pad} {CYAN}|{summary_color}{summary_label}{CYAN}|{RESET} {wall_elapsed:7.3f}s{CLEAR_LINE}"
 		)
 	elif interrupting := [s.presses for s in states if isinstance(s, Interrupting)]:
-		max_presses: Final = max(interrupting)
 		lines.append(
-			f"\r{BOLD}result{RESET}{summary_pad} {CYAN}|{interrupt_color(max_presses)}{interrupt_label(max_presses)}{CYAN}|{RESET} {wall_elapsed:7.3f}s{CLEAR_LINE}"
+			f"\r{BOLD}result{RESET}{summary_pad} {CYAN}|{interrupt_status(max(interrupting))}{CYAN}|{RESET} {wall_elapsed:7.3f}s{CLEAR_LINE}"
 		)
 	else:
 		running_spin: Final = SPINNER[int(wall_elapsed * 10) % len(SPINNER)]

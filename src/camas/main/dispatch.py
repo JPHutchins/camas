@@ -74,9 +74,7 @@ def dispatch_arg(arg: str, tasks: Mapping[str, TaskNode]) -> TaskNode:
 
 
 def print_interrupt_banner(count: int) -> None:
-	"""Print the white CLI exit line after a Ctrl-C'd run; no-op when uninterrupted."""
-	if not count:
-		return
+	"""Print the white CLI exit line for a Ctrl-C'd run."""
 	from ..core.color import RESET, WHITE
 	from ..core.render import color_on
 
@@ -285,7 +283,8 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 				print(f"error: {e}", file=sys.stderr)
 				sys.exit(2)
 			result: Final = asyncio.run(run(task, effects=effects, jobs=jobs))
-			print_interrupt_banner(result.interrupt_count)
+			if result.interrupt_count:
+				print_interrupt_banner(result.interrupt_count)
 			sys.exit(result.returncode)
 
 		case _:

@@ -125,8 +125,8 @@ def test_render_frame_interrupting_shows_press_count_labels() -> None:
 	frame = render_frame(
 		rows, states, term_width=80, term_height=24, now=TS, wall_elapsed=0.0, prev_visible=0
 	)
-	assert "^C^C" in frame.text  # second press
-	assert "KILL" in frame.text  # third press, also the summary (max presses)
+	assert "^C^C" in frame.text
+	assert "KILL" in frame.text
 	assert "working" in frame.text
 	assert "PASS" not in frame.text
 
@@ -159,14 +159,14 @@ def test_termtree_output_ctrl_c_dumps_stopped_output(capsys: pytest.CaptureFixtu
 	)
 	out = capsys.readouterr().out
 	assert "STOPPED" in out
-	assert "line one" in out  # full dump, not just the inline last line
+	assert "line one" in out
 
 
 def test_termtree_default_does_not_dump_stopped_output(capsys: pytest.CaptureFixture[str]) -> None:
 	asyncio.run(drive(Termtree(), Parallel(make_task("a")), list(_STOPPED_EVENTS)))
 	out = capsys.readouterr().out
 	assert "STOPPED" not in out
-	assert "line one" not in out  # only the inline "line two" survives in the row
+	assert "line one" not in out
 
 
 def _wide_tree(leaves: int) -> Parallel:

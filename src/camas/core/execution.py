@@ -100,7 +100,7 @@ if sys.platform != "win32":
 		if saved is not None:
 			termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, saved)
 
-else:  # pragma: no cover  (Windows has no termios)
+else:  # pragma: no cover
 
 	def suppress_ctrl_c_echo() -> list[Any] | None:
 		"""Ctrl-C echo suppression is POSIX-only; a no-op on Windows."""
@@ -142,7 +142,7 @@ async def await_run(
 		return await main_task
 	except asyncio.CancelledError:
 		return ()
-	except KeyboardInterrupt:  # pragma: no cover  (Windows single-stage fallback)
+	except KeyboardInterrupt:  # pragma: no cover
 		interrupts.count += 1
 		for proc in tuple(interrupts.procs.values()):
 			proc.kill()
@@ -319,7 +319,7 @@ async def run(
 	try:
 		loop.add_signal_handler(signal.SIGINT, on_sigint)
 		sigint_handled = True
-	except NotImplementedError:  # pragma: no cover  (Windows ProactorEventLoop)
+	except NotImplementedError:  # pragma: no cover
 		pass
 
 	results: tuple[TaskResult, ...] = ()
