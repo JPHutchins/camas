@@ -182,6 +182,35 @@ def test_format_task_summary_listing_with_color() -> None:
 	assert "\033[" in out
 
 
+def test_format_task_summary_listing_marks_default_after_name() -> None:
+	"""The bare-run default is tagged ``(default)`` immediately after its name."""
+	out = format_task_summary_listing(
+		{"all": Task("x", name="all"), "check": Task("y", name="check")},
+		None,
+		color=False,
+		default_task_name="all",
+	)
+	assert "all (default)" in out
+	assert "check (default)" not in out
+
+
+def test_format_task_summary_listing_default_marker_preserves_alignment() -> None:
+	"""The ``(default)`` marker is folded into the name column so bodies stay aligned."""
+	out = format_task_summary_listing(
+		{"all": Task("x", name="all"), "coverage": Task("y", name="coverage")},
+		None,
+		color=False,
+		default_task_name="all",
+	)
+	body_columns = {line.index("x" if " x" in line else "y") for line in out.splitlines()[1:]}
+	assert len(body_columns) == 1
+
+
+def test_format_task_summary_listing_no_marker_when_default_unset() -> None:
+	out = format_task_summary_listing({"a": Task("x", name="a")}, None, color=False)
+	assert "(default)" not in out
+
+
 def test_print_task_trees_empty(capsys: pytest.CaptureFixture[str]) -> None:
 	print_task_trees({}, None)
 	assert "No tasks file found" in capsys.readouterr().out
@@ -216,6 +245,20 @@ def test_format_available_effects_no_color() -> None:
 	out = format_available_effects(color=False)
 	assert "\033[" not in out
 	assert "Summary" in out
+
+
+def test_format_available_effects_marks_default() -> None:
+	out = format_available_effects(color=False, default_effect_names=frozenset({"Termtree"}))
+	assert "Termtree (default)" in out
+	assert "Summary (default)" not in out
+
+
+def test_format_available_effects_doc_is_not_greyed() -> None:
+	"""The one-line doc renders in the default foreground, not grey."""
+	from camas.core.color import GREY
+
+	out = format_available_effects(color=True)
+	assert f"— {GREY}" not in out
 
 
 def test_format_available_effects_empty(monkeypatch: pytest.MonkeyPatch) -> None:

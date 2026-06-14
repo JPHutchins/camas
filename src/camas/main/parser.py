@@ -16,14 +16,19 @@ if sys.version_info >= (3, 11):
 else:  # pragma: no cover
 	from typing_extensions import assert_never
 
+from ..core.color import BOLD_CYAN
 from ..core.render import color_on
+from ..v0.config import Config
 from .check import describe_check_help
+from .color import maybe_color
+from .effects import default_effect_names, format_effects_expr, resolve_default_effects
 from .format import (
 	format_available_effects,
 	format_load_error_hint,
 	format_reference,
 	format_task_summary_listing,
 	format_try_hint,
+	task_summary,
 )
 from .state import EMPTY_STATE, LoadErr, LoadOk, TasksState
 
@@ -34,24 +39,50 @@ if TYPE_CHECKING:
 	from ..v0.task import TaskNode
 
 
-def default_effects_expr() -> str:
-	"""Default ``--effects`` for the environment: ``Status('github')`` under GitHub
-	Actions (``GITHUB_ACTIONS=true``, collapsed workflow groups), else live ``Termtree``.
+def effects_help(config: Config, *, github: bool) -> str:
+	"""``--effects`` help: names the environment's resolved default, and the other
+	environment's default when it differs (``Termtree`` locally vs. ``Status``
+	under GitHub Actions, unless the :class:`Config` overrides them).
 
-	>>> import os
-	>>> _saved = os.environ.pop("GITHUB_ACTIONS", None)
-	>>> default_effects_expr()
-	'(Termtree(),)'
-	>>> os.environ["GITHUB_ACTIONS"] = "true"
-	>>> default_effects_expr()
-	'(Status(output_mode="github"),)'
-	>>> os.environ.pop("GITHUB_ACTIONS", None)
-	'true'
-	>>> _ = os.environ.update({"GITHUB_ACTIONS": _saved}) if _saved is not None else None
+	>>> effects_help(Config(), github=False)
+	"tuple of Effect instances; pass with no value to list available Effects (default: (Termtree(),); (Status(output_mode='github'),) under GITHUB_ACTIONS=true)"
+	>>> effects_help(Config(), github=True)
+	"tuple of Effect instances; pass with no value to list available Effects (default: (Status(output_mode='github'),); (Termtree(),) off GitHub Actions)"
 	"""
-	if os.environ.get("GITHUB_ACTIONS") == "true":
-		return '(Status(output_mode="github"),)'
-	return "(Termtree(),)"
+	active = format_effects_expr(resolve_default_effects(config, github=github))
+	other = format_effects_expr(resolve_default_effects(config, github=not github))
+	where = "under GITHUB_ACTIONS=true" if not github else "off GitHub Actions"
+	default = active if active == other else f"{active}; {other} {where}"
+	return (
+		"tuple of Effect instances; pass with no value to list available Effects "
+		f"(default: {default})"
+	)
+
+
+def positional_help(config: Config, *, github: bool, color: bool = False) -> str:
+	"""Positional help: names the task a bare ``camas`` runs, when one is configured.
+	A named task is rendered in bold cyan (matching ``--list``); an anonymous one
+	falls back to its one-line summary.
+
+	>>> from camas import Task
+	>>> positional_help(Config(default_task=Task("echo hi", name="greet")), github=False)
+	"name of a defined task, or a camas expression (trailing '-- ARGS' append to a Task's command); with no argument, runs greet"
+	>>> positional_help(Config(), github=False)
+	"name of a defined task, or a camas expression (trailing '-- ARGS' append to a Task's command)"
+	"""
+	base = (
+		"name of a defined task, or a camas expression "
+		"(trailing '-- ARGS' append to a Task's command)"
+	)
+	bare = config.bare_task(github=github)
+	if bare is None:
+		return base
+	label = (
+		maybe_color(bare.name, BOLD_CYAN, color)
+		if bare.name is not None
+		else task_summary(bare, frozenset())
+	)
+	return f"{base}; with no argument, runs {label}"
 
 
 def positive_jobs(raw: str) -> int:
@@ -101,10 +132,24 @@ class CamasArgumentParser(argparse.ArgumentParser):
 
 	def format_help(self) -> str:
 		color = color_on()
+		config = (
+			self.state.config
+			if isinstance(self.state, LoadOk) and self.state.config is not None
+			else Config()
+		)
+		github = os.environ.get("GITHUB_ACTIONS") == "true"
+		bare = config.bare_task(github=github)
 		sections = [super().format_help().rstrip()]
 		match self.state:
 			case LoadOk(tasks=tasks, source=source) if tasks:
-				sections.append(format_task_summary_listing(tasks, source, color=color))
+				sections.append(
+					format_task_summary_listing(
+						tasks,
+						source,
+						color=color,
+						default_task_name=bare.name if bare is not None else None,
+					)
+				)
 			case LoadErr(source=source, exception=exc):
 				sections.append(format_load_error_hint(source, exc))
 			case LoadOk():
@@ -114,7 +159,11 @@ class CamasArgumentParser(argparse.ArgumentParser):
 		effects: Mapping[str, type[Effect[Any]]] = (
 			self.state.scope_effects if isinstance(self.state, LoadOk) else {}
 		)
-		effects_listing = format_available_effects(color=color, scope_effects=effects)
+		effects_listing = format_available_effects(
+			color=color,
+			scope_effects=effects,
+			default_effect_names=default_effect_names(config, github=github),
+		)
 		if effects_listing:
 			sections.append(effects_listing)
 		sections.append(format_try_hint(color))
@@ -139,6 +188,10 @@ def build_parser(state: TasksState = EMPTY_STATE) -> argparse.ArgumentParser:
 	True
 	"""
 	tasks_for_metavar: Mapping[str, TaskNode] = state.tasks if isinstance(state, LoadOk) else {}
+	config: Final = (
+		state.config if isinstance(state, LoadOk) and state.config is not None else Config()
+	)
+	github: Final = os.environ.get("GITHUB_ACTIONS") == "true"
 	parser: Final = CamasArgumentParser(
 		prog="camas",
 		description="A task runner with parallel execution, matrix expansion, and pluggable output effects.",
@@ -149,8 +202,7 @@ def build_parser(state: TasksState = EMPTY_STATE) -> argparse.ArgumentParser:
 		"expression",
 		nargs="?",
 		metavar=expression_metavar(tasks_for_metavar),
-		help="name of a defined task, or a camas expression "
-		"(trailing '-- ARGS' append to a Task's command)",
+		help=positional_help(config, github=github, color=color_on()),
 	)
 	parser.add_argument(
 		"--version",
@@ -185,10 +237,9 @@ def build_parser(state: TasksState = EMPTY_STATE) -> argparse.ArgumentParser:
 	parser.add_argument(
 		"--effects",
 		nargs="?",
-		default=default_effects_expr(),
+		default=None,
 		const="",
-		help="tuple of Effect instances; pass with no value to list available Effects "
-		"(default: Termtree, or Status('github') when GITHUB_ACTIONS=true)",
+		help=effects_help(config, github=github),
 	)
 	parser.add_argument(
 		"--matrix",
