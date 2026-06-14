@@ -72,12 +72,12 @@ def to_interrupting(state: LeafState, presses: int) -> LeafState:
 			return Interrupting(task, start, last, presses)
 		case Waiting() | Completed():
 			return state
+		case _:
+			assert_never(state)
 
 
 def next_state(state: LeafState, event: TaskEvent) -> LeafState:
 	"""Pure state machine: apply a TaskEvent to a LeafState to produce the next state.
-
-	A leaf enters ``Interrupting`` only via :func:`to_interrupting`, never an event here.
 
 	>>> from datetime import datetime
 	>>> from camas import Task
