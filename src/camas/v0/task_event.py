@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""Event sum type emitted by execution: started, output, interrupted, aborted, completed."""
+"""Event sum type emitted by execution: started, output, completed."""
 
 from __future__ import annotations
 
@@ -43,34 +43,6 @@ class OutputEvent(NamedTuple):
 	timestamp: datetime
 
 
-class InterruptedEvent(NamedTuple):
-	"""Event: a signal was forwarded to a running task.
-
-	>>> from datetime import datetime
-	>>> from camas.v0 import Task
-	>>> InterruptedEvent(Task("hi"), 0, datetime(2026, 1, 1, 12, 0, 0))
-	InterruptedEvent(task=Task(cmd='hi', name=None, env={}, cwd=None), leaf_index=0, timestamp=datetime.datetime(2026, 1, 1, 12, 0))
-	"""
-
-	task: Task
-	leaf_index: int
-	timestamp: datetime
-
-
-class AbortedEvent(NamedTuple):
-	"""Event: a running task was force-killed.
-
-	>>> from datetime import datetime
-	>>> from camas.v0 import Task
-	>>> AbortedEvent(Task("hi"), 0, datetime(2026, 1, 1, 12, 0, 0))
-	AbortedEvent(task=Task(cmd='hi', name=None, env={}, cwd=None), leaf_index=0, timestamp=datetime.datetime(2026, 1, 1, 12, 0))
-	"""
-
-	task: Task
-	leaf_index: int
-	timestamp: datetime
-
-
 class CompletedEvent(NamedTuple):
 	"""Event: a task finished execution (either ran or was skipped).
 
@@ -89,4 +61,4 @@ class CompletedEvent(NamedTuple):
 	timestamp: datetime
 
 
-TaskEvent: TypeAlias = StartedEvent | OutputEvent | InterruptedEvent | AbortedEvent | CompletedEvent
+TaskEvent: TypeAlias = StartedEvent | OutputEvent | CompletedEvent

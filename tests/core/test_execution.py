@@ -23,8 +23,9 @@ from camas.core.execution import (
 	step_interrupt,
 	suppress_ctrl_c_echo,
 )
+from camas.core.leaf_state import KILL_PRESSES
 from camas.v0.completion import INTERRUPT_RC, Finished, Stopped
-from camas.v0.task_event import AbortedEvent, InterruptedEvent, TaskEvent
+from camas.v0.leaf_state import Interrupting, LeafState, Running
 
 if TYPE_CHECKING:
 	from camas.core.completion import RunResult, TaskResult
@@ -284,37 +285,33 @@ class FakeProc:
 		self.killed = True
 
 
-def _ignore_event(_idx: int, _event: TaskEvent) -> None:
-	pass
-
-
 async def _forever() -> tuple[TaskResult, ...]:
 	pending: asyncio.Future[tuple[TaskResult, ...]] = asyncio.get_running_loop().create_future()
 	return await pending
 
 
 def test_step_interrupt_forwards_twice_then_kills() -> None:
-	leaves = (Task("a"), Task("b"))
+	a, b = Task("a"), Task("b")
+	t0 = datetime(2026, 1, 1)
 	p0, p1 = FakeProc(), FakeProc()
 	procs: dict[int, Signalable] = {0: p0, 1: p1}
-	events: list[tuple[int, TaskEvent]] = []
-	interrupts = Interrupts(procs=procs, signaled=set(), pending=[])
-	now = datetime(2026, 1, 1)
+	interrupts = Interrupts(procs=procs)
+	states: list[LeafState] = [Running(a, t0, b""), Running(b, t0, b"")]
 
-	step_interrupt(interrupts, leaves, now, lambda i, e: events.append((i, e)))
-	assert p0.signals == [signal.SIGINT]
-	assert p1.signals == [signal.SIGINT]
-	assert interrupts.signaled == {0, 1}
-	assert [type(e) for _, e in events] == [InterruptedEvent, InterruptedEvent]
+	step_interrupt(interrupts, states)
+	assert (p0.signals, p1.signals) == ([signal.SIGINT], [signal.SIGINT])
+	assert states == [Interrupting(a, t0, b"", 1), Interrupting(b, t0, b"", 1)]
 
-	step_interrupt(interrupts, leaves, now, lambda i, e: events.append((i, e)))
+	step_interrupt(interrupts, states)
 	assert p0.signals == [signal.SIGINT, signal.SIGINT]
-	assert [type(e) for _, e in events[2:]] == [InterruptedEvent, InterruptedEvent]
+	assert states == [Interrupting(a, t0, b"", 2), Interrupting(b, t0, b"", 2)]
 
-	step_interrupt(interrupts, leaves, now, lambda i, e: events.append((i, e)))
-	assert p0.killed
-	assert p1.killed
-	assert [type(e) for _, e in events[4:]] == [AbortedEvent, AbortedEvent]
+	step_interrupt(interrupts, states)
+	assert (p0.killed, p1.killed) == (True, True)
+	assert states == [
+		Interrupting(a, t0, b"", KILL_PRESSES),
+		Interrupting(b, t0, b"", KILL_PRESSES),
+	]
 
 
 def test_fourth_press_cancels_run_and_await_run_returns_empty() -> None:
@@ -322,9 +319,10 @@ def test_fourth_press_cancels_run_and_await_run_returns_empty() -> None:
 		main = asyncio.ensure_future(_forever())
 		await asyncio.sleep(0)
 		procs: dict[int, Signalable] = {0: FakeProc()}
-		interrupts = Interrupts(procs=procs, signaled=set(), pending=[], main_task=main)
+		interrupts = Interrupts(procs=procs, main_task=main)
+		states: list[LeafState] = [Running(Task("x"), datetime(2026, 1, 1), b"")]
 		for _ in range(4):
-			step_interrupt(interrupts, (Task("x"),), datetime(2026, 1, 1), _ignore_event)
+			step_interrupt(interrupts, states)
 		results = await await_run(main, interrupts)
 		return main.cancelled(), results
 
@@ -366,6 +364,22 @@ def test_ctrl_c_resolves_jobs_queued_leaves_as_stopped() -> None:
 	assert result.returncode == INTERRUPT_RC
 	assert len(result.results) == 4
 	assert all(isinstance(r.completion, Stopped) for r in result.results)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal handling only")
+def test_ctrl_c_keeps_pre_interrupt_completion_finished() -> None:
+	async def scenario() -> RunResult:
+		asyncio.get_running_loop().call_later(0.4, _raise_sigint)
+		task = Parallel(
+			Task(("python", "-c", "pass"), name="quick"),
+			Task(("python", "-c", "import time; time.sleep(5)"), name="slow"),
+		)
+		return await run(task)
+
+	result = asyncio.run(scenario())
+	by_name = {r.name: r.completion for r in result.results}
+	assert isinstance(by_name["quick"], Finished)
+	assert isinstance(by_name["slow"], Stopped)
 
 
 class _FakeStdin:

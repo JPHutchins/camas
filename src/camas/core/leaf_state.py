@@ -15,16 +15,8 @@ if sys.version_info >= (3, 11):
 else:  # pragma: no cover
 	from typing_extensions import assert_never
 
-from ..v0.completion import INTERRUPT_RC, Stopped
 from ..v0.leaf_state import Completed, Interrupting, LeafState, Running, Waiting
-from ..v0.task_event import (
-	AbortedEvent,
-	CompletedEvent,
-	InterruptedEvent,
-	OutputEvent,
-	StartedEvent,
-	TaskEvent,
-)
+from ..v0.task_event import CompletedEvent, OutputEvent, StartedEvent, TaskEvent
 
 if TYPE_CHECKING:
 	from ..v0.task import Task
@@ -60,8 +52,32 @@ class LeafInfo(NamedTuple):
 	is_last_chain: tuple[ChainLink, ...]
 
 
+def to_interrupting(state: LeafState, presses: int) -> LeafState:
+	"""Mark a running leaf as interrupting at ``presses`` Ctrl-C; non-running states pass through.
+
+	>>> from datetime import datetime
+	>>> from camas import Task
+	>>> t = Task("echo hi")
+	>>> t0 = datetime(2026, 1, 1, 12, 0, 0)
+	>>> to_interrupting(Running(t, t0, b"out"), 2)
+	Interrupting(task=Task(cmd='echo hi', name=None, env={}, cwd=None), start_time=datetime.datetime(2026, 1, 1, 12, 0), last_line=b'out', presses=2)
+	>>> to_interrupting(Waiting(t), 1)
+	Waiting(task=Task(cmd='echo hi', name=None, env={}, cwd=None))
+	"""
+	match state:
+		case (
+			Running(task=task, start_time=start, last_line=last)
+			| Interrupting(task=task, start_time=start, last_line=last)
+		):
+			return Interrupting(task, start, last, presses)
+		case Waiting() | Completed():
+			return state
+
+
 def next_state(state: LeafState, event: TaskEvent) -> LeafState:
 	"""Pure state machine: apply a TaskEvent to a LeafState to produce the next state.
+
+	A leaf enters ``Interrupting`` only via :func:`to_interrupting`, never an event here.
 
 	>>> from datetime import datetime
 	>>> from camas import Task
@@ -77,8 +93,8 @@ def next_state(state: LeafState, event: TaskEvent) -> LeafState:
 	Completed(task=Task(cmd='echo hi', name=None, env={}, cwd=None), completion=Finished(returncode=0, elapsed=0.5, output=(b'done',)))
 	>>> next_state(Waiting(t), CompletedEvent(t, 0, Skipped(1), t0))
 	Completed(task=Task(cmd='echo hi', name=None, env={}, cwd=None), completion=Skipped(returncode=1))
-	>>> next_state(Running(t, t0, b""), InterruptedEvent(t, 0, t1))
-	Interrupting(task=Task(cmd='echo hi', name=None, env={}, cwd=None), start_time=datetime.datetime(2026, 1, 1, 12, 0), last_line=b'', presses=1)
+	>>> next_state(Interrupting(t, t0, b"", 2), OutputEvent(t, 0, b"bye", t1))
+	Interrupting(task=Task(cmd='echo hi', name=None, env={}, cwd=None), start_time=datetime.datetime(2026, 1, 1, 12, 0), last_line=b'bye', presses=2)
 	"""
 	match state:
 		case Waiting(task=task):
@@ -89,34 +105,24 @@ def next_state(state: LeafState, event: TaskEvent) -> LeafState:
 					return Running(task, ts, line)
 				case CompletedEvent(completion=completion):
 					return Completed(task, completion)
-				case InterruptedEvent() | AbortedEvent():
-					return Completed(task, Stopped(INTERRUPT_RC, 0.0, ()))
 				case _:
 					assert_never(event)
-		case Running(task=task, start_time=start, last_line=last):
+		case Running(task=task, start_time=start):
 			match event:
-				case InterruptedEvent():
-					return Interrupting(task, start, last, 1)
 				case OutputEvent(line=line):
 					return Running(task, start, line)
 				case CompletedEvent(completion=completion):
 					return Completed(task, completion)
-				case AbortedEvent():
-					return Interrupting(task, start, last, KILL_PRESSES)
 				case StartedEvent():  # pragma: no cover
 					return state
 				case _:
 					assert_never(event)
-		case Interrupting(task=task, start_time=start, last_line=last, presses=presses):
+		case Interrupting(task=task, start_time=start, presses=presses):
 			match event:
-				case InterruptedEvent():
-					return Interrupting(task, start, last, presses + 1)
 				case OutputEvent(line=line):
 					return Interrupting(task, start, line, presses)
 				case CompletedEvent(completion=completion):
 					return Completed(task, completion)
-				case AbortedEvent():
-					return Interrupting(task, start, last, KILL_PRESSES)
 				case StartedEvent():  # pragma: no cover
 					return state
 				case _:

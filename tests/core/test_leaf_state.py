@@ -6,16 +6,10 @@ from __future__ import annotations
 from datetime import datetime
 
 from camas import Task
-from camas.core.leaf_state import KILL_PRESSES, next_state
-from camas.v0.completion import INTERRUPT_RC, Finished, Skipped, Stopped
+from camas.core.leaf_state import KILL_PRESSES, next_state, to_interrupting
+from camas.v0.completion import Finished, Skipped, Stopped
 from camas.v0.leaf_state import Completed, Interrupting, Running, Waiting
-from camas.v0.task_event import (
-	AbortedEvent,
-	CompletedEvent,
-	InterruptedEvent,
-	OutputEvent,
-	StartedEvent,
-)
+from camas.v0.task_event import CompletedEvent, OutputEvent, StartedEvent
 
 T = Task("echo hi")
 T0 = datetime(2026, 1, 1, 12, 0, 0)
@@ -30,24 +24,6 @@ def test_waiting_completed_becomes_completed() -> None:
 	assert next_state(Waiting(T), CompletedEvent(T, 0, Skipped(1), T0)) == Completed(T, Skipped(1))
 
 
-def test_waiting_interrupted_resolves_stopped() -> None:
-	assert next_state(Waiting(T), InterruptedEvent(T, 0, T0)) == Completed(
-		T, Stopped(INTERRUPT_RC, 0.0, ())
-	)
-
-
-def test_waiting_aborted_resolves_stopped() -> None:
-	assert next_state(Waiting(T), AbortedEvent(T, 0, T0)) == Completed(
-		T, Stopped(INTERRUPT_RC, 0.0, ())
-	)
-
-
-def test_running_interrupted_becomes_interrupting_at_one_press() -> None:
-	assert next_state(Running(T, T0, b"x"), InterruptedEvent(T, 0, T1)) == Interrupting(
-		T, T0, b"x", 1
-	)
-
-
 def test_running_output_stays_running() -> None:
 	assert next_state(Running(T, T0, b""), OutputEvent(T, 0, b"hi", T1)) == Running(T, T0, b"hi")
 
@@ -55,18 +31,6 @@ def test_running_output_stays_running() -> None:
 def test_running_completed_becomes_completed() -> None:
 	done = Finished(0, 0.5, (b"done",))
 	assert next_state(Running(T, T0, b""), CompletedEvent(T, 0, done, T1)) == Completed(T, done)
-
-
-def test_running_aborted_becomes_interrupting_at_kill_level() -> None:
-	assert next_state(Running(T, T0, b"x"), AbortedEvent(T, 0, T1)) == Interrupting(
-		T, T0, b"x", KILL_PRESSES
-	)
-
-
-def test_interrupting_interrupted_increments_press_count() -> None:
-	assert next_state(Interrupting(T, T0, b"x", 1), InterruptedEvent(T, 0, T1)) == Interrupting(
-		T, T0, b"x", 2
-	)
 
 
 def test_interrupting_output_updates_last_line_keeping_press_count() -> None:
@@ -82,7 +46,20 @@ def test_interrupting_completed_keeps_reported_completion() -> None:
 	)
 
 
-def test_interrupting_aborted_jumps_to_kill_level() -> None:
-	assert next_state(Interrupting(T, T0, b"x", 1), AbortedEvent(T, 0, T1)) == Interrupting(
+def test_to_interrupting_running_records_press_count() -> None:
+	assert to_interrupting(Running(T, T0, b"x"), 1) == Interrupting(T, T0, b"x", 1)
+
+
+def test_to_interrupting_interrupting_updates_press_count() -> None:
+	assert to_interrupting(Interrupting(T, T0, b"x", 1), KILL_PRESSES) == Interrupting(
 		T, T0, b"x", KILL_PRESSES
 	)
+
+
+def test_to_interrupting_waiting_passes_through() -> None:
+	assert to_interrupting(Waiting(T), 1) == Waiting(T)
+
+
+def test_to_interrupting_completed_passes_through() -> None:
+	done = Completed(T, Finished(0, 0.1, ()))
+	assert to_interrupting(done, 2) == done

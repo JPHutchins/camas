@@ -26,24 +26,17 @@ else:  # pragma: no cover
 	from typing_extensions import assert_never
 
 from ..v0.completion import INTERRUPT_RC, Finished, Skipped, Stopped
-from ..v0.leaf_state import LeafState, Waiting
+from ..v0.leaf_state import Interrupting, LeafState, Waiting
 from ..v0.task import Parallel, Sequential, Task, TaskNode
-from ..v0.task_event import (
-	AbortedEvent,
-	CompletedEvent,
-	InterruptedEvent,
-	OutputEvent,
-	StartedEvent,
-	TaskEvent,
-)
+from ..v0.task_event import CompletedEvent, OutputEvent, StartedEvent, TaskEvent
 from .completion import RunResult, TaskResult
-from .leaf_state import next_state
+from .leaf_state import KILL_PRESSES, next_state, to_interrupting
 from .matrix import expand_matrix, resolve_cmd
 from .task import task_label
 from .traversal import flatten_leaves, subtree_leaf_indices
 
 if TYPE_CHECKING:
-	from collections.abc import Callable, Sequence
+	from collections.abc import Sequence
 
 	from ..v0.effect import Effect
 	from .effect import EventSink
@@ -66,10 +59,6 @@ class Interrupts:
 
 	procs: dict[int, Signalable]
 	"""Live leaf subprocesses by leaf index; populated/popped by ``run_cmd``."""
-	signaled: set[int]
-	"""Leaves that were forwarded a signal, so their completion is tagged ``Stopped``."""
-	pending: list[asyncio.Task[None]]
-	"""Dispatch tasks the handler spawns, drained before teardown."""
 	count: int = 0
 	main_task: asyncio.Task[tuple[TaskResult, ...]] | None = None
 
@@ -110,28 +99,20 @@ else:  # pragma: no cover
 		"""No tty state to restore on Windows."""
 
 
-def step_interrupt(
-	interrupts: Interrupts,
-	leaves: tuple[Task, ...],
-	now: datetime,
-	dispatch_event: Callable[[int, TaskEvent], None],
-) -> None:
-	"""Advance the escalation by one Ctrl-C press — forward, forward, kill, cancel."""
+def step_interrupt(interrupts: Interrupts, states: list[LeafState]) -> None:
+	"""Advance escalation one Ctrl-C press: forward SIGINT, again, kill, then cancel the run."""
 	interrupts.count += 1
-	running: Final = tuple(interrupts.procs.items())
-	match interrupts.count:
-		case 1 | 2:
-			for idx, proc in running:
-				proc.send_signal(signal.SIGINT)
-				interrupts.signaled.add(idx)
-				dispatch_event(idx, InterruptedEvent(leaves[idx], idx, now))
-		case 3:
-			for idx, proc in running:
-				proc.kill()
-				dispatch_event(idx, AbortedEvent(leaves[idx], idx, now))
-		case _:
-			if interrupts.main_task is not None:  # pragma: no branch
-				interrupts.main_task.cancel()
+	if interrupts.count > KILL_PRESSES:
+		if interrupts.main_task is not None:  # pragma: no branch
+			interrupts.main_task.cancel()
+		return
+	kill: Final = interrupts.count == KILL_PRESSES
+	for idx, proc in tuple(interrupts.procs.items()):
+		if kill:
+			proc.kill()
+		else:
+			proc.send_signal(signal.SIGINT)
+		states[idx] = to_interrupting(states[idx], interrupts.count)
 
 
 async def await_run(
@@ -158,7 +139,12 @@ def subprocess_env(merged: dict[str, str]) -> dict[str, str]:
 
 
 async def run_cmd(
-	task: Task, leaf_index: int, dispatch: EventSink, limiter: Limiter, interrupts: Interrupts
+	task: Task,
+	leaf_index: int,
+	dispatch: EventSink,
+	limiter: Limiter,
+	interrupts: Interrupts,
+	states: Sequence[LeafState],
 ) -> TaskResult:
 	"""Run one leaf as a subprocess, dispatching Started/Output/Completed events."""
 	async with limiter:
@@ -189,7 +175,7 @@ async def run_cmd(
 		rc: Final = proc.returncode or 0
 		completion: Final = (
 			Stopped(rc, elapsed, output)
-			if leaf_index in interrupts.signaled
+			if isinstance(states[leaf_index], Interrupting)
 			else Finished(rc, elapsed, output)
 		)
 		await dispatch(leaf_index, CompletedEvent(task, leaf_index, completion, datetime.now()))
@@ -218,15 +204,20 @@ async def execute(
 	index_map: dict[int, int],
 	limiter: Limiter,
 	interrupts: Interrupts,
+	states: Sequence[LeafState],
 ) -> tuple[TaskResult, ...]:
 	"""Walk a task subtree, returning one TaskResult per leaf in DFS order."""
 	match node:
 		case Task():
-			return (await run_cmd(node, index_map[id(node)], dispatch, limiter, interrupts),)
+			return (
+				await run_cmd(node, index_map[id(node)], dispatch, limiter, interrupts, states),
+			)
 		case Parallel(tasks=children):
 			async with TaskGroup() as tg:
 				futures: Final = tuple(
-					tg.create_task(execute(child, dispatch, leaves, index_map, limiter, interrupts))
+					tg.create_task(
+						execute(child, dispatch, leaves, index_map, limiter, interrupts, states)
+					)
 					for child in children
 				)
 			return tuple(r for f in futures for r in f.result())
@@ -237,7 +228,9 @@ async def execute(
 				child_results = (
 					await skip_subtree(child, Skipped(failed_rc), dispatch, leaves, index_map)
 					if failed_rc is not None
-					else await execute(child, dispatch, leaves, index_map, limiter, interrupts)
+					else await execute(
+						child, dispatch, leaves, index_map, limiter, interrupts, states
+					)
 				)
 				seq_results = (*seq_results, *child_results)
 				if failed_rc is None:
@@ -305,14 +298,11 @@ async def run(
 		):
 			slot[effect_idx] = effect_ctx
 
-	interrupts: Final = Interrupts(procs={}, signaled=set(), pending=[])
+	interrupts: Final = Interrupts(procs={})
 	loop: Final = asyncio.get_running_loop()
 
-	def dispatch_event(idx: int, event: TaskEvent) -> None:
-		interrupts.pending.append(loop.create_task(dispatch(idx, event)))
-
 	def on_sigint() -> None:
-		step_interrupt(interrupts, leaves, datetime.now(), dispatch_event)
+		step_interrupt(interrupts, states)
 
 	saved_tty: Final = suppress_ctrl_c_echo()
 	sigint_handled = False
@@ -327,15 +317,13 @@ async def run(
 		if setup_errors:
 			raise BaseExceptionGroup("setup errors", setup_errors)
 		main_task: Final = loop.create_task(
-			execute(expanded, dispatch, leaves, index_map, limiter, interrupts)
+			execute(expanded, dispatch, leaves, index_map, limiter, interrupts, states)
 		)
 		interrupts.main_task = main_task
 		results = await await_run(main_task, interrupts)
 	finally:
 		if sigint_handled:  # pragma: no branch
 			loop.remove_signal_handler(signal.SIGINT)
-		if interrupts.pending:
-			await asyncio.gather(*interrupts.pending, return_exceptions=True)
 		teardown_errors: Final = tuple(
 			r
 			for r in await asyncio.gather(
