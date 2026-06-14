@@ -39,11 +39,27 @@ class Running(NamedTuple):
 	last_line: bytes
 
 
-class Completed(NamedTuple):
-	"""Leaf state: task is done — either ran to exit or was skipped.
+class Interrupting(NamedTuple):
+	"""Leaf state: a signal was forwarded; the task has not exited yet.
 
-	The `completion` payload is a sum type: pattern-match on `Finished(...)`
-	vs `Skipped(...)` to distinguish the two cases.
+	>>> from datetime import datetime
+	>>> from camas.v0 import Task
+	>>> Interrupting(Task("echo hi"), datetime(2026, 1, 1, 12, 0, 0), b"output", 1)
+	Interrupting(task=Task(cmd='echo hi', name=None, env={}, cwd=None), start_time=datetime.datetime(2026, 1, 1, 12, 0), last_line=b'output', presses=1)
+	"""
+
+	task: Task
+	start_time: datetime
+	last_line: bytes
+	presses: int
+	"""Ctrl-C presses this leaf has absorbed: 1/2 forwarded SIGINT, 3+ force-killed."""
+
+
+class Completed(NamedTuple):
+	"""Leaf state: task is done — ran to exit, was skipped, or was stopped by a signal.
+
+	The `completion` payload is a sum type: pattern-match on `Finished(...)`,
+	`Skipped(...)`, or `Stopped(...)` to distinguish the cases.
 
 	>>> from camas.v0 import Task
 	>>> from camas.v0.completion import Finished, Skipped
@@ -57,4 +73,4 @@ class Completed(NamedTuple):
 	completion: Completion
 
 
-LeafState: TypeAlias = Waiting | Running | Completed
+LeafState: TypeAlias = Waiting | Running | Interrupting | Completed

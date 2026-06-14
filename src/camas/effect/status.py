@@ -23,10 +23,10 @@ if sys.version_info >= (3, 11):
 else:  # pragma: no cover
 	from typing_extensions import assert_never
 
-from ..core.color import CAMAS_VIOLET, GREEN, GREY, RED, RESET
+from ..core.color import CAMAS_VIOLET, GREEN, GREY, RED, RESET, YELLOW
 from ..core.render import strip_ansi
 from ..core.task import task_label
-from ..v0.completion import Completion, Finished, Skipped
+from ..v0.completion import Completion, Finished, Skipped, Stopped
 from ..v0.task_event import CompletedEvent, OutputEvent, StartedEvent, TaskEvent
 
 if TYPE_CHECKING:
@@ -54,6 +54,10 @@ FAILED_FMT: Final = (
 SKIPPED_FMT: Final = (
 	f"{GREY}[{{timestamp:%Y-%m-%d %H:%M:%S}}.{{ms:03d}}]{RESET} "
 	f"{GREY}⏭ [{{name}}] skipped{RESET} (prior rc={{rc}})"
+)
+STOPPED_FMT: Final = (
+	f"{GREY}[{{timestamp:%Y-%m-%d %H:%M:%S}}.{{ms:03d}}]{RESET} "
+	f"{YELLOW}■ [{{name}}] stopped{RESET} exit={{rc}} ({{elapsed:.3f}}s)"
 )
 OUTPUT_FMT: Final = (
 	f"{GREY}[{{timestamp:%Y-%m-%d %H:%M:%S}}.{{ms:03d}}] · [{{name}}]{RESET} {{line}}"
@@ -118,6 +122,7 @@ def fmt_completed(
 	finished_fmt: str,
 	failed_fmt: str,
 	skipped_fmt: str,
+	stopped_fmt: str,
 	task: Task,
 	c: Completion,
 	ts: datetime,
@@ -127,13 +132,15 @@ def fmt_completed(
 	>>> from datetime import datetime
 	>>> from camas import Task
 	>>> t0 = datetime(2026, 5, 21, 14, 30, 0, 123000)
-	>>> fmt_completed(FINISHED_FMT, FAILED_FMT, SKIPPED_FMT, Task("a", name="lint"), Finished(0, 1.5, ()), t0)
+	>>> fmt_completed(FINISHED_FMT, FAILED_FMT, SKIPPED_FMT, STOPPED_FMT, Task("a", name="lint"), Finished(0, 1.5, ()), t0)
 	'\x1b[90m[2026-05-21 14:30:00.123]\x1b[0m \x1b[32m✓ [lint] success\x1b[0m (1.500s)'
-	>>> fmt_completed(FINISHED_FMT, FAILED_FMT, SKIPPED_FMT, Task("a", name="lint"), Finished(2, 0.5, ()), t0)
+	>>> fmt_completed(FINISHED_FMT, FAILED_FMT, SKIPPED_FMT, STOPPED_FMT, Task("a", name="lint"), Finished(2, 0.5, ()), t0)
 	'\x1b[90m[2026-05-21 14:30:00.123]\x1b[0m \x1b[31m✗ [lint] error\x1b[0m exit=2 (0.500s)'
-	>>> fmt_completed(FINISHED_FMT, FAILED_FMT, SKIPPED_FMT, Task("a", name="follow"), Skipped(2), t0)
+	>>> fmt_completed(FINISHED_FMT, FAILED_FMT, SKIPPED_FMT, STOPPED_FMT, Task("a", name="follow"), Skipped(2), t0)
 	'\x1b[90m[2026-05-21 14:30:00.123]\x1b[0m \x1b[90m⏭ [follow] skipped\x1b[0m (prior rc=2)'
-	>>> fmt_completed("", FAILED_FMT, SKIPPED_FMT, Task("a"), Finished(0, 1.0, ()), t0) is None
+	>>> fmt_completed(FINISHED_FMT, FAILED_FMT, SKIPPED_FMT, STOPPED_FMT, Task("a", name="lint"), Stopped(130, 0.5, ()), t0)
+	'\x1b[90m[2026-05-21 14:30:00.123]\x1b[0m \x1b[33m■ [lint] stopped\x1b[0m exit=130 (0.500s)'
+	>>> fmt_completed("", FAILED_FMT, SKIPPED_FMT, STOPPED_FMT, Task("a"), Finished(0, 1.0, ()), t0) is None
 	True
 	"""
 	name = task_label(task)
@@ -151,6 +158,12 @@ def fmt_completed(
 			return (
 				skipped_fmt.format(name=name, cmd=cmd, rc=rc, timestamp=ts, ms=ms)
 				if skipped_fmt
+				else None
+			)
+		case Stopped(returncode=rc, elapsed=e):
+			return (
+				stopped_fmt.format(name=name, cmd=cmd, rc=rc, elapsed=e, timestamp=ts, ms=ms)
+				if stopped_fmt
 				else None
 			)
 		case _:
@@ -308,6 +321,7 @@ class Status:
 		finished_fmt: str = FINISHED_FMT,
 		failed_fmt: str = FAILED_FMT,
 		skipped_fmt: str = SKIPPED_FMT,
+		stopped_fmt: str = STOPPED_FMT,
 		output_fmt: str = OUTPUT_FMT,
 	) -> None:
 		self._output_mode: Final = output_mode
@@ -315,6 +329,7 @@ class Status:
 		self._finished_fmt: Final = finished_fmt
 		self._failed_fmt: Final = failed_fmt
 		self._skipped_fmt: Final = skipped_fmt
+		self._stopped_fmt: Final = stopped_fmt
 		self._output_fmt: Final = output_fmt
 
 	async def setup(self, task: TaskNode) -> LeafCtx:
@@ -333,13 +348,29 @@ class Status:
 				return next_ctx_on_output(self._output_mode, active, line)
 			case CompletedEvent(task=t, completion=c, timestamp=ts), Active(output=buf):
 				emit_line(
-					fmt_completed(self._finished_fmt, self._failed_fmt, self._skipped_fmt, t, c, ts)
+					fmt_completed(
+						self._finished_fmt,
+						self._failed_fmt,
+						self._skipped_fmt,
+						self._stopped_fmt,
+						t,
+						c,
+						ts,
+					)
 				)
 				emit(block_for(self._output_mode, t, c, buf))
 				return Done()
 			case CompletedEvent(task=t, completion=c, timestamp=ts), Idle():
 				emit_line(
-					fmt_completed(self._finished_fmt, self._failed_fmt, self._skipped_fmt, t, c, ts)
+					fmt_completed(
+						self._finished_fmt,
+						self._failed_fmt,
+						self._skipped_fmt,
+						self._stopped_fmt,
+						t,
+						c,
+						ts,
+					)
 				)
 				return Done()
 			case _:

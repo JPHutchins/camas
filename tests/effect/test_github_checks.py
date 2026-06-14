@@ -36,7 +36,7 @@ from camas.effect.github_checks import (
 	render_body,
 	resolve_config,
 )
-from camas.v0.completion import Finished, Skipped
+from camas.v0.completion import Finished, Skipped, Stopped
 from camas.v0.task_event import CompletedEvent, OutputEvent, StartedEvent
 
 if TYPE_CHECKING:
@@ -195,6 +195,13 @@ def test_render_body_skipped() -> None:
 	assert title == "⏭️ Skipped"
 	assert "exited 3" in summary
 	assert text == ""
+
+
+def test_render_body_stopped() -> None:
+	title, summary, text = render_body(Task("cmd", name="t"), b"bye\n", Stopped(130, 0.5, ()))
+	assert title == "⏹️ Stopped (exit 130) in 0.50s"
+	assert summary == "`cmd`"
+	assert "bye" in text
 
 
 def test_render_body_in_progress() -> None:

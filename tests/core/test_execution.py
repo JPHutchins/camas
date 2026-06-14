@@ -4,13 +4,31 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import signal
+import sys
 import time
+from datetime import datetime
+from typing import TYPE_CHECKING
 
 import pytest
 
 from camas import Parallel, Sequential, Task
-from camas.core.execution import run
-from camas.v0.completion import Finished
+from camas.core.execution import (
+	Interrupts,
+	Signalable,
+	await_run,
+	restore_tty,
+	run,
+	step_interrupt,
+	suppress_ctrl_c_echo,
+)
+from camas.core.leaf_state import KILL_PRESSES
+from camas.v0.completion import INTERRUPT_RC, Finished, Stopped
+from camas.v0.leaf_state import Interrupting, LeafState, Running
+
+if TYPE_CHECKING:
+	from camas.core.completion import RunResult, TaskResult
 
 
 def test_force_color_injected_in_subprocess(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -251,3 +269,144 @@ def test_run_result_has_structured_results() -> None:
 	assert result.elapsed > 0
 	names = {r.name for r in result.results}
 	assert names == {"a", "b"}
+
+
+class FakeProc:
+	"""Records the signals an interrupt escalation would send to a leaf subprocess."""
+
+	def __init__(self) -> None:
+		self.signals: list[int] = []
+		self.killed = False
+
+	def send_signal(self, sig: int, /) -> None:
+		self.signals.append(sig)
+
+	def kill(self) -> None:
+		self.killed = True
+
+
+async def _forever() -> tuple[TaskResult, ...]:
+	pending: asyncio.Future[tuple[TaskResult, ...]] = asyncio.get_running_loop().create_future()
+	return await pending
+
+
+def test_step_interrupt_forwards_twice_then_kills() -> None:
+	a, b = Task("a"), Task("b")
+	t0 = datetime(2026, 1, 1)
+	p0, p1 = FakeProc(), FakeProc()
+	procs: dict[int, Signalable] = {0: p0, 1: p1}
+	interrupts = Interrupts(procs=procs)
+	states: list[LeafState] = [Running(a, t0, b""), Running(b, t0, b"")]
+
+	step_interrupt(interrupts, states)
+	assert (p0.signals, p1.signals) == ([signal.SIGINT], [signal.SIGINT])
+	assert states == [Interrupting(a, t0, b"", 1), Interrupting(b, t0, b"", 1)]
+
+	step_interrupt(interrupts, states)
+	assert p0.signals == [signal.SIGINT, signal.SIGINT]
+	assert states == [Interrupting(a, t0, b"", 2), Interrupting(b, t0, b"", 2)]
+
+	step_interrupt(interrupts, states)
+	assert (p0.killed, p1.killed) == (True, True)
+	assert states == [
+		Interrupting(a, t0, b"", KILL_PRESSES),
+		Interrupting(b, t0, b"", KILL_PRESSES),
+	]
+
+
+def test_fourth_press_cancels_run_and_await_run_returns_empty() -> None:
+	async def scenario() -> tuple[bool, tuple[TaskResult, ...]]:
+		main = asyncio.ensure_future(_forever())
+		await asyncio.sleep(0)
+		procs: dict[int, Signalable] = {0: FakeProc()}
+		interrupts = Interrupts(procs=procs, main_task=main)
+		states: list[LeafState] = [Running(Task("x"), datetime(2026, 1, 1), b"")]
+		for _ in range(4):
+			step_interrupt(interrupts, states)
+		results = await await_run(main, interrupts)
+		return main.cancelled(), results
+
+	cancelled, results = asyncio.run(scenario())
+	assert cancelled is True
+	assert results == ()
+
+
+def _raise_sigint() -> None:
+	os.kill(os.getpid(), signal.SIGINT)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal handling only")
+def test_ctrl_c_forwards_sigint_and_exits_130() -> None:
+	async def scenario() -> RunResult:
+		asyncio.get_running_loop().call_later(0.3, _raise_sigint)
+		task = Parallel(
+			Task(("python", "-c", "import time; time.sleep(5)"), name="a"),
+			Task(("python", "-c", "import time; time.sleep(5)"), name="b"),
+		)
+		return await run(task)
+
+	result = asyncio.run(scenario())
+	assert result.returncode == INTERRUPT_RC
+	assert result.results
+	assert all(isinstance(r.completion, Stopped) for r in result.results)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal handling only")
+def test_ctrl_c_resolves_jobs_queued_leaves_as_stopped() -> None:
+	async def scenario() -> RunResult:
+		asyncio.get_running_loop().call_later(0.3, _raise_sigint)
+		task = Parallel(
+			*(Task(("python", "-c", "import time; time.sleep(5)"), name=f"t{i}") for i in range(4))
+		)
+		return await run(task, jobs=1)
+
+	result = asyncio.run(scenario())
+	assert result.returncode == INTERRUPT_RC
+	assert len(result.results) == 4
+	assert all(isinstance(r.completion, Stopped) for r in result.results)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal handling only")
+def test_ctrl_c_keeps_pre_interrupt_completion_finished() -> None:
+	async def scenario() -> RunResult:
+		asyncio.get_running_loop().call_later(0.4, _raise_sigint)
+		task = Parallel(
+			Task(("python", "-c", "pass"), name="quick"),
+			Task(("python", "-c", "import time; time.sleep(5)"), name="slow"),
+		)
+		return await run(task)
+
+	result = asyncio.run(scenario())
+	by_name = {r.name: r.completion for r in result.results}
+	assert isinstance(by_name["quick"], Finished)
+	assert isinstance(by_name["slow"], Stopped)
+
+
+class _FakeStdin:
+	def __init__(self, fd: int) -> None:
+		self._fd = fd
+
+	def fileno(self) -> int:
+		return self._fd
+
+
+def test_suppress_and_restore_ctrl_c_echo(monkeypatch: pytest.MonkeyPatch) -> None:
+	if sys.platform != "win32":  # pragma: no branch
+		import termios
+
+		master, slave = os.openpty()
+		try:
+			on = termios.tcgetattr(slave)
+			on[3] |= termios.ECHOCTL
+			termios.tcsetattr(slave, termios.TCSANOW, on)
+			monkeypatch.setattr(sys, "stdin", _FakeStdin(slave))
+
+			saved = suppress_ctrl_c_echo()
+			assert saved is not None
+			assert not termios.tcgetattr(slave)[3] & termios.ECHOCTL
+
+			restore_tty(saved)
+			assert termios.tcgetattr(slave)[3] & termios.ECHOCTL
+		finally:
+			os.close(master)
+			os.close(slave)
