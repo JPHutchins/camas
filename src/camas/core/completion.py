@@ -28,9 +28,11 @@ class RunResult(NamedTuple):
 
 	>>> from camas.v0.completion import Finished
 	>>> RunResult(0, (TaskResult("a", Finished(0, 0.1, ())),), 0.1)
-	RunResult(returncode=0, results=(TaskResult(name='a', completion=Finished(returncode=0, elapsed=0.1, output=())),), elapsed=0.1)
+	RunResult(returncode=0, results=(TaskResult(name='a', completion=Finished(returncode=0, elapsed=0.1, output=())),), elapsed=0.1, interrupt_count=0)
 	"""
 
 	returncode: int
 	results: tuple[TaskResult, ...]
 	elapsed: float
+	interrupt_count: int = 0
+	"""Ctrl-C presses the run received; non-zero drives the CLI's exit banner."""

@@ -18,7 +18,7 @@ from camas.effect.status import (
 	Idle,
 	Status,
 )
-from camas.v0.completion import Finished, Skipped
+from camas.v0.completion import Finished, Skipped, Stopped
 from camas.v0.leaf_state import LeafState, Waiting
 from camas.v0.task_event import CompletedEvent, OutputEvent, StartedEvent, TaskEvent
 
@@ -75,6 +75,30 @@ def test_default_options_pass_failure_through(capsys: pytest.CaptureFixture[str]
 	assert "exit=2 (0.200s)" in out
 	assert "\x1b[31mb-error\x1b[0m" in out
 	assert "a-out" not in out
+
+
+def test_stopped_completion_renders_stopped_line(capsys: pytest.CaptureFixture[str]) -> None:
+	a = make_task("lint")
+	task = Parallel(a)
+	events: list[TaskEvent] = [
+		StartedEvent(a, 0, TS),
+		CompletedEvent(a, 0, Stopped(130, 0.5, ()), TS),
+	]
+	asyncio.run(drive(Status(), task, events))
+	out = capsys.readouterr().out
+	assert "■ [lint] stopped" in out
+	assert "exit=130 (0.500s)" in out
+
+
+def test_empty_stopped_template_suppresses_line(capsys: pytest.CaptureFixture[str]) -> None:
+	a = make_task("lint")
+	task = Parallel(a)
+	events: list[TaskEvent] = [
+		StartedEvent(a, 0, TS),
+		CompletedEvent(a, 0, Stopped(130, 0.5, ()), TS),
+	]
+	asyncio.run(drive(Status(stopped_fmt=""), task, events))
+	assert "stopped" not in capsys.readouterr().out
 
 
 def test_all_mode_dumps_every_block(capsys: pytest.CaptureFixture[str]) -> None:

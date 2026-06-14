@@ -73,6 +73,15 @@ def dispatch_arg(arg: str, tasks: Mapping[str, TaskNode]) -> TaskNode:
 	return parse_expression(arg, tasks=tasks)
 
 
+def print_interrupt_banner(count: int) -> None:
+	"""Print the white CLI exit line for a Ctrl-C'd run."""
+	from ..core.color import RESET, WHITE
+	from ..core.render import color_on
+
+	line = f"Ctrl-C ({count}) received - exiting"
+	print(f"{WHITE}{line}{RESET}" if color_on() else line)
+
+
 def reconfigure_stdio_utf8() -> None:
 	"""UTF-8 with ``errors="replace"`` on stdout/stderr so Windows consoles and
 	pipes (ANSI code page by default before Python 3.15) can carry the
@@ -273,7 +282,10 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 			except ValueError as e:
 				print(f"error: {e}", file=sys.stderr)
 				sys.exit(2)
-			sys.exit(asyncio.run(run(task, effects=effects, jobs=jobs)).returncode)
+			result: Final = asyncio.run(run(task, effects=effects, jobs=jobs))
+			if result.interrupt_count:
+				print_interrupt_banner(result.interrupt_count)
+			sys.exit(result.returncode)
 
 		case _:
 			assert_never(state)

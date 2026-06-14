@@ -15,19 +15,22 @@ from typing import Final, NamedTuple
 
 from ..core.color import (
 	BOLD,
+	BOLD_YELLOW,
 	CAMAS_VIOLET,
 	CYAN,
+	DARK_RED,
 	GREEN,
 	GREY,
 	RED,
 	RESET,
+	YELLOW,
 )
-from ..core.leaf_state import LeafInfo
+from ..core.leaf_state import KILL_PRESSES, LeafInfo
 from ..core.render import DisplayRow, GroupHeader, flatten_rows, render_tree_prefix, strip_ansi
 from ..core.task import task_label
 from ..core.traversal import flatten_leaves
-from ..v0.completion import Finished, Skipped
-from ..v0.leaf_state import Completed, LeafState, Running, Waiting
+from ..v0.completion import Finished, Skipped, Stopped
+from ..v0.leaf_state import Completed, Interrupting, LeafState, Running, Waiting
 from ..v0.task import Task, TaskNode
 from ..v0.task_event import TaskEvent
 
@@ -76,6 +79,23 @@ PROG_MAX_CELL_WIDTH: Final = 12
 PROG_MIN_MARGIN: Final = 2
 
 
+def interrupt_status(presses: int) -> str:
+	"""Colored 6-col status for an interrupting row, by Ctrl-C count.
+
+	>>> interrupt_status(1) == f"{YELLOW}  ^C  "
+	True
+	>>> interrupt_status(2) == f"{YELLOW} ^C^C "
+	True
+	>>> interrupt_status(3) == f"{BOLD_YELLOW} KILL "
+	True
+	"""
+	if presses == 1:
+		return f"{YELLOW}  ^C  "
+	if presses < KILL_PRESSES:
+		return f"{YELLOW} ^C^C "
+	return f"{BOLD_YELLOW} KILL "
+
+
 def bucket_glyph_color(states: Sequence[LeafState]) -> tuple[str, str]:
 	"""Reduce a bucket of leaf states to (glyph, ANSI color) for a progress cell.
 
@@ -97,9 +117,15 @@ def bucket_glyph_color(states: Sequence[LeafState]) -> tuple[str, str]:
 	True
 	>>> bucket_glyph_color([Waiting(t), Running(t, t0, b"")]) == (' ', GREY)
 	True
+	>>> bucket_glyph_color([Interrupting(t, t0, b"", 1)]) == ('┄', YELLOW)
+	True
+	>>> bucket_glyph_color([Completed(t, Stopped(130, 0.1, ()))]) == ('─', YELLOW)
+	True
 	"""
 	if any(isinstance(s, Waiting) for s in states):
 		return PROG_WAITING, GREY
+	if any(isinstance(s, Interrupting) for s in states):
+		return PROG_RUNNING, YELLOW
 	if any(isinstance(s, Running) for s in states):
 		return PROG_RUNNING, CAMAS_VIOLET
 	if any(
@@ -109,6 +135,8 @@ def bucket_glyph_color(states: Sequence[LeafState]) -> tuple[str, str]:
 		for s in states
 	):
 		return PROG_DONE, RED
+	if any(isinstance(s, Completed) and isinstance(s.completion, Stopped) for s in states):
+		return PROG_DONE, YELLOW
 	all_skipped: Final = all(
 		isinstance(s, Completed) and isinstance(s.completion, Skipped) for s in states
 	)
@@ -237,10 +265,21 @@ def render_lines(
 								lines.append(
 									f"\r{header}{GREY}{stream}{RESET}{padding} {CYAN}|{color}{status}{CYAN}|{RESET} {elapsed:7.3f}s{CLEAR_LINE}"
 								)
-							case Skipped():  # pragma: no branch
+							case Skipped():
 								padding = " " * gap
 								lines.append(
 									f"\r{header}{padding} {CYAN}|{GREY} SKIP {CYAN}|{RESET}{CLEAR_LINE}"
+								)
+							case Stopped(elapsed=elapsed, output=output):  # pragma: no branch
+								stream_line = strip_ansi(last_line_display(output))
+								stream = (
+									f"  {truncate_middle(stream_line, gap - 2)}"
+									if gap > 2 and stream_line
+									else ""
+								)
+								padding = " " * max(gap - len(stream), 0)
+								lines.append(
+									f"\r{header}{GREY}{stream}{RESET}{padding} {CYAN}|{DARK_RED} STOP {CYAN}|{RESET} {elapsed:7.3f}s{CLEAR_LINE}"
 								)
 					case Running(start_time=start_time, last_line=last_line):
 						elapsed = (now - start_time).total_seconds()
@@ -255,6 +294,18 @@ def render_lines(
 						lines.append(
 							f"\r{header}{GREY}{stream}{RESET}{padding} {CYAN}|{CAMAS_VIOLET}{spin}{CYAN}|{RESET} {elapsed:7.3f}s{CLEAR_LINE}"
 						)
+					case Interrupting(start_time=start_time, last_line=last_line, presses=presses):
+						elapsed = (now - start_time).total_seconds()
+						stream_line = strip_ansi(decode_line(last_line)) if last_line else ""
+						stream = (
+							f"  {truncate_middle(stream_line, gap - 2)}"
+							if gap > 2 and stream_line
+							else ""
+						)
+						padding = " " * max(gap - len(stream), 0)
+						lines.append(
+							f"\r{header}{GREY}{stream}{RESET}{padding} {CYAN}|{interrupt_status(presses)}{CYAN}|{RESET} {elapsed:7.3f}s{CLEAR_LINE}"
+						)
 					case Waiting():
 						padding = " " * gap
 						lines.append(
@@ -263,16 +314,23 @@ def render_lines(
 	alldone: Final = all(isinstance(s, Completed) for s in states)
 	summary_pad: Final = render_progress_bar(states, max(display_width - 6, 0))
 	if alldone:
+		stopped: Final = any(
+			isinstance(s, Completed) and isinstance(s.completion, Stopped) for s in states
+		)
 		failed: Final = any(
 			isinstance(s, Completed)
 			and isinstance(s.completion, Finished)
 			and s.completion.returncode != 0
 			for s in states
 		)
-		summary_color: Final = RED if failed else GREEN
-		summary_label: Final = " FAIL " if failed else " PASS "
+		summary_color: Final = DARK_RED if stopped else (RED if failed else GREEN)
+		summary_label: Final = " STOP " if stopped else (" FAIL " if failed else " PASS ")
 		lines.append(
 			f"\r{BOLD}result{RESET}{summary_pad} {CYAN}|{summary_color}{summary_label}{CYAN}|{RESET} {wall_elapsed:7.3f}s{CLEAR_LINE}"
+		)
+	elif interrupting := [s.presses for s in states if isinstance(s, Interrupting)]:
+		lines.append(
+			f"\r{BOLD}result{RESET}{summary_pad} {CYAN}|{interrupt_status(max(interrupting))}{CYAN}|{RESET} {wall_elapsed:7.3f}s{CLEAR_LINE}"
 		)
 	else:
 		running_spin: Final = SPINNER[int(wall_elapsed * 10) % len(SPINNER)]
@@ -401,6 +459,16 @@ def print_passes(states: Sequence[LeafState], term_width: int) -> None:
 				pass
 
 
+def print_stops(states: Sequence[LeafState], term_width: int) -> None:
+	"""Print captured output for each task stopped by a forwarded signal."""
+	for state in states:
+		match state:
+			case Completed(task=task, completion=Stopped(returncode=rc, output=output)):
+				print_task_output(task, output, "STOPPED", DARK_RED, rc, term_width)
+			case _:
+				pass
+
+
 @dataclass
 class TermtreeState:
 	"""Mutable slots of a termtree run: the latest states view and the tick task handle."""
@@ -435,9 +503,15 @@ class Termtree:
 	how fast events arrive.
 	"""
 
-	def __init__(self, frame_interval_ms: float = 16.667, show_passing: bool = False) -> None:
+	def __init__(
+		self,
+		frame_interval_ms: float = 16.667,
+		show_passing: bool = False,
+		output_ctrl_c: bool = False,
+	) -> None:
 		self._frame_interval_ms: Final = frame_interval_ms
 		self._show_passing: Final = show_passing
+		self._output_ctrl_c: Final = output_ctrl_c
 
 	async def setup(self, task: TaskNode) -> TermtreeContext:
 		ctx: Final = TermtreeContext(  # zuban: ignore[misc] # zuban defies PEP591
@@ -471,6 +545,8 @@ class Termtree:
 			shutil.get_terminal_size().columns
 		)
 		print_failures(ctx.state.states, term_width)
+		if self._output_ctrl_c:
+			print_stops(ctx.state.states, term_width)
 		if self._show_passing:
 			print_passes(ctx.state.states, term_width)
 
