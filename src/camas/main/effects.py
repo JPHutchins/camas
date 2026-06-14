@@ -16,6 +16,8 @@ from .mypyc import MISSING, signature_fields_from_source
 if TYPE_CHECKING:
 	from collections.abc import Mapping
 
+	from ..v0.config import Config
+
 
 @functools.cache
 def discover_effects() -> tuple[Mapping[str, Any], tuple[tuple[str, Any], ...]]:
@@ -240,3 +242,80 @@ def expect_effect(value: Any) -> Effect[Any]:
 	if not isinstance(value, Effect):
 		raise ValueError(f"expected an Effect instance, got {type(value).__name__}")
 	return value  # pyright: ignore[reportUnknownVariableType,reportReturnType]
+
+
+def resolve_default_effects(config: Config, *, github: bool) -> tuple[Effect[Any], ...]:
+	"""The effects a bare run uses in an environment: the :class:`Config` override,
+	else the engine's built-in default — live ``Termtree`` locally, ``Status('github')``
+	(collapsed workflow groups) under GitHub Actions. An explicit ``()`` override is
+	honored as "no effects".
+	"""
+	configured = config.effects(github=github)
+	if configured is not None:
+		return configured
+	from ..effect.status import Status
+	from ..effect.termtree import Termtree
+
+	return (Status(output_mode="github"),) if github else (Termtree(),)
+
+
+def default_effect_names(config: Config, *, github: bool) -> frozenset[str]:
+	"""Class names of the effects a bare run uses in this environment — used to mark
+	the ``(default)`` entry in the Available Effects listing.
+	"""
+	return frozenset(type(e).__name__ for e in resolve_default_effects(config, github=github))
+
+
+def resolve_effects(
+	expr: str | None,
+	config: Config,
+	*,
+	github: bool,
+	scope_effects: Mapping[str, type[Effect[Any]]] = {},
+) -> tuple[Effect[Any], ...]:
+	"""The effects for a run: the parsed ``--effects`` expression (propagating its
+	``ValueError`` on a malformed expression), or the environment default when
+	``--effects`` was omitted (``expr is None``).
+	"""
+	if expr is None:
+		return resolve_default_effects(config, github=github)
+	return parse_effects(expr, scope_effects)
+
+
+def format_effect_call(effect: Effect[Any]) -> str:
+	"""Render an Effect instance as a ``--effects`` mini-language call, showing
+	only the constructor arguments whose values differ from their defaults.
+
+	>>> from camas.effect.status import Status
+	>>> from camas.effect.termtree import Termtree
+	>>> format_effect_call(Termtree())
+	'Termtree()'
+	>>> format_effect_call(Status(output_mode="github"))
+	"Status(output_mode='github')"
+	"""
+	cls = type(effect)
+	args = ", ".join(
+		f"{name}={value!r}"
+		for name, _kind, _annotation, default in signature_fields(cls)
+		if (value := getattr(effect, f"_{name}", MISSING)) is not MISSING and value != default
+	)
+	return f"{cls.__name__}({args})"
+
+
+def format_effects_expr(effects: tuple[Effect[Any], ...]) -> str:
+	"""Render an effects tuple as a ``--effects`` mini-language expression — the
+	inverse of :func:`parse_effects` for the common case.
+
+	>>> from camas.effect.status import Status
+	>>> from camas.effect.termtree import Termtree
+	>>> format_effects_expr(())
+	'()'
+	>>> format_effects_expr((Termtree(),))
+	'(Termtree(),)'
+	>>> format_effects_expr((Termtree(), Status(output_mode="github")))
+	"(Termtree(), Status(output_mode='github'))"
+	"""
+	calls = [format_effect_call(e) for e in effects]
+	if len(calls) == 1:
+		return f"({calls[0]},)"
+	return f"({', '.join(calls)})"

@@ -163,6 +163,8 @@ def name_scope_config(scope: Mapping[str, object]) -> Config | None:
 	return Config(
 		default_task=promote_field(config.default_task),
 		github_task=promote_field(config.github_task),
+		default_effects=config.default_effects,
+		default_github_effects=config.default_github_effects,
 	)
 
 

@@ -111,8 +111,12 @@ def format_task_summary_listing(
 	tasks: Mapping[str, TaskNode],
 	source: Path | None,
 	color: bool,
+	default_task_name: str | None = None,
 ) -> str:
-	"""Build the ``Available tasks from <source>`` listing as a string."""
+	"""Build the ``Available tasks from <source>`` listing as a string.
+
+	``default_task_name`` marks the task a bare ``camas`` runs with ``(default)``.
+	"""
 	if not tasks:
 		if source is not None:
 			return f"No tasks defined in {source}."
@@ -123,7 +127,8 @@ def format_task_summary_listing(
 		)
 	names = frozenset(tasks)
 	items = sorted(tasks.items())
-	width = max(len(n) for n, _ in items)
+	marker = " (default)"
+	width = max(len(n) + (len(marker) if n == default_task_name else 0) for n, _ in items)
 	header_text = f"Available tasks from {source}:" if source is not None else "Tasks:"
 	lines = [maybe_color(header_text, CAMAS_VIOLET, color)]
 	for name, node in items:
@@ -137,15 +142,27 @@ def format_task_summary_listing(
 			if isinstance(node, Task) or node.matrix is None
 			else f"  [matrix: {' '.join(format_axis(k, v) for k, v in node.matrix.items())}]"
 		)
+		marked = name == default_task_name
+		name_cell = maybe_color(name, BOLD_CYAN, color) + (
+			maybe_color(marker, GREY, color) if marked else ""
+		)
+		pad = " " * (width + 1 - len(name) - (len(marker) if marked else 0))
 		lines.append(
-			f"  {maybe_color(name.ljust(width + 1), BOLD_CYAN, color)} {body}"
-			f"{maybe_color(annotation, GREY, color) if annotation else ''}"
+			f"  {name_cell}{pad} {body}{maybe_color(annotation, GREY, color) if annotation else ''}"
 		)
 	return "\n".join(lines)
 
 
-def print_task_summary_listing(tasks: Mapping[str, TaskNode], source: Path | None) -> None:
-	print(format_task_summary_listing(tasks, source, color=color_on()))
+def print_task_summary_listing(
+	tasks: Mapping[str, TaskNode],
+	source: Path | None,
+	default_task_name: str | None = None,
+) -> None:
+	print(
+		format_task_summary_listing(
+			tasks, source, color=color_on(), default_task_name=default_task_name
+		)
+	)
 
 
 def print_task_trees(tasks: Mapping[str, TaskNode], source: Path | None) -> None:
@@ -256,11 +273,13 @@ def format_signature(cls: Any, indent: str, color: bool) -> list[str]:
 def format_available_effects(
 	color: bool | None = None,
 	scope_effects: Mapping[str, type[Effect[Any]]] = {},
+	default_effect_names: frozenset[str] = frozenset(),
 ) -> str:
 	"""Render each discovered Effect with its full constructor signature and
 	the signatures of every parameter type it transitively references.
 
-	``scope_effects`` adds user-defined Effect classes to the listing.
+	``scope_effects`` adds user-defined Effect classes to the listing;
+	``default_effect_names`` marks the environment's default effect(s) with ``(default)``.
 	"""
 	_, effects = available_effects(scope_effects)
 	if not effects:
@@ -272,8 +291,9 @@ def format_available_effects(
 			lines.append("")
 		doc = first_line_doc(cls)
 		name_str = maybe_color(name, BOLD_CYAN, on)
-		doc_str = f"  — {maybe_color(doc, GREY, on)}" if doc else ""
-		lines.append(f"  {name_str}{doc_str}")
+		default_str = maybe_color(" (default)", GREY, on) if name in default_effect_names else ""
+		doc_str = f"  — {doc}" if doc else ""
+		lines.append(f"  {name_str}{default_str}{doc_str}")
 		lines.extend(format_signature(cls, "    ", on))
 	return "\n".join(lines)
 
@@ -283,7 +303,10 @@ def format_try_hint(color: bool) -> str:
 	rows = (
 		('camas \'("echo Hello", "echo world!")\'', "( ) → Sequential"),
 		('camas \'{"echo Hello", "echo world!"}\'', "{ } → Parallel"),
-		("camas --effects '(Summary(),)' <task>", "post-run summary instead of live tree"),
+		(
+			"camas --effects '(Summary(term_width=Fixed(60)),)' <task>",
+			"post-run summary instead of live tree",
+		),
 	)
 	width = max(len(cmd) for cmd, _ in rows)
 	header = maybe_color("Try:", CAMAS_VIOLET, color)
@@ -314,8 +337,13 @@ def format_reference(color: bool) -> str:
 
 def print_available_effects(
 	scope_effects: Mapping[str, type[Effect[Any]]] = {},
+	default_effect_names: frozenset[str] = frozenset(),
 ) -> None:
-	print(format_available_effects(scope_effects=scope_effects))
+	print(
+		format_available_effects(
+			scope_effects=scope_effects, default_effect_names=default_effect_names
+		)
+	)
 
 
 def first_line_doc(obj: Any) -> str:

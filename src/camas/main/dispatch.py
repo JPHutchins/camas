@@ -20,8 +20,9 @@ else:  # pragma: no cover
 from ..core.execution import run
 from ..core.matrix import matrix_axes, override_matrix
 from ..core.render import print_tree
+from ..v0.config import Config
 from .argv import apply_passthrough, parse_axis_values, parse_matrix_kv, split_passthrough
-from .effects import parse_effects
+from .effects import default_effect_names, resolve_effects
 from .expression import parse_expression
 from .format import (
 	format_load_error_hint,
@@ -148,14 +149,20 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 				print(format_load_error_hint(err.source, err.exception))
 				sys.exit(0)
 			if args.effects == "":
-				print_available_effects({})
+				print_available_effects(
+					{},
+					default_effect_names(
+						Config(), github=os.environ.get("GITHUB_ACTIONS") == "true"
+					),
+				)
 				sys.exit(0)
 			exit_for_load_err(err)
 
 		case LoadOk(tasks=tasks, source=source, scope_effects=scope_effects, config=config):
 			args, _leftover = parser.parse_known_args(split.head)
 			in_github: Final = os.environ.get("GITHUB_ACTIONS") == "true"
-			default_node: Final = config.bare_task(github=in_github) if config is not None else None
+			effective_config: Final = config if config is not None else Config()
+			default_node: Final = effective_config.bare_task(github=in_github)
 			axis_node: Final = (
 				tasks[args.expression]
 				if isinstance(args.expression, str) and args.expression in tasks
@@ -181,7 +188,11 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 				sys.exit(write_starter_tasks_py(Path.cwd()))
 
 			if args.list:
-				print_task_summary_listing(tasks, source)
+				print_task_summary_listing(
+					tasks,
+					source,
+					default_task_name=default_node.name if default_node is not None else None,
+				)
 				sys.exit(0)
 
 			if args.tree:
@@ -194,7 +205,9 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 				sys.exit(run_typecheck_only(source))
 
 			if args.effects == "":
-				print_available_effects(scope_effects)
+				print_available_effects(
+					scope_effects, default_effect_names(effective_config, github=in_github)
+				)
 				sys.exit(0)
 
 			resolved: TaskNode
@@ -213,7 +226,9 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 				resolved = dispatch_arg(args.expression, tasks)
 
 			try:
-				effects: Final = parse_effects(args.effects, scope_effects)
+				effects: Final = resolve_effects(
+					args.effects, effective_config, github=in_github, scope_effects=scope_effects
+				)
 			except ValueError as e:
 				print(f"error: --effects: {e}", file=sys.stderr)
 				sys.exit(2)

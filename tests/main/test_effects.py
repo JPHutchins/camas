@@ -14,12 +14,21 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from camas import Config
+from camas.effect.status import Status
+from camas.effect.summary import Summary
+from camas.effect.termtree import Termtree
 from camas.main.effects import (
 	available_effects,
+	default_effect_names,
 	discover_effects,
 	eval_value,
+	format_effect_call,
+	format_effects_expr,
 	parse_effects,
 	reachable_classes,
+	resolve_default_effects,
+	resolve_effects,
 	signature_fields,
 )
 from camas.main.mypyc import MISSING
@@ -207,3 +216,53 @@ def test_signature_fields_signature_raises(monkeypatch: pytest.MonkeyPatch) -> N
 
 	monkeypatch.setattr(inspect, "signature", boom)
 	assert signature_fields(Plain) == []
+
+
+def test_format_effect_call_omits_default_args() -> None:
+	assert format_effect_call(Termtree()) == "Termtree()"
+	assert format_effect_call(Termtree(show_passing=True)) == "Termtree(show_passing=True)"
+
+
+def test_format_effects_expr_singleton_keeps_trailing_comma() -> None:
+	assert format_effects_expr(()) == "()"
+	assert format_effects_expr((Termtree(),)) == "(Termtree(),)"
+	assert format_effects_expr((Termtree(), Summary())) == "(Termtree(), Summary())"
+
+
+@pytest.mark.parametrize(
+	("github", "expected"),
+	[(False, (Termtree(),)), (True, (Status(output_mode="github"),))],
+)
+def test_resolve_default_effects_builtin_when_unset(
+	github: bool, expected: tuple[object, ...]
+) -> None:
+	"""No override → the engine's environment default."""
+	out = resolve_default_effects(Config(), github=github)
+	assert [type(e).__name__ for e in out] == [type(e).__name__ for e in expected]
+
+
+def test_resolve_default_effects_honors_override() -> None:
+	override = (Summary(),)
+	assert resolve_default_effects(Config(default_effects=override), github=False) is override
+
+
+def test_resolve_default_effects_empty_override_is_no_effects() -> None:
+	"""An explicit ``()`` is honored, not treated as unset."""
+	assert resolve_default_effects(Config(default_effects=()), github=False) == ()
+
+
+def test_resolve_effects_parses_expression_over_default() -> None:
+	out = resolve_effects("(Summary(),)", Config(), github=False)
+	assert [type(e).__name__ for e in out] == ["Summary"]
+
+
+def test_resolve_effects_none_uses_config_default() -> None:
+	override = (Summary(),)
+	assert resolve_effects(None, Config(default_effects=override), github=False) is override
+
+
+@pytest.mark.parametrize(
+	("github", "expected"), [(False, frozenset({"Termtree"})), (True, frozenset({"Status"}))]
+)
+def test_default_effect_names_tracks_environment(github: bool, expected: frozenset[str]) -> None:
+	assert default_effect_names(Config(), github=github) == expected

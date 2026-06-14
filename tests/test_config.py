@@ -27,3 +27,21 @@ GH = Task("gh", name="gh")
 def test_bare_task_resolution(config: Config, github: bool, expected: Task | None) -> None:
 	"""``github_task`` wins under GitHub Actions, falling back to ``default_task``."""
 	assert config.bare_task(github=github) is expected
+
+
+@pytest.mark.parametrize("github", [False, True])
+def test_effects_default_is_none_deferring_to_engine(github: bool) -> None:
+	"""Unset effects return ``None`` — the signal for the engine to substitute its
+	environment default, keeping the concrete effects out of the type layer.
+	"""
+	assert Config().effects(github=github) is None
+
+
+def test_effects_returns_per_environment_override() -> None:
+	from camas.effect.summary import Summary
+
+	local = (Summary(),)
+	gh = (Summary(show_passing=True),)
+	config = Config(default_effects=local, default_github_effects=gh)
+	assert config.effects(github=False) is local
+	assert config.effects(github=True) is gh
