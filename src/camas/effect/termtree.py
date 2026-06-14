@@ -282,23 +282,82 @@ def render_lines(
 	return lines
 
 
+class FrameResult(NamedTuple):
+	"""A positioned frame: the bytes to emit and the live-region height it occupies.
+
+	>>> FrameResult("", 0)
+	FrameResult(text='', visible=0)
+	"""
+
+	text: str
+	visible: int
+
+
+def clamp_lines(lines: tuple[str, ...], height: int) -> tuple[str, ...]:
+	r"""Reduce a frame to at most ``height`` lines, always keeping the summary (last) line.
+
+	The summary is the most information-dense line (aggregate progress + total
+	elapsed), so it survives; the overflowing leaf rows above it collapse into one
+	elision marker. Bounding the live region to the viewport is what stops the
+	repaint from scrolling: cursor-up (``\033[NF``) clamps at the top of the
+	screen, so a frame taller than the window can never be rewritten in place.
+
+	>>> clamp_lines(("a", "b", "sum"), 5)
+	('a', 'b', 'sum')
+	>>> clamp_lines((), 5)
+	()
+	>>> clamp_lines(("sum",), 0)
+	()
+	>>> clamp_lines(("a", "b", "sum"), 1)
+	('sum',)
+	>>> over = tuple(str(i) for i in range(10)) + ("sum",)
+	>>> result = clamp_lines(over, 4)
+	>>> (len(result), result[0], result[-1])
+	(4, '0', 'sum')
+	"""
+	if height <= 0:
+		return ()
+	if len(lines) <= height:
+		return lines
+	if height == 1:
+		return (lines[-1],)
+	visible_rows: Final = height - 2
+	hidden: Final = len(lines) - 1 - visible_rows
+	marker: Final = f"\r{GREY}... {hidden} more{CLEAR_LINE}{RESET}"
+	return (*lines[:visible_rows], marker, lines[-1])
+
+
 def render_frame(
 	rows: tuple[DisplayRow, ...],
 	states: Sequence[LeafState],
 	term_width: int,
-	display_width: int,
+	term_height: int,
 	now: datetime,
 	wall_elapsed: float,
-) -> str:
-	r"""Render one positioned frame as an ANSI string, for live animation.
+	prev_visible: int,
+	*,
+	final: bool = False,
+) -> FrameResult:
+	r"""Render one positioned frame for live animation, clamped to ``term_height``.
 
-	Starts with CPL (`\033[NF`) to move the cursor up N lines to column 1,
-	then writes the frame. Callers must first reserve N+1 rows of vertical
-	space (via `"\n" * N`) so the frame has room to render inline without
-	scrolling the viewport.
+	Repaints in place by moving the cursor up ``prev_visible - 1`` lines (CPL,
+	``\033[NF``) to the top of the previously-drawn region, then rewriting it.
+	``prev_visible`` is the height the *previous* frame occupied (0 on the first
+	frame, which just writes where the cursor is and lets the terminal scroll to
+	make room) — tracking that, not the current frame's height, keeps the cursor
+	math right when the line count changes across a resize, and lets a now-shorter
+	frame erase the rows the previous one left behind (``\033[0J``).
+
+	``final`` skips the clamp to emit the whole tree once at teardown so the
+	completed run persists in the scrollback.
 	"""
-	lines: Final = render_lines(rows, states, term_width, display_width, now, wall_elapsed)
-	return f"\033[{len(lines) - 1}F" + "\n".join(lines)
+	full: Final = tuple(
+		render_lines(rows, states, term_width, term_width - STATUS_COL_WIDTH - 1, now, wall_elapsed)
+	)
+	lines: Final = full if final else clamp_lines(full, term_height)
+	reposition: Final = f"\033[{prev_visible - 1}F" if prev_visible > 1 else ""
+	erase: Final = "\033[0J" if len(lines) < prev_visible else ""
+	return FrameResult(reposition + "\n".join(lines) + erase, len(lines))
 
 
 def print_task_output(
@@ -348,6 +407,8 @@ class TermtreeState:
 
 	states: Sequence[LeafState]
 	tick_task: asyncio.Task[None] | None = None
+	visible: int = 0
+	"""Lines the previous frame occupied; :func:`draw` reads it to reposition, then writes it back."""
 
 
 class TermtreeContext(NamedTuple):
@@ -356,12 +417,11 @@ class TermtreeContext(NamedTuple):
 	``wall_start`` is the wall-clock setup time (for human-facing timestamps if
 	ever surfaced); ``wall_start_mono`` is the corresponding monotonic reading
 	(``time.perf_counter()``) used to compute the displayed elapsed total so
-	the TUI never sees a backward/forward NTP step.
+	the TUI never sees a backward/forward NTP step. Terminal dimensions are not
+	cached here — :func:`draw` re-reads them every frame so the view tracks resizes.
 	"""
 
 	rows: tuple[DisplayRow, ...]
-	term_width: int
-	display_width: int
 	wall_start: datetime
 	wall_start_mono: float
 	state: TermtreeState
@@ -380,22 +440,14 @@ class Termtree:
 		self._show_passing: Final = show_passing
 
 	async def setup(self, task: TaskNode) -> TermtreeContext:
-		term_width: Final = (  # zuban: ignore[misc] # zuban defies PEP591
-			shutil.get_terminal_size().columns
-		)
-		rows: Final = flatten_rows(task)  # zuban: ignore[misc] # zuban defies PEP591
 		ctx: Final = TermtreeContext(  # zuban: ignore[misc] # zuban defies PEP591
-			rows=rows,
-			term_width=term_width,
-			display_width=term_width - STATUS_COL_WIDTH - 1,
+			rows=flatten_rows(task),
 			wall_start=datetime.now(),
 			wall_start_mono=time.perf_counter(),
 			state=TermtreeState(
 				states=tuple(Waiting(info.task) for info in flatten_leaves(task)),
 			),
 		)
-		sys.stdout.write("\n" * len(rows))
-		sys.stdout.flush()
 		draw(ctx)
 		ctx.state.tick_task = asyncio.create_task(tick_loop(ctx, self._frame_interval_ms / 1000))
 		return ctx
@@ -412,27 +464,39 @@ class Termtree:
 			ctx.state.tick_task.cancel()
 			with contextlib.suppress(asyncio.CancelledError):
 				await ctx.state.tick_task
-		draw(ctx)
+		draw(ctx, final=True)
 		sys.stdout.write("\n")
 		sys.stdout.flush()
-		print_failures(ctx.state.states, ctx.term_width)
+		term_width: Final = (  # zuban: ignore[misc] # zuban defies PEP591
+			shutil.get_terminal_size().columns
+		)
+		print_failures(ctx.state.states, term_width)
 		if self._show_passing:
-			print_passes(ctx.state.states, ctx.term_width)
+			print_passes(ctx.state.states, term_width)
 
 
-def draw(ctx: TermtreeContext) -> None:
+def draw(ctx: TermtreeContext, *, final: bool = False) -> None:
+	"""Render and emit one frame, re-reading the terminal size so the view tracks resizes.
+
+	``final`` emits the whole tree (no height clamp) once the live region stops, so
+	the completed tree persists in the scrollback.
+	"""
 	# Write bytes directly: the box-drawing chars can't encode to cp1252 (Windows
 	# default in non-TTY contexts like captured subprocesses / piped CI logs).
-	frame = render_frame(
+	size: Final = shutil.get_terminal_size()
+	frame: Final = render_frame(
 		ctx.rows,
 		ctx.state.states,
-		ctx.term_width,
-		ctx.display_width,
+		size.columns,
+		size.lines,
 		datetime.now(),
 		time.perf_counter() - ctx.wall_start_mono,
+		ctx.state.visible,
+		final=final,
 	)
-	sys.stdout.buffer.write(frame.encode("utf-8", errors="replace"))
+	sys.stdout.buffer.write(frame.text.encode("utf-8", errors="replace"))
 	sys.stdout.flush()
+	ctx.state.visible = frame.visible
 
 
 async def tick_loop(ctx: TermtreeContext, interval: float) -> None:

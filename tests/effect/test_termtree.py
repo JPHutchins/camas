@@ -71,9 +71,11 @@ def test_render_frame_all_waiting_shows_group_header_and_wait_cells(
 	tree = Parallel(make_task("a"), make_task("b"), name="root")
 	rows = flatten_rows(tree)
 	states: tuple[LeafState, ...] = (Waiting(make_task("a")), Waiting(make_task("b")))
-	frame = render_frame(rows, states, term_width=80, display_width=60, now=TS, wall_elapsed=0.0)
-	assert "root" in frame
-	assert "WAIT" in frame
+	frame = render_frame(
+		rows, states, term_width=80, term_height=24, now=TS, wall_elapsed=0.0, prev_visible=0
+	)
+	assert "root" in frame.text
+	assert "WAIT" in frame.text
 
 
 def test_render_frame_mixed_states() -> None:
@@ -87,10 +89,12 @@ def test_render_frame_mixed_states() -> None:
 		Running(b, TS, b"working..."),
 		Completed(c, Skipped(1)),
 	)
-	frame = render_frame(rows, states, term_width=80, display_width=60, now=TS, wall_elapsed=0.0)
-	assert "PASS" in frame
-	assert "SKIP" in frame
-	assert "all clean" in frame
+	frame = render_frame(
+		rows, states, term_width=80, term_height=24, now=TS, wall_elapsed=0.0, prev_visible=0
+	)
+	assert "PASS" in frame.text
+	assert "SKIP" in frame.text
+	assert "all clean" in frame.text
 
 
 def test_render_frame_failure_summary() -> None:
@@ -98,8 +102,92 @@ def test_render_frame_failure_summary() -> None:
 	tree = Parallel(a)
 	rows = flatten_rows(tree)
 	states: tuple[LeafState, ...] = (Completed(a, Finished(1, 0.1, (b"boom\n",))),)
-	frame = render_frame(rows, states, term_width=80, display_width=60, now=TS, wall_elapsed=0.0)
-	assert "FAIL" in frame
+	frame = render_frame(
+		rows, states, term_width=80, term_height=24, now=TS, wall_elapsed=0.0, prev_visible=0
+	)
+	assert "FAIL" in frame.text
+
+
+def _wide_tree(leaves: int) -> Parallel:
+	return Parallel(*(make_task(f"t{i}") for i in range(leaves)), name="root")
+
+
+def test_render_frame_clamps_to_height_and_keeps_summary() -> None:
+	"""A frame taller than the window collapses to the height, summary always last."""
+	tree = _wide_tree(40)
+	rows = flatten_rows(tree)
+	states: tuple[LeafState, ...] = tuple(Waiting(make_task(f"t{i}")) for i in range(40))
+	frame = render_frame(
+		rows, states, term_width=80, term_height=10, now=TS, wall_elapsed=0.0, prev_visible=0
+	)
+	body = frame.text.split("\n")
+	assert frame.visible == 10
+	assert len(body) == 10
+	assert "more" in frame.text  # elision marker
+	assert "result" in body[-1]  # summary survives the clamp
+
+
+def test_render_frame_does_not_clamp_when_it_fits() -> None:
+	tree = _wide_tree(3)
+	rows = flatten_rows(tree)
+	states: tuple[LeafState, ...] = tuple(Waiting(make_task(f"t{i}")) for i in range(3))
+	frame = render_frame(
+		rows, states, term_width=80, term_height=24, now=TS, wall_elapsed=0.0, prev_visible=0
+	)
+	assert frame.visible == len(rows) + 1
+	assert "more" not in frame.text
+
+
+def test_render_frame_repositions_with_previous_height() -> None:
+	"""Cursor moves up by the *previous* frame's height, not the current one."""
+	tree = _wide_tree(2)
+	rows = flatten_rows(tree)
+	states: tuple[LeafState, ...] = (Waiting(make_task("t0")), Waiting(make_task("t1")))
+	first = render_frame(
+		rows, states, term_width=80, term_height=24, now=TS, wall_elapsed=0.0, prev_visible=0
+	)
+	assert not first.text.startswith("\x1b[")  # no reposition on the first frame
+	repaint = render_frame(
+		rows,
+		states,
+		term_width=80,
+		term_height=24,
+		now=TS,
+		wall_elapsed=0.0,
+		prev_visible=first.visible,
+	)
+	assert repaint.text.startswith(f"\x1b[{first.visible - 1}F")
+
+
+def test_render_frame_erases_leftover_rows_when_shrinking() -> None:
+	"""A now-shorter frame erases the rows the previous (taller) one left behind."""
+	tree = _wide_tree(40)
+	rows = flatten_rows(tree)
+	states: tuple[LeafState, ...] = tuple(Waiting(make_task(f"t{i}")) for i in range(40))
+	frame = render_frame(
+		rows, states, term_width=80, term_height=10, now=TS, wall_elapsed=0.0, prev_visible=24
+	)
+	assert frame.visible == 10
+	assert frame.text.endswith("\x1b[0J")
+
+
+def test_render_frame_final_emits_full_tree_unclamped() -> None:
+	"""The teardown frame skips the clamp so the whole tree lands in the scrollback."""
+	tree = _wide_tree(40)
+	rows = flatten_rows(tree)
+	states: tuple[LeafState, ...] = tuple(Waiting(make_task(f"t{i}")) for i in range(40))
+	frame = render_frame(
+		rows,
+		states,
+		term_width=80,
+		term_height=10,
+		now=TS,
+		wall_elapsed=0.0,
+		prev_visible=10,
+		final=True,
+	)
+	assert frame.visible == len(rows) + 1  # all rows, not clamped to 10
+	assert "more" not in frame.text
 
 
 def test_print_failures_outputs_failed_task(capsys: pytest.CaptureFixture[str]) -> None:
