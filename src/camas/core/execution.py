@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from functools import partial
 from subprocess import STDOUT
-from typing import TYPE_CHECKING, Any, Final, Protocol, TypeAlias
+from typing import TYPE_CHECKING, Any, Final, Protocol, TypeAlias, cast
 
 if sys.version_info >= (3, 11):
 	from asyncio import TaskGroup
@@ -79,6 +79,38 @@ def silence_dead(action: Callable[[], None]) -> None:
 	"""Run ``action`` (a signal/kill call), ignoring the race where the process already exited."""
 	with suppress(ProcessLookupError):
 		action()
+
+
+def suppress_ctrl_c_echo() -> object | None:
+	"""Clear ``ECHOCTL`` on the controlling tty for the run; return prior attrs to restore.
+
+	A tty echoes the interrupt char as ``^C`` at the cursor when Ctrl-C is pressed;
+	on some terminals (notably the WSL pty under Windows Terminal) that echo carries
+	a newline, which slides the live tree's repaint anchor down and strands rows.
+	Returns ``None`` (a no-op) off a tty or where ``termios`` is unavailable (Windows).
+	"""
+	try:
+		import termios
+	except ModuleNotFoundError:  # pragma: no cover  (Windows has no termios)
+		return None
+	try:
+		fd = sys.stdin.fileno()
+		saved: list[Any] = termios.tcgetattr(fd)
+	except (OSError, ValueError, termios.error):
+		return None  # not a tty (piped / captured)
+	updated: list[Any] = termios.tcgetattr(fd)
+	updated[3] &= ~termios.ECHOCTL
+	termios.tcsetattr(fd, termios.TCSADRAIN, updated)
+	return saved
+
+
+def restore_tty(saved: object | None) -> None:
+	"""Restore tty attributes captured by :func:`suppress_ctrl_c_echo`."""
+	if saved is None:
+		return
+	import termios
+
+	termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, cast("list[Any]", saved))
 
 
 def step_interrupt(
@@ -285,6 +317,7 @@ async def run(
 	def on_sigint() -> None:
 		step_interrupt(interrupts, leaves, datetime.now(), dispatch_event)
 
+	saved_tty: Final = suppress_ctrl_c_echo()
 	sigint_handled = False
 	try:
 		loop.add_signal_handler(signal.SIGINT, on_sigint)
@@ -317,6 +350,7 @@ async def run(
 			)
 			if isinstance(r, BaseException)
 		)
+		restore_tty(saved_tty)
 		if teardown_errors:
 			raise BaseExceptionGroup("teardown errors", teardown_errors)
 	return RunResult(

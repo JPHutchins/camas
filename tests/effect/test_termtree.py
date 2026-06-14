@@ -217,7 +217,7 @@ def test_render_frame_repositions_with_previous_height() -> None:
 		wall_elapsed=0.0,
 		prev_visible=first.visible,
 	)
-	assert repaint.text.startswith(f"\r\x1b[{first.visible - 1}A")
+	assert repaint.text.startswith(f"\x1b[{first.visible - 1}F")
 
 
 def test_render_frame_erases_leftover_rows_when_shrinking() -> None:

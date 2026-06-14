@@ -359,7 +359,7 @@ def clamp_lines(lines: tuple[str, ...], height: int) -> tuple[str, ...]:
 	The summary is the most information-dense line (aggregate progress + total
 	elapsed), so it survives; the overflowing leaf rows above it collapse into one
 	elision marker. Bounding the live region to the viewport is what stops the
-	repaint from scrolling: cursor-up (``\033[NA``) clamps at the top of the
+	repaint from scrolling: cursor-up (``\033[NF``) clamps at the top of the
 	screen, so a frame taller than the window can never be rewritten in place.
 
 	>>> clamp_lines(("a", "b", "sum"), 5)
@@ -400,15 +400,13 @@ def render_frame(
 ) -> FrameResult:
 	r"""Render one positioned frame for live animation, clamped to ``term_height``.
 
-	Repaints in place with ``\r`` + cursor-up (CUU, ``\033[NA``) to the top of the
-	previously-drawn region, then rewrites it. CUU is preferred over cursor-previous-
-	line (CPL, ``\033[NF``): both clamp at the top of the screen, but Windows Terminal
-	strands the top row each frame under CPL, so the live tree stacks instead of
-	repainting. ``prev_visible`` is the height the *previous* frame occupied (0 on the
-	first frame, which just writes where the cursor is and lets the terminal scroll to
-	make room) — tracking that, not the current frame's height, keeps the cursor math
-	right when the line count changes across a resize, and lets a now-shorter frame
-	erase the rows the previous one left behind (``\033[0J``).
+	Repaints in place by moving the cursor up ``prev_visible - 1`` lines (CPL,
+	``\033[NF``) to the top of the previously-drawn region, then rewriting it.
+	``prev_visible`` is the height the *previous* frame occupied (0 on the first
+	frame, which just writes where the cursor is and lets the terminal scroll to
+	make room) — tracking that, not the current frame's height, keeps the cursor
+	math right when the line count changes across a resize, and lets a now-shorter
+	frame erase the rows the previous one left behind (``\033[0J``).
 
 	``final`` skips the clamp to emit the whole tree once at teardown so the
 	completed run persists in the scrollback.
@@ -417,7 +415,7 @@ def render_frame(
 		render_lines(rows, states, term_width, term_width - STATUS_COL_WIDTH - 1, now, wall_elapsed)
 	)
 	lines: Final = full if final else clamp_lines(full, term_height)
-	reposition: Final = f"\r\033[{prev_visible - 1}A" if prev_visible > 1 else ""
+	reposition: Final = f"\033[{prev_visible - 1}F" if prev_visible > 1 else ""
 	erase: Final = "\033[0J" if len(lines) < prev_visible else ""
 	return FrameResult(reposition + "\n".join(lines) + erase, len(lines))
 

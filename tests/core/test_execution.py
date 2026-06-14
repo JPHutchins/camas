@@ -14,7 +14,15 @@ from typing import TYPE_CHECKING
 import pytest
 
 from camas import Parallel, Sequential, Task
-from camas.core.execution import Interrupts, Signalable, await_run, run, step_interrupt
+from camas.core.execution import (
+	Interrupts,
+	Signalable,
+	await_run,
+	restore_tty,
+	run,
+	step_interrupt,
+	suppress_ctrl_c_echo,
+)
 from camas.v0.completion import INTERRUPT_RC, Finished, Stopped
 from camas.v0.task_event import AbortedEvent, InterruptedEvent, TaskEvent
 
@@ -359,3 +367,33 @@ def test_ctrl_c_resolves_jobs_queued_leaves_as_stopped() -> None:
 	assert result.returncode == INTERRUPT_RC
 	assert len(result.results) == 4
 	assert all(isinstance(r.completion, Stopped) for r in result.results)
+
+
+class _FakeStdin:
+	def __init__(self, fd: int) -> None:
+		self._fd = fd
+
+	def fileno(self) -> int:
+		return self._fd
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX termios only")
+def test_suppress_and_restore_ctrl_c_echo(monkeypatch: pytest.MonkeyPatch) -> None:
+	import termios
+
+	master, slave = os.openpty()
+	try:
+		on = termios.tcgetattr(slave)
+		on[3] |= termios.ECHOCTL  # ensure it starts enabled
+		termios.tcsetattr(slave, termios.TCSANOW, on)
+		monkeypatch.setattr(sys, "stdin", _FakeStdin(slave))
+
+		saved = suppress_ctrl_c_echo()
+		assert saved is not None
+		assert not termios.tcgetattr(slave)[3] & termios.ECHOCTL  # cleared while live
+
+		restore_tty(saved)
+		assert termios.tcgetattr(slave)[3] & termios.ECHOCTL  # restored on teardown
+	finally:
+		os.close(master)
+		os.close(slave)
