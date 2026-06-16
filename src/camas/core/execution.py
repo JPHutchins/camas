@@ -210,21 +210,19 @@ async def execute(node: TaskNode, ctx: RunContext) -> tuple[TaskResult, ...]:
 			return tuple(r for f in futures for r in f.result())
 		case Sequential(tasks=children):
 			seq_results: tuple[TaskResult, ...] = ()
-			failed_rc: int | None = None
+			blocker: TaskResult | None = None
 			for child in children:
 				child_results = (
-					await skip_subtree(child, Skipped(failed_rc), ctx)
-					if failed_rc is not None
+					await skip_subtree(
+						child, Skipped(blocker.completion.returncode, blocker.name), ctx
+					)
+					if blocker is not None
 					else await execute(child, ctx)
 				)
 				seq_results = (*seq_results, *child_results)
-				if failed_rc is None:
-					failed_rc = next(
-						(
-							r.completion.returncode
-							for r in child_results
-							if r.completion.returncode != 0
-						),
+				if blocker is None:
+					blocker = next(
+						(r for r in child_results if r.completion.returncode != 0),
 						None,
 					)
 			return seq_results

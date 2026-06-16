@@ -92,7 +92,7 @@ def next_state(state: LeafState, event: TaskEvent) -> LeafState:
 	>>> next_state(Running(t, t0, b""), CompletedEvent(t, 0, Finished(0, 0.5, (b"done",)), t1))
 	Completed(task=Task(cmd='echo hi', name=None, env={}, cwd=None), completion=Finished(returncode=0, elapsed=0.5, output=(b'done',)))
 	>>> next_state(Waiting(t), CompletedEvent(t, 0, Skipped(1), t0))
-	Completed(task=Task(cmd='echo hi', name=None, env={}, cwd=None), completion=Skipped(returncode=1))
+	Completed(task=Task(cmd='echo hi', name=None, env={}, cwd=None), completion=Skipped(returncode=1, blocked_by=None))
 	>>> next_state(Interrupting(t, t0, b"", 2), OutputEvent(t, 0, b"bye", t1))
 	Interrupting(task=Task(cmd='echo hi', name=None, env={}, cwd=None), start_time=datetime.datetime(2026, 1, 1, 12, 0), last_line=b'bye', presses=2)
 	"""
