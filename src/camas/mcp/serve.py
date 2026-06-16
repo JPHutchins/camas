@@ -1,0 +1,482 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 JP Hutchins
+
+"""The ``camas mcp`` stdio server: exposes a project's tasks as ``camas_list`` and ``camas_run``.
+
+A native peer of the display Effects — it consumes camas's own ``RunResult`` and
+serializes it to MCP, rather than scraping terminal output. The project is pinned
+at launch (one server, one project); a run executes in-process via
+:func:`camas.core.execution.run` so the live event stream is preserved.
+
+Everything here imports ``mcp``/``pydantic`` at module top — fine, because the whole
+package is imported only inside the ``camas mcp`` branch of :func:`camas.main.main`,
+never on the ``camas <task>`` hot path.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import os
+import re
+import sys
+from contextlib import redirect_stdout
+from dataclasses import dataclass
+from enum import Enum
+from importlib.metadata import version
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Final, NamedTuple
+
+from mcp import types
+from mcp.server.lowlevel import Server
+from pydantic import AnyUrl, ValidationError
+
+from ..core.execution import run
+from ..core.matrix import override_matrix
+from ..core.render import render_tree_lines, strip_ansi
+from ..main.argv import apply_passthrough
+from ..main.format import format_load_error_hint
+from ..main.state import EMPTY_STATE, LoadErr, LoadOk, TasksState
+from ..main.tasks import load_tasks, load_tasks_from_py
+from ..v0.completion import Finished, Skipped, Stopped
+from . import wire
+from .catalog import to_list_response
+from .result import to_run_response
+
+if sys.version_info >= (3, 11):
+	from typing import assert_never
+else:  # pragma: no cover
+	from typing_extensions import assert_never
+
+if TYPE_CHECKING:
+	from collections.abc import Mapping, Sequence
+
+	from ..core.completion import RunResult, TaskResult
+	from ..v0.task import TaskNode
+
+
+CAMAS_DIR: Final = ".camas"
+
+
+class ToolName(Enum):
+	"""The tools this server exposes; each member's value is its on-the-wire name."""
+
+	LIST = "camas_list"
+	RUN = "camas_run"
+
+
+LIST_DESCRIPTION: Final = (
+	"List THIS project's camas-defined tasks: each task's name, help text, a one-line "
+	"preview of the command(s) it runs, and any matrix axes it expands across (versions, "
+	"targets, toolchains, platforms — whatever the project declares). Two tasks are flagged: "
+	"the default (what the developer runs while working) and the github default — the exact "
+	"task this project's CI runs (camas is the single definition shared by local and CI), so "
+	"running it locally before you commit or push reproduces CI exactly. Use this first to "
+	"discover valid task names for camas_run; it is the source of truth. Read-only; runs nothing."
+)
+RUN_DESCRIPTION: Final = (
+	"Run THIS project's defined tasks exactly as composed by the project — honoring its "
+	"concurrency, matrix expansion across whatever axes it declares, and per-task cwd/env. "
+	"Use this INSTEAD of invoking the underlying commands by hand: it runs the "
+	"project-sanctioned command set, in the right order, in parallel where declared, and "
+	"returns a structured per-task pass/fail report naming which task failed, with an output "
+	"excerpt and a log path. Compact failures-first summary by default; pass verbosity='full' "
+	"for everything, or dry_run=true to preview the fully-resolved plan without executing. A "
+	"non-zero result means a task failed — a normal result, not a tool error."
+)
+
+NO_ARGS_SCHEMA: Final[dict[str, Any]] = {
+	"type": "object",
+	"properties": {},
+	"additionalProperties": False,
+}
+LIST_ANNOTATIONS: Final = types.ToolAnnotations(readOnlyHint=True, openWorldHint=False)
+RUN_ANNOTATIONS: Final = types.ToolAnnotations(
+	readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=True
+)
+
+
+class Compat(NamedTuple):
+	"""Client-compatibility switches. ``emit_structured`` gates the 2025-11-25 ``title`` and
+	``annotations`` tool fields plus ``structuredContent`` — all default-OFF because emitting
+	them makes some Claude Code versions silently drop every tool (issue #25081); the
+	load-bearing ``TextContent`` summary carries everything. ``outputSchema`` is deferred until
+	``--rich`` is de-gated, since ref-blind clients need it inlined and pydantic offers no
+	upstream way to emit a ref-free schema.
+	"""
+
+	emit_structured: bool = False
+
+
+@dataclass
+class Session:
+	"""Launch-pinned server state: the resolved project, its root (for ``.camas/`` logs),
+	the compat switches, and a per-run counter naming each run's log directory.
+	"""
+
+	project: TasksState
+	base: Path
+	compat: Compat
+	runs: int = 0
+
+	def reserve_run(self) -> int:
+		"""Claim the next run's sequence number (atomic between ``await`` points)."""
+		self.runs += 1
+		return self.runs
+
+
+def serve_stdio(argv: list[str]) -> None:  # pragma: no cover
+	"""Entry point for ``camas mcp``: resolve the project, build the server, serve over stdio."""
+	os.environ["NO_COLOR"] = "1"
+	base = project_base()
+	session = Session(resolve_project_quiet(base), base, compat_from_argv(argv))
+	asyncio.run(_run_over_stdio(build_server(session)))
+
+
+async def _run_over_stdio(server: Server[object]) -> None:  # pragma: no cover
+	"""Wire the low-level server to the stdio transport and run until the client closes it."""
+	from mcp.server.stdio import stdio_server
+
+	async with stdio_server() as (read, write):
+		await server.run(read, write, server.create_initialization_options())
+
+
+def build_server(session: Session) -> Server[object]:
+	"""A low-level MCP ``Server`` with the two camas tool handlers registered."""
+	server: Server[object] = Server("camas", version=version("camas"))
+
+	async def list_handler() -> list[types.Tool]:
+		return list(tools(task_names(session.project), session.compat))
+
+	async def call_handler(name: str, arguments: dict[str, Any]) -> types.CallToolResult:
+		return await call(session, name, arguments)
+
+	server.list_tools()(list_handler)  # type: ignore[no-untyped-call]
+	server.call_tool(validate_input=False)(call_handler)
+	return server
+
+
+async def call(session: Session, name: str, arguments: dict[str, Any]) -> types.CallToolResult:
+	"""Dispatch a ``tools/call`` to the matching handler, or a tool error for an unknown name."""
+	match _parse_tool(name):
+		case ToolName.LIST:
+			return list_call(session)
+		case ToolName.RUN:
+			return await run_call(session, arguments)
+		case _:
+			known = ", ".join(repr(tool.value) for tool in ToolName)
+			return error_result(f"unknown tool {name!r}; expected one of: {known}")
+
+
+def _parse_tool(name: str) -> ToolName | None:
+	"""The tool matching ``name``, or ``None`` if the client named an unknown tool."""
+	return next((tool for tool in ToolName if tool.value == name), None)
+
+
+def task_names(project: TasksState) -> tuple[str, ...]:
+	"""Discovered task names, sorted; empty when the project failed to load."""
+	return tuple(sorted(project.tasks)) if isinstance(project, LoadOk) else ()
+
+
+class Tools(NamedTuple):
+	"""The fixed pair of tools the server exposes — a known shape, not an open list."""
+
+	discovery: types.Tool
+	execution: types.Tool
+
+
+def tools(names: tuple[str, ...], compat: Compat) -> Tools:
+	"""The two tool definitions, with ``names`` spliced into ``camas_run``'s ``task`` enum."""
+	return Tools(
+		discovery=types.Tool(
+			name=ToolName.LIST.value,
+			description=LIST_DESCRIPTION,
+			inputSchema=NO_ARGS_SCHEMA,
+			title="List camas tasks" if compat.emit_structured else None,
+			annotations=LIST_ANNOTATIONS if compat.emit_structured else None,
+		),
+		execution=types.Tool(
+			name=ToolName.RUN.value,
+			description=RUN_DESCRIPTION,
+			inputSchema=wire.run_input_schema(names),
+			title="Run camas tasks" if compat.emit_structured else None,
+			annotations=RUN_ANNOTATIONS if compat.emit_structured else None,
+		),
+	)
+
+
+def list_call(session: Session) -> types.CallToolResult:
+	"""Handle ``camas_list``: the project's task catalog, or a load error."""
+	match session.project:
+		case LoadErr(source=source, exception=exception):
+			return error_result(format_load_error_hint(source, exception))
+		case LoadOk(tasks=tasks, config=config):
+			resp = to_list_response(tasks, config)
+			return success(list_text(resp), resp, session.compat)
+		case _:
+			assert_never(session.project)
+
+
+async def run_call(session: Session, arguments: dict[str, Any]) -> types.CallToolResult:
+	"""Handle ``camas_run``: validate, resolve the node, then dry-run or execute in-process."""
+	match session.project:
+		case LoadErr(source=source, exception=exception):
+			return error_result(format_load_error_hint(source, exception))
+		case LoadOk(tasks=tasks):
+			return await _run_for(session, tasks, arguments)
+		case _:
+			assert_never(session.project)
+
+
+async def _run_for(
+	session: Session, tasks: Mapping[str, TaskNode], arguments: dict[str, Any]
+) -> types.CallToolResult:
+	"""Validate, resolve the node, then dry-run or execute in the server's event loop."""
+	try:
+		req = wire.RunRequest.model_validate(arguments)
+	except ValidationError as e:
+		return error_result(f"invalid camas_run arguments:\n{e}")
+	try:
+		node = resolve_run_node(tasks, req)
+	except ValueError as e:
+		return error_result(str(e))
+	if req.dry_run:
+		return success_text(dry_run_text(node))
+	result = await run(node, jobs=req.jobs, interactive=False)
+	logs = write_logs(create_run_log_dir(session.base, req.task, session.reserve_run()), result)
+	resp = to_run_response(node, result, verbosity=req.verbosity)
+	return success(
+		run_text(req.task, resp, logs), resp, session.compat, links=failing_log_links(resp, logs)
+	)
+
+
+def resolve_run_node(tasks: Mapping[str, TaskNode], req: wire.RunRequest) -> TaskNode:
+	"""The node to run: looked up by name, then matrix-overridden and passthrough-appended.
+
+	Raises:
+		ValueError: when ``req.task`` names no task, an override targets an unknown
+			matrix axis, or passthrough args are applied to a non-leaf task.
+	"""
+	if req.task not in tasks:
+		known = ", ".join(sorted(tasks)) or "none"
+		raise ValueError(f"no task named {req.task!r} (known: {known})")
+	node = tasks[req.task]
+	if req.matrix_overrides:
+		node = override_matrix(node, {k: tuple(v) for k, v in req.matrix_overrides.items()})
+	if req.args:
+		node = apply_passthrough(node, tuple(req.args))
+	return node
+
+
+def create_run_log_dir(base: Path, task: str, seq: int) -> Path:
+	"""Create and return ``base/.camas/runs/<task>/<seq>/`` (plus the ``.camas/.gitignore``).
+
+	Namespacing the per-run directory by task name keeps the logs legible to humans and
+	agents browsing them; ``seq`` separates repeated runs of the same task.
+	"""
+	camas = base / CAMAS_DIR
+	camas.mkdir(exist_ok=True)
+	gitignore = camas / ".gitignore"
+	if not gitignore.exists():
+		gitignore.write_text("*\n", encoding="utf-8")
+	run_dir = camas / "runs" / _slug(task) / str(seq)
+	run_dir.mkdir(parents=True, exist_ok=True)
+	return run_dir
+
+
+def write_logs(run_dir: Path, result: RunResult) -> tuple[Path | None, ...]:
+	"""Write each leaf's full output to ``run_dir``, one entry per leaf in DFS order.
+
+	An entry is ``None`` when that leaf produced no log — it was skipped, or ran silently.
+	Positionally aligned with ``RunResponse.leaves`` so the two zip ``strict``.
+	"""
+	return tuple(_write_leaf_log(run_dir, i, leaf) for i, leaf in enumerate(result.results))
+
+
+def _write_leaf_log(run_dir: Path, index: int, leaf: TaskResult) -> Path | None:
+	match leaf.completion:
+		case Finished(output=output) | Stopped(output=output):
+			if not output:
+				return None
+			path = run_dir / f"{index:03d}_{_slug(leaf.name)}.log"
+			path.write_text(_decode_log(output), encoding="utf-8")
+			return path
+		case Skipped():
+			return None
+		case _:
+			assert_never(leaf.completion)
+
+
+def failing_log_links(
+	resp: wire.RunResponse, logs: tuple[Path | None, ...]
+) -> tuple[types.ResourceLink, ...]:
+	"""``resource_link``s to the on-disk logs of the leaves that did not pass."""
+	return tuple(
+		types.ResourceLink(
+			type="resource_link",
+			name=leaf.name,
+			uri=AnyUrl(log.as_uri()),
+			mimeType="text/plain",
+			description=f"Full output of task {leaf.name!r}",
+		)
+		for leaf, log in zip(resp.leaves, logs, strict=True)
+		if log is not None and leaf.completion.returncode != 0
+	)
+
+
+def list_text(resp: wire.ListResponse) -> str:
+	"""The load-bearing human summary for ``camas_list``."""
+	lines = [f"{len(resp.tasks)} task(s) defined. Call camas_run with one of these names."]
+	if resp.default is not None:
+		lines.append(f"default (developer's task): {resp.default}")
+	if resp.github_default is not None:
+		lines.append(
+			f"github default (exactly what CI runs; run before committing/pushing): "
+			f"{resp.github_default}"
+		)
+	lines.append("")
+	width = max((len(t.name) for t in resp.tasks), default=0)
+	for t in resp.tasks:
+		marks = "".join(
+			mark
+			for mark, on in ((" [default]", t.is_default), (" [github]", t.is_github_default))
+			if on
+		)
+		body = t.help or t.command_preview
+		lines.append(f"  {t.name.ljust(width)}{marks}  {body}{_matrix_note(t.matrix_axes)}")
+	return "\n".join(lines)
+
+
+def _matrix_note(axes: dict[str, list[str]]) -> str:
+	if not axes:
+		return ""
+	rendered = ", ".join(f"{name}={'/'.join(values)}" for name, values in axes.items())
+	return f"  (matrix: {rendered})"
+
+
+def run_text(task: str, resp: wire.RunResponse, logs: tuple[Path | None, ...]) -> str:
+	"""The load-bearing human summary for ``camas_run`` — failures carry their log path."""
+	verdict = "PASSED" if resp.returncode == 0 else "FAILED"
+	lines = [
+		f"camas_run {task!r}: {verdict} (returncode={resp.returncode}) in {resp.elapsed:.2f}s — "
+		f"{resp.passed} passed, {resp.failed} failed, {resp.skipped} skipped",
+		"",
+	]
+	for leaf, log in zip(resp.leaves, logs, strict=True):
+		lines.extend(_leaf_lines(leaf, log))
+	return "\n".join(lines)
+
+
+def dry_run_text(node: TaskNode) -> str:
+	"""The fully-resolved (post-matrix) plan for ``dry_run=true`` — nothing is executed."""
+	plan = "\n".join(render_tree_lines(node, show_cmd=True, color=False))
+	return f"Dry run — fully-resolved plan, nothing executed:\n{plan}"
+
+
+def success(
+	text: str,
+	model: wire.ListResponse | wire.RunResponse,
+	compat: Compat,
+	*,
+	links: tuple[types.ResourceLink, ...] = (),
+) -> types.CallToolResult:
+	"""A non-error result: the load-bearing ``TextContent`` plus gated ``structuredContent``."""
+	content: list[types.ContentBlock] = [types.TextContent(type="text", text=text), *links]
+	structured = model.model_dump(mode="json") if compat.emit_structured else None
+	return types.CallToolResult(content=content, structuredContent=structured, isError=False)
+
+
+def success_text(text: str) -> types.CallToolResult:
+	"""A non-error, text-only result (used by the dry-run preview)."""
+	return types.CallToolResult(content=[types.TextContent(type="text", text=text)], isError=False)
+
+
+def error_result(text: str) -> types.CallToolResult:
+	"""A tool-execution error (``isError=true``) with self-correcting text for the agent."""
+	return types.CallToolResult(content=[types.TextContent(type="text", text=text)], isError=True)
+
+
+def resolve_project(base: Path) -> TasksState:
+	"""Walk up from ``base`` for a ``tasks.py`` or ``[tool.camas.tasks]`` pyproject.
+
+	Never exits or prints (unlike the CLI's resolver): a broken tasks file becomes a
+	:class:`LoadErr` the handlers turn into a tool error.
+	"""
+	for candidate in (base, *base.parents):
+		tasks_py = candidate / "tasks.py"
+		if tasks_py.is_file():
+			try:
+				return load_tasks_from_py(tasks_py)
+			except Exception as e:
+				return LoadErr(source=tasks_py, exception=e)
+		pyproject = candidate / "pyproject.toml"
+		if pyproject.is_file():
+			try:
+				loaded = load_tasks(pyproject)
+			except ValueError as e:
+				return LoadErr(source=pyproject, exception=e)
+			if loaded.tasks:
+				return loaded
+	return EMPTY_STATE
+
+
+def resolve_project_quiet(base: Path) -> TasksState:
+	"""Resolve the project with stdout redirected to stderr.
+
+	``tasks.py`` runs as Python via ``runpy``; a module-level ``print`` there would
+	otherwise land on the stdout that the JSON-RPC transport owns and corrupt the stream.
+	"""
+	with redirect_stdout(sys.stderr):
+		return resolve_project(base)
+
+
+def project_base() -> Path:
+	"""The absolute project root: ``CLAUDE_PROJECT_DIR`` when Claude Code sets it, else cwd.
+
+	Resolved to absolute so per-run log paths can become ``file://`` ``resource_link``s.
+	"""
+	env = os.environ.get("CLAUDE_PROJECT_DIR")
+	return (Path(env) if env else Path.cwd()).resolve()
+
+
+def compat_from_argv(argv: list[str]) -> Compat:
+	"""Parse ``camas mcp`` flags: ``--rich`` opts into the gated 2025-11-25 tool fields."""
+	return Compat(emit_structured="--rich" in argv)
+
+
+def _leaf_lines(leaf: wire.LeafReport, log: Path | None) -> list[str]:
+	"""The summary lines for one leaf: a status header, any output excerpt, and its log path."""
+	completion = leaf.completion
+	match completion:
+		case wire.Finished(returncode=rc, elapsed=el):
+			if rc == 0:
+				return [f"ok     {leaf.name} ({el:.2f}s)", *_indent(completion.output)]
+			head = f"FAIL   {leaf.name} (exit {rc}, {el:.2f}s)"
+			return [head, *_indent(completion.output), *_tail(leaf.truncated, log)]
+		case wire.Stopped(returncode=rc, elapsed=el):
+			head = f"STOP   {leaf.name} (interrupted, exit {rc}, {el:.2f}s)"
+			return [head, *_indent(completion.output), *_tail(leaf.truncated, log)]
+		case wire.Skipped(blocked_by=blocked_by):
+			blame = f" — blocked by {blocked_by!r}" if blocked_by is not None else ""
+			return [f"SKIP   {leaf.name}{blame}"]
+		case _:
+			assert_never(completion)
+
+
+def _indent(output: list[str]) -> list[str]:
+	return [f"    {line}" for line in output]
+
+
+def _tail(truncated: bool, log: Path | None) -> list[str]:
+	"""The trailing lines under a failed leaf: a truncation marker then the full-log path."""
+	lines = ["    … earlier output truncated; see full log"] if truncated else []
+	if log is not None:
+		lines.append(f"    full log: {log}")
+	return lines
+
+
+def _slug(name: str) -> str:
+	return re.sub(r"[^A-Za-z0-9._-]+", "_", name)[:80]
+
+
+def _decode_log(output: Sequence[bytes]) -> str:
+	return strip_ansi("".join(chunk.decode("utf-8", errors="replace") for chunk in output))

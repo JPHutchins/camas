@@ -35,10 +35,10 @@ def to_run_response(
 ) -> wire.RunResponse:
 	"""Assemble the wire ``RunResponse`` from a finished run and its pre-expansion task tree."""
 	leaves = tuple(info.task for info in flatten_leaves(expand_matrix(node)))
-	mapped = tuple(
+	reports = [
 		_report(task, tr, verbosity=verbosity, tail=tail)
 		for task, tr in zip(leaves, result.results, strict=True)
-	)
+	]
 	completions = tuple(tr.completion for tr in result.results)
 	passed = sum(1 for c in completions if isinstance(c, Finished) and c.returncode == 0)
 	skipped = sum(1 for c in completions if isinstance(c, Skipped))
@@ -49,18 +49,13 @@ def to_run_response(
 		failed=len(completions) - passed - skipped,
 		skipped=skipped,
 		interrupt_count=result.interrupt_count,
-		leaves=[leaf.report for leaf in mapped],
-		truncated=any(leaf.truncated for leaf in mapped),
+		leaves=reports,
+		truncated=any(report.truncated for report in reports),
 	)
 
 
 class _Decoded(NamedTuple):
 	lines: list[str]
-	truncated: bool
-
-
-class _MappedLeaf(NamedTuple):
-	report: wire.LeafReport
 	truncated: bool
 
 
@@ -79,7 +74,7 @@ def _decode(output: Sequence[bytes], tail: int, *, include: bool) -> _Decoded:
 	return _Decoded(lines, truncated=False)
 
 
-def _report(task: Task, result: TaskResult, *, verbosity: Verbosity, tail: int) -> _MappedLeaf:
+def _report(task: Task, result: TaskResult, *, verbosity: Verbosity, tail: int) -> wire.LeafReport:
 	comp: Completion = result.completion
 	include = verbosity == "full" or (verbosity == "failures" and comp.returncode != 0)
 	match comp:
@@ -96,10 +91,10 @@ def _report(task: Task, result: TaskResult, *, verbosity: Verbosity, tail: int) 
 			completion = wire.Skipped(returncode=rc, blocked_by=bb)
 		case _:
 			assert_never(comp)
-	report = wire.LeafReport(
+	return wire.LeafReport(
 		name=result.name,
 		command=_command(task),
 		cwd=str(task.cwd) if task.cwd is not None else None,
 		completion=completion,
+		truncated=decoded.truncated,
 	)
-	return _MappedLeaf(report, decoded.truncated)

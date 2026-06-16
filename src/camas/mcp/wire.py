@@ -47,6 +47,8 @@ class LeafReport(BaseModel):
 	command: str
 	cwd: str | None = None
 	completion: Completion
+	truncated: bool = False
+	"""True when this leaf's ``output`` is a tail excerpt; the full log is on disk."""
 
 
 class RunResponse(BaseModel):
@@ -96,7 +98,7 @@ class RunRequest(BaseModel):
 		description="summary: pass/fail only; failures: + output of failed leaves; full: all output.",
 	)
 	jobs: int | None = Field(
-		default=None, description="Max concurrent leaf subprocesses; null = unbounded."
+		default=None, ge=1, description="Max concurrent leaf subprocesses; null = unbounded."
 	)
 	matrix_overrides: dict[str, list[str]] = Field(
 		default_factory=dict,
