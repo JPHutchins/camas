@@ -375,16 +375,16 @@ def test_run_text_covers_every_status() -> None:
 			wire.LeafReport(name="s2", command="c", completion=wire.Skipped(returncode=2)),
 		],
 	)
-	text = serve.run_text(
-		"ci", resp, (Path("/logs/ok1.log"), Path("/logs/bad.log"), None, None, None)
-	)
+	ok1_log = Path("/logs/ok1.log")
+	bad_log = Path("/logs/bad.log")
+	text = serve.run_text("ci", resp, (ok1_log, bad_log, None, None, None))
 	assert "FAILED (returncode=1)" in text
 	assert "ok     ok1" in text
-	assert "/logs/ok1.log" not in text
+	assert str(ok1_log) not in text
 	assert "FAIL   bad" in text
 	assert "    err" in text
 	assert "truncated" in text
-	assert "full log: /logs/bad.log" in text
+	assert f"full log: {bad_log}" in text
 	assert "STOP   stp" in text
 	assert "    bye" in text
 	assert "SKIP   s1 — blocked by 'bad'" in text

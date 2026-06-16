@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import importlib
 import sys
 
 from .dispatch import dispatch, reconfigure_stdio_utf8, resolve_tasks_source
@@ -15,9 +16,7 @@ def main() -> None:
 	reconfigure_stdio_utf8()
 	argv = sys.argv[1:]
 	if argv and argv[0] == "mcp":
-		from camas.mcp.serve import serve_stdio
-
-		serve_stdio(argv[1:])
+		importlib.import_module("camas.mcp.serve").serve_stdio(argv[1:])
 		return
 	dispatch(*resolve_tasks_source(argv))
 
