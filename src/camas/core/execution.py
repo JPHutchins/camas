@@ -231,7 +231,11 @@ async def execute(node: TaskNode, ctx: RunContext) -> tuple[TaskResult, ...]:
 
 
 async def run(
-	task: TaskNode, effects: Sequence[Effect[Any]] = (), jobs: int | None = None
+	task: TaskNode,
+	effects: Sequence[Effect[Any]] = (),
+	jobs: int | None = None,
+	*,
+	interactive: bool = True,
 ) -> RunResult:
 	"""Execute a task tree, dispatching events to every effect.
 
@@ -288,13 +292,14 @@ async def run(
 	def on_sigint() -> None:
 		step_interrupt(interrupts, states)
 
-	saved_tty: Final = suppress_ctrl_c_echo()
+	saved_tty: Final = suppress_ctrl_c_echo() if interactive else None
 	sigint_handled = False
-	try:
-		loop.add_signal_handler(signal.SIGINT, on_sigint)
-		sigint_handled = True
-	except NotImplementedError:  # pragma: no cover
-		pass
+	if interactive:
+		try:
+			loop.add_signal_handler(signal.SIGINT, on_sigint)
+			sigint_handled = True
+		except NotImplementedError:  # pragma: no cover
+			pass
 
 	results: tuple[TaskResult, ...] = ()
 	try:

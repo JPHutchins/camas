@@ -248,6 +248,14 @@ def test_sequential_skip_nested_group() -> None:
 	assert skips == {"skipped1": Skipped(1, "fail"), "skipped2": Skipped(1, "fail")}
 
 
+def test_interactive_flag_gates_terminal_setup(monkeypatch: pytest.MonkeyPatch) -> None:
+	calls: list[int] = []
+	monkeypatch.setattr("camas.core.execution.suppress_ctrl_c_echo", lambda: calls.append(1))
+	assert asyncio.run(run(Task(("python", "-c", "pass")), interactive=True)).returncode == 0
+	assert asyncio.run(run(Task(("python", "-c", "pass")), interactive=False)).returncode == 0
+	assert calls == [1]
+
+
 def test_matrix_nested_sequential_in_parallel() -> None:
 	task = Parallel(
 		Sequential(
