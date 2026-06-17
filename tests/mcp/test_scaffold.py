@@ -12,32 +12,61 @@ import pytest
 from camas.mcp.scaffold import write_mcp_json
 
 if TYPE_CHECKING:
+	from collections.abc import Callable
 	from pathlib import Path
 
 
-def test_creates_mcp_json_when_absent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def _which(*found: str) -> Callable[[str], str | None]:
+	return lambda name: f"/usr/bin/{name}" if name in found else None
+
+
+def test_uv_project_emits_portable_uv_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 	monkeypatch.chdir(tmp_path)
+	(tmp_path / "uv.lock").write_text("")
+	monkeypatch.setattr("shutil.which", _which("uv", "camas"))
 	assert write_mcp_json([]) == 0
 	entry = json.loads((tmp_path / ".mcp.json").read_text())["mcpServers"]["camas"]
 	assert entry["type"] == "stdio"
+	assert (entry["command"], entry["args"]) == ("uv", ["run", "camas", "mcp"])
+
+
+def test_uv_present_without_lock_falls_through(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	monkeypatch.chdir(tmp_path)
+	monkeypatch.setattr("shutil.which", _which("uv", "camas"))
+	assert write_mcp_json([]) == 0
+	entry = json.loads((tmp_path / ".mcp.json").read_text())["mcpServers"]["camas"]
+	assert entry["command"] == "camas"
+
+
+def test_camas_on_path_appends_rich(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+	monkeypatch.chdir(tmp_path)
+	monkeypatch.setattr("shutil.which", _which("camas"))
+	assert write_mcp_json(["--rich"]) == 0
+	entry = json.loads((tmp_path / ".mcp.json").read_text())["mcpServers"]["camas"]
+	assert (entry["command"], entry["args"]) == ("camas", ["mcp", "--rich"])
+
+
+def test_absolute_fallback_when_nothing_on_path(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	monkeypatch.chdir(tmp_path)
+	monkeypatch.setattr("shutil.which", _which())
+	assert write_mcp_json([]) == 0
+	entry = json.loads((tmp_path / ".mcp.json").read_text())["mcpServers"]["camas"]
 	assert entry["command"] == sys.executable
 	assert entry["args"] == ["-m", "camas", "mcp"]
 
 
 def test_merges_preserving_other_servers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 	monkeypatch.chdir(tmp_path)
+	monkeypatch.setattr("shutil.which", _which("camas"))
 	(tmp_path / ".mcp.json").write_text(json.dumps({"mcpServers": {"other": {"command": "x"}}}))
 	assert write_mcp_json([]) == 0
 	servers = json.loads((tmp_path / ".mcp.json").read_text())["mcpServers"]
 	assert servers["other"] == {"command": "x"}
-	assert servers["camas"]["command"] == sys.executable
-
-
-def test_rich_flag_appends_rich_arg(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-	monkeypatch.chdir(tmp_path)
-	assert write_mcp_json(["--rich"]) == 0
-	args = json.loads((tmp_path / ".mcp.json").read_text())["mcpServers"]["camas"]["args"]
-	assert args == ["-m", "camas", "mcp", "--rich"]
+	assert servers["camas"]["command"] == "camas"
 
 
 def test_malformed_json_errors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

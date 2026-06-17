@@ -5,14 +5,15 @@
 
 Stdlib only — no ``mcp``/``pydantic`` — so scaffolding works without the ``[mcp]``
 extra and stays off the import path of ``camas mcp`` (serving). The launch command
-is ``{sys.executable} -m camas mcp``: the interpreter currently running camas, which
-is correct regardless of install method (uv, pipx, pip) but absolute, hence
-per-machine rather than committable.
+is chosen for portability: a uv project gets ``uv run camas mcp`` (committable, uses
+the project's own camas), a ``camas`` on PATH is used directly, and only as a last
+resort does it fall back to this interpreter's absolute path.
 """
 
 from __future__ import annotations
 
 import json
+import shutil
 import sys
 from pathlib import Path
 from typing import Any, Final, cast
@@ -36,24 +37,45 @@ def write_mcp_json(argv: list[str]) -> int:
 	if not isinstance(servers, dict):
 		print(f"error: {target} has a non-object 'mcpServers'", file=sys.stderr)
 		return 2
-	servers[SERVER_NAME] = _entry(rich="--rich" in argv)
+	command, args = _launch(rich="--rich" in argv)
+	servers[SERVER_NAME] = {"type": "stdio", "command": command, "args": args}
 	target.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
 	print(
 		f"Wrote the {SERVER_NAME!r} MCP server to {target}\n"
-		f"  command: {sys.executable} -m camas mcp{' --rich' if '--rich' in argv else ''}\n\n"
-		"This command is specific to this environment, not portable. Reload Claude "
-		"Code, approve the server, then ask it to call camas_list."
+		f"  command: {command} {' '.join(args)}\n\n"
+		f"{_portability_note(command)} Reload Claude Code, approve the server, "
+		"then ask it to call camas_list."
 	)
 	return 0
 
 
-def _entry(*, rich: bool) -> dict[str, Any]:
-	"""The ``.mcp.json`` stdio entry launching this interpreter's camas."""
-	return {
-		"type": "stdio",
-		"command": sys.executable,
-		"args": ["-m", "camas", "mcp", *(["--rich"] if rich else [])],
-	}
+def _launch(*, rich: bool) -> tuple[str, list[str]]:
+	"""The most portable launch command for camas in this environment.
+
+	A uv project (``uv.lock`` in cwd or an ancestor) runs ``uv run camas`` —
+	committable and bound to the project's camas, not a stale global. Else a
+	``camas`` on PATH is used directly. The final fallback runs this interpreter's
+	``-m camas`` (an absolute, per-machine path).
+	"""
+	tail = ["mcp", "--rich"] if rich else ["mcp"]
+	if shutil.which("uv") is not None and _uv_project_root() is not None:
+		return "uv", ["run", "camas", *tail]
+	if shutil.which("camas") is not None:
+		return "camas", tail
+	return sys.executable, ["-m", "camas", *tail]
+
+
+def _uv_project_root() -> Path | None:
+	"""The nearest directory (cwd or an ancestor) holding a ``uv.lock``."""
+	cwd = Path.cwd()
+	return next((d for d in (cwd, *cwd.parents) if (d / "uv.lock").is_file()), None)
+
+
+def _portability_note(command: str) -> str:
+	"""Whether the chosen command is committable, or an absolute per-machine path."""
+	if command == sys.executable:
+		return "This absolute command is specific to this machine, not portable."
+	return "This entry is portable; commit it to share the server with your team."
 
 
 def _load(path: Path) -> dict[str, Any] | None:
