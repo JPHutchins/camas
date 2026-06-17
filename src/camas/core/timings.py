@@ -136,13 +136,17 @@ def _open_rw(path: Path) -> IO[str]:
 	return os.fdopen(os.open(path, os.O_RDWR | os.O_CREAT, 0o644), "r+", encoding="utf-8")
 
 
-def _flock(handle: IO[str], *, exclusive: bool) -> None:
-	"""Take an advisory lock on ``handle``; a no-op where ``fcntl`` is unavailable (non-POSIX)."""
-	if sys.platform == "win32":  # pragma: no cover
-		return
+if sys.platform != "win32":
 	import fcntl
 
-	fcntl.flock(handle, fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)
+	def _flock(handle: IO[str], *, exclusive: bool) -> None:
+		"""Take an advisory ``flock`` on ``handle`` (POSIX)."""
+		fcntl.flock(handle, fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)
+
+else:  # pragma: no cover
+
+	def _flock(handle: IO[str], *, exclusive: bool) -> None:
+		"""Advisory file locking is POSIX-only; a no-op on Windows."""
 
 
 def _fold(previous: TaskTiming | None, elapsed_s: float) -> TaskTiming:
