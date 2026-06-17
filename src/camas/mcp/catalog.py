@@ -8,13 +8,14 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from ..core.matrix import matrix_axes
+from ..core.timings import estimate
 from ..main.expression import to_expression
 from . import wire
 
 if TYPE_CHECKING:
 	from collections.abc import Mapping
 
-	from ..core.timings import TaskTiming
+	from ..core.timings import Estimate, TaskTiming
 	from ..v0.config import Config
 	from ..v0.task import TaskNode
 
@@ -37,7 +38,7 @@ def to_list_response(
 				node,
 				is_default=name == default,
 				is_github_default=name == github_default,
-				timing=_wire_timing(timings.get(name)),
+				est=estimate(node, timings),
 			)
 			for name, node in sorted(tasks.items())
 		],
@@ -51,27 +52,15 @@ def _task_name(node: TaskNode | None) -> str | None:
 	return node.name if node is not None else None
 
 
-def _wire_timing(timing: TaskTiming | None) -> wire.Timing | None:
-	"""Map the core cache's :class:`TaskTiming` onto the pydantic ``camas_list`` payload."""
-	if timing is None:
-		return None
-	return wire.Timing(
-		elapsed_s=timing.elapsed_s,
-		samples=timing.samples,
-		slowest_leaf=timing.slowest_leaf,
-		slowest_elapsed_s=timing.slowest_elapsed_s,
-	)
-
-
 def _task_info(
 	name: str,
 	node: TaskNode,
 	*,
 	is_default: bool,
 	is_github_default: bool,
-	timing: wire.Timing | None,
+	est: Estimate | None,
 ) -> wire.TaskInfo:
-	"""One ``TaskInfo``: help, a fully-typed command expression, and matrix axes as lists."""
+	"""One ``TaskInfo``: help, a fully-typed command expression, matrix axes, and any estimate."""
 	return wire.TaskInfo(
 		name=name,
 		help=node.help,
@@ -79,5 +68,8 @@ def _task_info(
 		matrix_axes={axis: list(values) for axis, values in matrix_axes(node).items()},
 		is_default=is_default,
 		is_github_default=is_github_default,
-		timing=timing,
+		estimated_s=est.elapsed_s if est is not None else None,
+		samples=est.samples if est is not None else None,
+		slowest_leaf=est.slowest_leaf if est is not None else None,
+		slowest_s=est.slowest_s if est is not None else None,
 	)

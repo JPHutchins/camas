@@ -17,7 +17,6 @@ from camas.mcp.wire import (
 	Skipped,
 	Stopped,
 	TaskInfo,
-	Timing,
 	run_input_schema,
 )
 
@@ -98,17 +97,26 @@ def test_docs_response_round_trips() -> None:
 	assert DocsResponse.model_validate(resp.model_dump()) == resp
 
 
-def test_task_info_timing_round_trips() -> None:
+def test_task_info_estimate_round_trips() -> None:
 	info = TaskInfo(
 		name="check",
 		command_preview="Parallel(...)",
-		timing=Timing(elapsed_s=32.0, samples=3, slowest_leaf="test", slowest_elapsed_s=31.9),
+		estimated_s=32.0,
+		samples=3,
+		slowest_leaf="test",
+		slowest_s=31.9,
 	)
 	dumped = info.model_dump()
-	assert dumped["timing"]["elapsed_s"] == 32.0
-	assert dumped["timing"]["slowest_leaf"] == "test"
+	assert dumped["estimated_s"] == 32.0
+	assert dumped["slowest_leaf"] == "test"
 	assert TaskInfo.model_validate(dumped) == info
 
 
-def test_task_info_timing_defaults_none() -> None:
-	assert TaskInfo(name="x", command_preview="Task(...)").timing is None
+def test_task_info_estimate_defaults_none() -> None:
+	info = TaskInfo(name="x", command_preview="Task(...)")
+	assert (info.estimated_s, info.samples, info.slowest_leaf, info.slowest_s) == (
+		None,
+		None,
+		None,
+		None,
+	)

@@ -66,15 +66,6 @@ class RunResponse(BaseModel):
 	truncated: bool = False
 
 
-class Timing(BaseModel):
-	"""A task's last observed run duration, its slowest leaf, and how many runs informed it."""
-
-	elapsed_s: float
-	samples: int
-	slowest_leaf: str
-	slowest_elapsed_s: float
-
-
 class TaskInfo(BaseModel):
 	"""One task discoverable in the project, as ``camas_list`` reports it."""
 
@@ -84,7 +75,14 @@ class TaskInfo(BaseModel):
 	matrix_axes: dict[str, list[str]] = Field(default_factory=dict)
 	is_default: bool = False
 	is_github_default: bool = False
-	timing: Timing | None = None
+	estimated_s: float | None = None
+	"""Wall-clock seconds composed from observed leaf durations, when all are known."""
+	samples: int | None = None
+	"""Fewest runs informing any leaf in the estimate — its confidence."""
+	slowest_leaf: str | None = None
+	"""The slowest leaf in this task's subtree."""
+	slowest_s: float | None = None
+	"""That leaf's mean observed duration."""
 
 
 class ListResponse(BaseModel):

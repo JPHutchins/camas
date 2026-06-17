@@ -54,13 +54,13 @@ def test_matrix_axes_reported_as_lists() -> None:
 	assert resp.tasks[0].command_preview == 'Parallel(Task("test {PY}"), name="m")'
 
 
-def test_timings_threaded_onto_matching_task() -> None:
-	timing = TaskTiming(elapsed_s=2.0, samples=1, slowest_leaf="test", slowest_elapsed_s=1.9)
-	resp = to_list_response(
-		{"ci": Task("pytest", name="ci"), "lint": Task("ruff", name="lint")}, None, {"ci": timing}
-	)
+def test_estimates_composed_onto_matching_task() -> None:
+	ci = Sequential(Task("ruff", name="fmt"), Task("pytest", name="run"), name="ci")
+	cache = {"fmt": TaskTiming(0.5, 1), "run": TaskTiming(2.0, 3)}
+	resp = to_list_response({"ci": ci, "lint": Task("ruff", name="lint")}, None, cache)
 	by_name = {t.name: t for t in resp.tasks}
-	assert by_name["ci"].timing is not None
-	assert by_name["ci"].timing.elapsed_s == 2.0
-	assert by_name["ci"].timing.slowest_leaf == "test"
-	assert by_name["lint"].timing is None
+	assert by_name["ci"].estimated_s == 2.5
+	assert by_name["ci"].samples == 1
+	assert by_name["ci"].slowest_leaf == "run"
+	assert by_name["ci"].slowest_s == 2.0
+	assert by_name["lint"].estimated_s is None

@@ -47,7 +47,7 @@ async def drive(
 		await effect.teardown(tuple(ctxs))
 
 
-def test_records_run_with_slowest_leaf(tmp_path: Path) -> None:
+def test_records_each_leaf(tmp_path: Path) -> None:
 	(tmp_path / ".camas").mkdir()
 	a, b = _task("fast"), _task("slow")
 	events: list[TaskEvent] = [
@@ -57,9 +57,9 @@ def test_records_run_with_slowest_leaf(tmp_path: Path) -> None:
 		CompletedEvent(b, 1, Finished(0, 0.5, ()), TS),
 	]
 	asyncio.run(drive(Timings(base=tmp_path), Parallel(a, b, name="quick"), events))
-	entry = timings.load(tmp_path)["quick"]
-	assert entry.slowest_leaf == "slow"
-	assert entry.samples == 1
+	cache = timings.load(tmp_path)
+	assert cache["fast"].elapsed_s == 0.1
+	assert cache["slow"].elapsed_s == 0.5
 
 
 def test_anonymous_run_not_recorded(tmp_path: Path) -> None:
@@ -82,7 +82,7 @@ def test_base_defaults_to_cwd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
 		CompletedEvent(a, 0, Finished(0, 0.1, ()), TS),
 	]
 	asyncio.run(drive(Timings(), Parallel(a, name="grp"), events))
-	assert "grp" in timings.load(tmp_path)
+	assert "t" in timings.load(tmp_path)
 
 
 def test_anonymous_leaves_named_by_command(tmp_path: Path) -> None:
@@ -95,7 +95,9 @@ def test_anonymous_leaves_named_by_command(tmp_path: Path) -> None:
 		CompletedEvent(t, 1, Finished(0, 0.1, ()), TS),
 	]
 	asyncio.run(drive(Timings(base=tmp_path), Parallel(s, t, name="grp"), events))
-	assert timings.load(tmp_path)["grp"].slowest_leaf == "echo hi"
+	cache = timings.load(tmp_path)
+	assert cache["echo hi"].elapsed_s == 0.5
+	assert cache["python -c pass"].elapsed_s == 0.1
 
 
 def test_unfinished_leaf_excluded(tmp_path: Path) -> None:
@@ -107,7 +109,9 @@ def test_unfinished_leaf_excluded(tmp_path: Path) -> None:
 		CompletedEvent(a, 0, Finished(0, 0.2, ()), TS),
 	]
 	asyncio.run(drive(Timings(base=tmp_path), Parallel(a, b, name="grp"), events))
-	assert timings.load(tmp_path)["grp"].slowest_leaf == "done"
+	cache = timings.load(tmp_path)
+	assert "done" in cache
+	assert "never" not in cache
 
 
 def test_skipped_leaf_excluded(tmp_path: Path) -> None:
@@ -119,4 +123,6 @@ def test_skipped_leaf_excluded(tmp_path: Path) -> None:
 		CompletedEvent(b, 1, Skipped(2), TS),
 	]
 	asyncio.run(drive(Timings(base=tmp_path), Sequential(a, b, name="seq"), events))
-	assert timings.load(tmp_path)["seq"].slowest_leaf == "fail"
+	cache = timings.load(tmp_path)
+	assert "fail" in cache
+	assert "skip" not in cache

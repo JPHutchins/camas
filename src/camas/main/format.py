@@ -27,7 +27,7 @@ from .mypyc import MISSING
 if TYPE_CHECKING:
 	from collections.abc import Mapping
 
-	from ..core.timings import TaskTiming
+	from ..core.timings import Estimate
 	from ..v0.effect import Effect
 
 
@@ -145,7 +145,7 @@ def format_task_summary_listing(
 			if isinstance(node, Task) or node.matrix is None
 			else f"  [matrix: {' '.join(format_axis(k, v) for k, v in node.matrix.items())}]"
 		)
-		timing = _timing_note(name, observed.get(name), color)
+		timing = _timing_note(timings.estimate(node, observed), color)
 		marked = name == default_task_name
 		name_cell = maybe_color(name, BOLD_CYAN, color) + (
 			maybe_color(marker, GREY, color) if marked else ""
@@ -156,25 +156,18 @@ def format_task_summary_listing(
 	return "\n".join(lines)
 
 
-def _timing_note(name: str, timing: TaskTiming | None, color: bool) -> str:
-	"""The observed-duration annotation for a task: ``~Ns``, its slowest leaf, sample count.
+def _timing_note(estimate: Estimate | None, color: bool) -> str:
+	"""A task's estimated-duration annotation, ``~Ns`` composed from observed leaf times.
 
-	>>> from camas.core.timings import TaskTiming
-	>>> _timing_note("check", TaskTiming(32.0, 3, "test", 31.9), color=False)
-	'~32.00s, slowest test 31.90s (n=3)'
-	>>> _timing_note("lint", TaskTiming(0.2, 1, "lint", 0.2), color=False)
-	'~0.20s (n=1)'
-	>>> _timing_note("x", None, color=False)
+	>>> from camas.core.timings import Estimate
+	>>> _timing_note(Estimate(32.0, 3, "test", 31.9), color=False)
+	'~32.00s'
+	>>> _timing_note(None, color=False)
 	''
 	"""
-	if timing is None:
+	if estimate is None:
 		return ""
-	slowest = (
-		f", slowest {timing.slowest_leaf} {timing.slowest_elapsed_s:.2f}s"
-		if timing.slowest_leaf != name
-		else ""
-	)
-	return maybe_color(f"~{timing.elapsed_s:.2f}s{slowest} (n={timing.samples})", GREY, color)
+	return maybe_color(f"~{estimate.elapsed_s:.2f}s", GREY, color)
 
 
 def print_task_summary_listing(
@@ -198,9 +191,9 @@ def print_task_trees(tasks: Mapping[str, TaskNode], source: Path | None) -> None
 	print(maybe_color(header, CAMAS_VIOLET, color_on()))
 	print()
 	observed = timings.load(source.parent) if source is not None else {}
-	for name, task in sorted(tasks.items()):
+	for _, task in sorted(tasks.items()):
 		print_tree(task, show_cmd=True)
-		note = _timing_note(name, observed.get(name), color_on())
+		note = _timing_note(timings.estimate(task, observed), color_on())
 		if note:
 			print(f"  {note}")
 		print()

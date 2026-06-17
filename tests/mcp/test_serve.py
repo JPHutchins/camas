@@ -629,9 +629,10 @@ def test_list_text_shows_timing_with_slowest_leaf() -> None:
 			wire.TaskInfo(
 				name="check",
 				command_preview="x",
-				timing=wire.Timing(
-					elapsed_s=32.0, samples=2, slowest_leaf="test", slowest_elapsed_s=31.9
-				),
+				estimated_s=32.0,
+				samples=2,
+				slowest_leaf="test",
+				slowest_s=31.9,
 			)
 		],
 		default=None,
@@ -645,9 +646,10 @@ def test_list_text_omits_slowest_when_it_is_the_task_itself() -> None:
 			wire.TaskInfo(
 				name="lint",
 				command_preview="x",
-				timing=wire.Timing(
-					elapsed_s=0.2, samples=1, slowest_leaf="lint", slowest_elapsed_s=0.2
-				),
+				estimated_s=0.2,
+				samples=1,
+				slowest_leaf="lint",
+				slowest_s=0.2,
 			)
 		],
 		default=None,

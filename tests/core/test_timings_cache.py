@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from camas import Parallel, Sequential, Task
 from camas.core import timings
 from camas.core.completion import RunResult, TaskResult
 from camas.v0.completion import Finished, Skipped, Stopped
@@ -22,59 +23,80 @@ def test_load_missing_is_empty(tmp_path: Path) -> None:
 
 
 def test_record_is_noop_without_camas_dir(tmp_path: Path) -> None:
-	timings.record_run(tmp_path, "x", _result(TaskResult("x", Finished(0, 0.5, ())), elapsed=0.5))
+	timings.record_run(tmp_path, _result(TaskResult("x", Finished(0, 0.5, ())), elapsed=0.5))
 	assert timings.load(tmp_path) == {}
 	assert not (tmp_path / ".camas").exists()
 
 
-def test_record_run_writes_slowest_leaf_when_camas_exists(tmp_path: Path) -> None:
+def test_record_run_writes_each_leaf(tmp_path: Path) -> None:
 	(tmp_path / ".camas").mkdir()
 	timings.record_run(
 		tmp_path,
-		"check",
 		_result(
 			TaskResult("lint", Finished(0, 0.1, ())),
 			TaskResult("test", Finished(0, 2.0, ())),
 			elapsed=2.1,
 		),
 	)
-	entry = timings.load(tmp_path)["check"]
-	assert entry == timings.TaskTiming(
-		elapsed_s=2.1, samples=1, slowest_leaf="test", slowest_elapsed_s=2.0
-	)
+	cache = timings.load(tmp_path)
+	assert cache["lint"] == timings.TaskTiming(elapsed_s=0.1, samples=1)
+	assert cache["test"] == timings.TaskTiming(elapsed_s=2.0, samples=1)
 
 
-def test_record_increments_samples(tmp_path: Path) -> None:
+def test_record_averages_repeated_runs(tmp_path: Path) -> None:
 	(tmp_path / ".camas").mkdir()
-	run = _result(TaskResult("a", Finished(0, 0.5, ())), elapsed=0.5)
-	timings.record_run(tmp_path, "a", run)
-	timings.record_run(tmp_path, "a", run)
-	assert timings.load(tmp_path)["a"].samples == 2
+	timings.record(tmp_path, [("a", 1.0)])
+	timings.record(tmp_path, [("a", 3.0)])
+	assert timings.load(tmp_path)["a"] == timings.TaskTiming(elapsed_s=2.0, samples=2)
 
 
 def test_record_counts_stopped_leaf(tmp_path: Path) -> None:
 	(tmp_path / ".camas").mkdir()
-	timings.record_run(tmp_path, "t", _result(TaskResult("x", Stopped(130, 0.3, ())), elapsed=0.3))
-	assert timings.load(tmp_path)["t"].slowest_leaf == "x"
+	timings.record_run(tmp_path, _result(TaskResult("x", Stopped(130, 0.3, ())), elapsed=0.3))
+	assert timings.load(tmp_path)["x"].elapsed_s == 0.3
 
 
 def test_record_skips_run_with_no_timed_leaf(tmp_path: Path) -> None:
 	(tmp_path / ".camas").mkdir()
-	timings.record_run(tmp_path, "t", _result(TaskResult("s", Skipped(1, "blk")), elapsed=0.0))
+	timings.record_run(tmp_path, _result(TaskResult("s", Skipped(1, "blk")), elapsed=0.0))
 	assert timings.load(tmp_path) == {}
 
 
 def test_load_skips_malformed_lines(tmp_path: Path) -> None:
 	(tmp_path / ".camas").mkdir()
-	(tmp_path / ".camas" / "timings").write_text(
-		"good 1.0 2 0.9 leaf\ngarbage\nbad x 2 0.9 leaf\n", encoding="utf-8"
-	)
+	(tmp_path / ".camas" / "timings").write_text("good 1.0 2\ngarbage\nbad x 2\n", encoding="utf-8")
 	cache = timings.load(tmp_path)
 	assert set(cache) == {"good"}
-	assert cache["good"] == timings.TaskTiming(1.0, 2, "leaf", 0.9)
+	assert cache["good"] == timings.TaskTiming(1.0, 2)
 
 
-def test_slowest_leaf_name_with_spaces_round_trips(tmp_path: Path) -> None:
+def test_leaf_name_with_spaces_round_trips(tmp_path: Path) -> None:
 	(tmp_path / ".camas").mkdir()
-	timings.record(tmp_path, "m", 3.0, [("test [PY=3.13]", 3.0), ("test [PY=3.12]", 1.0)])
-	assert timings.load(tmp_path)["m"].slowest_leaf == "test [PY=3.13]"
+	timings.record(tmp_path, [("test [PY=3.13]", 3.0), ("test [PY=3.12]", 1.0)])
+	cache = timings.load(tmp_path)
+	assert cache["test [PY=3.13]"].elapsed_s == 3.0
+	assert cache["test [PY=3.12]"].elapsed_s == 1.0
+
+
+def test_estimate_leaf_uses_its_own_timing() -> None:
+	cache = {"lint": timings.TaskTiming(0.2, 1)}
+	assert timings.estimate(Task("ruff", name="lint"), cache) == timings.Estimate(
+		0.2, 1, "lint", 0.2
+	)
+
+
+def test_estimate_sequential_sums_children() -> None:
+	cache = {"a": timings.TaskTiming(1.0, 3), "b": timings.TaskTiming(2.0, 1)}
+	est = timings.estimate(Sequential(Task("x", name="a"), Task("y", name="b")), cache)
+	assert est == timings.Estimate(elapsed_s=3.0, samples=1, slowest_leaf="b", slowest_s=2.0)
+
+
+def test_estimate_parallel_takes_max() -> None:
+	cache = {"a": timings.TaskTiming(1.0, 2), "b": timings.TaskTiming(2.0, 2)}
+	est = timings.estimate(Parallel(Task("x", name="a"), Task("y", name="b")), cache)
+	assert est == timings.Estimate(elapsed_s=2.0, samples=2, slowest_leaf="b", slowest_s=2.0)
+
+
+def test_estimate_is_none_when_a_leaf_was_never_timed() -> None:
+	cache = {"a": timings.TaskTiming(1.0, 1)}
+	assert timings.estimate(Sequential(Task("x", name="a"), Task("y", name="b")), cache) is None

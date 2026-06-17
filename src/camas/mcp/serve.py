@@ -67,9 +67,9 @@ LIST_DESCRIPTION: Final = (
 	"targets, toolchains, platforms — whatever the project declares). Two tasks are flagged: "
 	"the default (what the developer runs while working) and the github default — the exact "
 	"task this project's CI runs (camas is the single definition shared by local and CI), so "
-	"running it locally before you commit or push reproduces CI exactly. Tasks that have run "
-	"before also carry an observed duration and their slowest leaf, so you can pick a quick task "
-	"for the inner loop and the thorough one before committing. Use this first to discover valid "
+	"running it locally before you commit or push reproduces CI exactly. Tasks whose leaves have "
+	"been timed also carry an estimated duration and their slowest leaf, so you can pick a "
+	"quick task for the inner loop and the thorough one before committing. Use this first to discover valid "
 	"task names for camas_run; it is the source of truth. Read-only; runs nothing."
 )
 RUN_DESCRIPTION: Final = (
@@ -308,7 +308,7 @@ async def _run_for(
 		return success(dry_run_text(node), to_plan_response(node), session.compat)
 	result = await run(node, jobs=req.jobs, interactive=False)
 	logs = write_logs(create_run_log_dir(session.base, req.task, session.reserve_run()), result)
-	timings.record_run(session.base, req.task, result)
+	timings.record_run(session.base, result)
 	resp = attach_logs(to_run_response(node, result, verbosity=req.verbosity), logs)
 	return success(
 		run_text(req.task, resp, logs), resp, session.compat, links=failing_log_links(resp, logs)
@@ -421,16 +421,15 @@ def _matrix_note(axes: dict[str, list[str]]) -> str:
 
 
 def _timing_note(task: wire.TaskInfo) -> str:
-	"""The observed-duration annotation: ``~Ns``, the slowest leaf, and the sample count."""
-	if task.timing is None:
+	"""The estimated-duration annotation: ``~Ns``, the slowest leaf, and the sample count."""
+	if task.estimated_s is None:
 		return ""
-	t = task.timing
 	slowest = (
-		f", slowest {t.slowest_leaf} {t.slowest_elapsed_s:.2f}s"
-		if t.slowest_leaf != task.name
+		f", slowest {task.slowest_leaf} {task.slowest_s:.2f}s"
+		if task.slowest_leaf != task.name
 		else ""
 	)
-	return f"  [~{t.elapsed_s:.2f}s{slowest}, n={t.samples}]"
+	return f"  [~{task.estimated_s:.2f}s{slowest}, n={task.samples}]"
 
 
 def run_text(task: str, resp: wire.RunResponse, logs: tuple[Path | None, ...]) -> str:
