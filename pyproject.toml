@@ -208,12 +208,12 @@ exclude = ["tests/fixtures/**", "examples/**"]
 exclude = ["tests/fixtures/", "examples/", "build/", "setup.py"]
 
 [tool.pyrefly]
+project-includes = [
+"src/**/*.py*",
+"tests/**/*.py*",
+]
 project-excludes = [
 "tests/fixtures/**",
-"examples/**",
-"build/**",
-"setup.py",
-".venv*/**",
 ]
 
 [tool.coverage.run]
