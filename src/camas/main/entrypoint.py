@@ -16,7 +16,7 @@ def main() -> None:
 	reconfigure_stdio_utf8()
 	argv = sys.argv[1:]
 	if argv and argv[0] == "mcp":
-		importlib.import_module("camas.mcp.serve").serve_stdio(argv[1:])
+		importlib.import_module("camas.mcp.cli").main(argv[1:])
 		return
 	dispatch(*resolve_tasks_source(argv))
 

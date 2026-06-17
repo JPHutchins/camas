@@ -27,6 +27,7 @@ from camas.main.tasks import (
 	load_tasks_from_py,
 	name_scope_config,
 	name_scope_effects,
+	reject_reserved_names,
 )
 
 if TYPE_CHECKING:
@@ -307,6 +308,25 @@ b = "Ref(\\"a\\")"
 	)
 	with pytest.raises(ValueError, match="cycle"):
 		load_tasks(pyproject)
+
+
+def test_reject_reserved_names_raises_on_mcp() -> None:
+	with pytest.raises(ValueError, match="reserved"):
+		reject_reserved_names({"mcp": Task("x")})
+
+
+def test_load_tasks_rejects_reserved_mcp_name(tmp_path: Path) -> None:
+	pyproject = tmp_path / "pyproject.toml"
+	pyproject.write_text('[tool.camas.tasks]\nmcp = "echo hi"\n')
+	with pytest.raises(ValueError, match="reserved"):
+		load_tasks(pyproject)
+
+
+def test_load_tasks_from_py_rejects_reserved_mcp_name(tmp_path: Path) -> None:
+	tasks_py = tmp_path / "tasks.py"
+	tasks_py.write_text("from camas import Task\nmcp = Task('echo hi')\n")
+	with pytest.raises(ValueError, match="reserved"):
+		load_tasks_from_py(tasks_py)
 
 
 def test_dispatch_arg_bare_name() -> None:

@@ -66,14 +66,11 @@ def positional_help(config: Config, *, github: bool, color: bool = False) -> str
 
 	>>> from camas import Task
 	>>> positional_help(Config(default_task=Task("echo hi", name="greet")), github=False)
-	"name of a defined task, or a camas expression (trailing '-- ARGS' append to a Task's command); with no argument, runs greet"
+	"name of a defined task, a camas expression, or 'mcp' (trailing '-- ARGS' append to a Task's command); with no argument, runs greet"
 	>>> positional_help(Config(), github=False)
-	"name of a defined task, or a camas expression (trailing '-- ARGS' append to a Task's command)"
+	"name of a defined task, a camas expression, or 'mcp' (trailing '-- ARGS' append to a Task's command)"
 	"""
-	base = (
-		"name of a defined task, or a camas expression "
-		"(trailing '-- ARGS' append to a Task's command)"
-	)
+	base = "name of a defined task, a camas expression, or 'mcp' (trailing '-- ARGS' append to a Task's command)"
 	bare = config.bare_task(github=github)
 	if bare is None:
 		return base
@@ -267,5 +264,5 @@ RESERVED_FLAGS: Final = frozenset(
 
 
 def expression_metavar(tasks: Mapping[str, TaskNode] | None) -> str:
-	"""Positional metavar: ``task | expression`` when tasks exist, else ``expression``."""
-	return "task | expression" if tasks else "expression"
+	"""Positional metavar: prepends ``task`` when tasks exist; ``mcp`` is always reserved."""
+	return "task | expression | mcp" if tasks else "expression | mcp"
