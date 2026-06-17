@@ -38,10 +38,12 @@
           default = mkCamas pkgs { };
           with-github-checks = mkCamas pkgs { extras = [ "github_checks" ]; };
           with-check = mkCamas pkgs { extras = [ "check" ]; };
+          with-mcp = mkCamas pkgs { extras = [ "mcp" ]; };
           all = mkCamas pkgs {
             extras = [
               "github_checks"
               "check"
+              "mcp"
             ];
           };
           interpreted = mkCamas pkgs { withMypyC = false; };

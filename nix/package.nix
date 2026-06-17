@@ -35,13 +35,15 @@ python3Packages.buildPythonApplication {
 
   dependencies =
     lib.optionals (lib.elem "github_checks" extras) [ python3Packages.httpx ]
-    ++ lib.optionals (lib.elem "check" extras) [ python3Packages.ty ];
+    ++ lib.optionals (lib.elem "check" extras) [ python3Packages.ty ]
+    ++ lib.optionals (lib.elem "mcp" extras) [ python3Packages.mcp ];
 
   nativeCheckInputs = with python3Packages; [
     pytestCheckHook
     pytest-asyncio
     cyclopts
     httpx
+    mcp
   ];
 
   disabledTestMarks = [ "slow" ];
@@ -57,6 +59,7 @@ python3Packages.buildPythonApplication {
   passthru.optional-dependencies = {
     github_checks = [ python3Packages.httpx ];
     check = [ python3Packages.ty ];
+    mcp = [ python3Packages.mcp ];
   };
 
   meta = {
