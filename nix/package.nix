@@ -15,6 +15,14 @@
   withMypyC ? true,
 }:
 
+let
+  optional-dependencies = {
+    github_checks = [ python3Packages.httpx ];
+    check = [ python3Packages.ty ];
+    mcp = [ python3Packages.mcp ];
+    all = lib.concatAttrValues (lib.removeAttrs optional-dependencies [ "all" ]);
+  };
+in
 python3Packages.buildPythonApplication {
   pname = "camas";
   inherit version src;
@@ -33,18 +41,17 @@ python3Packages.buildPythonApplication {
     mypy
   ];
 
-  dependencies =
-    lib.optionals (lib.elem "github_checks" extras) [ python3Packages.httpx ]
-    ++ lib.optionals (lib.elem "check" extras) [ python3Packages.ty ]
-    ++ lib.optionals (lib.elem "mcp" extras) [ python3Packages.mcp ];
+  dependencies = lib.concatMap (extra: optional-dependencies.${extra}) extras;
 
-  nativeCheckInputs = with python3Packages; [
-    pytestCheckHook
-    pytest-asyncio
-    cyclopts
-    httpx
-    mcp
-  ];
+  inherit optional-dependencies;
+
+  nativeCheckInputs =
+    (with python3Packages; [
+      pytestCheckHook
+      pytest-asyncio
+      cyclopts
+    ])
+    ++ optional-dependencies.all;
 
   disabledTestMarks = [ "slow" ];
 
@@ -55,12 +62,6 @@ python3Packages.buildPythonApplication {
     "camas.effect.summary"
     "camas.effect.termtree"
   ];
-
-  passthru.optional-dependencies = {
-    github_checks = [ python3Packages.httpx ];
-    check = [ python3Packages.ty ];
-    mcp = [ python3Packages.mcp ];
-  };
 
   meta = {
     description = "Task runner with parallel execution, matrix expansion, and pluggable output effects";
