@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import json
-import sys
 from typing import TYPE_CHECKING
 
 import pytest
@@ -48,15 +47,16 @@ def test_camas_on_path_appends_rich(tmp_path: Path, monkeypatch: pytest.MonkeyPa
 	assert (entry["command"], entry["args"]) == ("camas", ["mcp", "--rich"])
 
 
-def test_absolute_fallback_when_nothing_on_path(
-	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_errors_when_no_portable_launcher(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
 	monkeypatch.chdir(tmp_path)
 	monkeypatch.setattr("shutil.which", _which())
-	assert write_mcp_json([]) == 0
-	entry = json.loads((tmp_path / ".mcp.json").read_text())["mcpServers"]["camas"]
-	assert entry["command"] == sys.executable
-	assert entry["args"] == ["-m", "camas", "mcp"]
+	assert write_mcp_json([]) == 2
+	err = capsys.readouterr().err
+	assert "not on PATH" in err
+	assert "uv add camas" in err
+	assert not (tmp_path / ".mcp.json").exists()
 
 
 def test_merges_preserving_other_servers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

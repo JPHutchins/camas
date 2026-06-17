@@ -25,7 +25,15 @@ def write_mcp_json(argv: list[str]) -> int:
 	if not isinstance(servers, dict):
 		print(f"error: {mcp_json_path} has a non-object 'mcpServers'", file=sys.stderr)
 		return 2
-	command, args = launch_command(rich="--rich" in argv)
+	launcher = launch_command(rich="--rich" in argv)
+	if launcher is None:
+		print(
+			f"error: cannot write a portable {mcp_json_path} — no uv.lock found and camas is not "
+			"on PATH.\n  Add camas to a uv project (uv add camas) or install it on PATH, then retry.",
+			file=sys.stderr,
+		)
+		return 2
+	command, args = launcher
 	servers[SERVER_NAME] = {"type": "stdio", "command": command, "args": args}
 	mcp_json_path.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
 	print(
@@ -37,14 +45,14 @@ def write_mcp_json(argv: list[str]) -> int:
 	return 0
 
 
-def launch_command(*, rich: bool) -> tuple[str, list[str]]:
-	"""The most portable launch command for camas in this environment."""
+def launch_command(*, rich: bool) -> tuple[str, list[str]] | None:
+	"""The most portable launch command for camas, or None if none is portable enough to commit."""
 	tail = ["mcp", "--rich"] if rich else ["mcp"]
 	if shutil.which("uv") is not None and uv_project_root() is not None:
 		return "uv", ["run", "camas", *tail]
 	if shutil.which("camas") is not None:
 		return "camas", tail
-	return sys.executable, ["-m", "camas", *tail]
+	return None
 
 
 def uv_project_root() -> Path | None:
@@ -57,8 +65,6 @@ def portability_note(command: str) -> str:
 	"""How portable the chosen launch command is, for the committed ``.mcp.json``."""
 	if command == "uv":
 		return "This entry is portable; uv resolves camas from the lockfile."
-	if command == sys.executable:
-		return "This absolute command is specific to this machine, not portable."
 	return "This entry is portable if your team installs camas on PATH; commit it to share."
 
 
