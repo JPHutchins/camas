@@ -348,7 +348,7 @@ def format_reference(color: bool) -> str:
 	# Source is the package's install path — a local directory openable without a
 	# network round-trip; examples ship only on GitHub, not in the wheel.
 	entries = (
-		("Source (all documentation is in source)", str(Path(__file__).parent.parent)),
+		("Source (docs live here)", str(Path(__file__).parent.parent)),
 		("Examples", "https://github.com/JPHutchins/camas/tree/main/examples"),
 		("PyPI", "https://pypi.org/project/camas/"),
 	)

@@ -557,9 +557,8 @@ def success(
 	links: tuple[types.ResourceLink, ...] = (),
 ) -> types.CallToolResult:
 	"""A non-error result: the load-bearing ``TextContent`` plus gated ``structuredContent``."""
-	content: list[types.ContentBlock] = [types.TextContent(type="text", text=text), *links]
 	return types.CallToolResult(
-		content=content,
+		content=[types.TextContent(type="text", text=text), *links],
 		structuredContent=model.model_dump(mode="json") if compat.emit_structured else None,
 		isError=False,
 	)
