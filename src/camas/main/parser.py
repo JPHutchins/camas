@@ -191,7 +191,7 @@ def build_parser(state: TasksState = EMPTY_STATE) -> argparse.ArgumentParser:
 	github: Final = os.environ.get("GITHUB_ACTIONS") == "true"
 	parser: Final = CamasArgumentParser(
 		prog="camas",
-		description="A task runner with parallel execution, matrix expansion, and pluggable output effects.",
+		description="A task runner with parallel execution, matrix expansion, MCP, and pluggable output effects.",
 		formatter_class=argparse.RawDescriptionHelpFormatter,
 	)
 	parser.state = state

@@ -2,11 +2,11 @@
 
 # Camas
 
-A task runner with parallel execution, matrix expansion, and pluggable output effects.
+A task runner with parallel execution, matrix expansion, MCP, and pluggable output effects.
 
 - **For developers:** live tree view that updates in place as tasks stream
 - **For CI/CD:** one definition drives both local runs and CI
-- **For LLMs:** _coming soon — structured JSON stream + MCP_
+- **For LLMs:** a closed edit→validate→run loop over structured MCP
 
 <br clear="all">
 
