@@ -1,13 +1,14 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""The ``.camas/timings`` cache of observed per-leaf durations, composed into task estimates."""
+"""The ``timings.txt`` cache of observed per-leaf durations, composed into task estimates."""
 
 from __future__ import annotations
 
 import os
 import sys
-from typing import IO, TYPE_CHECKING, Final, NamedTuple
+from enum import IntEnum
+from typing import IO, TYPE_CHECKING, Final, NamedTuple, TypeAlias
 
 from ..v0.completion import Finished, Skipped, Stopped
 from ..v0.task import Parallel, Sequential, Task
@@ -27,8 +28,17 @@ if TYPE_CHECKING:
 	from .completion import RunResult
 
 
-CAMAS_DIR: Final = ".camas"
-CACHE_NAME: Final = "timings"
+CACHE_NAME: Final = "timings.txt"
+
+
+class CacheVersion(IntEnum):
+	"""Versions of the ``timings.txt`` format; the file's first line is the writer's version."""
+
+	V0 = 0
+
+
+TaskLabel: TypeAlias = str
+"""A leaf's :func:`task_label` — its ``name`` or its joined command — the cache key."""
 
 
 class TaskTiming(NamedTuple):
@@ -37,28 +47,33 @@ class TaskTiming(NamedTuple):
 	elapsed_s: float
 	samples: int
 
+	def fold(self, elapsed_s: float) -> TaskTiming:
+		"""This leaf's running mean after one more observation."""
+		samples = self.samples + 1
+		return TaskTiming((self.elapsed_s * self.samples + elapsed_s) / samples, samples)
+
 
 class Estimate(NamedTuple):
 	"""A task's duration composed from the per-leaf cache, with its slowest leaf."""
 
 	elapsed_s: float
 	samples: int
-	slowest_leaf: str
+	slowest_leaf: TaskLabel
 	slowest_s: float
 
 
-def load(base: Path) -> dict[str, TaskTiming]:
-	"""Read the cache under ``base``; an absent or unreadable file is an empty cache."""
+def load(camas_dir: Path) -> dict[TaskLabel, TaskTiming]:
+	"""Read the cache in ``camas_dir``; an absent or unreadable file is an empty cache."""
 	try:
-		with (base / CAMAS_DIR / CACHE_NAME).open("r", encoding="utf-8") as handle:
-			_flock(handle, exclusive=False)
+		with (camas_dir / CACHE_NAME).open("r", encoding="utf-8") as handle:
+			lock(handle, exclusive=False)
 			text = handle.read()
 	except OSError:
 		return {}
-	return _parse_text(text)
+	return parse(text)
 
 
-def estimate(node: TaskNode, timings: Mapping[str, TaskTiming]) -> Estimate | None:
+def estimate(node: TaskNode, timings: Mapping[TaskLabel, TaskTiming]) -> Estimate | None:
 	"""Compose ``node``'s estimate from observed leaf durations: a leaf is its own timing,
 	a Sequential the sum of its children, a Parallel their max. ``None`` when any leaf in
 	the subtree has never been timed.
@@ -71,37 +86,51 @@ def estimate(node: TaskNode, timings: Mapping[str, TaskTiming]) -> Estimate | No
 				return None
 			return Estimate(timing.elapsed_s, timing.samples, label, timing.elapsed_s)
 		case Sequential(tasks=children):
-			return _combine(children, timings, parallel=False)
+			parts = child_estimates(children, timings)
+			return rolled_up(parts, sum(p.elapsed_s for p in parts)) if parts else None
 		case Parallel(tasks=children):
-			return _combine(children, timings, parallel=True)
+			parts = child_estimates(children, timings)
+			return rolled_up(parts, max(p.elapsed_s for p in parts)) if parts else None
 		case _:
 			assert_never(node)
 
 
-def record(base: Path, leaves: Sequence[tuple[str, float]]) -> None:
-	"""Fold a run's per-leaf durations into the cache, but only where ``.camas`` already
-	exists; this never creates it.
+def record(camas_dir: Path, leaves: Sequence[tuple[TaskLabel, float]]) -> None:
+	"""Fold a run's observed per-leaf durations into the cache under an exclusive lock.
 
-	The read-modify-write runs under an exclusive lock on a single open handle, so the
-	CLI and MCP (which share this path) can run concurrently without losing samples or
-	reading a half-written cache. A run with no timed leaf records nothing.
+	``camas_dir`` must already exist — the gate on whether to record at all lives at the
+	call site (the ``Timings`` effect is only enabled when it does, and the MCP server
+	creates it). The lock lets the CLI and MCP, which share this path, run concurrently.
 	"""
-	directory: Final = base / CAMAS_DIR
-	if not leaves or not directory.is_dir():
+	if not leaves:
 		return
 	observed: Final = dict(leaves)
-	with _open_rw(directory / CACHE_NAME) as handle:
-		_flock(handle, exclusive=True)
-		cache = _parse_text(handle.read())
-		merged = {**cache, **{n: _fold(cache.get(n), s) for n, s in observed.items()}}
+	with open_for_update(camas_dir / CACHE_NAME) as handle:
+		lock(handle, exclusive=True)
+		cache = parse(handle.read())
+		merged = {
+			**cache,
+			**{
+				label: cache[label].fold(s) if label in cache else TaskTiming(s, 1)
+				for label, s in observed.items()
+			},
+		}
 		handle.seek(0)
 		handle.truncate()
-		handle.write("".join(_format(n, t) for n, t in sorted(merged.items())))
+		handle.write(serialize(merged))
 
 
-def record_run(base: Path, result: RunResult) -> None:
+def record_run(camas_dir: Path, result: RunResult) -> None:
 	"""Record a finished run's per-leaf durations."""
-	record(base, _leaves(result))
+	record(camas_dir, leaves_of(result))
+
+
+def ensure_camas_dir(camas_dir: Path) -> None:
+	"""Create ``camas_dir`` and its catch-all ``.gitignore`` if either is absent."""
+	camas_dir.mkdir(exist_ok=True)
+	gitignore = camas_dir / ".gitignore"
+	if not gitignore.exists():
+		gitignore.write_text("*\n", encoding="utf-8")
 
 
 def elapsed_of(completion: Completion) -> float | None:
@@ -115,23 +144,51 @@ def elapsed_of(completion: Completion) -> float | None:
 			assert_never(completion)
 
 
-def _combine(
-	children: Sequence[TaskNode], timings: Mapping[str, TaskTiming], *, parallel: bool
-) -> Estimate | None:
-	"""Fold children's estimates: max for a Parallel, sum for a Sequential; ``None`` if any
-	child is unknown. The slowest leaf is the worst across the whole subtree.
+def serialize(timings: Mapping[TaskLabel, TaskTiming]) -> str:
+	r"""Render the cache: a version line, then ``<label> <mean_seconds> <samples>`` per leaf.
+
+	>>> serialize({"lint": TaskTiming(0.5, 2), "ruff check .": TaskTiming(1.25, 1)})
+	'0\nlint 0.5 2\nruff check . 1.25 1\n'
 	"""
-	parts: Final = [e for child in children if (e := estimate(child, timings)) is not None]
-	if len(parts) != len(children):
-		return None
-	elapsed: Final = (
-		max(p.elapsed_s for p in parts) if parallel else sum(p.elapsed_s for p in parts)
+	rows = (f"{label} {t.elapsed_s} {t.samples}" for label, t in sorted(timings.items()))
+	return "\n".join((str(CacheVersion.V0.value), *rows)) + "\n"
+
+
+def parse(text: str) -> dict[TaskLabel, TaskTiming]:
+	r"""Parse a cache; a missing or unknown version line yields an empty cache.
+
+	>>> parse("0\nlint 0.5 2\nruff check . 1.25 1\n") == {
+	...     "lint": TaskTiming(0.5, 2), "ruff check .": TaskTiming(1.25, 1)
+	... }
+	True
+	>>> parse("999\nlint 0.5 2\n")
+	{}
+	>>> parse("")
+	{}
+	"""
+	lines = text.splitlines()
+	if not lines or lines[0] != str(CacheVersion.V0.value):
+		return {}
+	return dict(filter(None, (parse_line(line) for line in lines[1:])))
+
+
+def child_estimates(
+	children: Sequence[TaskNode], timings: Mapping[TaskLabel, TaskTiming]
+) -> list[Estimate] | None:
+	"""Every child's estimate, or ``None`` if any child has an un-timed leaf."""
+	parts = [e for child in children if (e := estimate(child, timings)) is not None]
+	return parts if len(parts) == len(children) else None
+
+
+def rolled_up(parts: list[Estimate], elapsed_s: float) -> Estimate:
+	"""An ``elapsed_s`` estimate carrying the subtree's least-sampled count and slowest leaf."""
+	slowest = max(parts, key=lambda p: p.slowest_s)
+	return Estimate(
+		elapsed_s, min(p.samples for p in parts), slowest.slowest_leaf, slowest.slowest_s
 	)
-	slowest: Final = max(parts, key=lambda p: p.slowest_s)
-	return Estimate(elapsed, min(p.samples for p in parts), slowest.slowest_leaf, slowest.slowest_s)
 
 
-def _open_rw(path: Path) -> IO[str]:
+def open_for_update(path: Path) -> IO[str]:
 	"""Open ``path`` read-write for the locked update, creating it without truncating."""
 	return os.fdopen(os.open(path, os.O_RDWR | os.O_CREAT, 0o644), "r+", encoding="utf-8")
 
@@ -139,42 +196,26 @@ def _open_rw(path: Path) -> IO[str]:
 if sys.platform != "win32":
 	import fcntl
 
-	def _flock(handle: IO[str], *, exclusive: bool) -> None:
+	def lock(handle: IO[str], *, exclusive: bool) -> None:
 		"""Take an advisory ``flock`` on ``handle`` (POSIX)."""
 		fcntl.flock(handle, fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)
 
 else:  # pragma: no cover
 
-	def _flock(handle: IO[str], *, exclusive: bool) -> None:
+	def lock(handle: IO[str], *, exclusive: bool) -> None:
 		"""Advisory file locking is POSIX-only; a no-op on Windows."""
 
 
-def _fold(previous: TaskTiming | None, elapsed_s: float) -> TaskTiming:
-	"""Fold a fresh sample into a leaf's running mean."""
-	if previous is None:
-		return TaskTiming(elapsed_s=elapsed_s, samples=1)
-	samples: Final = previous.samples + 1
-	return TaskTiming((previous.elapsed_s * previous.samples + elapsed_s) / samples, samples)
-
-
-def _leaves(result: RunResult) -> list[tuple[str, float]]:
+def leaves_of(result: RunResult) -> list[tuple[TaskLabel, float]]:
 	return [(r.name, e) for r in result.results if (e := elapsed_of(r.completion)) is not None]
 
 
-def _format(task: str, timing: TaskTiming) -> str:
-	return f"{task} {timing.elapsed_s} {timing.samples}\n"
-
-
-def _parse_text(text: str) -> dict[str, TaskTiming]:
-	return dict(filter(None, (_parse(line) for line in text.splitlines())))
-
-
-def _parse(line: str) -> tuple[str, TaskTiming] | None:
+def parse_line(line: str) -> tuple[TaskLabel, TaskTiming] | None:
 	parts = line.rsplit(maxsplit=2)
 	if len(parts) != 3:
 		return None
-	task, elapsed_s, samples = parts
+	label, elapsed_s, samples = parts
 	try:
-		return task, TaskTiming(elapsed_s=float(elapsed_s), samples=int(samples))
+		return label, TaskTiming(float(elapsed_s), int(samples))
 	except ValueError:
 		return None

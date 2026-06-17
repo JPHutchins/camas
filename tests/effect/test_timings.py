@@ -17,8 +17,6 @@ from camas.v0.task_event import CompletedEvent, StartedEvent, TaskEvent
 if TYPE_CHECKING:
 	from pathlib import Path
 
-	import pytest
-
 	from camas.v0.effect import Effect
 
 TS = datetime(2026, 5, 21, 14, 30, 0)
@@ -48,7 +46,6 @@ async def drive(
 
 
 def test_records_each_leaf(tmp_path: Path) -> None:
-	(tmp_path / ".camas").mkdir()
 	a, b = _task("fast"), _task("slow")
 	events: list[TaskEvent] = [
 		StartedEvent(a, 0, TS),
@@ -56,37 +53,23 @@ def test_records_each_leaf(tmp_path: Path) -> None:
 		CompletedEvent(a, 0, Finished(0, 0.1, ()), TS),
 		CompletedEvent(b, 1, Finished(0, 0.5, ()), TS),
 	]
-	asyncio.run(drive(Timings(base=tmp_path), Parallel(a, b, name="quick"), events))
+	asyncio.run(drive(Timings(camas_dir=tmp_path), Parallel(a, b, name="quick"), events))
 	cache = timings.load(tmp_path)
 	assert cache["fast"].elapsed_s == 0.1
 	assert cache["slow"].elapsed_s == 0.5
 
 
-def test_anonymous_run_not_recorded(tmp_path: Path) -> None:
-	(tmp_path / ".camas").mkdir()
+def test_anonymous_run_records_its_leaves(tmp_path: Path) -> None:
 	a = _task("solo")
 	events: list[TaskEvent] = [
 		StartedEvent(a, 0, TS),
 		CompletedEvent(a, 0, Finished(0, 0.1, ()), TS),
 	]
-	asyncio.run(drive(Timings(base=tmp_path), Parallel(a), events))
-	assert timings.load(tmp_path) == {}
-
-
-def test_base_defaults_to_cwd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-	monkeypatch.chdir(tmp_path)
-	(tmp_path / ".camas").mkdir()
-	a = _task("t")
-	events: list[TaskEvent] = [
-		StartedEvent(a, 0, TS),
-		CompletedEvent(a, 0, Finished(0, 0.1, ()), TS),
-	]
-	asyncio.run(drive(Timings(), Parallel(a, name="grp"), events))
-	assert "t" in timings.load(tmp_path)
+	asyncio.run(drive(Timings(camas_dir=tmp_path), Parallel(a), events))
+	assert timings.load(tmp_path)["solo"].elapsed_s == 0.1
 
 
 def test_anonymous_leaves_named_by_command(tmp_path: Path) -> None:
-	(tmp_path / ".camas").mkdir()
 	s, t = Task("echo hi"), Task(("python", "-c", "pass"))
 	events: list[TaskEvent] = [
 		StartedEvent(s, 0, TS),
@@ -94,35 +77,33 @@ def test_anonymous_leaves_named_by_command(tmp_path: Path) -> None:
 		CompletedEvent(s, 0, Finished(0, 0.5, ()), TS),
 		CompletedEvent(t, 1, Finished(0, 0.1, ()), TS),
 	]
-	asyncio.run(drive(Timings(base=tmp_path), Parallel(s, t, name="grp"), events))
+	asyncio.run(drive(Timings(camas_dir=tmp_path), Parallel(s, t, name="grp"), events))
 	cache = timings.load(tmp_path)
 	assert cache["echo hi"].elapsed_s == 0.5
 	assert cache["python -c pass"].elapsed_s == 0.1
 
 
 def test_unfinished_leaf_excluded(tmp_path: Path) -> None:
-	(tmp_path / ".camas").mkdir()
 	a, b = _task("done"), _task("never")
 	events: list[TaskEvent] = [
 		StartedEvent(a, 0, TS),
 		StartedEvent(b, 1, TS),
 		CompletedEvent(a, 0, Finished(0, 0.2, ()), TS),
 	]
-	asyncio.run(drive(Timings(base=tmp_path), Parallel(a, b, name="grp"), events))
+	asyncio.run(drive(Timings(camas_dir=tmp_path), Parallel(a, b, name="grp"), events))
 	cache = timings.load(tmp_path)
 	assert "done" in cache
 	assert "never" not in cache
 
 
 def test_skipped_leaf_excluded(tmp_path: Path) -> None:
-	(tmp_path / ".camas").mkdir()
 	a, b = _task("fail"), _task("skip")
 	events: list[TaskEvent] = [
 		StartedEvent(a, 0, TS),
 		CompletedEvent(a, 0, Finished(2, 0.3, ()), TS),
 		CompletedEvent(b, 1, Skipped(2), TS),
 	]
-	asyncio.run(drive(Timings(base=tmp_path), Sequential(a, b, name="seq"), events))
+	asyncio.run(drive(Timings(camas_dir=tmp_path), Sequential(a, b, name="seq"), events))
 	cache = timings.load(tmp_path)
 	assert "fail" in cache
 	assert "skip" not in cache
