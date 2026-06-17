@@ -35,6 +35,7 @@ from camas.main.mypyc import MISSING
 
 if TYPE_CHECKING:
 	from collections.abc import Iterator
+	from pathlib import Path
 
 
 def test_parse_effects_rejects_invalid_syntax() -> None:
@@ -60,7 +61,7 @@ def test_parse_effects_rejects_non_effect_value() -> None:
 def test_discover_effects_returns_builtin_set() -> None:
 	constructors, effects = discover_effects()
 	names = {n for n, _ in effects}
-	assert names == {"Summary", "Termtree", "GitHubChecks", "Status"}
+	assert names == {"Summary", "Termtree", "GitHubChecks", "Status", "Timings"}
 	assert "Auto" in constructors
 	assert "Fixed" in constructors
 
@@ -259,6 +260,35 @@ def test_resolve_effects_parses_expression_over_default() -> None:
 def test_resolve_effects_none_uses_config_default() -> None:
 	override = (Summary(),)
 	assert resolve_effects(None, Config(default_effects=override), github=False) is override
+
+
+def test_default_adds_timings_with_camas_locally(tmp_path: Path) -> None:
+	(tmp_path / ".camas").mkdir()
+	out = resolve_default_effects(Config(), github=False, base=tmp_path)
+	assert [type(e).__name__ for e in out] == ["Termtree", "Timings"]
+
+
+def test_default_omits_timings_under_github(tmp_path: Path) -> None:
+	(tmp_path / ".camas").mkdir()
+	out = resolve_default_effects(Config(), github=True, base=tmp_path)
+	assert [type(e).__name__ for e in out] == ["Status"]
+
+
+def test_default_omits_timings_without_camas(tmp_path: Path) -> None:
+	out = resolve_default_effects(Config(), github=False, base=tmp_path)
+	assert [type(e).__name__ for e in out] == ["Termtree"]
+
+
+def test_default_omits_timings_without_base() -> None:
+	assert [type(e).__name__ for e in resolve_default_effects(Config(), github=False)] == [
+		"Termtree"
+	]
+
+
+def test_resolve_effects_threads_base_to_default(tmp_path: Path) -> None:
+	(tmp_path / ".camas").mkdir()
+	out = resolve_effects(None, Config(), github=False, base=tmp_path)
+	assert any(type(e).__name__ == "Timings" for e in out)
 
 
 @pytest.mark.parametrize(

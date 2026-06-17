@@ -15,6 +15,7 @@ from .mypyc import MISSING, signature_fields_from_source
 
 if TYPE_CHECKING:
 	from collections.abc import Mapping
+	from pathlib import Path
 
 	from ..v0.config import Config
 
@@ -244,11 +245,12 @@ def expect_effect(value: Any) -> Effect[Any]:
 	return value  # pyright: ignore[reportUnknownVariableType,reportReturnType]
 
 
-def resolve_default_effects(config: Config, *, github: bool) -> tuple[Effect[Any], ...]:
-	"""The effects a bare run uses in an environment: the :class:`Config` override,
-	else the engine's built-in default — live ``Termtree`` locally, ``Status('github')``
-	(collapsed workflow groups) under GitHub Actions. An explicit ``()`` override is
-	honored as "no effects".
+def resolve_default_effects(
+	config: Config, *, github: bool, base: Path | None = None
+) -> tuple[Effect[Any], ...]:
+	"""The effects a bare run uses: the :class:`Config` override, else the environment default.
+
+	Locally, a project with a ``.camas`` directory also gets ``Timings`` to record durations.
 	"""
 	configured = config.effects(github=github)
 	if configured is not None:
@@ -256,7 +258,13 @@ def resolve_default_effects(config: Config, *, github: bool) -> tuple[Effect[Any
 	from ..effect.status import Status
 	from ..effect.termtree import Termtree
 
-	return (Status(output_mode="github"),) if github else (Termtree(),)
+	if github:
+		return (Status(output_mode="github"),)
+	if base is not None and (base / ".camas").is_dir():
+		from ..effect.timings import Timings
+
+		return (Termtree(), Timings(base=base))
+	return (Termtree(),)
 
 
 def default_effect_names(config: Config, *, github: bool) -> frozenset[str]:
@@ -272,13 +280,14 @@ def resolve_effects(
 	*,
 	github: bool,
 	scope_effects: Mapping[str, type[Effect[Any]]] = {},
+	base: Path | None = None,
 ) -> tuple[Effect[Any], ...]:
 	"""The effects for a run: the parsed ``--effects`` expression (propagating its
 	``ValueError`` on a malformed expression), or the environment default when
 	``--effects`` was omitted (``expr is None``).
 	"""
 	if expr is None:
-		return resolve_default_effects(config, github=github)
+		return resolve_default_effects(config, github=github, base=base)
 	return parse_effects(expr, scope_effects)
 
 

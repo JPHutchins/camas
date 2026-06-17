@@ -15,6 +15,7 @@ if sys.version_info >= (3, 11):
 else:  # pragma: no cover
 	from typing_extensions import assert_never
 
+from ..core import timings
 from ..core.color import BOLD_CYAN, CAMAS_LIGHT_PINK, CAMAS_VIOLET, GREY, RESET
 from ..core.matrix import matrix_axes
 from ..core.render import color_on, print_tree
@@ -26,6 +27,7 @@ from .mypyc import MISSING
 if TYPE_CHECKING:
 	from collections.abc import Mapping
 
+	from ..core.timings import TaskTiming
 	from ..v0.effect import Effect
 
 
@@ -127,6 +129,7 @@ def format_task_summary_listing(
 		)
 	names = frozenset(tasks)
 	items = sorted(tasks.items())
+	observed = timings.load(source.parent) if source is not None else {}
 	marker = " (default)"
 	width = max(len(n) + (len(marker) if n == default_task_name else 0) for n, _ in items)
 	header_text = f"Available tasks from {source}:" if source is not None else "Tasks:"
@@ -142,15 +145,36 @@ def format_task_summary_listing(
 			if isinstance(node, Task) or node.matrix is None
 			else f"  [matrix: {' '.join(format_axis(k, v) for k, v in node.matrix.items())}]"
 		)
+		timing = _timing_note(name, observed.get(name), color)
 		marked = name == default_task_name
 		name_cell = maybe_color(name, BOLD_CYAN, color) + (
 			maybe_color(marker, GREY, color) if marked else ""
 		)
 		pad = " " * (width + 1 - len(name) - (len(marker) if marked else 0))
-		lines.append(
-			f"  {name_cell}{pad} {body}{maybe_color(annotation, GREY, color) if annotation else ''}"
-		)
+		annotated = maybe_color(annotation, GREY, color) if annotation else ""
+		lines.append(f"  {name_cell}{pad} {body}{annotated}{f'  {timing}' if timing else ''}")
 	return "\n".join(lines)
+
+
+def _timing_note(name: str, timing: TaskTiming | None, color: bool) -> str:
+	"""The observed-duration annotation for a task: ``~Ns``, its slowest leaf, sample count.
+
+	>>> from camas.core.timings import TaskTiming
+	>>> _timing_note("check", TaskTiming(32.0, 3, "test", 31.9), color=False)
+	'~32.00s, slowest test 31.90s (n=3)'
+	>>> _timing_note("lint", TaskTiming(0.2, 1, "lint", 0.2), color=False)
+	'~0.20s (n=1)'
+	>>> _timing_note("x", None, color=False)
+	''
+	"""
+	if timing is None:
+		return ""
+	slowest = (
+		f", slowest {timing.slowest_leaf} {timing.slowest_elapsed_s:.2f}s"
+		if timing.slowest_leaf != name
+		else ""
+	)
+	return maybe_color(f"~{timing.elapsed_s:.2f}s{slowest} (n={timing.samples})", GREY, color)
 
 
 def print_task_summary_listing(
@@ -173,8 +197,12 @@ def print_task_trees(tasks: Mapping[str, TaskNode], source: Path | None) -> None
 	header = f"Available tasks from {source}:" if source is not None else "Tasks:"
 	print(maybe_color(header, CAMAS_VIOLET, color_on()))
 	print()
-	for _, task in sorted(tasks.items()):
+	observed = timings.load(source.parent) if source is not None else {}
+	for name, task in sorted(tasks.items()):
 		print_tree(task, show_cmd=True)
+		note = _timing_note(name, observed.get(name), color_on())
+		if note:
+			print(f"  {note}")
 		print()
 
 

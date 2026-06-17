@@ -6,6 +6,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from camas import Parallel, Sequential, Task
+from camas.core import timings
 from camas.main.format import (
 	first_line_doc,
 	format_annotation,
@@ -32,6 +33,34 @@ if TYPE_CHECKING:
 
 def test_task_summary_leaf_str_cmd() -> None:
 	assert task_summary(Task("ruff check ."), frozenset()) == "ruff check ."
+
+
+def test_listing_shows_observed_timing(tmp_path: Path) -> None:
+	(tmp_path / ".camas").mkdir()
+	timings.record(tmp_path, "check", 32.0, [("lint", 0.1), ("test", 31.9)])
+	out = format_task_summary_listing(
+		{"check": Parallel(Task("ruff", name="lint"), name="check")},
+		tmp_path / "tasks.py",
+		color=False,
+	)
+	assert "~32.00s, slowest test 31.90s (n=1)" in out
+
+
+def test_listing_without_source_shows_no_timing() -> None:
+	out = format_task_summary_listing({"lint": Task("ruff", name="lint")}, None, color=False)
+	assert "~" not in out
+
+
+def test_tree_shows_observed_timing(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+	(tmp_path / ".camas").mkdir()
+	timings.record(tmp_path, "lint", 0.2, [("lint", 0.2)])
+	print_task_trees({"lint": Task("ruff", name="lint")}, tmp_path / "tasks.py")
+	assert "~0.20s (n=1)" in capsys.readouterr().out
+
+
+def test_tree_without_source_shows_no_timing(capsys: pytest.CaptureFixture[str]) -> None:
+	print_task_trees({"lint": Task("ruff", name="lint")}, None)
+	assert "~" not in capsys.readouterr().out
 
 
 def test_task_summary_leaf_tuple_cmd() -> None:

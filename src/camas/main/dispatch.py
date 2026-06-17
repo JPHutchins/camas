@@ -236,7 +236,11 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 
 			try:
 				effects: Final = resolve_effects(
-					args.effects, effective_config, github=in_github, scope_effects=scope_effects
+					args.effects,
+					effective_config,
+					github=in_github,
+					scope_effects=scope_effects,
+					base=source.parent if source is not None else None,
 				)
 			except ValueError as e:
 				print(f"error: --effects: {e}", file=sys.stderr)
