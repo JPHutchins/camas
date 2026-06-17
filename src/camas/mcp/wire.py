@@ -49,6 +49,8 @@ class LeafReport(BaseModel):
 	completion: Completion
 	truncated: bool = False
 	"""True when this leaf's ``output`` is a tail excerpt; the full log is on disk."""
+	log: str | None = None
+	"""Filesystem path to this leaf's full output log, when one was written."""
 
 
 class RunResponse(BaseModel):

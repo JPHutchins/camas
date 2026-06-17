@@ -40,7 +40,7 @@ from ..main.tasks import load_tasks, load_tasks_from_py
 from ..v0.completion import Finished, Skipped, Stopped
 from . import wire
 from .catalog import to_list_response
-from .result import to_run_response
+from .result import to_plan_response, to_run_response
 
 if sys.version_info >= (3, 11):
 	from typing import assert_never
@@ -96,12 +96,12 @@ RUN_ANNOTATIONS: Final = types.ToolAnnotations(
 
 
 class Compat(NamedTuple):
-	"""Client-compatibility switches. ``emit_structured`` gates the 2025-11-25 ``title`` and
-	``annotations`` tool fields plus ``structuredContent`` — all default-OFF because emitting
-	them makes some Claude Code versions silently drop every tool (issue #25081); the
-	load-bearing ``TextContent`` summary carries everything. ``outputSchema`` is deferred until
-	``--rich`` is de-gated, since ref-blind clients need it inlined and pydantic offers no
-	upstream way to emit a ref-free schema.
+	"""Client-compatibility switches. ``emit_structured`` gates the 2025-11-25 ``title``,
+	``annotations``, and ``outputSchema`` tool fields plus ``structuredContent`` — all
+	default-OFF because emitting them makes some Claude Code versions silently drop every tool
+	(issue #25081, closed unfixed); the load-bearing ``TextContent`` summary carries everything.
+	When ``--rich`` opts in, ``outputSchema`` is the raw ``model_json_schema()`` with ``$ref``s
+	intact — current Claude Code resolves them; ref-blind clients are not a target.
 	"""
 
 	emit_structured: bool = False
@@ -191,6 +191,7 @@ def tools(names: tuple[str, ...], compat: Compat) -> Tools:
 			name=ToolName.LIST.value,
 			description=LIST_DESCRIPTION,
 			inputSchema=NO_ARGS_SCHEMA,
+			outputSchema=wire.ListResponse.model_json_schema() if compat.emit_structured else None,
 			title="List camas tasks" if compat.emit_structured else None,
 			annotations=LIST_ANNOTATIONS if compat.emit_structured else None,
 		),
@@ -198,6 +199,7 @@ def tools(names: tuple[str, ...], compat: Compat) -> Tools:
 			name=ToolName.RUN.value,
 			description=RUN_DESCRIPTION,
 			inputSchema=wire.run_input_schema(names),
+			outputSchema=wire.RunResponse.model_json_schema() if compat.emit_structured else None,
 			title="Run camas tasks" if compat.emit_structured else None,
 			annotations=RUN_ANNOTATIONS if compat.emit_structured else None,
 		),
@@ -240,10 +242,10 @@ async def _run_for(
 	except ValueError as e:
 		return error_result(str(e))
 	if req.dry_run:
-		return success_text(dry_run_text(node))
+		return success(dry_run_text(node), to_plan_response(node), session.compat)
 	result = await run(node, jobs=req.jobs, interactive=False)
 	logs = write_logs(create_run_log_dir(session.base, req.task, session.reserve_run()), result)
-	resp = to_run_response(node, result, verbosity=req.verbosity)
+	resp = attach_logs(to_run_response(node, result, verbosity=req.verbosity), logs)
 	return success(
 		run_text(req.task, resp, logs), resp, session.compat, links=failing_log_links(resp, logs)
 	)
@@ -385,9 +387,13 @@ def success(
 	return types.CallToolResult(content=content, structuredContent=structured, isError=False)
 
 
-def success_text(text: str) -> types.CallToolResult:
-	"""A non-error, text-only result (used by the dry-run preview)."""
-	return types.CallToolResult(content=[types.TextContent(type="text", text=text)], isError=False)
+def attach_logs(resp: wire.RunResponse, logs: tuple[Path | None, ...]) -> wire.RunResponse:
+	"""Thread each written log path into its ``LeafReport.log`` for ``structuredContent``."""
+	leaves = [
+		leaf.model_copy(update={"log": str(log)}) if log is not None else leaf
+		for leaf, log in zip(resp.leaves, logs, strict=True)
+	]
+	return resp.model_copy(update={"leaves": leaves})
 
 
 def error_result(text: str) -> types.CallToolResult:

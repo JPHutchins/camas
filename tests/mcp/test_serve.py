@@ -129,14 +129,16 @@ def test_tools_default_omits_rich_fields() -> None:
 	assert (tool_run.outputSchema, tool_run.annotations) == (None, None)
 
 
-def test_tools_rich_includes_title_and_annotations() -> None:
+def test_tools_rich_includes_title_annotations_and_schema() -> None:
 	tool_list, tool_run = serve.tools((), Compat(emit_structured=True))
 	assert tool_list.title == "List camas tasks"
 	assert tool_list.annotations is not None
 	assert tool_list.annotations.readOnlyHint is True
 	assert tool_run.annotations is not None
 	assert tool_run.annotations.destructiveHint is True
-	assert tool_run.outputSchema is None  # deferred until --rich is de-gated (needs ref inlining)
+	assert tool_list.outputSchema is not None
+	assert tool_run.outputSchema is not None
+	assert tool_run.outputSchema["type"] == "object"
 
 
 # --- list_call ---
@@ -207,7 +209,33 @@ async def test_run_call_dry_run_executes_nothing(tmp_path: Path) -> None:
 	result = await serve.run_call(session, {"task": "lint", "dry_run": True})
 	assert result.isError is False
 	assert "fully-resolved plan" in _text(result)
+	assert result.structuredContent is None
 	assert not (tmp_path / ".camas").exists()
+
+
+async def test_run_call_dry_run_structured_when_rich(tmp_path: Path) -> None:
+	session = _session({"lint": PASS}, None, tmp_path, rich=True)
+	result = await serve.run_call(session, {"task": "lint", "dry_run": True})
+	assert result.structuredContent is not None
+	assert result.structuredContent["returncode"] == 0
+	assert result.structuredContent["skipped"] == 1
+	assert result.structuredContent["leaves"][0]["name"] == "lint"
+
+
+async def test_run_call_dry_run_names_anonymous_leaf_by_command(tmp_path: Path) -> None:
+	node = Parallel(Task("echo anon", cwd="work"), name="grp")
+	session = _session({"grp": node}, None, tmp_path, rich=True)
+	result = await serve.run_call(session, {"task": "grp", "dry_run": True})
+	assert result.structuredContent is not None
+	assert result.structuredContent["leaves"][0]["name"] == "echo anon"
+	assert result.structuredContent["leaves"][0]["cwd"] == "work"
+
+
+async def test_run_call_log_path_in_structured_content_when_rich(tmp_path: Path) -> None:
+	session = _session({"bad": FAIL}, None, tmp_path, rich=True)
+	result = await serve.run_call(session, {"task": "bad"})
+	assert result.structuredContent is not None
+	assert result.structuredContent["leaves"][0]["log"].endswith("000_bad.log")
 
 
 async def test_run_call_unknown_task_is_tool_error(tmp_path: Path) -> None:
@@ -416,10 +444,7 @@ def test_dry_run_text_shows_resolved_commands() -> None:
 # --- result builders ---
 
 
-def test_success_text_and_error_result() -> None:
-	ok = serve.success_text("hi")
-	assert ok.isError is False
-	assert _text(ok) == "hi"
+def test_error_result_is_tool_error() -> None:
 	err = serve.error_result("nope")
 	assert err.isError is True
 	assert _text(err) == "nope"
