@@ -21,7 +21,12 @@ from ..core.render import color_on
 from ..v0.config import Config
 from .check import describe_check_help
 from .color import maybe_color
-from .effects import default_effect_names, format_effects_expr, resolve_default_effects
+from .effects import (
+	default_effect_names,
+	format_effects_expr,
+	resolve_default_effects,
+	running_under_agent,
+)
 from .format import (
 	format_available_effects,
 	format_load_error_hint,
@@ -39,7 +44,7 @@ if TYPE_CHECKING:
 	from ..v0.task import TaskNode
 
 
-def effects_help(config: Config, *, github: bool) -> str:
+def effects_help(config: Config, *, github: bool, agent: bool = False) -> str:
 	"""``--effects`` help: names the environment's resolved default, and the other
 	environment's default when it differs (``Termtree`` locally vs. ``Status``
 	under GitHub Actions, unless the :class:`Config` overrides them).
@@ -49,8 +54,8 @@ def effects_help(config: Config, *, github: bool) -> str:
 	>>> effects_help(Config(), github=True)
 	"tuple of Effect instances; pass with no value to list available Effects (default: (Status(output_mode='github'),); (Termtree(),) off GitHub Actions)"
 	"""
-	active = format_effects_expr(resolve_default_effects(config, github=github))
-	other = format_effects_expr(resolve_default_effects(config, github=not github))
+	active = format_effects_expr(resolve_default_effects(config, github=github, agent=agent))
+	other = format_effects_expr(resolve_default_effects(config, github=not github, agent=agent))
 	where = "under GITHUB_ACTIONS=true" if not github else "off GitHub Actions"
 	default = active if active == other else f"{active}; {other} {where}"
 	return (
@@ -135,6 +140,7 @@ class CamasArgumentParser(argparse.ArgumentParser):
 			else Config()
 		)
 		github = os.environ.get("GITHUB_ACTIONS") == "true"
+		agent = running_under_agent()
 		bare = config.bare_task(github=github)
 		sections = [super().format_help().rstrip()]
 		match self.state:
@@ -145,6 +151,7 @@ class CamasArgumentParser(argparse.ArgumentParser):
 						source,
 						color=color,
 						default_task_name=bare.name if bare is not None else None,
+						camas_dir=config.camas_path(source.parent) if source is not None else None,
 					)
 				)
 			case LoadErr(source=source, exception=exc):
@@ -159,7 +166,7 @@ class CamasArgumentParser(argparse.ArgumentParser):
 		effects_listing = format_available_effects(
 			color=color,
 			scope_effects=effects,
-			default_effect_names=default_effect_names(config, github=github),
+			default_effect_names=default_effect_names(config, github=github, agent=agent),
 		)
 		if effects_listing:
 			sections.append(effects_listing)
@@ -189,6 +196,7 @@ def build_parser(state: TasksState = EMPTY_STATE) -> argparse.ArgumentParser:
 		state.config if isinstance(state, LoadOk) and state.config is not None else Config()
 	)
 	github: Final = os.environ.get("GITHUB_ACTIONS") == "true"
+	agent: Final = running_under_agent()
 	parser: Final = CamasArgumentParser(
 		prog="camas",
 		description="A task runner with parallel execution, matrix expansion, MCP, and pluggable output effects.",
@@ -236,7 +244,7 @@ def build_parser(state: TasksState = EMPTY_STATE) -> argparse.ArgumentParser:
 		nargs="?",
 		default=None,
 		const="",
-		help=effects_help(config, github=github),
+		help=effects_help(config, github=github, agent=agent),
 	)
 	parser.add_argument(
 		"--matrix",

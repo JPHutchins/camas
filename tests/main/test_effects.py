@@ -29,6 +29,7 @@ from camas.main.effects import (
 	reachable_classes,
 	resolve_default_effects,
 	resolve_effects,
+	running_under_agent,
 	signature_fields,
 )
 from camas.main.mypyc import MISSING
@@ -296,3 +297,41 @@ def test_resolve_effects_threads_base_to_default(tmp_path: Path) -> None:
 )
 def test_default_effect_names_tracks_environment(github: bool, expected: frozenset[str]) -> None:
 	assert default_effect_names(Config(), github=github) == expected
+
+
+def test_agent_default_is_status_not_termtree() -> None:
+	out = resolve_default_effects(Config(), github=False, agent=True)
+	assert [type(e).__name__ for e in out] == ["Status"]
+
+
+def test_agent_default_adds_timings_with_camas(tmp_path: Path) -> None:
+	(tmp_path / ".camas").mkdir()
+	out = resolve_default_effects(Config(), github=False, agent=True, base=tmp_path)
+	assert [type(e).__name__ for e in out] == ["Status", "Timings"]
+
+
+def test_github_default_ignores_agent() -> None:
+	out = resolve_default_effects(Config(), github=True, agent=True)
+	assert [type(e).__name__ for e in out] == ["Status"]
+
+
+def test_default_effect_names_marks_status_for_agent() -> None:
+	assert default_effect_names(Config(), github=False, agent=True) == frozenset({"Status"})
+
+
+def test_running_under_agent_detects_claudecode(monkeypatch: pytest.MonkeyPatch) -> None:
+	monkeypatch.delenv("CAMAS_AGENT", raising=False)
+	monkeypatch.setenv("CLAUDECODE", "1")
+	assert running_under_agent() is True
+
+
+def test_running_under_agent_via_camas_agent(monkeypatch: pytest.MonkeyPatch) -> None:
+	monkeypatch.delenv("CLAUDECODE", raising=False)
+	monkeypatch.setenv("CAMAS_AGENT", "1")
+	assert running_under_agent() is True
+
+
+def test_running_under_agent_false_when_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+	monkeypatch.delenv("CLAUDECODE", raising=False)
+	monkeypatch.delenv("CAMAS_AGENT", raising=False)
+	assert running_under_agent() is False

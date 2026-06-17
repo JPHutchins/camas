@@ -36,31 +36,36 @@ def test_task_summary_leaf_str_cmd() -> None:
 
 
 def test_listing_shows_observed_timing(tmp_path: Path) -> None:
-	(tmp_path / ".camas").mkdir()
-	timings.record(tmp_path, [("lint", 0.1), ("test", 31.9)])
+	camas_dir = tmp_path / ".camas"
+	camas_dir.mkdir()
+	timings.record(camas_dir, [("lint", 0.1), ("test", 31.9)])
 	out = format_task_summary_listing(
 		{"check": Parallel(Task("ruff", name="lint"), Task("pytest", name="test"), name="check")},
 		tmp_path / "tasks.py",
 		color=False,
+		camas_dir=camas_dir,
 	)
 	assert "~31.90s" in out
 	assert "slowest" not in out
 	assert "n=" not in out
 
 
-def test_listing_without_source_shows_no_timing() -> None:
+def test_listing_without_camas_dir_shows_no_timing() -> None:
 	out = format_task_summary_listing({"lint": Task("ruff", name="lint")}, None, color=False)
 	assert "~" not in out
 
 
 def test_tree_shows_observed_timing(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-	(tmp_path / ".camas").mkdir()
-	timings.record(tmp_path, [("lint", 0.2)])
-	print_task_trees({"lint": Task("ruff", name="lint")}, tmp_path / "tasks.py")
+	camas_dir = tmp_path / ".camas"
+	camas_dir.mkdir()
+	timings.record(camas_dir, [("lint", 0.2)])
+	print_task_trees(
+		{"lint": Task("ruff", name="lint")}, tmp_path / "tasks.py", camas_dir=camas_dir
+	)
 	assert "~0.20s" in capsys.readouterr().out
 
 
-def test_tree_without_source_shows_no_timing(capsys: pytest.CaptureFixture[str]) -> None:
+def test_tree_without_camas_dir_shows_no_timing(capsys: pytest.CaptureFixture[str]) -> None:
 	print_task_trees({"lint": Task("ruff", name="lint")}, None)
 	assert "~" not in capsys.readouterr().out
 

@@ -33,13 +33,15 @@ README's Versioning section.
 **LLM agents:** prefer the MCP::
 
     $ camas mcp [--help | --rich]
-	$ camas mcp init [--rich] # create the .mcp.json, if desired
+    $ camas mcp init [--rich]    # write .mcp.json, if desired
 
-Or, if forced to use CLI, ``--effects='(Summary(),)'`` when invoking
-``camas`` from a tool. ``Summary`` produces one compact post-run
-report; the default ``Termtree`` is a live, redrawing animation that
-bloats stdout with hundreds of frame redraws when captured. Humans
-keep ``Termtree`` (it's the default).
+When you must use the CLI, camas auto-detects coding agents (the
+``CLAUDECODE`` env var, or set ``CAMAS_AGENT=1``) and defaults
+``--effects`` to ``(Status(),)`` — line-oriented status output instead
+of the default ``Termtree``, whose live cursor-redraw frames bloat
+captured stdout. Pass ``--effects='(Status(output_mode=...),)'`` to pick
+a mode (see ``camas --effects`` for the options). Humans keep
+``Termtree`` (the off-agent default).
 
 The doctests below invoke ``camas`` as a subprocess so they can verify
 behavior end-to-end. In real usage these are just shell commands::
@@ -68,7 +70,7 @@ those at the shell from ``tmp``.
 	...             [sys.executable, "-m", "camas", *args],
 	...             cwd=tmp, capture_output=True, text=True,
 	...             encoding="utf-8", errors="replace",
-	...             env={**os.environ, "NO_COLOR": "1"},
+	...             env={**os.environ, "NO_COLOR": "1", "CLAUDECODE": "", "CAMAS_AGENT": ""},
 	...         )
 	...     return camas
 

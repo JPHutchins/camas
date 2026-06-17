@@ -37,7 +37,16 @@ def _camas(*args: str, cwd: Path) -> subprocess.CompletedProcess[str]:
 def test_write_starter(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
 	assert write_starter_tasks_py(tmp_path) == 0
 	assert (tmp_path / "tasks.py").read_text(encoding="utf-8") == starter_text()
-	assert "Wrote" in capsys.readouterr().out
+	assert (tmp_path / ".camas" / ".gitignore").read_text(encoding="utf-8") == "*\n"
+	out = capsys.readouterr().out
+	assert "Wrote" in out
+	assert ".camas" in out
+
+
+def test_write_starter_refuses_existing_leaves_no_camas_dir(tmp_path: Path) -> None:
+	(tmp_path / "tasks.py").write_text("untouched = 1\n")
+	assert write_starter_tasks_py(tmp_path) == 2
+	assert not (tmp_path / ".camas").exists()
 
 
 def test_write_starter_refuses_existing(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

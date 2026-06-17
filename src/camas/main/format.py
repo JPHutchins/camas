@@ -114,10 +114,12 @@ def format_task_summary_listing(
 	source: Path | None,
 	color: bool,
 	default_task_name: str | None = None,
+	camas_dir: Path | None = None,
 ) -> str:
 	"""Build the ``Available tasks from <source>`` listing as a string.
 
-	``default_task_name`` marks the task a bare ``camas`` runs with ``(default)``.
+	``default_task_name`` marks the task a bare ``camas`` runs with ``(default)``;
+	``camas_dir`` is the project's resolved camas directory, read for timing estimates.
 	"""
 	if not tasks:
 		if source is not None:
@@ -129,7 +131,7 @@ def format_task_summary_listing(
 		)
 	names = frozenset(tasks)
 	items = sorted(tasks.items())
-	observed = timings.load(source.parent) if source is not None else {}
+	observed = timings.load(camas_dir) if camas_dir is not None else {}
 	marker = " (default)"
 	width = max(len(n) + (len(marker) if n == default_task_name else 0) for n, _ in items)
 	header_text = f"Available tasks from {source}:" if source is not None else "Tasks:"
@@ -145,7 +147,8 @@ def format_task_summary_listing(
 			if isinstance(node, Task) or node.matrix is None
 			else f"  [matrix: {' '.join(format_axis(k, v) for k, v in node.matrix.items())}]"
 		)
-		timing = _timing_note(timings.estimate(node, observed), color)
+		est = timings.estimate(node, observed)
+		timing = timing_note(est, color) if est is not None else ""
 		marked = name == default_task_name
 		name_cell = maybe_color(name, BOLD_CYAN, color) + (
 			maybe_color(marker, GREY, color) if marked else ""
@@ -156,17 +159,13 @@ def format_task_summary_listing(
 	return "\n".join(lines)
 
 
-def _timing_note(estimate: Estimate | None, color: bool) -> str:
+def timing_note(estimate: Estimate, color: bool) -> str:
 	"""A task's estimated-duration annotation, ``~Ns`` composed from observed leaf times.
 
 	>>> from camas.core.timings import Estimate
-	>>> _timing_note(Estimate(32.0, 3, "test", 31.9), color=False)
+	>>> timing_note(Estimate(32.0, 3, "test", 31.9), color=False)
 	'~32.00s'
-	>>> _timing_note(None, color=False)
-	''
 	"""
-	if estimate is None:
-		return ""
 	return maybe_color(f"~{estimate.elapsed_s:.2f}s", GREY, color)
 
 
@@ -174,15 +173,22 @@ def print_task_summary_listing(
 	tasks: Mapping[str, TaskNode],
 	source: Path | None,
 	default_task_name: str | None = None,
+	camas_dir: Path | None = None,
 ) -> None:
 	print(
 		format_task_summary_listing(
-			tasks, source, color=color_on(), default_task_name=default_task_name
+			tasks,
+			source,
+			color=color_on(),
+			default_task_name=default_task_name,
+			camas_dir=camas_dir,
 		)
 	)
 
 
-def print_task_trees(tasks: Mapping[str, TaskNode], source: Path | None) -> None:
+def print_task_trees(
+	tasks: Mapping[str, TaskNode], source: Path | None, camas_dir: Path | None = None
+) -> None:
 	"""Print every defined task's tree with commands expanded — verbose ``--tree`` output."""
 	if not tasks:
 		print_task_summary_listing(tasks, source)
@@ -190,12 +196,12 @@ def print_task_trees(tasks: Mapping[str, TaskNode], source: Path | None) -> None
 	header = f"Available tasks from {source}:" if source is not None else "Tasks:"
 	print(maybe_color(header, CAMAS_VIOLET, color_on()))
 	print()
-	observed = timings.load(source.parent) if source is not None else {}
+	observed = timings.load(camas_dir) if camas_dir is not None else {}
 	for _, task in sorted(tasks.items()):
 		print_tree(task, show_cmd=True)
-		note = _timing_note(timings.estimate(task, observed), color_on())
-		if note:
-			print(f"  {note}")
+		est = timings.estimate(task, observed)
+		if est is not None:
+			print(f"  {timing_note(est, color_on())}")
 		print()
 
 
