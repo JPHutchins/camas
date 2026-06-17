@@ -3,23 +3,17 @@
 
 """Effect: on teardown, record the run's per-task duration to the ``.camas`` cache."""
 
-from __future__ import annotations
-
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Final, NamedTuple
+from typing import Final, NamedTuple
 
 from ..core import timings
 from ..core.traversal import flatten_leaves
-from ..v0.leaf_state import Completed, Waiting
-
-if TYPE_CHECKING:
-	from collections.abc import Sequence
-
-	from ..v0.leaf_state import LeafState
-	from ..v0.task import Task, TaskNode
-	from ..v0.task_event import TaskEvent
+from ..v0.leaf_state import Completed, LeafState, Waiting
+from ..v0.task import Task, TaskNode
+from ..v0.task_event import TaskEvent
 
 
 @dataclass
