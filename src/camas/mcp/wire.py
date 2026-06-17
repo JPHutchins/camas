@@ -62,7 +62,7 @@ class RunResponse(BaseModel):
 	failed: int
 	skipped: int
 	interrupt_count: int
-	leaves: list[LeafReport]
+	leaves: tuple[LeafReport, ...]
 	truncated: bool = False
 
 
@@ -88,7 +88,7 @@ class TaskInfo(BaseModel):
 class ListResponse(BaseModel):
 	"""The project's task catalog: every task plus the default and CI-default names."""
 
-	tasks: list[TaskInfo]
+	tasks: tuple[TaskInfo, ...]
 	default: str | None = None
 	github_default: str | None = None
 

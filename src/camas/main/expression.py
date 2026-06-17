@@ -298,28 +298,28 @@ def to_expression(node: TaskNode) -> str:
 	"""
 	match node:
 		case Task(cmd=cmd, name=name):
-			return f"Task({_lit(_join_cmd(cmd))}{_name_kw(name)})"
+			return f"Task({quote(join_command(cmd))}{name_kwarg(name)})"
 		case Sequential(tasks=tasks, name=name):
-			return f"Sequential({_render_members(tasks)}{_name_kw(name)})"
+			return f"Sequential({render_members(tasks)}{name_kwarg(name)})"
 		case Parallel(tasks=tasks, name=name):
-			return f"Parallel({_render_members(tasks)}{_name_kw(name)})"
+			return f"Parallel({render_members(tasks)}{name_kwarg(name)})"
 		case _:
 			assert_never(node)
 
 
-def _render_members(tasks: tuple[TaskNode, ...]) -> str:
+def render_members(tasks: tuple[TaskNode, ...]) -> str:
 	return ", ".join(to_expression(child) for child in tasks)
 
 
-def _name_kw(name: str | None) -> str:
-	return f", name={_lit(name)}" if name is not None else ""
+def name_kwarg(name: str | None) -> str:
+	return f", name={quote(name)}" if name is not None else ""
 
 
-def _lit(value: str) -> str:
+def quote(value: str) -> str:
 	return json.dumps(value, ensure_ascii=False)
 
 
-def _join_cmd(cmd: str | tuple[str, ...]) -> str:
+def join_command(cmd: str | tuple[str, ...]) -> str:
 	return cmd if isinstance(cmd, str) else " ".join(cmd)
 
 

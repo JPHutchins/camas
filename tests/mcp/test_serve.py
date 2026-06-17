@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -36,9 +37,6 @@ def _session(
 
 PASS = Task(("python", "-c", "print('ok')"), name="lint")
 FAIL = Task(("python", "-c", "import sys; print('boom'); sys.exit(3)"), name="bad")
-
-
-# --- resolve_project / project_base / compat_from_argv ---
 
 
 def test_resolve_project_finds_tasks_py(tmp_path: Path) -> None:
@@ -115,14 +113,6 @@ def test_resolve_project_quiet_redirects_tasks_py_stdout(
 	assert "BANNER" in captured.err
 
 
-def test_compat_from_argv() -> None:
-	assert serve.compat_from_argv(["--rich"]).emit_structured is True
-	assert serve.compat_from_argv([]).emit_structured is False
-
-
-# --- tools / task_names ---
-
-
 def test_task_names_empty_on_load_error(tmp_path: Path) -> None:
 	assert serve.task_names(LoadErr(source=tmp_path / "tasks.py", exception=RuntimeError())) == ()
 
@@ -160,9 +150,6 @@ def test_tools_rich_includes_title_annotations_and_schema() -> None:
 	assert tool_docs.annotations.readOnlyHint is True
 
 
-# --- list_call ---
-
-
 def test_list_call_text_lists_tasks_and_markers(tmp_path: Path) -> None:
 	ci = Sequential(PASS, name="ci")
 	session = _session(
@@ -189,9 +176,6 @@ def test_list_call_structured_when_rich(tmp_path: Path) -> None:
 	result = serve.list_call(session)
 	assert result.structuredContent is not None
 	assert result.structuredContent["tasks"][0]["name"] == "lint"
-
-
-# --- run_call ---
 
 
 async def test_run_call_pass(tmp_path: Path) -> None:
@@ -260,7 +244,7 @@ async def test_run_call_log_path_in_structured_content_when_rich(tmp_path: Path)
 async def test_run_call_records_timing(tmp_path: Path) -> None:
 	session = _session({"lint": PASS}, None, tmp_path)
 	await serve.run_call(session, {"task": "lint"})
-	cache = timings.load(tmp_path)
+	cache = timings.load(session.camas_dir)
 	assert cache["lint"].samples == 1
 	assert cache["lint"].elapsed_s >= 0.0
 
@@ -268,7 +252,7 @@ async def test_run_call_records_timing(tmp_path: Path) -> None:
 async def test_run_call_dry_run_records_no_timing(tmp_path: Path) -> None:
 	session = _session({"lint": PASS}, None, tmp_path)
 	await serve.run_call(session, {"task": "lint", "dry_run": True})
-	assert timings.load(tmp_path) == {}
+	assert timings.load(session.camas_dir) == {}
 
 
 async def test_list_reflects_recorded_timing(tmp_path: Path) -> None:
@@ -444,8 +428,11 @@ async def test_call_routes_docs(tmp_path: Path) -> None:
 	assert "authoring guide" in _text(result)
 
 
-def test_init_options_declares_list_changed(tmp_path: Path) -> None:
-	opts = serve.init_options(serve.build_server(_session({"lint": PASS}, None, tmp_path)))
+def test_build_server_declares_list_changed(tmp_path: Path) -> None:
+	from mcp.server.lowlevel.server import NotificationOptions
+
+	server = serve.build_server(_session({"lint": PASS}, None, tmp_path))
+	opts = server.create_initialization_options(NotificationOptions(tools_changed=True))
 	assert opts.capabilities.tools is not None
 	assert opts.capabilities.tools.listChanged is True
 
@@ -476,9 +463,6 @@ async def test_check_via_client_refreshes_catalog_and_notifies(
 		assert "PASSED" in _text(ran)
 
 
-# --- resolve_run_node branches ---
-
-
 def test_resolve_run_node_unknown_task_raises() -> None:
 	with pytest.raises(ValueError, match="no task named 'x'"):
 		serve.resolve_run_node({"lint": PASS}, wire.RunRequest(task="x"))
@@ -498,14 +482,12 @@ def test_resolve_run_node_applies_overrides_and_args() -> None:
 	assert leaf.cmd == "pytest -v"
 
 
-# --- logging ---
-
-
 def test_create_run_log_dir_namespaces_by_task_and_is_idempotent(tmp_path: Path) -> None:
-	first = serve.create_run_log_dir(tmp_path, "ci", 1)
-	assert (tmp_path / ".camas" / ".gitignore").read_text() == "*\n"
-	assert first == tmp_path / ".camas" / "runs" / "ci" / "1"
-	second = serve.create_run_log_dir(tmp_path, "ci", 2)
+	camas_dir = tmp_path / ".camas"
+	first = serve.create_run_log_dir(camas_dir, "ci", 1)
+	assert (camas_dir / ".gitignore").read_text() == "*\n"
+	assert first == camas_dir / "runs" / "ci" / "1"
+	second = serve.create_run_log_dir(camas_dir, "ci", 2)
 	assert second.is_dir()
 
 
@@ -539,21 +521,18 @@ def test_failing_log_links_only_for_failed_leaves(tmp_path: Path) -> None:
 		failed=1,
 		skipped=0,
 		interrupt_count=0,
-		leaves=[
+		leaves=(
 			wire.LeafReport(
 				name="ok", command="c", completion=wire.Finished(returncode=0, elapsed=0.1)
 			),
 			wire.LeafReport(
 				name="bad", command="c", completion=wire.Finished(returncode=1, elapsed=0.1)
 			),
-		],
+		),
 	)
 	links = serve.failing_log_links(resp, (tmp_path / "a.log", tmp_path / "b.log"))
 	assert len(links) == 1
 	assert links[0].name == "bad"
-
-
-# --- text renderers ---
 
 
 def test_run_text_covers_every_status() -> None:
@@ -564,7 +543,7 @@ def test_run_text_covers_every_status() -> None:
 		failed=2,
 		skipped=2,
 		interrupt_count=1,
-		leaves=[
+		leaves=(
 			wire.LeafReport(
 				name="ok1", command="c", completion=wire.Finished(returncode=0, elapsed=0.1)
 			),
@@ -583,7 +562,7 @@ def test_run_text_covers_every_status() -> None:
 				name="s1", command="c", completion=wire.Skipped(returncode=2, blocked_by="bad")
 			),
 			wire.LeafReport(name="s2", command="c", completion=wire.Skipped(returncode=2)),
-		],
+		),
 	)
 	ok1_log = Path("/logs/ok1.log")
 	bad_log = Path("/logs/bad.log")
@@ -604,11 +583,11 @@ def test_run_text_covers_every_status() -> None:
 
 def test_list_text_renders_matrix_and_no_markers() -> None:
 	resp = wire.ListResponse(
-		tasks=[
+		tasks=(
 			wire.TaskInfo(
 				name="m", command_preview="test {PY}", matrix_axes={"PY": ["3.13", "3.14"]}
-			)
-		],
+			),
+		),
 		default=None,
 	)
 	text = serve.list_text(resp)
@@ -625,7 +604,7 @@ def test_dry_run_text_shows_resolved_commands() -> None:
 
 def test_list_text_shows_timing_with_slowest_leaf() -> None:
 	resp = wire.ListResponse(
-		tasks=[
+		tasks=(
 			wire.TaskInfo(
 				name="check",
 				command_preview="x",
@@ -633,8 +612,8 @@ def test_list_text_shows_timing_with_slowest_leaf() -> None:
 				samples=2,
 				slowest_leaf="test",
 				slowest_s=31.9,
-			)
-		],
+			),
+		),
 		default=None,
 	)
 	assert "[~32.00s, slowest test 31.90s, n=2]" in serve.list_text(resp)
@@ -642,7 +621,7 @@ def test_list_text_shows_timing_with_slowest_leaf() -> None:
 
 def test_list_text_omits_slowest_when_it_is_the_task_itself() -> None:
 	resp = wire.ListResponse(
-		tasks=[
+		tasks=(
 			wire.TaskInfo(
 				name="lint",
 				command_preview="x",
@@ -650,8 +629,8 @@ def test_list_text_omits_slowest_when_it_is_the_task_itself() -> None:
 				samples=1,
 				slowest_leaf="lint",
 				slowest_s=0.2,
-			)
-		],
+			),
+		),
 		default=None,
 	)
 	line = serve.list_text(resp)
@@ -659,16 +638,10 @@ def test_list_text_omits_slowest_when_it_is_the_task_itself() -> None:
 	assert "slowest" not in line
 
 
-# --- result builders ---
-
-
 def test_error_result_is_tool_error() -> None:
 	err = serve.error_result("nope")
 	assert err.isError is True
 	assert _text(err) == "nope"
-
-
-# --- in-memory client integration ---
 
 
 async def test_in_memory_round_trip(tmp_path: Path) -> None:
@@ -695,6 +668,68 @@ async def test_call_unknown_tool_is_error(tmp_path: Path) -> None:
 	result = await serve.call(session, "camas_nope", {})
 	assert result.isError is True
 	assert "unknown tool 'camas_nope'" in _text(result)
+
+
+def _bump_mtime(path: Path, session: Session) -> None:
+	os.utime(path, ns=(0, (session.source_mtime_ns or 0) + 1_000_000_000))
+
+
+def test_session_refresh_picks_up_edits(tmp_path: Path) -> None:
+	tasks_py = tmp_path / "tasks.py"
+	tasks_py.write_text("from camas import Task\na = Task('x')\n")
+	session = Session(serve.resolve_project(tmp_path), tmp_path, Compat())
+	assert serve.task_names(session.project) == ("a",)
+	tasks_py.write_text("from camas import Task\na = Task('x')\nb = Task('y')\n")
+	_bump_mtime(tasks_py, session)
+	session.refresh()
+	assert set(serve.task_names(session.project)) == {"a", "b"}
+
+
+def test_session_refresh_noop_when_unchanged(tmp_path: Path) -> None:
+	(tmp_path / "tasks.py").write_text("from camas import Task\na = Task('x')\n")
+	session = Session(serve.resolve_project(tmp_path), tmp_path, Compat())
+	pinned = session.project
+	session.refresh()
+	assert session.project is pinned
+
+
+def test_session_refresh_noop_without_source(tmp_path: Path) -> None:
+	session = Session(serve.resolve_project(tmp_path), tmp_path, Compat())
+	session.refresh()
+	assert serve.task_names(session.project) == ()
+
+
+def test_session_refresh_on_deleted_source_reresolves(tmp_path: Path) -> None:
+	tasks_py = tmp_path / "tasks.py"
+	tasks_py.write_text("from camas import Task\na = Task('x')\n")
+	session = Session(serve.resolve_project(tmp_path), tmp_path, Compat())
+	tasks_py.unlink()
+	session.refresh()
+	assert serve.task_names(session.project) == ()
+
+
+def test_session_refresh_handles_load_error_source(tmp_path: Path) -> None:
+	(tmp_path / "tasks.py").write_text("raise RuntimeError('boom')\n")
+	session = Session(serve.resolve_project(tmp_path), tmp_path, Compat())
+	assert isinstance(session.project, LoadErr)
+	session.refresh()
+	assert isinstance(session.project, LoadErr)
+
+
+async def test_run_via_client_picks_up_new_task_without_check(tmp_path: Path) -> None:
+	tasks_py = tmp_path / "tasks.py"
+	tasks_py.write_text("from camas import Task\na = Task(('python', '-c', 'pass'))\n")
+	session = Session(serve.resolve_project(tmp_path), tmp_path, Compat())
+	async with create_connected_server_and_client_session(serve.build_server(session)) as client:
+		tasks_py.write_text(
+			"from camas import Task\n"
+			"a = Task(('python', '-c', 'pass'))\n"
+			"b = Task(('python', '-c', 'pass'))\n"
+		)
+		_bump_mtime(tasks_py, session)
+		ran = await client.call_tool("camas_run", {"task": "b"})
+		assert ran.isError is False
+		assert "PASSED" in _text(ran)
 
 
 def _text(result: types.CallToolResult) -> str:

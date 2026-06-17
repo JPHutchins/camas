@@ -26,18 +26,20 @@ def test_entrypoint_mcp_branch_invokes_serve(monkeypatch: pytest.MonkeyPatch) ->
 
 def test_camas_list_does_not_import_mcp_stack(tmp_path: Path) -> None:
 	"""The MCP server's heavy deps must never load on the ``camas <task>`` hot path."""
-	script = (
-		"import sys\n"
-		"sys.argv = ['camas', '--list']\n"
-		"from camas.main import main\n"
-		"try:\n"
-		"    main()\n"
-		"except SystemExit:\n"
-		"    pass\n"
-		"heavy = {'mcp', 'pydantic', 'pydantic_core', 'starlette', 'uvicorn', 'anyio'}\n"
-		"leaked = sorted(m for m in sys.modules if m.split('.')[0] in heavy)\n"
-		"assert not leaked, leaked\n"
-	)
+	from textwrap import dedent
+
+	script = dedent("""
+		import sys
+		sys.argv = ['camas', '--list']
+		from camas.main import main
+		try:
+			main()
+		except SystemExit:
+			pass
+		heavy = {'mcp', 'pydantic', 'pydantic_core', 'starlette', 'uvicorn', 'anyio'}
+		leaked = sorted(m for m in sys.modules if m.split('.')[0] in heavy)
+		assert not leaked, leaked
+	""")
 	result = subprocess.run(
 		[sys.executable, "-c", script],
 		cwd=tmp_path,

@@ -47,10 +47,10 @@ def to_run_response(
 ) -> wire.RunResponse:
 	"""Assemble the wire ``RunResponse`` from a finished run and its pre-expansion task tree."""
 	leaves = tuple(info.task for info in flatten_leaves(expand_matrix(node)))
-	reports = [
-		_report(task, tr, verbosity=verbosity, tail=tail)
+	reports = tuple(
+		report(task, tr, verbosity=verbosity, tail=tail)
 		for task, tr in zip(leaves, result.results, strict=True)
-	]
+	)
 	completions = tuple(tr.completion for tr in result.results)
 	passed = sum(1 for c in completions if isinstance(c, Finished) and c.returncode == 0)
 	skipped = sum(1 for c in completions if isinstance(c, Skipped))
@@ -72,15 +72,15 @@ def to_plan_response(node: TaskNode) -> wire.RunResponse:
 	Lets ``camas_run dry_run=true`` satisfy the advertised ``outputSchema`` — the
 	structured counterpart of the rendered plan, with each leaf reported as skipped.
 	"""
-	leaves = [
+	leaves = tuple(
 		wire.LeafReport(
-			name=info.task.name if info.task.name is not None else _command(info.task),
-			command=_command(info.task),
+			name=info.task.name if info.task.name is not None else command_of(info.task),
+			command=command_of(info.task),
 			cwd=str(info.task.cwd) if info.task.cwd is not None else None,
 			completion=wire.Skipped(returncode=0, blocked_by=None),
 		)
 		for info in flatten_leaves(expand_matrix(node))
-	]
+	)
 	return wire.RunResponse(
 		returncode=0,
 		elapsed=0.0,
@@ -110,12 +110,12 @@ def to_check_response(state: TasksState) -> wire.CheckResponse:
 				return wire.CheckResponse(status="no_tasks")
 			if source.suffix != ".py":
 				return wire.CheckResponse(status="ok", source=str(source), task_count=len(tasks))
-			return _typecheck_response(source, len(tasks))
+			return typecheck_response(source, len(tasks))
 		case _:
 			assert_never(state)
 
 
-def _typecheck_response(source: Path, task_count: int) -> wire.CheckResponse:
+def typecheck_response(source: Path, task_count: int) -> wire.CheckResponse:
 	"""Run the type checker against a loaded ``.py`` tasks source and map its outcome."""
 	result = run_typecheck(source)
 	match result:
@@ -142,46 +142,46 @@ def _typecheck_response(source: Path, task_count: int) -> wire.CheckResponse:
 			assert_never(result)
 
 
-class _Decoded(NamedTuple):
+class Decoded(NamedTuple):
+	"""Decoded leaf output: ANSI-free lines and whether they are a tail excerpt."""
+
 	lines: list[str]
 	truncated: bool
 
 
-def _command(task: Task) -> str:
+def command_of(task: Task) -> str:
 	"""The task's command as one shell-readable string."""
 	return task.cmd if isinstance(task.cmd, str) else shlex.join(task.cmd)
 
 
-def _decode(output: Sequence[bytes], tail: int, *, include: bool) -> _Decoded:
+def decode(output: Sequence[bytes], tail: int) -> Decoded:
 	"""Decode merged stdout/stderr to ANSI-free lines, tail-truncated to ``tail``."""
-	if not include:
-		return _Decoded([], truncated=False)
 	lines = [strip_ansi(b.decode("utf-8", errors="replace")).rstrip("\n") for b in output]
 	if len(lines) > tail:
-		return _Decoded(lines[-tail:], truncated=True)
-	return _Decoded(lines, truncated=False)
+		return Decoded(lines[-tail:], truncated=True)
+	return Decoded(lines, truncated=False)
 
 
-def _report(task: Task, result: TaskResult, *, verbosity: Verbosity, tail: int) -> wire.LeafReport:
+def report(task: Task, result: TaskResult, *, verbosity: Verbosity, tail: int) -> wire.LeafReport:
 	comp: Completion = result.completion
 	include = verbosity == "full" or (verbosity == "failures" and comp.returncode != 0)
 	match comp:
 		case Finished(returncode=rc, elapsed=el, output=out):
-			decoded = _decode(out, tail, include=include)
+			decoded = decode(out, tail) if include else Decoded([], truncated=False)
 			completion: wire.Completion = wire.Finished(
 				returncode=rc, elapsed=el, output=decoded.lines
 			)
 		case Stopped(returncode=rc, elapsed=el, output=out):
-			decoded = _decode(out, tail, include=include)
+			decoded = decode(out, tail) if include else Decoded([], truncated=False)
 			completion = wire.Stopped(returncode=rc, elapsed=el, output=decoded.lines)
 		case Skipped(returncode=rc, blocked_by=bb):
-			decoded = _Decoded([], truncated=False)
+			decoded = Decoded([], truncated=False)
 			completion = wire.Skipped(returncode=rc, blocked_by=bb)
 		case _:
 			assert_never(comp)
 	return wire.LeafReport(
 		name=result.name,
-		command=_command(task),
+		command=command_of(task),
 		cwd=str(task.cwd) if task.cwd is not None else None,
 		completion=completion,
 		truncated=decoded.truncated,

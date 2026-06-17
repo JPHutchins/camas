@@ -65,10 +65,10 @@ def test_run_response_round_trips_completion_union() -> None:
 		failed=1,
 		skipped=0,
 		interrupt_count=0,
-		leaves=[
+		leaves=(
 			LeafReport(name="a", command="true", completion=Finished(returncode=0, elapsed=0.1)),
 			LeafReport(name="b", command="false", completion=Stopped(returncode=130, elapsed=0.2)),
-		],
+		),
 	)
 	dumped = resp.model_dump()
 	assert dumped["leaves"][0]["completion"]["type"] == "finished"
@@ -78,7 +78,7 @@ def test_run_response_round_trips_completion_union() -> None:
 
 def test_list_response_markers() -> None:
 	listing = ListResponse(
-		tasks=[TaskInfo(name="ci", command_preview="pytest", is_default=True)],
+		tasks=(TaskInfo(name="ci", command_preview="pytest", is_default=True),),
 		default="ci",
 	)
 	assert listing.tasks[0].is_default is True
