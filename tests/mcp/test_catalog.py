@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from camas import Config, Parallel, Sequential, Task
+from camas.core.timings import TaskTiming
 from camas.mcp.catalog import to_list_response
 
 
@@ -51,3 +52,15 @@ def test_matrix_axes_reported_as_lists() -> None:
 	resp = to_list_response({"m": node}, None)
 	assert resp.tasks[0].matrix_axes == {"PY": ["3.13", "3.14"]}
 	assert resp.tasks[0].command_preview == 'Parallel(Task("test {PY}"), name="m")'
+
+
+def test_timings_threaded_onto_matching_task() -> None:
+	timing = TaskTiming(elapsed_s=2.0, samples=1, slowest_leaf="test", slowest_elapsed_s=1.9)
+	resp = to_list_response(
+		{"ci": Task("pytest", name="ci"), "lint": Task("ruff", name="lint")}, None, {"ci": timing}
+	)
+	by_name = {t.name: t for t in resp.tasks}
+	assert by_name["ci"].timing is not None
+	assert by_name["ci"].timing.elapsed_s == 2.0
+	assert by_name["ci"].timing.slowest_leaf == "test"
+	assert by_name["lint"].timing is None

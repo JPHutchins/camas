@@ -17,6 +17,7 @@ from camas.mcp.wire import (
 	Skipped,
 	Stopped,
 	TaskInfo,
+	Timing,
 	run_input_schema,
 )
 
@@ -95,3 +96,19 @@ def test_check_response_defaults_and_rejects_bad_status() -> None:
 def test_docs_response_round_trips() -> None:
 	resp = DocsResponse(source="/site-packages/camas", tutorial="Task(...)")
 	assert DocsResponse.model_validate(resp.model_dump()) == resp
+
+
+def test_task_info_timing_round_trips() -> None:
+	info = TaskInfo(
+		name="check",
+		command_preview="Parallel(...)",
+		timing=Timing(elapsed_s=32.0, samples=3, slowest_leaf="test", slowest_elapsed_s=31.9),
+	)
+	dumped = info.model_dump()
+	assert dumped["timing"]["elapsed_s"] == 32.0
+	assert dumped["timing"]["slowest_leaf"] == "test"
+	assert TaskInfo.model_validate(dumped) == info
+
+
+def test_task_info_timing_defaults_none() -> None:
+	assert TaskInfo(name="x", command_preview="Task(...)").timing is None

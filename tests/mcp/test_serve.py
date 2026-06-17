@@ -12,6 +12,7 @@ from mcp import types
 from mcp.shared.memory import create_connected_server_and_client_session
 
 from camas import Config, Parallel, Sequential, Task
+from camas.core import timings
 from camas.core.completion import RunResult, TaskResult
 from camas.main.check import CheckerErr, CheckerNotFound, CheckerOk
 from camas.main.state import LoadErr, LoadOk
@@ -254,6 +255,26 @@ async def test_run_call_log_path_in_structured_content_when_rich(tmp_path: Path)
 	result = await serve.run_call(session, {"task": "bad"})
 	assert result.structuredContent is not None
 	assert result.structuredContent["leaves"][0]["log"].endswith("000_bad.log")
+
+
+async def test_run_call_records_timing(tmp_path: Path) -> None:
+	session = _session({"lint": PASS}, None, tmp_path)
+	await serve.run_call(session, {"task": "lint"})
+	cache = timings.load(tmp_path)
+	assert cache["lint"].samples == 1
+	assert cache["lint"].elapsed_s >= 0.0
+
+
+async def test_run_call_dry_run_records_no_timing(tmp_path: Path) -> None:
+	session = _session({"lint": PASS}, None, tmp_path)
+	await serve.run_call(session, {"task": "lint", "dry_run": True})
+	assert timings.load(tmp_path) == {}
+
+
+async def test_list_reflects_recorded_timing(tmp_path: Path) -> None:
+	session = _session({"lint": PASS}, None, tmp_path)
+	await serve.run_call(session, {"task": "lint"})
+	assert "n=1" in _text(serve.list_call(session))
 
 
 async def test_run_call_unknown_task_is_tool_error(tmp_path: Path) -> None:
@@ -600,6 +621,40 @@ def test_dry_run_text_shows_resolved_commands() -> None:
 	assert "fully-resolved plan" in text
 	assert "a" in text
 	assert "b" in text
+
+
+def test_list_text_shows_timing_with_slowest_leaf() -> None:
+	resp = wire.ListResponse(
+		tasks=[
+			wire.TaskInfo(
+				name="check",
+				command_preview="x",
+				timing=wire.Timing(
+					elapsed_s=32.0, samples=2, slowest_leaf="test", slowest_elapsed_s=31.9
+				),
+			)
+		],
+		default=None,
+	)
+	assert "[~32.00s, slowest test 31.90s, n=2]" in serve.list_text(resp)
+
+
+def test_list_text_omits_slowest_when_it_is_the_task_itself() -> None:
+	resp = wire.ListResponse(
+		tasks=[
+			wire.TaskInfo(
+				name="lint",
+				command_preview="x",
+				timing=wire.Timing(
+					elapsed_s=0.2, samples=1, slowest_leaf="lint", slowest_elapsed_s=0.2
+				),
+			)
+		],
+		default=None,
+	)
+	line = serve.list_text(resp)
+	assert "[~0.20s, n=1]" in line
+	assert "slowest" not in line
 
 
 # --- result builders ---

@@ -14,13 +14,19 @@ from . import wire
 if TYPE_CHECKING:
 	from collections.abc import Mapping
 
+	from ..core.timings import TaskTiming
 	from ..v0.config import Config
 	from ..v0.task import TaskNode
 
 
-def to_list_response(tasks: Mapping[str, TaskNode], config: Config | None) -> wire.ListResponse:
+def to_list_response(
+	tasks: Mapping[str, TaskNode],
+	config: Config | None,
+	timings: Mapping[str, TaskTiming] = {},
+) -> wire.ListResponse:
 	"""Assemble the ``camas_list`` catalog — one ``TaskInfo`` per task, sorted by
-	name, with the default and CI-default names taken from ``config``.
+	name, with the default and CI-default names taken from ``config`` and each task's
+	observed duration drawn from ``timings``.
 	"""
 	default = _task_name(config.default_task) if config is not None else None
 	github_default = _task_name(config.github_task) if config is not None else None
@@ -31,6 +37,7 @@ def to_list_response(tasks: Mapping[str, TaskNode], config: Config | None) -> wi
 				node,
 				is_default=name == default,
 				is_github_default=name == github_default,
+				timing=_wire_timing(timings.get(name)),
 			)
 			for name, node in sorted(tasks.items())
 		],
@@ -44,8 +51,25 @@ def _task_name(node: TaskNode | None) -> str | None:
 	return node.name if node is not None else None
 
 
+def _wire_timing(timing: TaskTiming | None) -> wire.Timing | None:
+	"""Map the core cache's :class:`TaskTiming` onto the pydantic ``camas_list`` payload."""
+	if timing is None:
+		return None
+	return wire.Timing(
+		elapsed_s=timing.elapsed_s,
+		samples=timing.samples,
+		slowest_leaf=timing.slowest_leaf,
+		slowest_elapsed_s=timing.slowest_elapsed_s,
+	)
+
+
 def _task_info(
-	name: str, node: TaskNode, *, is_default: bool, is_github_default: bool
+	name: str,
+	node: TaskNode,
+	*,
+	is_default: bool,
+	is_github_default: bool,
+	timing: wire.Timing | None,
 ) -> wire.TaskInfo:
 	"""One ``TaskInfo``: help, a fully-typed command expression, and matrix axes as lists."""
 	return wire.TaskInfo(
@@ -55,4 +79,5 @@ def _task_info(
 		matrix_axes={axis: list(values) for axis, values in matrix_axes(node).items()},
 		is_default=is_default,
 		is_github_default=is_github_default,
+		timing=timing,
 	)

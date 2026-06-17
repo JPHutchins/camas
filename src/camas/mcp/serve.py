@@ -21,6 +21,7 @@ from mcp.server.lowlevel import Server
 from mcp.server.lowlevel.server import NotificationOptions
 from pydantic import AnyUrl, ValidationError
 
+from ..core import timings
 from ..core.execution import run
 from ..core.matrix import override_matrix
 from ..core.render import render_tree_lines, strip_ansi
@@ -66,8 +67,10 @@ LIST_DESCRIPTION: Final = (
 	"targets, toolchains, platforms — whatever the project declares). Two tasks are flagged: "
 	"the default (what the developer runs while working) and the github default — the exact "
 	"task this project's CI runs (camas is the single definition shared by local and CI), so "
-	"running it locally before you commit or push reproduces CI exactly. Use this first to "
-	"discover valid task names for camas_run; it is the source of truth. Read-only; runs nothing."
+	"running it locally before you commit or push reproduces CI exactly. Tasks that have run "
+	"before also carry an observed duration and their slowest leaf, so you can pick a quick task "
+	"for the inner loop and the thorough one before committing. Use this first to discover valid "
+	"task names for camas_run; it is the source of truth. Read-only; runs nothing."
 )
 RUN_DESCRIPTION: Final = (
 	"Run THIS project's defined tasks exactly as composed by the project — honoring its "
@@ -259,7 +262,7 @@ def list_call(session: Session) -> types.CallToolResult:
 		case LoadErr(source=source, exception=exception):
 			return error_result(format_load_error_hint(source, exception))
 		case LoadOk(tasks=tasks, config=config):
-			resp = to_list_response(tasks, config)
+			resp = to_list_response(tasks, config, timings.load(session.base))
 			return success(list_text(resp), resp, session.compat)
 		case _:
 			assert_never(session.project)
@@ -305,6 +308,7 @@ async def _run_for(
 		return success(dry_run_text(node), to_plan_response(node), session.compat)
 	result = await run(node, jobs=req.jobs, interactive=False)
 	logs = write_logs(create_run_log_dir(session.base, req.task, session.reserve_run()), result)
+	timings.record_run(session.base, req.task, result)
 	resp = attach_logs(to_run_response(node, result, verbosity=req.verbosity), logs)
 	return success(
 		run_text(req.task, resp, logs), resp, session.compat, links=failing_log_links(resp, logs)
@@ -404,7 +408,8 @@ def list_text(resp: wire.ListResponse) -> str:
 			if on
 		)
 		body = t.help or t.command_preview
-		lines.append(f"  {t.name.ljust(width)}{marks}  {body}{_matrix_note(t.matrix_axes)}")
+		note = f"{_matrix_note(t.matrix_axes)}{_timing_note(t)}"
+		lines.append(f"  {t.name.ljust(width)}{marks}  {body}{note}")
 	return "\n".join(lines)
 
 
@@ -413,6 +418,19 @@ def _matrix_note(axes: dict[str, list[str]]) -> str:
 		return ""
 	rendered = ", ".join(f"{name}={'/'.join(values)}" for name, values in axes.items())
 	return f"  (matrix: {rendered})"
+
+
+def _timing_note(task: wire.TaskInfo) -> str:
+	"""The observed-duration annotation: ``~Ns``, the slowest leaf, and the sample count."""
+	if task.timing is None:
+		return ""
+	t = task.timing
+	slowest = (
+		f", slowest {t.slowest_leaf} {t.slowest_elapsed_s:.2f}s"
+		if t.slowest_leaf != task.name
+		else ""
+	)
+	return f"  [~{t.elapsed_s:.2f}s{slowest}, n={t.samples}]"
 
 
 def run_text(task: str, resp: wire.RunResponse, logs: tuple[Path | None, ...]) -> str:
