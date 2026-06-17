@@ -7,6 +7,8 @@ import pytest
 from pydantic import ValidationError
 
 from camas.mcp.wire import (
+	CheckResponse,
+	DocsResponse,
 	Finished,
 	LeafReport,
 	ListResponse,
@@ -81,3 +83,15 @@ def test_list_response_markers() -> None:
 	)
 	assert listing.tasks[0].is_default is True
 	assert listing.github_default is None
+
+
+def test_check_response_defaults_and_rejects_bad_status() -> None:
+	resp = CheckResponse(status="ok", source="/x/tasks.py", task_count=3, checker="ty")
+	assert (resp.diagnostics, resp.task_count) == (None, 3)
+	with pytest.raises(ValidationError):
+		CheckResponse.model_validate({"status": "exploded"})
+
+
+def test_docs_response_round_trips() -> None:
+	resp = DocsResponse(source="/site-packages/camas", tutorial="Task(...)")
+	assert DocsResponse.model_validate(resp.model_dump()) == resp

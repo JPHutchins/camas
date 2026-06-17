@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""Build the MCP ``RunResponse`` from camas's ``RunResult``."""
+"""Build MCP wire responses from camas's run results and load state."""
 
 from __future__ import annotations
 
@@ -12,6 +12,16 @@ from typing import TYPE_CHECKING, Literal, NamedTuple
 from ..core.matrix import expand_matrix
 from ..core.render import strip_ansi
 from ..core.traversal import flatten_leaves
+from ..main.check import (
+	INSTALL_HINT,
+	CheckerErr,
+	CheckerNotFound,
+	CheckerOk,
+	format_checker_output,
+	format_minimal_trace,
+	run_typecheck,
+)
+from ..main.state import LoadErr, LoadOk
 from ..v0.completion import Finished, Skipped, Stopped
 from . import wire
 
@@ -22,8 +32,10 @@ else:  # pragma: no cover
 
 if TYPE_CHECKING:
 	from collections.abc import Sequence
+	from pathlib import Path
 
 	from ..core.completion import RunResult, TaskResult
+	from ..main.state import TasksState
 	from ..v0.completion import Completion
 	from ..v0.task import Task, TaskNode
 
@@ -78,6 +90,56 @@ def to_plan_response(node: TaskNode) -> wire.RunResponse:
 		interrupt_count=0,
 		leaves=leaves,
 	)
+
+
+def to_check_response(state: TasksState) -> wire.CheckResponse:
+	"""Validate a freshly-resolved tasks source: did it evaluate, and does it type-check."""
+	match state:
+		case LoadErr(source=source, exception=exception):
+			trace = format_minimal_trace(exception, source)
+			checker = (
+				format_checker_output(run_typecheck(source), after_trace=True)
+				if source.suffix == ".py"
+				else ""
+			)
+			return wire.CheckResponse(
+				status="load_error", source=str(source), diagnostics=trace + checker
+			)
+		case LoadOk(tasks=tasks, source=source):
+			if source is None:
+				return wire.CheckResponse(status="no_tasks")
+			if source.suffix != ".py":
+				return wire.CheckResponse(status="ok", source=str(source), task_count=len(tasks))
+			return _typecheck_response(source, len(tasks))
+		case _:
+			assert_never(state)
+
+
+def _typecheck_response(source: Path, task_count: int) -> wire.CheckResponse:
+	"""Run the type checker against a loaded ``.py`` tasks source and map its outcome."""
+	result = run_typecheck(source)
+	match result:
+		case CheckerOk(name=name):
+			return wire.CheckResponse(
+				status="ok", source=str(source), task_count=task_count, checker=name
+			)
+		case CheckerErr(name=name, output=output):
+			return wire.CheckResponse(
+				status="type_error",
+				source=str(source),
+				task_count=task_count,
+				checker=name,
+				diagnostics=output,
+			)
+		case CheckerNotFound():
+			return wire.CheckResponse(
+				status="no_checker",
+				source=str(source),
+				task_count=task_count,
+				diagnostics=INSTALL_HINT,
+			)
+		case _:
+			assert_never(result)
 
 
 class _Decoded(NamedTuple):

@@ -30,7 +30,12 @@ These five are the unversioned alias for the latest API generation; to
 pin a generation, import from its namespace (``camas.v0``). See the
 README's Versioning section.
 
-**LLM agents:** prefer ``--effects='(Summary(),)'`` when invoking
+**LLM agents:** prefer the MCP::
+
+    $ camas mcp [--help | --rich]
+	$ camas mcp init [--rich] # create the .mcp.json, if desired
+
+Or, if forced to use CLI, ``--effects='(Summary(),)'`` when invoking
 ``camas`` from a tool. ``Summary`` produces one compact post-run
 report; the default ``Termtree`` is a live, redrawing animation that
 bloats stdout with hundreds of frame redraws when captured. Humans

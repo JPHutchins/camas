@@ -13,12 +13,16 @@ from mcp.shared.memory import create_connected_server_and_client_session
 
 from camas import Config, Parallel, Sequential, Task
 from camas.core.completion import RunResult, TaskResult
+from camas.main.check import CheckerErr, CheckerNotFound, CheckerOk
 from camas.main.state import LoadErr, LoadOk
 from camas.mcp import serve, wire
 from camas.mcp.serve import Compat, Session
 from camas.v0.completion import Finished, Skipped, Stopped
 
 if TYPE_CHECKING:
+	from collections.abc import Callable
+
+	from camas.main.check import TypeCheckResult
 	from camas.v0.task import TaskNode
 
 
@@ -123,14 +127,20 @@ def test_task_names_empty_on_load_error(tmp_path: Path) -> None:
 
 
 def test_tools_default_omits_rich_fields() -> None:
-	tool_list, tool_run = serve.tools(("a", "b"), Compat(emit_structured=False))
+	tool_list, tool_run, tool_check, tool_docs = serve.tools(
+		("a", "b"), Compat(emit_structured=False)
+	)
 	assert (tool_list.title, tool_list.outputSchema, tool_list.annotations) == (None, None, None)
 	assert tool_run.inputSchema["properties"]["task"]["enum"] == ["a", "b"]
 	assert (tool_run.outputSchema, tool_run.annotations) == (None, None)
+	assert (tool_check.title, tool_check.outputSchema, tool_check.annotations) == (None, None, None)
+	assert (tool_docs.title, tool_docs.outputSchema, tool_docs.annotations) == (None, None, None)
+	assert tool_check.inputSchema == serve.NO_ARGS_SCHEMA
+	assert tool_docs.inputSchema == serve.NO_ARGS_SCHEMA
 
 
 def test_tools_rich_includes_title_annotations_and_schema() -> None:
-	tool_list, tool_run = serve.tools((), Compat(emit_structured=True))
+	tool_list, tool_run, tool_check, tool_docs = serve.tools((), Compat(emit_structured=True))
 	assert tool_list.title == "List camas tasks"
 	assert tool_list.annotations is not None
 	assert tool_list.annotations.readOnlyHint is True
@@ -139,6 +149,14 @@ def test_tools_rich_includes_title_annotations_and_schema() -> None:
 	assert tool_list.outputSchema is not None
 	assert tool_run.outputSchema is not None
 	assert tool_run.outputSchema["type"] == "object"
+	assert tool_check.title == "Check camas tasks"
+	assert tool_check.outputSchema is not None
+	assert tool_check.annotations is not None
+	assert tool_check.annotations.readOnlyHint is True
+	assert tool_docs.title == "How to author camas tasks"
+	assert tool_docs.outputSchema is not None
+	assert tool_docs.annotations is not None
+	assert tool_docs.annotations.readOnlyHint is True
 
 
 # --- list_call ---
@@ -292,6 +310,149 @@ def test_server_reports_camas_version(tmp_path: Path) -> None:
 	session = _session({"lint": PASS}, None, tmp_path)
 	opts = serve.build_server(session).create_initialization_options()
 	assert opts.server_version == version("camas")
+
+
+_VALID_TASKS = "from camas import Task\nlint = Task('ruff check .')\n"
+
+
+def _fixed_checker(result: TypeCheckResult) -> Callable[[Path], TypeCheckResult]:
+	def checker(_source: Path) -> TypeCheckResult:
+		return result
+
+	return checker
+
+
+def test_check_call_ok_typechecked(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+	(tmp_path / "tasks.py").write_text(_VALID_TASKS)
+	monkeypatch.setattr("camas.mcp.result.run_typecheck", _fixed_checker(CheckerOk("ty")))
+	result = serve.check_call(_session({}, None, tmp_path))
+	assert result.isError is False
+	assert "OK" in _text(result)
+	assert "type-checked clean with ty" in _text(result)
+
+
+def test_check_call_type_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+	(tmp_path / "tasks.py").write_text(_VALID_TASKS)
+	monkeypatch.setattr(
+		"camas.mcp.result.run_typecheck", _fixed_checker(CheckerErr("mypy", "error: bad type"))
+	)
+	result = serve.check_call(_session({}, None, tmp_path))
+	assert result.isError is False
+	text = _text(result)
+	assert "TYPE ERRORS" in text
+	assert "error: bad type" in text
+
+
+def test_check_call_no_checker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+	(tmp_path / "tasks.py").write_text(_VALID_TASKS)
+	monkeypatch.setattr("camas.mcp.result.run_typecheck", _fixed_checker(CheckerNotFound()))
+	assert "no type checker is available" in _text(serve.check_call(_session({}, None, tmp_path)))
+
+
+def test_check_call_load_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+	(tmp_path / "tasks.py").write_text("raise RuntimeError('boom in tasks')\n")
+	monkeypatch.setattr("camas.mcp.result.run_typecheck", _fixed_checker(CheckerNotFound()))
+	result = serve.check_call(_session({}, None, tmp_path))
+	assert result.isError is False
+	text = _text(result)
+	assert "LOAD ERROR" in text
+	assert "boom in tasks" in text
+
+
+def test_check_call_load_error_pyproject(tmp_path: Path) -> None:
+	(tmp_path / "pyproject.toml").write_text("[tool.camas.tasks]\nlint = 123\n")
+	text = _text(serve.check_call(_session({}, None, tmp_path)))
+	assert "LOAD ERROR" in text
+	assert "pyproject.toml" in text
+
+
+def test_check_call_no_tasks(tmp_path: Path) -> None:
+	result = serve.check_call(_session({}, None, tmp_path))
+	assert result.isError is False
+	assert "no tasks.py" in _text(result)
+
+
+def test_check_call_pyproject_ok_skips_typecheck(tmp_path: Path) -> None:
+	(tmp_path / "pyproject.toml").write_text('[tool.camas.tasks]\nlint = "ruff check ."\n')
+	result = serve.check_call(_session({}, None, tmp_path))
+	assert result.isError is False
+	text = _text(result)
+	assert "OK" in text
+	assert "no type checker ran" in text
+
+
+def test_check_call_refreshes_session_project(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	monkeypatch.setattr("camas.mcp.result.run_typecheck", _fixed_checker(CheckerOk("ty")))
+	(tmp_path / "tasks.py").write_text("from camas import Task\nbuild = Task('echo build')\n")
+	session = _session({}, None, tmp_path)
+	serve.check_call(session)
+	assert isinstance(session.project, LoadOk)
+	assert "build" in session.project.tasks
+
+
+def test_check_call_structured_when_rich(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+	(tmp_path / "tasks.py").write_text(_VALID_TASKS)
+	monkeypatch.setattr("camas.mcp.result.run_typecheck", _fixed_checker(CheckerOk("ty")))
+	result = serve.check_call(_session({}, None, tmp_path, rich=True))
+	assert result.structuredContent is not None
+	assert result.structuredContent["status"] == "ok"
+	assert result.structuredContent["checker"] == "ty"
+
+
+def test_docs_call_serves_tutorial_and_source(tmp_path: Path) -> None:
+	result = serve.docs_call(_session({}, None, tmp_path))
+	assert result.isError is False
+	text = _text(result)
+	assert "authoring guide" in text
+	assert "source of truth" in text
+	assert "Task(" in text
+	assert result.structuredContent is None
+
+
+def test_docs_call_structured_when_rich(tmp_path: Path) -> None:
+	result = serve.docs_call(_session({}, None, tmp_path, rich=True))
+	assert result.structuredContent is not None
+	assert result.structuredContent["source"].endswith("camas")
+	assert "Sequential" in result.structuredContent["tutorial"]
+
+
+async def test_call_routes_docs(tmp_path: Path) -> None:
+	result = await serve.call(_session({}, None, tmp_path), "camas_docs", {})
+	assert "authoring guide" in _text(result)
+
+
+def test_init_options_declares_list_changed(tmp_path: Path) -> None:
+	opts = serve.init_options(serve.build_server(_session({"lint": PASS}, None, tmp_path)))
+	assert opts.capabilities.tools is not None
+	assert opts.capabilities.tools.listChanged is True
+
+
+async def test_check_via_client_refreshes_catalog_and_notifies(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	monkeypatch.setattr("camas.mcp.result.run_typecheck", _fixed_checker(CheckerOk("ty")))
+	(tmp_path / "tasks.py").write_text(
+		"from camas import Task\na = Task(('python', '-c', 'pass'))\n"
+	)
+	session = Session(serve.resolve_project(tmp_path), tmp_path, Compat())
+	async with create_connected_server_and_client_session(serve.build_server(session)) as client:
+		first = await client.list_tools()
+		run_first = next(t for t in first.tools if t.name == "camas_run")
+		assert run_first.inputSchema["properties"]["task"]["enum"] == ["a"]
+		(tmp_path / "tasks.py").write_text(
+			"from camas import Task\n"
+			"a = Task(('python', '-c', 'pass'))\n"
+			"b = Task(('python', '-c', 'pass'))\n"
+		)
+		assert "OK" in _text(await client.call_tool("camas_check", {}))
+		after = await client.list_tools()
+		run_after = next(t for t in after.tools if t.name == "camas_run")
+		assert set(run_after.inputSchema["properties"]["task"]["enum"]) == {"a", "b"}
+		ran = await client.call_tool("camas_run", {"task": "b"})
+		assert ran.isError is False
+		assert "PASSED" in _text(ran)
 
 
 # --- resolve_run_node branches ---
@@ -457,7 +618,12 @@ async def test_in_memory_round_trip(tmp_path: Path) -> None:
 	session = _session({"lint": PASS}, Config(default_task=PASS), tmp_path)
 	async with create_connected_server_and_client_session(serve.build_server(session)) as client:
 		listed = await client.list_tools()
-		assert {t.name for t in listed.tools} == {"camas_list", "camas_run"}
+		assert {t.name for t in listed.tools} == {
+			"camas_list",
+			"camas_run",
+			"camas_check",
+			"camas_docs",
+		}
 		catalog = await client.call_tool("camas_list", {})
 		assert "lint" in _text(catalog)
 		run = await client.call_tool("camas_run", {"task": "lint"})

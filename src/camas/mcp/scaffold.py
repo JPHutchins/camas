@@ -1,14 +1,7 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""``camas mcp init``: write this project's ``.mcp.json`` entry for the camas server.
-
-Stdlib only — no ``mcp``/``pydantic`` — so scaffolding works without the ``[mcp]``
-extra and stays off the import path of ``camas mcp`` (serving). The launch command
-is chosen for portability: a uv project gets ``uv run camas mcp`` (committable, uses
-the project's own camas), a ``camas`` on PATH is used directly, and only as a last
-resort does it fall back to this interpreter's absolute path.
-"""
+"""The ``camas mcp init`` command: write this project's ``.mcp.json`` entry for the camas server."""
 
 from __future__ import annotations
 
@@ -22,12 +15,7 @@ SERVER_NAME: Final = "camas"
 
 
 def write_mcp_json(argv: list[str]) -> int:
-	"""Merge a camas ``stdio`` server into ``./.mcp.json``, creating it if absent.
-
-	``--rich`` opts the entry into the gated 2025-11-25 tool fields. Returns the
-	process exit code: ``0`` on success, ``2`` if ``.mcp.json`` is unreadable, not
-	a JSON object, or has a non-object ``mcpServers``.
-	"""
+	"""Merge a camas ``stdio`` server into ``./.mcp.json``; return 0, or 2 if it is malformed."""
 	target: Final = Path.cwd() / ".mcp.json"
 	existing = _load(target)
 	if existing is None:
@@ -50,13 +38,7 @@ def write_mcp_json(argv: list[str]) -> int:
 
 
 def _launch(*, rich: bool) -> tuple[str, list[str]]:
-	"""The most portable launch command for camas in this environment.
-
-	A uv project (``uv.lock`` in cwd or an ancestor) runs ``uv run camas`` —
-	committable and bound to the project's camas, not a stale global. Else a
-	``camas`` on PATH is used directly. The final fallback runs this interpreter's
-	``-m camas`` (an absolute, per-machine path).
-	"""
+	"""The most portable launch command for camas in this environment."""
 	tail = ["mcp", "--rich"] if rich else ["mcp"]
 	if shutil.which("uv") is not None and _uv_project_root() is not None:
 		return "uv", ["run", "camas", *tail]

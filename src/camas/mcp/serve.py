@@ -1,17 +1,7 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""The ``camas mcp`` stdio server: exposes a project's tasks as ``camas_list`` and ``camas_run``.
-
-A native peer of the display Effects — it consumes camas's own ``RunResult`` and
-serializes it to MCP, rather than scraping terminal output. The project is pinned
-at launch (one server, one project); a run executes in-process via
-:func:`camas.core.execution.run` so the live event stream is preserved.
-
-Everything here imports ``mcp``/``pydantic`` at module top — fine, because the whole
-package is imported only inside the ``camas mcp`` branch of :func:`camas.main.main`,
-never on the ``camas <task>`` hot path.
-"""
+"""The ``camas mcp`` stdio server: exposes a project's camas tasks over the Model Context Protocol."""
 
 from __future__ import annotations
 
@@ -28,6 +18,7 @@ from typing import TYPE_CHECKING, Any, Final, NamedTuple
 
 from mcp import types
 from mcp.server.lowlevel import Server
+from mcp.server.lowlevel.server import NotificationOptions
 from pydantic import AnyUrl, ValidationError
 
 from ..core.execution import run
@@ -40,7 +31,8 @@ from ..main.tasks import load_tasks, load_tasks_from_py
 from ..v0.completion import Finished, Skipped, Stopped
 from . import wire
 from .catalog import to_list_response
-from .result import to_plan_response, to_run_response
+from .docs import to_docs_response
+from .result import to_check_response, to_plan_response, to_run_response
 
 if sys.version_info >= (3, 11):
 	from typing import assert_never
@@ -49,6 +41,8 @@ else:  # pragma: no cover
 
 if TYPE_CHECKING:
 	from collections.abc import Mapping, Sequence
+
+	from mcp.server.models import InitializationOptions
 
 	from ..core.completion import RunResult, TaskResult
 	from ..v0.task import TaskNode
@@ -62,6 +56,8 @@ class ToolName(Enum):
 
 	LIST = "camas_list"
 	RUN = "camas_run"
+	CHECK = "camas_check"
+	DOCS = "camas_docs"
 
 
 LIST_DESCRIPTION: Final = (
@@ -83,6 +79,24 @@ RUN_DESCRIPTION: Final = (
 	"for everything, or dry_run=true to preview the fully-resolved plan without executing. A "
 	"non-zero result means a task failed — a normal result, not a tool error."
 )
+CHECK_DESCRIPTION: Final = (
+	"Validate THIS project's tasks definition: re-read tasks.py from disk, evaluate it "
+	"(catching import and runtime errors), then run a static type checker (ty or mypy) over "
+	"it. Call this right after you write or edit tasks.py to confirm it loads and type-checks "
+	"before running anything — the tight authoring loop. Returns a structured verdict (ok / "
+	"load error / type error / no checker available / no tasks file) carrying the exact "
+	"diagnostics to fix. A broken file is a normal result, not a tool error. On success the "
+	"task catalog is refreshed, so a newly-added task becomes runnable via camas_run without "
+	"restarting the server."
+)
+DOCS_DESCRIPTION: Final = (
+	"How to author or edit THIS project's tasks.py. Returns camas's own installed source path "
+	"and its authoring tutorial — served live from the package, so it never drifts: the Task / "
+	"Sequential / Parallel / Config API, matrix expansion, per-leaf cwd and env, and custom "
+	"output Effects, with worked examples. Read this before writing tasks.py, then validate "
+	"your work with camas_check. The cited source path is the API source of truth — read it "
+	"for exact signatures and the examples directory."
+)
 
 NO_ARGS_SCHEMA: Final[dict[str, Any]] = {
 	"type": "object",
@@ -93,6 +107,8 @@ LIST_ANNOTATIONS: Final = types.ToolAnnotations(readOnlyHint=True, openWorldHint
 RUN_ANNOTATIONS: Final = types.ToolAnnotations(
 	readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=True
 )
+CHECK_ANNOTATIONS: Final = types.ToolAnnotations(readOnlyHint=True, openWorldHint=False)
+DOCS_ANNOTATIONS: Final = types.ToolAnnotations(readOnlyHint=True, openWorldHint=False)
 
 
 class Compat(NamedTuple):
@@ -137,18 +153,27 @@ async def _run_over_stdio(server: Server[object]) -> None:  # pragma: no cover
 	from mcp.server.stdio import stdio_server
 
 	async with stdio_server() as (read, write):
-		await server.run(read, write, server.create_initialization_options())
+		await server.run(read, write, init_options(server))
+
+
+def init_options(server: Server[object]) -> InitializationOptions:
+	"""Initialization options declaring the ``tools.listChanged`` capability."""
+	return server.create_initialization_options(NotificationOptions(tools_changed=True))
 
 
 def build_server(session: Session) -> Server[object]:
-	"""A low-level MCP ``Server`` with the two camas tool handlers registered."""
+	"""A low-level MCP ``Server`` with the camas tool handlers registered."""
 	server: Server[object] = Server("camas", version=version("camas"))
 
 	async def list_handler() -> list[types.Tool]:
 		return list(tools(task_names(session.project), session.compat))
 
 	async def call_handler(name: str, arguments: dict[str, Any]) -> types.CallToolResult:
-		return await call(session, name, arguments)
+		before = task_names(session.project)
+		result = await call(session, name, arguments)
+		if name == ToolName.CHECK.value and task_names(session.project) != before:
+			await server.request_context.session.send_tool_list_changed()
+		return result
 
 	server.list_tools()(list_handler)  # type: ignore[no-untyped-call]
 	server.call_tool(validate_input=False)(call_handler)
@@ -162,6 +187,10 @@ async def call(session: Session, name: str, arguments: dict[str, Any]) -> types.
 			return list_call(session)
 		case ToolName.RUN:
 			return await run_call(session, arguments)
+		case ToolName.CHECK:
+			return check_call(session)
+		case ToolName.DOCS:
+			return docs_call(session)
 		case _:
 			known = ", ".join(repr(tool.value) for tool in ToolName)
 			return error_result(f"unknown tool {name!r}; expected one of: {known}")
@@ -178,14 +207,16 @@ def task_names(project: TasksState) -> tuple[str, ...]:
 
 
 class Tools(NamedTuple):
-	"""The fixed pair of tools the server exposes — a known shape, not an open list."""
+	"""The fixed set of tools the server exposes — a known shape, not an open list."""
 
 	discovery: types.Tool
 	execution: types.Tool
+	validation: types.Tool
+	docs: types.Tool
 
 
 def tools(names: tuple[str, ...], compat: Compat) -> Tools:
-	"""The two tool definitions, with ``names`` spliced into ``camas_run``'s ``task`` enum."""
+	"""The four tool definitions, with ``names`` spliced into ``camas_run``'s ``task`` enum."""
 	return Tools(
 		discovery=types.Tool(
 			name=ToolName.LIST.value,
@@ -203,6 +234,22 @@ def tools(names: tuple[str, ...], compat: Compat) -> Tools:
 			title="Run camas tasks" if compat.emit_structured else None,
 			annotations=RUN_ANNOTATIONS if compat.emit_structured else None,
 		),
+		validation=types.Tool(
+			name=ToolName.CHECK.value,
+			description=CHECK_DESCRIPTION,
+			inputSchema=NO_ARGS_SCHEMA,
+			outputSchema=wire.CheckResponse.model_json_schema() if compat.emit_structured else None,
+			title="Check camas tasks" if compat.emit_structured else None,
+			annotations=CHECK_ANNOTATIONS if compat.emit_structured else None,
+		),
+		docs=types.Tool(
+			name=ToolName.DOCS.value,
+			description=DOCS_DESCRIPTION,
+			inputSchema=NO_ARGS_SCHEMA,
+			outputSchema=wire.DocsResponse.model_json_schema() if compat.emit_structured else None,
+			title="How to author camas tasks" if compat.emit_structured else None,
+			annotations=DOCS_ANNOTATIONS if compat.emit_structured else None,
+		),
 	)
 
 
@@ -216,6 +263,19 @@ def list_call(session: Session) -> types.CallToolResult:
 			return success(list_text(resp), resp, session.compat)
 		case _:
 			assert_never(session.project)
+
+
+def check_call(session: Session) -> types.CallToolResult:
+	"""Handle ``camas_check``: re-resolve and re-pin the project from disk, then validate it."""
+	session.project = resolve_project_quiet(session.base)
+	resp = to_check_response(session.project)
+	return success(check_text(resp), resp, session.compat)
+
+
+def docs_call(session: Session) -> types.CallToolResult:
+	"""Handle ``camas_docs``: the camas authoring tutorial."""
+	resp = to_docs_response()
+	return success(docs_text(resp), resp, session.compat)
 
 
 async def run_call(session: Session, arguments: dict[str, Any]) -> types.CallToolResult:
@@ -374,9 +434,53 @@ def dry_run_text(node: TaskNode) -> str:
 	return f"Dry run — fully-resolved plan, nothing executed:\n{plan}"
 
 
+def check_text(resp: wire.CheckResponse) -> str:
+	"""The load-bearing human summary for ``camas_check`` — the verdict, then any diagnostics."""
+	match resp.status:
+		case "ok":
+			how = (
+				f"type-checked clean with {resp.checker}"
+				if resp.checker is not None
+				else "no type checker ran"
+			)
+			return f"camas_check: OK — {resp.source} loads ({resp.task_count} task(s); {how})."
+		case "type_error":
+			return (
+				f"camas_check: TYPE ERRORS — {resp.source} loads ({resp.task_count} task(s)) but "
+				f"{resp.checker} reported:\n\n{resp.diagnostics}"
+			)
+		case "load_error":
+			return (
+				f"camas_check: LOAD ERROR — {resp.source} failed to evaluate:\n\n{resp.diagnostics}"
+			)
+		case "no_checker":
+			return (
+				f"camas_check: {resp.source} loads ({resp.task_count} task(s)), but no type "
+				f"checker is available.\n{resp.diagnostics}"
+			)
+		case "no_tasks":
+			return (
+				"camas_check: no tasks.py or [tool.camas.tasks] found in this project. "
+				"Call camas_docs for how to author one."
+			)
+		case _:
+			assert_never(resp.status)
+
+
+def docs_text(resp: wire.DocsResponse) -> str:
+	"""The load-bearing human summary for ``camas_docs`` — source pointer, then the tutorial."""
+	return (
+		"camas authoring guide. The API source of truth is the installed camas package at:\n"
+		f"  {resp.source}\n"
+		"Read its v0/ submodules for exact Task/Sequential/Parallel/Config signatures and the "
+		"examples/ directory for full project layouts; validate your tasks.py with camas_check."
+		f"\n\n{resp.tutorial}"
+	)
+
+
 def success(
 	text: str,
-	model: wire.ListResponse | wire.RunResponse,
+	model: wire.ListResponse | wire.RunResponse | wire.CheckResponse | wire.DocsResponse,
 	compat: Compat,
 	*,
 	links: tuple[types.ResourceLink, ...] = (),

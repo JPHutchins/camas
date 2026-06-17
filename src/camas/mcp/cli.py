@@ -1,11 +1,7 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""Dispatch ``camas mcp`` subcommands: ``init`` scaffolds ``.mcp.json``; otherwise serve.
-
-Both branches import lazily so ``init`` never pulls in the ``mcp``/``pydantic`` stack
-that serving needs.
-"""
+"""Dispatch ``camas mcp`` subcommands: ``init`` scaffolds ``.mcp.json``; otherwise serve."""
 
 from __future__ import annotations
 

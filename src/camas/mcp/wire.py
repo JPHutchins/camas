@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""Pydantic wire models — camas's native run/completion sum types as MCP JSON-RPC payloads."""
+"""Pydantic wire models for the MCP tools' JSON-RPC payloads."""
 
 from __future__ import annotations
 
@@ -83,6 +83,30 @@ class ListResponse(BaseModel):
 	tasks: list[TaskInfo]
 	default: str | None = None
 	github_default: str | None = None
+
+
+class CheckResponse(BaseModel):
+	"""Outcome of validating the project's tasks source — does it load, and does it type-check.
+
+	``status`` is the verdict; the remaining fields carry the detail an agent needs to fix
+	a problem. ``diagnostics`` holds the eval traceback, the type-checker output, or the
+	install hint, depending on ``status``.
+	"""
+
+	status: Literal["ok", "load_error", "type_error", "no_checker", "no_tasks"]
+	source: str | None = None
+	task_count: int | None = None
+	checker: Literal["ty", "mypy"] | None = None
+	diagnostics: str | None = None
+
+
+class DocsResponse(BaseModel):
+	"""The camas authoring guide: the installed source path plus its tutorial, served live."""
+
+	source: str
+	"""Absolute path to the installed camas package — the API source of truth."""
+	tutorial: str
+	"""The package ``__init__.py`` docstring: a worked, doctested authoring tutorial."""
 
 
 class RunRequest(BaseModel):
