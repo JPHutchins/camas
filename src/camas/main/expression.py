@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import ast
+import json
 import re
 import sys
 from typing import TYPE_CHECKING, Final, NamedTuple, cast
@@ -271,6 +272,55 @@ def parse_expression(expr: str, tasks: Mapping[str, TaskNode] | None = None) -> 
 	except ValueError as e:
 		print(f"error: {e}", file=sys.stderr)
 		sys.exit(2)
+
+
+def to_expression(node: TaskNode) -> str:
+	"""Render a task tree to a fully-typed camas expression — the verbose inverse of
+	:func:`parse_expression`, in the same notation as ``tasks.py``.
+
+	Every node is its constructor call with the command/children expanded and the
+	``name`` shown, so an agent reading it sees the exact structure, the literal
+	commands, and the handle of every task — and could paste it back into ``tasks.py``
+	or a ``camas`` expression unchanged.
+
+	>>> to_expression(Task("echo hi"))
+	'Task("echo hi")'
+	>>> to_expression(Task(("ruff", "check", ".")))
+	'Task("ruff check .")'
+	>>> to_expression(Task("ruff", name="lint"))
+	'Task("ruff", name="lint")'
+	>>> to_expression(Sequential(Task("a"), Task("b")))
+	'Sequential(Task("a"), Task("b"))'
+	>>> to_expression(Parallel(Task("a"), Task("b"), name="checks"))
+	'Parallel(Task("a"), Task("b"), name="checks")'
+	>>> to_expression(Sequential(Parallel(Task("a"), name="p"), Task("b"), name="s"))
+	'Sequential(Parallel(Task("a"), name="p"), Task("b"), name="s")'
+	"""
+	match node:
+		case Task(cmd=cmd, name=name):
+			return f"Task({_lit(_join_cmd(cmd))}{_name_kw(name)})"
+		case Sequential(tasks=tasks, name=name):
+			return f"Sequential({_render_members(tasks)}{_name_kw(name)})"
+		case Parallel(tasks=tasks, name=name):
+			return f"Parallel({_render_members(tasks)}{_name_kw(name)})"
+		case _:
+			assert_never(node)
+
+
+def _render_members(tasks: tuple[TaskNode, ...]) -> str:
+	return ", ".join(to_expression(child) for child in tasks)
+
+
+def _name_kw(name: str | None) -> str:
+	return f", name={_lit(name)}" if name is not None else ""
+
+
+def _lit(value: str) -> str:
+	return json.dumps(value, ensure_ascii=False)
+
+
+def _join_cmd(cmd: str | tuple[str, ...]) -> str:
+	return cmd if isinstance(cmd, str) else " ".join(cmd)
 
 
 def parse_task_value(raw: str) -> TaskNode | Ref:

@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from ..core.matrix import matrix_axes
-from ..main.format import task_summary
+from ..main.expression import to_expression
 from . import wire
 
 if TYPE_CHECKING:
@@ -47,11 +47,11 @@ def _task_name(node: TaskNode | None) -> str | None:
 def _task_info(
 	name: str, node: TaskNode, *, is_default: bool, is_github_default: bool
 ) -> wire.TaskInfo:
-	"""One ``TaskInfo``: help, a one-line command preview, and matrix axes as lists."""
+	"""One ``TaskInfo``: help, a fully-typed command expression, and matrix axes as lists."""
 	return wire.TaskInfo(
 		name=name,
 		help=node.help,
-		command_preview=task_summary(node, frozenset()),
+		command_preview=to_expression(node),
 		matrix_axes={axis: list(values) for axis, values in matrix_axes(node).items()},
 		is_default=is_default,
 		is_github_default=is_github_default,

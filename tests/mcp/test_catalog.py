@@ -23,11 +23,15 @@ def test_catalog_lists_sorted_with_markers() -> None:
 	assert by_name["test"].help is None
 
 
-def test_command_preview_inlines_structure() -> None:
-	resp = to_list_response(
-		{"ci": Sequential(Task("a"), Parallel(Task("b"), Task("c")), name="ci")}, None
+def test_command_preview_is_fully_typed_expression() -> None:
+	d = Task("d's actual command", name="d")
+	e = Task("e's actual command", name="e")
+	a = Parallel(d, e, name="a")
+	resp = to_list_response({"ci": Sequential(a, Parallel(Task("b"), Task("c")), name="ci")}, None)
+	assert (
+		resp.tasks[0].command_preview
+		== 'Sequential(Parallel(Task("d\'s actual command", name="d"), Task("e\'s actual command", name="e"), name="a"), Parallel(Task("b"), Task("c")), name="ci")'
 	)
-	assert resp.tasks[0].command_preview == "a, b | c"
 
 
 def test_no_config_marks_nothing() -> None:
@@ -46,4 +50,4 @@ def test_matrix_axes_reported_as_lists() -> None:
 	node = Parallel(Task("test {PY}"), matrix={"PY": ("3.13", "3.14")}, name="m")
 	resp = to_list_response({"m": node}, None)
 	assert resp.tasks[0].matrix_axes == {"PY": ["3.13", "3.14"]}
-	assert resp.tasks[0].command_preview == "test {PY}"
+	assert resp.tasks[0].command_preview == 'Parallel(Task("test {PY}"), name="m")'
