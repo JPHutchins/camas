@@ -20,6 +20,7 @@ keywords = [
 "github",
 "agents",
 "CI/CD",
+"MCP",
 ]
 classifiers = [
 "Development Status :: 3 - Alpha",
@@ -43,7 +44,8 @@ Issues = "https://github.com/JPHutchins/camas/issues"
 [project.optional-dependencies]
 github_checks = ["httpx>=0.28,<1"]
 check = ["ty>=0.0.31,<1"]
-all = ["httpx>=0.28,<1", "ty>=0.0.31,<1"]
+mcp = ["mcp>=1.24,<2"]
+all = ["httpx>=0.28,<1", "ty>=0.0.31,<1", "mcp>=1.24,<2"]
 
 [project.scripts]
 camas = "camas.main:main"
@@ -86,6 +88,7 @@ dev = [
 "tomli>=2",
 "typing_extensions>=4.12",
 "httpx>=0.28,<1",
+"mcp>=1.24,<2",
 ]
 
 [tool.pytest.ini_options]
@@ -205,12 +208,12 @@ exclude = ["tests/fixtures/**", "examples/**"]
 exclude = ["tests/fixtures/", "examples/", "build/", "setup.py"]
 
 [tool.pyrefly]
+project-includes = [
+"src/**/*.py*",
+"tests/**/*.py*",
+]
 project-excludes = [
 "tests/fixtures/**",
-"examples/**",
-"build/**",
-"setup.py",
-".venv*/**",
 ]
 
 [tool.coverage.run]

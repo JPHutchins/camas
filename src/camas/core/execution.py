@@ -210,21 +210,19 @@ async def execute(node: TaskNode, ctx: RunContext) -> tuple[TaskResult, ...]:
 			return tuple(r for f in futures for r in f.result())
 		case Sequential(tasks=children):
 			seq_results: tuple[TaskResult, ...] = ()
-			failed_rc: int | None = None
+			blocker: TaskResult | None = None
 			for child in children:
 				child_results = (
-					await skip_subtree(child, Skipped(failed_rc), ctx)
-					if failed_rc is not None
+					await skip_subtree(
+						child, Skipped(blocker.completion.returncode, blocker.name), ctx
+					)
+					if blocker is not None
 					else await execute(child, ctx)
 				)
 				seq_results = (*seq_results, *child_results)
-				if failed_rc is None:
-					failed_rc = next(
-						(
-							r.completion.returncode
-							for r in child_results
-							if r.completion.returncode != 0
-						),
+				if blocker is None:
+					blocker = next(
+						(r for r in child_results if r.completion.returncode != 0),
 						None,
 					)
 			return seq_results
@@ -233,7 +231,11 @@ async def execute(node: TaskNode, ctx: RunContext) -> tuple[TaskResult, ...]:
 
 
 async def run(
-	task: TaskNode, effects: Sequence[Effect[Any]] = (), jobs: int | None = None
+	task: TaskNode,
+	effects: Sequence[Effect[Any]] = (),
+	jobs: int | None = None,
+	*,
+	interactive: bool = True,
 ) -> RunResult:
 	"""Execute a task tree, dispatching events to every effect.
 
@@ -290,13 +292,14 @@ async def run(
 	def on_sigint() -> None:
 		step_interrupt(interrupts, states)
 
-	saved_tty: Final = suppress_ctrl_c_echo()
+	saved_tty: Final = suppress_ctrl_c_echo() if interactive else None
 	sigint_handled = False
-	try:
-		loop.add_signal_handler(signal.SIGINT, on_sigint)
-		sigint_handled = True
-	except NotImplementedError:  # pragma: no cover
-		pass
+	if interactive:
+		try:
+			loop.add_signal_handler(signal.SIGINT, on_sigint)
+			sigint_handled = True
+		except NotImplementedError:  # pragma: no cover
+			pass
 
 	results: tuple[TaskResult, ...] = ()
 	try:

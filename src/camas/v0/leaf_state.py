@@ -66,7 +66,7 @@ class Completed(NamedTuple):
 	>>> Completed(Task("echo hi"), Finished(0, 0.5, ()))
 	Completed(task=Task(cmd='echo hi', name=None, env={}, cwd=None), completion=Finished(returncode=0, elapsed=0.5, output=()))
 	>>> Completed(Task("echo hi"), Skipped(1))
-	Completed(task=Task(cmd='echo hi', name=None, env={}, cwd=None), completion=Skipped(returncode=1))
+	Completed(task=Task(cmd='echo hi', name=None, env={}, cwd=None), completion=Skipped(returncode=1, blocked_by=None))
 	"""
 
 	task: Task

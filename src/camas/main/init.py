@@ -9,6 +9,9 @@ import sys
 from pathlib import Path
 from typing import Final
 
+from ..core.timings import ensure_camas_dir
+from ..v0.config import DEFAULT_CAMAS_DIR
+
 
 def starter_text() -> str:
 	"""The packaged :mod:`camas.main.starter` template, scaffolded verbatim.
@@ -22,16 +25,23 @@ def starter_text() -> str:
 
 
 def write_starter_tasks_py(directory: Path) -> int:
-	"""Write :func:`starter_text` to ``directory/tasks.py`` — the exit code for
-	``camas --init``. Exclusive create: an existing file is never touched, and
-	any ``OSError`` (exists, permissions, ...) becomes a clean error exit.
+	"""Write :func:`starter_text` to ``directory/tasks.py`` and create the camas
+	directory beside it — the exit code for ``camas --init``. Exclusive create: an
+	existing ``tasks.py`` is never touched, and any ``OSError`` (exists, permissions,
+	...) becomes a clean error exit.
 	"""
 	target: Final = directory / "tasks.py"
+	camas_dir: Final = directory / DEFAULT_CAMAS_DIR
 	try:
 		with target.open("x", encoding="utf-8") as f:
 			f.write(starter_text())
+		ensure_camas_dir(camas_dir)
 	except OSError as e:
 		print(f"error: {e}", file=sys.stderr)
 		return 2
-	print(f"Wrote {target}\n\nTry:\n  camas --list\n  camas greet --help\n  camas")
+	print(
+		f"Wrote {target}\n"
+		f"Created {camas_dir} for run logs and timing estimates; delete it to opt out.\n\n"
+		"Try:\n  camas --list\n  camas greet --help\n  camas"
+	)
 	return 0

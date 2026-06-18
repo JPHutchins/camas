@@ -212,7 +212,8 @@ def test_help_includes_tasks_and_effects(
 	assert "Try:" in out
 
 
-def test_successful_execution() -> None:
+def test_successful_execution(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+	monkeypatch.chdir(tmp_path)
 	with (
 		pytest.raises(SystemExit, match="0"),
 		patch("sys.argv", ["camas", 'Task(("python", "-c", "pass"), name="ok")']),
@@ -220,7 +221,8 @@ def test_successful_execution() -> None:
 		main()
 
 
-def test_failed_execution() -> None:
+def test_failed_execution(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+	monkeypatch.chdir(tmp_path)
 	with (
 		pytest.raises(SystemExit, match="1"),
 		patch("sys.argv", ["camas", 'Task(("python", "-c", "raise SystemExit(1)"), name="fail")']),

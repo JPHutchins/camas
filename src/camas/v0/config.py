@@ -5,13 +5,18 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, Final, NamedTuple
 
 if TYPE_CHECKING:
+	from pathlib import Path
 	from typing import Any
 
 	from .effect import Effect
 	from .task import TaskNode
+
+
+DEFAULT_CAMAS_DIR: Final = ".camas"
+"""The default project subdirectory for camas's run logs and timing cache."""
 
 
 class Config(NamedTuple):
@@ -25,6 +30,12 @@ class Config(NamedTuple):
 	"""``None`` defers to the engine's default; ``()`` is an explicit no-effects."""
 	default_github_effects: tuple[Effect[Any], ...] | None = None
 	"""``None`` defers to the engine's default; ``()`` is an explicit no-effects."""
+	camas_dir: str = DEFAULT_CAMAS_DIR
+	"""Project subdirectory for run logs and the timing cache; delete it to opt out."""
+
+	def camas_path(self, base: Path) -> Path:
+		"""The resolved camas directory under ``base``."""
+		return base / self.camas_dir
 
 	def bare_task(self, *, github: bool) -> TaskNode | None:
 		"""The task a bare ``camas`` invocation runs."""

@@ -22,7 +22,7 @@ from ..core.matrix import matrix_axes, override_matrix
 from ..core.render import print_tree
 from ..v0.config import Config
 from .argv import apply_passthrough, parse_axis_values, parse_matrix_kv, split_passthrough
-from .effects import default_effect_names, resolve_effects
+from .effects import default_effect_names, resolve_effects, running_under_agent
 from .expression import parse_expression
 from .format import (
 	format_load_error_hint,
@@ -161,7 +161,9 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 				print_available_effects(
 					{},
 					default_effect_names(
-						Config(), github=os.environ.get("GITHUB_ACTIONS") == "true"
+						Config(),
+						github=os.environ.get("GITHUB_ACTIONS") == "true",
+						agent=running_under_agent(),
 					),
 				)
 				sys.exit(0)
@@ -170,7 +172,11 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 		case LoadOk(tasks=tasks, source=source, scope_effects=scope_effects, config=config):
 			args, _leftover = parser.parse_known_args(split.head)
 			in_github: Final = os.environ.get("GITHUB_ACTIONS") == "true"
+			in_agent: Final = running_under_agent()
 			effective_config: Final = config if config is not None else Config()
+			camas_dir: Final = (
+				effective_config.camas_path(source.parent) if source is not None else None
+			)
 			default_node: Final = effective_config.bare_task(github=in_github)
 			axis_node: Final = (
 				tasks[args.expression]
@@ -201,11 +207,12 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 					tasks,
 					source,
 					default_task_name=default_node.name if default_node is not None else None,
+					camas_dir=camas_dir,
 				)
 				sys.exit(0)
 
 			if args.tree:
-				print_task_trees(tasks, source)
+				print_task_trees(tasks, source, camas_dir=camas_dir)
 				sys.exit(0)
 
 			if args.check:
@@ -215,7 +222,8 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 
 			if args.effects == "":
 				print_available_effects(
-					scope_effects, default_effect_names(effective_config, github=in_github)
+					scope_effects,
+					default_effect_names(effective_config, github=in_github, agent=in_agent),
 				)
 				sys.exit(0)
 
@@ -236,7 +244,12 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 
 			try:
 				effects: Final = resolve_effects(
-					args.effects, effective_config, github=in_github, scope_effects=scope_effects
+					args.effects,
+					effective_config,
+					github=in_github,
+					agent=in_agent,
+					scope_effects=scope_effects,
+					base=source.parent if source is not None else None,
 				)
 			except ValueError as e:
 				print(f"error: --effects: {e}", file=sys.stderr)

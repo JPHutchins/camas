@@ -32,13 +32,18 @@ class Skipped(NamedTuple):
 
 	Carries the returncode of the task that caused the skip — an Either-like
 	propagation so callers that need an rc (e.g. the overall run's exit code)
-	can read it uniformly across completion variants.
+	can read it uniformly across completion variants — and ``blocked_by``, the
+	label of that task, so consumers can point at the real failure, not the skip.
 
 	>>> Skipped(1)
-	Skipped(returncode=1)
+	Skipped(returncode=1, blocked_by=None)
+	>>> Skipped(1, "lint").blocked_by
+	'lint'
 	"""
 
 	returncode: int
+	blocked_by: str | None = None
+	"""Label of the leaf whose non-zero exit short-circuited this one; ``None`` when not derivable."""
 
 
 class Stopped(NamedTuple):

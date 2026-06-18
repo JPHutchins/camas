@@ -57,12 +57,31 @@ def assign_key_name(node: TaskNode | Ref, key: str) -> TaskNode | Ref:
 			return node
 
 
+RESERVED_TASK_NAMES: Final = frozenset({"mcp"})
+
+
+def reject_reserved_names(tasks: Mapping[str, object]) -> None:
+	"""Reject task names that collide with a reserved ``camas`` subcommand.
+
+	Raises:
+		ValueError: when a task is named after a reserved keyword (``mcp``); the CLI
+			intercepts those before task dispatch and would otherwise shadow them.
+
+	>>> reject_reserved_names({"build": None, "test": None}) is None
+	True
+	"""
+	clash = sorted(RESERVED_TASK_NAMES.intersection(tasks))
+	if clash:
+		names = ", ".join(repr(name) for name in clash)
+		raise ValueError(f"task name {names} is reserved for a camas subcommand; rename it")
+
+
 def load_tasks(path: Path) -> LoadOk:
 	"""Read [tool.camas.tasks] from a pyproject.toml and resolve all refs.
 
 	Raises:
-		ValueError: when the table or a task value has the wrong type, or a
-			task fails to parse or resolve.
+		ValueError: when the table or a task value has the wrong type, a task fails
+			to parse or resolve, or a task uses a reserved name.
 	"""
 	parsed: dict[str, Any] = tomllib.loads(path.read_text())
 	raw: Any = dig(dig(dig(parsed, "tool"), "camas"), "tasks")
@@ -76,6 +95,7 @@ def load_tasks(path: Path) -> LoadOk:
 			pre[name] = assign_key_name(parse_task_value(value), name)
 		except ValueError as e:
 			raise ValueError(f"task {name!r}: {e}") from e
+	reject_reserved_names(pre)
 	return LoadOk(
 		tasks={name: resolve_refs(tree, pre, frozenset({name})) for name, tree in pre.items()},
 		source=path,
@@ -171,8 +191,10 @@ def name_scope_config(scope: Mapping[str, object]) -> Config | None:
 def load_tasks_from_py(path: Path) -> LoadOk:
 	"""Execute a Python task-definition file and collect its module-level bindings."""
 	scope: Final = runpy.run_path(str(path))
+	tasks: Final = name_scope_bindings(scope)
+	reject_reserved_names(tasks)
 	return LoadOk(
-		tasks=name_scope_bindings(scope),
+		tasks=tasks,
 		source=path,
 		scope_effects=name_scope_effects(scope),
 		config=name_scope_config(scope),

@@ -15,6 +15,7 @@ from .mypyc import MISSING, signature_fields_from_source
 
 if TYPE_CHECKING:
 	from collections.abc import Mapping
+	from pathlib import Path
 
 	from ..v0.config import Config
 
@@ -244,11 +245,26 @@ def expect_effect(value: Any) -> Effect[Any]:
 	return value  # pyright: ignore[reportUnknownVariableType,reportReturnType]
 
 
-def resolve_default_effects(config: Config, *, github: bool) -> tuple[Effect[Any], ...]:
-	"""The effects a bare run uses in an environment: the :class:`Config` override,
-	else the engine's built-in default — live ``Termtree`` locally, ``Status('github')``
-	(collapsed workflow groups) under GitHub Actions. An explicit ``()`` override is
-	honored as "no effects".
+def running_under_agent() -> bool:
+	"""Whether camas is driven by an AI coding agent rather than a human at a terminal.
+
+	Detected from ``CLAUDECODE`` (set by Claude Code) or an explicit ``CAMAS_AGENT``
+	override. Agents default to the line-oriented ``Status`` renderer instead of the
+	live ``Termtree``, whose cursor-redraw frames bloat captured output.
+	"""
+	import os
+
+	return os.environ.get("CLAUDECODE") == "1" or bool(os.environ.get("CAMAS_AGENT"))
+
+
+def resolve_default_effects(
+	config: Config, *, github: bool, agent: bool = False, base: Path | None = None
+) -> tuple[Effect[Any], ...]:
+	"""The effects a bare run uses: the :class:`Config` override, else the environment default.
+
+	The renderer is ``Status(output_mode="github")`` under GitHub Actions, the line-oriented
+	``Status`` for an agent, else the live ``Termtree``. A project whose camas directory exists
+	also gets ``Timings`` to record per-leaf durations.
 	"""
 	configured = config.effects(github=github)
 	if configured is not None:
@@ -256,14 +272,24 @@ def resolve_default_effects(config: Config, *, github: bool) -> tuple[Effect[Any
 	from ..effect.status import Status
 	from ..effect.termtree import Termtree
 
-	return (Status(output_mode="github"),) if github else (Termtree(),)
+	if github:
+		return (Status(output_mode="github"),)
+	renderer: Effect[Any] = Status() if agent else Termtree()
+	camas = config.camas_path(base) if base is not None else None
+	if camas is not None and camas.is_dir():
+		from ..effect.timings import Timings
+
+		return (renderer, Timings(camas_dir=camas))
+	return (renderer,)
 
 
-def default_effect_names(config: Config, *, github: bool) -> frozenset[str]:
+def default_effect_names(config: Config, *, github: bool, agent: bool = False) -> frozenset[str]:
 	"""Class names of the effects a bare run uses in this environment — used to mark
 	the ``(default)`` entry in the Available Effects listing.
 	"""
-	return frozenset(type(e).__name__ for e in resolve_default_effects(config, github=github))
+	return frozenset(
+		type(e).__name__ for e in resolve_default_effects(config, github=github, agent=agent)
+	)
 
 
 def resolve_effects(
@@ -271,14 +297,16 @@ def resolve_effects(
 	config: Config,
 	*,
 	github: bool,
+	agent: bool = False,
 	scope_effects: Mapping[str, type[Effect[Any]]] = {},
+	base: Path | None = None,
 ) -> tuple[Effect[Any], ...]:
 	"""The effects for a run: the parsed ``--effects`` expression (propagating its
 	``ValueError`` on a malformed expression), or the environment default when
 	``--effects`` was omitted (``expr is None``).
 	"""
 	if expr is None:
-		return resolve_default_effects(config, github=github)
+		return resolve_default_effects(config, github=github, agent=agent, base=base)
 	return parse_effects(expr, scope_effects)
 
 

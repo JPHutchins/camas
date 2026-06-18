@@ -2,11 +2,11 @@
 
 # Camas
 
-A task runner with parallel execution, matrix expansion, and pluggable output effects.
+A task runner with parallel execution, matrix expansion, MCP, and pluggable output effects.
 
 - **For developers:** live tree view that updates in place as tasks stream
 - **For CI/CD:** one definition drives both local runs and CI
-- **For LLMs:** _coming soon — structured JSON stream + MCP_
+- **For LLMs:** a closed edit→validate→run loop over structured MCP
 
 <br clear="all">
 
@@ -67,6 +67,8 @@ camas --init
 
 The starter demonstrates leaf tasks, `Sequential`/`Parallel` composition, a matrix, a [`Config`](#config) default task, and the optional [PEP 723 standalone block](#standalone-taskspy-pep-723) — cross-platform placeholder commands ready to be swapped for your real ones.
 
+`--init` also creates a gitignored `.camas/` directory beside `tasks.py`. Camas writes run logs and a per-leaf timing cache there, so `camas --list` can annotate tasks with an estimated duration; delete the directory to opt out. Rename or relocate it with `Config(camas_dir=...)`.
+
 ## Why camas?
 
 camas is **not a build system**. camas is for the specific job of running structured trees of shell commands.
@@ -103,6 +105,8 @@ camas is **not a build system**. camas is for the specific job of running struct
 The renderer is swappable, not the tree. Run the same `tasks.py` locally with the live `Termtree` and in CI with `Status` — one flag changes the output, the pipeline definition is unchanged.
 
 **On GitHub Actions, no flag is needed.** Camas detects `GITHUB_ACTIONS=true` and defaults `--effects` to `(Status(output_mode="github"),)` — collapsed workflow groups, ISO timestamps with millisecond precision, ANSI colors preserved.
+
+**Under an AI coding agent, no flag is needed either.** Camas detects agents (the `CLAUDECODE` env var, or set `CAMAS_AGENT=1`) and defaults to the line-oriented `Status` renderer instead of the live `Termtree`, whose cursor-redraw frames bloat captured output. Prefer the `camas mcp` server over the CLI from an agent; a `Config` `default_effects` always overrides the detection.
 
 ```yaml
 - run: uv run camas check
