@@ -93,6 +93,7 @@ def test_entrypoint_mcp_init_routes_to_scaffold(
 	from camas.main import main
 
 	monkeypatch.chdir(tmp_path)
+	monkeypatch.setattr("shutil.which", _which("camas"))
 	monkeypatch.setattr("sys.argv", ["camas", "mcp", "init"])
 	with pytest.raises(SystemExit) as exc:
 		main()
