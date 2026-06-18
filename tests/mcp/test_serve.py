@@ -317,6 +317,13 @@ def test_server_reports_camas_version(tmp_path: Path) -> None:
 	assert opts.server_version == version("camas")
 
 
+def test_server_advertises_instructions(tmp_path: Path) -> None:
+	server = serve.build_server(_session({"lint": PASS}, None, tmp_path))
+	opts = server.create_initialization_options()
+	assert opts.instructions is not None
+	assert "camas_run" in opts.instructions
+
+
 _VALID_TASKS = "from camas import Task\nlint = Task('ruff check .')\n"
 
 

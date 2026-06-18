@@ -98,9 +98,7 @@ def estimate(node: TaskNode, timings: Mapping[TaskLabel, TaskTiming]) -> Estimat
 def record(camas_dir: Path, leaves: Sequence[tuple[TaskLabel, float]]) -> None:
 	"""Fold a run's observed per-leaf durations into the cache under an exclusive lock.
 
-	``camas_dir`` must already exist — the gate on whether to record at all lives at the
-	call site (the ``Timings`` effect is only enabled when it does, and the MCP server
-	creates it). The lock lets the CLI and MCP, which share this path, run concurrently.
+	``camas_dir`` must already exist.
 	"""
 	if not leaves:
 		return

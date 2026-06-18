@@ -9,6 +9,7 @@ import asyncio
 import os
 import re
 import sys
+import textwrap
 from contextlib import redirect_stdout
 from dataclasses import dataclass, field
 from enum import Enum
@@ -57,51 +58,6 @@ class ToolName(Enum):
 	DOCS = "camas_docs"
 
 
-LIST_DESCRIPTION: Final = (
-	"List THIS project's camas-defined tasks: each task's name, help text, its fully-resolved, "
-	"matrix-expanded command expression (every leaf, recursively), and any matrix axes it "
-	"expands across (versions, targets, toolchains, platforms — whatever the project declares). "
-	"Two tasks are flagged: "
-	"the default (what the developer runs while working) and the github default — the exact "
-	"task this project's CI runs (camas is the single definition shared by local and CI), so "
-	"running it locally before you commit or push reproduces CI exactly. Tasks whose leaves have "
-	"been timed also carry an estimated duration and their slowest leaf, so you can pick a "
-	"quick task for the inner loop and the thorough one before committing. Use this first to discover valid "
-	"task names for camas_run; it is the source of truth. Read-only; runs nothing."
-)
-RUN_DESCRIPTION: Final = (
-	"Run THIS project's defined tasks exactly as composed by the project — honoring its "
-	"concurrency, matrix expansion across whatever axes it declares, and per-task cwd/env. "
-	"Use this INSTEAD of invoking the underlying commands by hand: it runs the "
-	"project-sanctioned command set, in the right order, in parallel where declared, and "
-	"returns a structured per-task pass/fail report. A failed leaf's output is included inline "
-	"(the last N lines) — read its log path only when you see the truncation marker, or pass "
-	"verbosity='full' to inline every leaf's full output. For a tight inner loop, pass args=[…] "
-	"to append flags to a single-leaf task (camas's -- passthrough, e.g. "
-	"args=['tests/test_x.py::test_y', '-x'] to run and fail-fast on one test); composite tasks "
-	"reject args, so target a leaf. Compact failures-first summary by default; dry_run=true "
-	"previews the fully-resolved plan without executing. A non-zero result means a task failed "
-	"— a normal result, not a tool error."
-)
-CHECK_DESCRIPTION: Final = (
-	"Validate THIS project's tasks definition: re-read tasks.py from disk, evaluate it "
-	"(catching import and runtime errors), then run a static type checker (ty or mypy) over "
-	"it. Call this right after you write or edit tasks.py to confirm it loads and type-checks "
-	"before running anything — the tight authoring loop. Returns a structured verdict (ok / "
-	"load error / type error / no checker available / no tasks file) carrying the exact "
-	"diagnostics to fix. A broken file is a normal result, not a tool error. On success the "
-	"task catalog is refreshed, so a newly-added task becomes runnable via camas_run without "
-	"restarting the server."
-)
-DOCS_DESCRIPTION: Final = (
-	"How to author or edit THIS project's tasks.py. Returns camas's own installed source path "
-	"and its authoring tutorial — served live from the package, so it never drifts: the Task / "
-	"Sequential / Parallel / Config API, matrix expansion, per-leaf cwd and env, and custom "
-	"output Effects, with worked examples. Read this before writing tasks.py, then validate "
-	"your work with camas_check. The cited source path is the API source of truth — read it "
-	"for exact signatures and the examples directory."
-)
-
 NO_ARGS_SCHEMA: Final[dict[str, Any]] = {
 	"type": "object",
 	"properties": {},
@@ -149,11 +105,7 @@ class Session:
 		return (config if config is not None else Config()).camas_path(self.base)
 
 	def refresh(self) -> None:
-		"""Re-resolve the project if its source file changed on disk since it was pinned.
-
-		A cheap ``stat`` keeps the catalog current when a human edits ``tasks.py`` out of
-		band, without re-running it (via ``runpy``) on every call.
-		"""
+		"""Re-resolve the project if its source file changed on disk since it was pinned."""
 		if source_mtime_ns(self.project) != self.source_mtime_ns:
 			self.project = resolve_project_quiet(self.base)
 			self.source_mtime_ns = source_mtime_ns(self.project)
@@ -203,7 +155,19 @@ async def run_over_stdio(server: Server[object]) -> None:  # pragma: no cover
 
 def build_server(session: Session) -> Server[object]:
 	"""A low-level MCP ``Server`` with the camas tool handlers registered."""
-	server: Server[object] = Server("camas", version=version("camas"))
+	server: Server[object] = Server(
+		"camas",
+		version=version("camas"),
+		instructions=textwrap.dedent("""\
+			camas is the single source of truth for this project's tasks: the same
+			definitions drive local development and CI, so running a task through camas
+			reproduces CI exactly. Use the camas tools to discover, run, and validate tasks
+			instead of invoking the underlying commands by hand — camas_list to see the
+			available tasks and what each one runs, camas_run to run one, camas_check to
+			validate the tasks definition after you edit it, and camas_docs for how to
+			author tasks. Call camas_list first; it is the source of truth for task names.
+		""").strip(),
+	)
 
 	async def list_handler() -> list[types.Tool]:
 		return list(tools(task_names(session.project), session.compat))
@@ -284,7 +248,19 @@ def tools(task_names: tuple[str, ...], compat: Compat) -> Tools:
 		discovery=tool_def(
 			compat,
 			name=ToolName.LIST.value,
-			description=LIST_DESCRIPTION,
+			description=textwrap.dedent("""\
+				List THIS project's camas-defined tasks: each task's name, help text, its
+				fully-resolved, matrix-expanded command expression (every leaf, recursively),
+				and any matrix axes it expands across (versions, targets, toolchains,
+				platforms — whatever the project declares). Two tasks are flagged: the default
+				(what the developer runs while working) and the github default — the exact task
+				this project's CI runs (camas is the single definition shared by local and CI),
+				so running it locally before you commit or push reproduces CI exactly. Tasks
+				whose leaves have been timed also carry an estimated duration and their slowest
+				leaf, so you can pick a quick task for the inner loop and the thorough one before
+				committing. Use this first to discover valid task names for camas_run; it is the
+				source of truth. Read-only; runs nothing.
+			""").strip(),
 			input_schema=NO_ARGS_SCHEMA,
 			output_model=wire.ListResponse,
 			title="List camas tasks",
@@ -293,7 +269,21 @@ def tools(task_names: tuple[str, ...], compat: Compat) -> Tools:
 		execution=tool_def(
 			compat,
 			name=ToolName.RUN.value,
-			description=RUN_DESCRIPTION,
+			description=textwrap.dedent("""\
+				Run THIS project's defined tasks exactly as composed by the project — honoring
+				its concurrency, matrix expansion across whatever axes it declares, and
+				per-task cwd/env. Use this INSTEAD of invoking the underlying commands by hand:
+				it runs the project-sanctioned command set, in the right order, in parallel
+				where declared, and returns a structured per-task pass/fail report. A failed
+				leaf's output is included inline (the last N lines) — read its log path only
+				when you see the truncation marker, or pass verbosity='full' to inline every
+				leaf's full output. For a tight inner loop, pass args=[…] to append flags to a
+				single-leaf task (camas's -- passthrough, e.g. args=['tests/test_x.py::test_y',
+				'-x'] to run and fail-fast on one test); composite tasks reject args, so target
+				a leaf. Compact failures-first summary by default; dry_run=true previews the
+				fully-resolved plan without executing. A non-zero result means a task failed — a
+				normal result, not a tool error.
+			""").strip(),
 			input_schema=wire.run_input_schema(task_names),
 			output_model=wire.RunResponse,
 			title="Run camas tasks",
@@ -302,7 +292,17 @@ def tools(task_names: tuple[str, ...], compat: Compat) -> Tools:
 		validation=tool_def(
 			compat,
 			name=ToolName.CHECK.value,
-			description=CHECK_DESCRIPTION,
+			description=textwrap.dedent("""\
+				Validate THIS project's tasks definition: re-read tasks.py from disk, evaluate
+				it (catching import and runtime errors), then run a static type checker (ty or
+				mypy) over it. Call this right after you write or edit tasks.py to confirm it
+				loads and type-checks before running anything — the tight authoring loop.
+				Returns a structured verdict (ok / load error / type error / no checker
+				available / no tasks file) carrying the exact diagnostics to fix. A broken file
+				is a normal result, not a tool error. On success the task catalog is refreshed,
+				so a newly-added task becomes runnable via camas_run without restarting the
+				server.
+			""").strip(),
 			input_schema=NO_ARGS_SCHEMA,
 			output_model=wire.CheckResponse,
 			title="Check camas tasks",
@@ -311,7 +311,15 @@ def tools(task_names: tuple[str, ...], compat: Compat) -> Tools:
 		docs=tool_def(
 			compat,
 			name=ToolName.DOCS.value,
-			description=DOCS_DESCRIPTION,
+			description=textwrap.dedent("""\
+				How to author or edit THIS project's tasks.py. Returns camas's own installed
+				source path and its authoring tutorial — served live from the package, so it
+				never drifts: the Task / Sequential / Parallel / Config API, matrix expansion,
+				per-leaf cwd and env, and custom output Effects, with worked examples. Read this
+				before writing tasks.py, then validate your work with camas_check. The cited
+				source path is the API source of truth — read it for exact signatures and the
+				examples directory.
+			""").strip(),
 			input_schema=NO_ARGS_SCHEMA,
 			output_model=wire.DocsResponse,
 			title="How to author camas tasks",
@@ -400,11 +408,7 @@ def resolve_run_node(tasks: Mapping[str, TaskNode], req: wire.RunRequest) -> Tas
 
 
 def create_run_log_dir(camas_dir: Path, task: str, seq: int) -> Path:
-	"""Create and return ``camas_dir/runs/<task>/<seq>/`` (creating ``camas_dir`` if needed).
-
-	Namespacing the per-run directory by task name keeps the logs legible to agents
-	browsing them; ``seq`` separates repeated runs of the same task.
-	"""
+	"""Create and return ``camas_dir/runs/<task>/<seq>/`` (creating ``camas_dir`` if needed)."""
 	timings.ensure_camas_dir(camas_dir)
 	run_dir = camas_dir / "runs" / slug(task) / str(seq)
 	run_dir.mkdir(parents=True, exist_ok=True)
@@ -622,10 +626,7 @@ def resolve_project_quiet(base: Path) -> TasksState:
 
 
 def project_base() -> Path:
-	"""The absolute project root: ``CLAUDE_PROJECT_DIR`` when Claude Code sets it, else cwd.
-
-	Resolved to absolute so per-run log paths can become ``file://`` ``resource_link``s.
-	"""
+	"""The absolute project root: ``CLAUDE_PROJECT_DIR`` when Claude Code sets it, else cwd."""
 	return (Path(env) if (env := os.environ.get("CLAUDE_PROJECT_DIR")) else Path.cwd()).resolve()
 
 

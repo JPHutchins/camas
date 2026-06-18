@@ -48,7 +48,6 @@ def to_list_response(
 
 
 def task_name(node: TaskNode | None) -> str | None:
-	"""The task's discovered name, or ``None`` when the field is unset."""
 	return node.name if node is not None else None
 
 
