@@ -13,4 +13,4 @@ Contributions and bug reports are welcome!
 
 ## Linting & Testing
 
-Use `uv run camas` to see a list of available checks.
+Use `uv run camas --help` to see a list of available checks.
