@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ..core.matrix import matrix_axes
+from ..core.matrix import expand_matrix, matrix_axes
 from ..core.timings import estimate
 from ..main.expression import to_expression
 from . import wire
@@ -64,7 +64,7 @@ def task_info(
 	info = wire.TaskInfo(
 		name=name,
 		help=node.help,
-		command_preview=to_expression(node),
+		command_preview=to_expression(expand_matrix(node)),
 		matrix_axes={axis: list(values) for axis, values in matrix_axes(node).items()},
 		is_default=is_default,
 		is_github_default=is_github_default,

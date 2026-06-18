@@ -58,9 +58,10 @@ class ToolName(Enum):
 
 
 LIST_DESCRIPTION: Final = (
-	"List THIS project's camas-defined tasks: each task's name, help text, a one-line "
-	"preview of the command(s) it runs, and any matrix axes it expands across (versions, "
-	"targets, toolchains, platforms — whatever the project declares). Two tasks are flagged: "
+	"List THIS project's camas-defined tasks: each task's name, help text, its fully-resolved, "
+	"matrix-expanded command expression (every leaf, recursively), and any matrix axes it "
+	"expands across (versions, targets, toolchains, platforms — whatever the project declares). "
+	"Two tasks are flagged: "
 	"the default (what the developer runs while working) and the github default — the exact "
 	"task this project's CI runs (camas is the single definition shared by local and CI), so "
 	"running it locally before you commit or push reproduces CI exactly. Tasks whose leaves have "
@@ -73,10 +74,14 @@ RUN_DESCRIPTION: Final = (
 	"concurrency, matrix expansion across whatever axes it declares, and per-task cwd/env. "
 	"Use this INSTEAD of invoking the underlying commands by hand: it runs the "
 	"project-sanctioned command set, in the right order, in parallel where declared, and "
-	"returns a structured per-task pass/fail report naming which task failed, with an output "
-	"excerpt and a log path. Compact failures-first summary by default; pass verbosity='full' "
-	"for everything, or dry_run=true to preview the fully-resolved plan without executing. A "
-	"non-zero result means a task failed — a normal result, not a tool error."
+	"returns a structured per-task pass/fail report. A failed leaf's output is included inline "
+	"(the last N lines) — read its log path only when you see the truncation marker, or pass "
+	"verbosity='full' to inline every leaf's full output. For a tight inner loop, pass args=[…] "
+	"to append flags to a single-leaf task (camas's -- passthrough, e.g. "
+	"args=['tests/test_x.py::test_y', '-x'] to run and fail-fast on one test); composite tasks "
+	"reject args, so target a leaf. Compact failures-first summary by default; dry_run=true "
+	"previews the fully-resolved plan without executing. A non-zero result means a task failed "
+	"— a normal result, not a tool error."
 )
 CHECK_DESCRIPTION: Final = (
 	"Validate THIS project's tasks definition: re-read tasks.py from disk, evaluate it "
@@ -464,10 +469,11 @@ def list_text(resp: wire.ListResponse) -> str:
 			for mark, on in ((" [default]", t.is_default), (" [github]", t.is_github_default))
 			if on
 		)
-		body = t.help or t.command_preview
+		help_note = f"  {t.help}" if t.help else ""
 		matrix = matrix_note(t.matrix_axes) if t.matrix_axes else ""
 		timing = timing_note(t) if t.estimated_s is not None else ""
-		lines.append(f"  {t.name.ljust(width)}{marks}  {body}{matrix}{timing}")
+		lines.append(f"  {t.name.ljust(width)}{marks}{help_note}{matrix}{timing}")
+		lines.append(f"      {t.command_preview}")
 	return "\n".join(lines)
 
 

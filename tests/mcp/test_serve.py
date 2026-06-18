@@ -595,6 +595,22 @@ def test_list_text_renders_matrix_and_no_markers() -> None:
 	assert "(matrix: PY=3.13/3.14)" in text
 
 
+def test_list_text_shows_help_and_expansion_together() -> None:
+	resp = wire.ListResponse(
+		tasks=(
+			wire.TaskInfo(
+				name="lint",
+				help="Lint sources",
+				command_preview='Task("ruff check .", name="lint")',
+			),
+		),
+		default=None,
+	)
+	text = serve.list_text(resp)
+	assert "Lint sources" in text
+	assert 'Task("ruff check .", name="lint")' in text
+
+
 def test_dry_run_text_shows_resolved_commands() -> None:
 	text = serve.dry_run_text(Parallel(Task("a"), Task("b"), name="p"))
 	assert "fully-resolved plan" in text

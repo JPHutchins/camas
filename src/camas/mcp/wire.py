@@ -140,7 +140,10 @@ class RunRequest(BaseModel):
 	)
 	args: list[str] = Field(
 		default_factory=list,
-		description="Extra args appended to the task's command (camas's -- passthrough).",
+		description=(
+			"Passthrough flags appended to a single-leaf task's command (camas's --), e.g. "
+			"['tests/test_x.py::test_y', '-x']; leaf tasks only — composite tasks are rejected."
+		),
 	)
 
 
