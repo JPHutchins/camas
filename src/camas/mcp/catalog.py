@@ -24,10 +24,13 @@ def to_list_response(
 	tasks: Mapping[str, TaskNode],
 	config: Config | None,
 	timings: Mapping[str, TaskTiming] = {},
+	*,
+	expand: bool = False,
 ) -> wire.ListResponse:
 	"""Assemble the ``camas_list`` catalog — one ``TaskInfo`` per task, sorted by
 	name, with the default and CI-default names taken from ``config`` and each task's
-	observed duration drawn from ``timings``.
+	observed duration drawn from ``timings``. ``expand`` matrix-expands each command
+	preview; otherwise it stays the unexpanded template.
 	"""
 	default = task_name(config.default_task) if config is not None else None
 	github_default = task_name(config.github_task) if config is not None else None
@@ -39,6 +42,7 @@ def to_list_response(
 				is_default=name == default,
 				is_github_default=name == github_default,
 				est=estimate(node, timings),
+				expand=expand,
 			)
 			for name, node in sorted(tasks.items())
 		),
@@ -58,12 +62,13 @@ def task_info(
 	is_default: bool,
 	is_github_default: bool,
 	est: Estimate | None,
+	expand: bool,
 ) -> wire.TaskInfo:
 	"""One ``TaskInfo``: help, a fully-typed command expression, matrix axes, and any estimate."""
 	info = wire.TaskInfo(
 		name=name,
 		help=node.help,
-		command_preview=to_expression(expand_matrix(node)),
+		command_preview=to_expression(expand_matrix(node) if expand else node),
 		matrix_axes={axis: list(values) for axis, values in matrix_axes(node).items()},
 		is_default=is_default,
 		is_github_default=is_github_default,

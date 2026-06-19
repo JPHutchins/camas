@@ -11,6 +11,7 @@ from camas.mcp.wire import (
 	DocsResponse,
 	Finished,
 	LeafReport,
+	ListRequest,
 	ListResponse,
 	RunRequest,
 	RunResponse,
@@ -19,6 +20,15 @@ from camas.mcp.wire import (
 	TaskInfo,
 	run_input_schema,
 )
+
+
+def test_list_request_defaults_to_unexpanded() -> None:
+	assert ListRequest.model_validate({}).expand_matrix is False
+
+
+def test_list_request_rejects_unknown_field() -> None:
+	with pytest.raises(ValidationError):
+		ListRequest.model_validate({"bogus": 1})
 
 
 def test_run_request_defaults() -> None:
