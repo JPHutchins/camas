@@ -415,18 +415,17 @@ def resolve_run_node(tasks: Mapping[str, TaskNode], req: wire.RunRequest) -> tup
 			task, an override targets an unknown matrix axis, or passthrough args are
 			applied to a non-leaf task.
 	"""
-	name = req.task
-	if name is None:
+	if req.task is None:
 		raise ValueError("camas_run requires 'task' (or pass 'under' to budget the default task)")
-	if name not in tasks:
+	if req.task not in tasks:
 		known = ", ".join(sorted(tasks)) or "none"
-		raise ValueError(f"no task named {name!r} (known: {known})")
-	node = tasks[name]
+		raise ValueError(f"no task named {req.task!r} (known: {known})")
+	node = tasks[req.task]
 	if req.matrix_overrides:
 		node = override_matrix(node, {k: tuple(v) for k, v in req.matrix_overrides.items()})
 	if req.args:
 		node = apply_passthrough(node, tuple(req.args))
-	return name, node
+	return req.task, node
 
 
 async def run_budget(
@@ -436,9 +435,7 @@ async def run_budget(
 	req: wire.RunRequest,
 	budget_s: float,
 ) -> types.CallToolResult:
-	"""Handle ``camas_run`` with ``under``: select the source task's leaves that fit the
-	budget, schedule mutating leaves first, then dry-run or execute the read-only group.
-	"""
+	"""Handle ``camas_run`` with ``under``: budget the source task's leaves, then dry-run or execute."""
 	if req.args:
 		return error_result("camas_run: 'args' (passthrough) cannot be combined with 'under'")
 	try:

@@ -43,12 +43,7 @@ Disposition: TypeAlias = Fits | OverBudget | Untimed
 
 
 class BudgetPlan(NamedTuple):
-	"""A budget's verdict over a source task's de-duplicated leaves.
-
-	``node`` is the runnable schedule — mutating leaves in a leading ``Sequential``
-	followed by the read-only remainder as a single ``Parallel`` — or ``None`` when
-	nothing fits.
-	"""
+	"""A budget's partition of a task's leaves, with the runnable schedule of those that fit."""
 
 	budget_s: float
 	node: TaskNode | None
@@ -79,10 +74,8 @@ def classify(task: Task, budget_s: float, timings: Mapping[TaskLabel, TaskTiming
 def plan_under(
 	node: TaskNode, budget_s: float, timings: Mapping[TaskLabel, TaskTiming]
 ) -> BudgetPlan:
-	"""Partition ``node``'s expanded, de-duplicated leaves by ``budget_s`` and schedule
-	those that fit. Mutating leaves run sequentially first, then the read-only leaves as
-	one parallel group; leaves with no estimate are excluded (a strict budget cannot
-	bound them).
+	"""Partition ``node``'s expanded, de-duplicated leaves by ``budget_s``; untimed leaves
+	are excluded, since a budget can't bound a leaf it has never measured.
 	"""
 	leaves = tuple(dict.fromkeys(info.task for info in flatten_leaves(expand_matrix(node))))
 	dispositions = tuple(classify(leaf, budget_s, timings) for leaf in leaves)
@@ -93,9 +86,8 @@ def plan_under(
 
 
 def schedule(fitting: tuple[Task, ...]) -> TaskNode | None:
-	"""Order the fitting leaves: mutating leaves sequentially first (formatters before
-	checkers, never racing the read-only group over the same files), then the read-only
-	leaves as one parallel group. ``None`` when nothing fits.
+	"""Mutating leaves run before the read-only group, so a formatter never races a
+	checker over the same files.
 
 	>>> schedule(()) is None
 	True
