@@ -4,10 +4,10 @@ from pathlib import Path
 
 from camas import Config, Parallel, Sequential, Task
 
-format = Task("uv run ruff format .")
+format = Task("uv run ruff format .", mutates=True)
 format_check = Task("uv run ruff format --check .")
 lint = Task("uv run ruff check .")
-lint_fix = Task("uv run ruff check --fix .")
+lint_fix = Task("uv run ruff check --fix .", mutates=True)
 fix = Sequential(lint_fix, format)
 mypy = Task("uv run mypy .")
 ty = Task("uv run ty check")

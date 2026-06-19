@@ -23,9 +23,11 @@ from mcp.server.lowlevel.server import NotificationOptions
 from pydantic import AnyUrl, BaseModel, ValidationError
 
 from ..core import timings
+from ..core.budget import plan_under
 from ..core.execution import run
 from ..core.matrix import override_matrix
 from ..core.render import render_tree_lines, strip_ansi
+from ..core.task import task_label
 from ..main.argv import apply_passthrough
 from ..main.format import format_load_error_hint
 from ..main.state import EMPTY_STATE, LoadErr, LoadOk, TasksState
@@ -45,6 +47,7 @@ else:  # pragma: no cover
 if TYPE_CHECKING:
 	from collections.abc import Mapping, Sequence
 
+	from ..core.budget import BudgetPlan
 	from ..core.completion import RunResult, TaskResult
 	from ..v0.task import TaskNode
 
@@ -282,9 +285,12 @@ def tools(task_names: tuple[str, ...], compat: Compat) -> Tools:
 				leaf's full output. For a tight inner loop, pass args=[…] to append flags to a
 				single-leaf task (camas's -- passthrough, e.g. args=['tests/test_x.py::test_y',
 				'-x'] to run and fail-fast on one test); composite tasks reject args, so target
-				a leaf. Compact failures-first summary by default; dry_run=true previews the
-				fully-resolved plan without executing. A non-zero result means a task failed — a
-				normal result, not a tool error.
+				a leaf. For a time-boxed inner loop, pass under=<seconds> to run only the leaves
+				whose recorded estimate fits — mutating leaves (formatters) first, then the
+				read-only rest in parallel; omit task to budget the project default. Compact
+				failures-first summary by default; dry_run=true previews the fully-resolved plan
+				without executing. A non-zero result means a task failed — a normal result, not a
+				tool error.
 			""").strip(),
 			input_schema=wire.run_input_schema(task_names),
 			output_model=wire.RunResponse,
@@ -366,53 +372,171 @@ async def run_call(session: Session, arguments: dict[str, Any]) -> types.CallToo
 	match session.project:
 		case LoadErr(source=source, exception=exception):
 			return error_result(format_load_error_hint(source, exception))
-		case LoadOk(tasks=tasks):
-			return await run_for(session, tasks, arguments)
+		case LoadOk(tasks=tasks, config=config):
+			return await run_for(session, tasks, config, arguments)
 		case _:
 			assert_never(session.project)
 
 
 async def run_for(
-	session: Session, tasks: Mapping[str, TaskNode], arguments: dict[str, Any]
+	session: Session,
+	tasks: Mapping[str, TaskNode],
+	config: Config | None,
+	arguments: dict[str, Any],
 ) -> types.CallToolResult:
 	"""Validate, resolve the node, then dry-run or execute in the server's event loop."""
 	try:
 		req = wire.RunRequest.model_validate(arguments)
 	except ValidationError as e:
 		return error_result(f"invalid camas_run arguments:\n{e}")
+	if req.under is not None:
+		return await run_budget(session, tasks, config, req, req.under)
 	try:
-		node = resolve_run_node(tasks, req)
+		name, node = resolve_run_node(tasks, req)
 	except ValueError as e:
 		return error_result(str(e))
 	if req.dry_run:
 		return success(dry_run_text(node), to_plan_response(node), session.compat)
 	result = await run(node, jobs=req.jobs, interactive=False)
-	logs = write_logs(
-		create_run_log_dir(session.camas_dir, req.task, session.reserve_run()), result
-	)
+	logs = write_logs(create_run_log_dir(session.camas_dir, name, session.reserve_run()), result)
 	timings.record_run(session.camas_dir, result)
 	resp = attach_logs(to_run_response(node, result, verbosity=req.verbosity), logs)
 	return success(
-		run_text(req.task, resp, logs), resp, session.compat, links=failing_log_links(resp, logs)
+		run_text(name, resp, logs), resp, session.compat, links=failing_log_links(resp, logs)
 	)
 
 
-def resolve_run_node(tasks: Mapping[str, TaskNode], req: wire.RunRequest) -> TaskNode:
-	"""The node to run: looked up by name, then matrix-overridden and passthrough-appended.
+def resolve_run_node(tasks: Mapping[str, TaskNode], req: wire.RunRequest) -> tuple[str, TaskNode]:
+	"""The ``(name, node)`` to run: looked up by name, then matrix-overridden and
+	passthrough-appended.
 
 	Raises:
-		ValueError: when ``req.task`` names no task, an override targets an unknown
-			matrix axis, or passthrough args are applied to a non-leaf task.
+		ValueError: when ``req.task`` is omitted (only ``under`` may omit it), names no
+			task, an override targets an unknown matrix axis, or passthrough args are
+			applied to a non-leaf task.
 	"""
-	if req.task not in tasks:
+	name = req.task
+	if name is None:
+		raise ValueError("camas_run requires 'task' (or pass 'under' to budget the default task)")
+	if name not in tasks:
 		known = ", ".join(sorted(tasks)) or "none"
-		raise ValueError(f"no task named {req.task!r} (known: {known})")
-	node = tasks[req.task]
+		raise ValueError(f"no task named {name!r} (known: {known})")
+	node = tasks[name]
 	if req.matrix_overrides:
 		node = override_matrix(node, {k: tuple(v) for k, v in req.matrix_overrides.items()})
 	if req.args:
 		node = apply_passthrough(node, tuple(req.args))
-	return node
+	return name, node
+
+
+async def run_budget(
+	session: Session,
+	tasks: Mapping[str, TaskNode],
+	config: Config | None,
+	req: wire.RunRequest,
+	budget_s: float,
+) -> types.CallToolResult:
+	"""Handle ``camas_run`` with ``under``: select the source task's leaves that fit the
+	budget, schedule mutating leaves first, then dry-run or execute the read-only group.
+	"""
+	if req.args:
+		return error_result("camas_run: 'args' (passthrough) cannot be combined with 'under'")
+	try:
+		source = budget_source(tasks, config, req.task)
+		if req.matrix_overrides:
+			source = override_matrix(source, {k: tuple(v) for k, v in req.matrix_overrides.items()})
+	except ValueError as e:
+		return error_result(str(e))
+	plan = plan_under(source, budget_s, timings.load(session.camas_dir))
+	report = to_budget_report(plan)
+	label = req.task or "default task"
+	if plan.node is None:
+		empty = wire.RunResponse(
+			returncode=0, elapsed=0.0, passed=0, failed=0, skipped=0, interrupt_count=0, leaves=()
+		)
+		text = f"{budget_headline(report)}\n\nNothing ran — no leaf fit the budget."
+		return success(text, attach_budget(empty, report), session.compat)
+	if req.dry_run:
+		resp = attach_budget(to_plan_response(plan.node), report)
+		return success(
+			f"{budget_headline(report)}\n\n{dry_run_text(plan.node)}", resp, session.compat
+		)
+	result = await run(plan.node, jobs=req.jobs, interactive=False)
+	logs = write_logs(create_run_log_dir(session.camas_dir, label, session.reserve_run()), result)
+	timings.record_run(session.camas_dir, result)
+	resp = attach_budget(
+		attach_logs(to_run_response(plan.node, result, verbosity=req.verbosity), logs), report
+	)
+	return success(
+		f"{budget_headline(report)}\n\n{run_text(label, resp, logs)}",
+		resp,
+		session.compat,
+		links=failing_log_links(resp, logs),
+	)
+
+
+def budget_source(
+	tasks: Mapping[str, TaskNode], config: Config | None, task: str | None
+) -> TaskNode:
+	"""The task a budget run filters: the named task, else the project's default task.
+
+	Raises:
+		ValueError: when ``task`` names no task, or no task is named and no
+			:class:`Config` default exists to budget.
+	"""
+	if task is not None:
+		if task not in tasks:
+			known = ", ".join(sorted(tasks)) or "none"
+			raise ValueError(f"no task named {task!r} (known: {known})")
+		return tasks[task]
+	default = config.default_task if config is not None else None
+	if default is None:
+		raise ValueError("no task given and no Config default_task to budget; name a task to run")
+	return default
+
+
+def to_budget_report(plan: BudgetPlan) -> wire.BudgetReport:
+	"""The wire ``BudgetReport`` for a plan: the selected leaves and the excluded ones."""
+	return wire.BudgetReport(
+		budget_s=plan.budget_s,
+		selected=tuple(task_label(f.task) for f in plan.fits),
+		excluded=(
+			*(
+				wire.ExcludedLeaf(
+					name=task_label(o.task), reason="over_budget", estimated_s=o.estimated_s
+				)
+				for o in plan.over_budget
+			),
+			*(wire.ExcludedLeaf(name=task_label(u.task), reason="untimed") for u in plan.untimed),
+		),
+	)
+
+
+def attach_budget(resp: wire.RunResponse, report: wire.BudgetReport) -> wire.RunResponse:
+	"""Thread the budget partition into the run response's ``budget`` field."""
+	return resp.model_copy(update={"budget": report})
+
+
+def budget_headline(report: wire.BudgetReport) -> str:
+	"""The load-bearing budget summary: leaves selected, and what was excluded and why."""
+	over = tuple(e for e in report.excluded if e.reason == "over_budget")
+	untimed = tuple(e for e in report.excluded if e.reason == "untimed")
+	lines = [
+		f"Time budget {report.budget_s:.2f}s — selected {len(report.selected)} leaf(s), "
+		f"excluded {len(report.excluded)} ({len(over)} over budget, {len(untimed)} untimed)."
+	]
+	if over:
+		lines.append("  over budget: " + ", ".join(excluded_note(e) for e in over))
+	if untimed:
+		lines.append(
+			"  untimed (run the task normally once to record an estimate): "
+			+ ", ".join(excluded_note(e) for e in untimed)
+		)
+	return "\n".join(lines)
+
+
+def excluded_note(leaf: wire.ExcludedLeaf) -> str:
+	return f"{leaf.name} ~{leaf.estimated_s:.2f}s" if leaf.estimated_s is not None else leaf.name
 
 
 def create_run_log_dir(camas_dir: Path, task: str, seq: int) -> Path:

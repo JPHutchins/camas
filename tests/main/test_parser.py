@@ -3,11 +3,12 @@
 
 from __future__ import annotations
 
+import argparse
 from typing import TYPE_CHECKING
 
 import pytest
 
-from camas.main.parser import build_parser, resolve_jobs
+from camas.main.parser import build_parser, parse_duration, resolve_jobs
 
 if TYPE_CHECKING:
 	from collections.abc import Mapping
@@ -85,3 +86,27 @@ def test_build_parser_format_help_no_tasks_no_effects(monkeypatch: pytest.Monkey
 	assert "Available tasks" not in out
 	assert "Available Effects" not in out
 	assert "Try:" in out
+
+
+def test_parse_duration_units() -> None:
+	assert parse_duration("1h") == 3600.0
+	assert parse_duration("90") == 90.0
+	assert parse_duration("0.25s") == 0.25
+
+
+def test_parse_duration_rejects_garbage() -> None:
+	with pytest.raises(argparse.ArgumentTypeError, match="duration"):
+		parse_duration("soon")
+	with pytest.raises(argparse.ArgumentTypeError, match="duration"):
+		parse_duration("5x")
+
+
+def test_parse_duration_rejects_nonpositive() -> None:
+	with pytest.raises(argparse.ArgumentTypeError, match="positive"):
+		parse_duration("0")
+	with pytest.raises(argparse.ArgumentTypeError, match="positive"):
+		parse_duration("0ms")
+
+
+def test_under_flag_parses_to_seconds() -> None:
+	assert build_parser().parse_args(["check", "--under", "500ms"]).under == 0.5

@@ -96,6 +96,7 @@ def specialize_task(task: Task, binding: MatrixBinding, suffix: str) -> Task:
 		env={k: substitute_in_str(v, binding) for k, v in task.env.items()} | dict(binding),
 		cwd=substitute_cwd(task.cwd, binding),
 		help=substitute_help(task.help, binding),
+		mutates=task.mutates,
 	)
 
 
@@ -325,6 +326,7 @@ def expand_matrix(
 				env={**parent_env, **task.env},
 				cwd=task.cwd if task.cwd is not None else ancestor_cwd,
 				help=task.help,
+				mutates=task.mutates,
 			)
 		case Sequential(tasks=tasks, matrix=matrix, env=env, cwd=cwd):
 			seq_env: Final = parent_env | env

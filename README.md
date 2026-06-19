@@ -170,6 +170,34 @@ _ = Config(
 
 `Config` is discovered by type, so the binding's name never matters — `_` by convention. Defining two is an error.
 
+## Time budget (`--under`)
+
+Once camas has timed a task's leaves (the `.camas/` cache, surfaced by `camas --list`), `camas --under=<duration>` runs only the leaves whose estimate fits a wall-clock budget — the fast inner-loop subset, picked for you instead of by hand.
+
+```
+camas --under=1s            # budget the Config default task
+camas --under=500ms check   # budget a named task or expression
+```
+
+It runs the **mutating** leaves first, in sequence, then the read-only rest in parallel — so formatters never race a checker over the same files. Mark a leaf that writes the workspace with `mutates=True`:
+
+```python
+fix = Task("ruff check --fix .", mutates=True)
+fmt = Task("ruff format .", mutates=True)
+lint = Task("ruff check .")
+```
+
+```
+$ camas --under=1s --dry-run
+Time budget 1.00s — selected 6 leaf(s), excluded 2 (2 over budget, 0 untimed).
+  over budget: pyright ~4.57s, coverage ~20.98s
+fix → fmt → (mypy | ty | zuban | pyrefly)
+```
+
+Durations are `1s`, `500ms`, `2m`, `1h`, or a bare number of seconds. Leaves with no recorded timing yet are excluded (a budget can't bound them — run the task once normally to time them). The budget is per-leaf: a leaf is selected when its own estimate fits, so the parallel group's wall-clock stays near the budget.
+
+**For agents**, `camas_run` exposes the same budget as its `under` argument (omit `task` to budget the project default), and the response's `budget` field reports what was selected and excluded — a tight, time-boxed validate loop over structured MCP.
+
 ## Effects plugins
 
 Define an `Effect` in your `tasks.py` and it's discovered automatically — usable by name from `--effects` and listed under `camas --effects`. See [examples/effect-plugin/](https://github.com/JPHutchins/camas/tree/main/tests/fixtures/effect-plugin) for a typed `Tail` effect that streams per-task output as it arrives.

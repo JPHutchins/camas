@@ -6,7 +6,7 @@ from __future__ import annotations
 import asyncio
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from mcp import types
@@ -37,6 +37,13 @@ def _session(
 
 PASS = Task(("python", "-c", "print('ok')"), name="lint")
 FAIL = Task(("python", "-c", "import sys; print('boom'); sys.exit(3)"), name="bad")
+
+
+def _task_enum(input_schema: dict[str, Any]) -> list[str]:
+	"""The task-name enum, spliced onto the string branch of the optional ``task`` field."""
+	branches = input_schema["properties"]["task"]["anyOf"]
+	enum: list[str] = next(b["enum"] for b in branches if b.get("type") == "string")
+	return enum
 
 
 def test_resolve_project_finds_tasks_py(tmp_path: Path) -> None:
@@ -122,7 +129,7 @@ def test_tools_default_omits_rich_fields() -> None:
 		("a", "b"), Compat(emit_structured=False)
 	)
 	assert (tool_list.title, tool_list.outputSchema, tool_list.annotations) == (None, None, None)
-	assert tool_run.inputSchema["properties"]["task"]["enum"] == ["a", "b"]
+	assert _task_enum(tool_run.inputSchema) == ["a", "b"]
 	assert (tool_run.outputSchema, tool_run.annotations) == (None, None)
 	assert (tool_check.title, tool_check.outputSchema, tool_check.annotations) == (None, None, None)
 	assert (tool_docs.title, tool_docs.outputSchema, tool_docs.annotations) == (None, None, None)
@@ -484,7 +491,7 @@ async def test_check_via_client_refreshes_catalog_and_notifies(
 	async with create_connected_server_and_client_session(serve.build_server(session)) as client:
 		first = await client.list_tools()
 		run_first = next(t for t in first.tools if t.name == "camas_run")
-		assert run_first.inputSchema["properties"]["task"]["enum"] == ["a"]
+		assert _task_enum(run_first.inputSchema) == ["a"]
 		(tmp_path / "tasks.py").write_text(
 			"from camas import Task\n"
 			"a = Task(('python', '-c', 'pass'))\n"
@@ -493,7 +500,7 @@ async def test_check_via_client_refreshes_catalog_and_notifies(
 		assert "OK" in _text(await client.call_tool("camas_check", {}))
 		after = await client.list_tools()
 		run_after = next(t for t in after.tools if t.name == "camas_run")
-		assert set(run_after.inputSchema["properties"]["task"]["enum"]) == {"a", "b"}
+		assert set(_task_enum(run_after.inputSchema)) == {"a", "b"}
 		ran = await client.call_tool("camas_run", {"task": "b"})
 		assert ran.isError is False
 		assert "PASSED" in _text(ran)
@@ -506,16 +513,130 @@ def test_resolve_run_node_unknown_task_raises() -> None:
 
 def test_resolve_run_node_applies_overrides_and_args() -> None:
 	node = Parallel(Task("test {PY}"), matrix={"PY": ("3.12", "3.13")}, name="m")
-	resolved = serve.resolve_run_node(
+	name, resolved = serve.resolve_run_node(
 		{"m": node}, wire.RunRequest(task="m", matrix_overrides={"PY": ["3.13"]})
 	)
+	assert name == "m"
 	assert isinstance(resolved, Parallel)
 	assert resolved.matrix == {"PY": ("3.13",)}
-	leaf = serve.resolve_run_node(
+	leaf_name, leaf = serve.resolve_run_node(
 		{"t": Task("pytest", name="t")}, wire.RunRequest(task="t", args=["-v"])
 	)
+	assert leaf_name == "t"
 	assert isinstance(leaf, Task)
 	assert leaf.cmd == "pytest -v"
+
+
+def test_resolve_run_node_requires_task() -> None:
+	with pytest.raises(ValueError, match="requires 'task'"):
+		serve.resolve_run_node({"lint": PASS}, wire.RunRequest())
+
+
+def _record(base: Path, leaves: list[tuple[str, float]]) -> None:
+	camas = base / ".camas"
+	camas.mkdir(exist_ok=True)
+	timings.record(camas, leaves)
+
+
+_FMT = Task(("python", "-c", "print('fmt')"), name="fmt", mutates=True)
+_LINT = Task(("python", "-c", "print('lint')"), name="lint")
+_SLOW = Task(("python", "-c", "print('slow')"), name="slow")
+
+
+async def test_run_call_under_selects_runs_and_reports(tmp_path: Path) -> None:
+	default = Sequential(_FMT, Parallel(_LINT, _SLOW), name="all")
+	_record(tmp_path, [("fmt", 0.1), ("lint", 0.2), ("slow", 9.0)])
+	session = _session({"all": default}, Config(default_task=default), tmp_path, rich=True)
+	result = await serve.run_call(session, {"under": 1.0})
+	assert result.isError is False
+	text = _text(result)
+	assert "Time budget 1.00s — selected 2 leaf(s)" in text
+	assert "over budget: slow ~9.00s" in text
+	assert "PASSED" in text
+	assert result.structuredContent is not None
+	budget = result.structuredContent["budget"]
+	assert set(budget["selected"]) == {"fmt", "lint"}
+	assert next(e for e in budget["excluded"] if e["name"] == "slow")["reason"] == "over_budget"
+
+
+async def test_run_call_under_dry_run_previews(tmp_path: Path) -> None:
+	_record(tmp_path, [("a", 0.1)])
+	a = Task(("python", "-c", "print('a')"), name="a")
+	session = _session({"p": Parallel(a, name="p")}, None, tmp_path, rich=True)
+	result = await serve.run_call(session, {"task": "p", "under": 1.0, "dry_run": True})
+	assert result.isError is False
+	assert "Dry run" in _text(result)
+	assert result.structuredContent is not None
+	assert result.structuredContent["budget"]["budget_s"] == 1.0
+
+
+async def test_run_call_under_nothing_fits(tmp_path: Path) -> None:
+	_record(tmp_path, [("a", 9.0)])
+	a = Task(("python", "-c", "print('a')"), name="a")
+	session = _session({"p": Parallel(a, name="p")}, None, tmp_path)
+	result = await serve.run_call(session, {"task": "p", "under": 0.5})
+	assert result.isError is False
+	assert "Nothing ran" in _text(result)
+
+
+async def test_run_call_under_reports_untimed(tmp_path: Path) -> None:
+	_record(tmp_path, [("a", 0.1)])
+	a = Task(("python", "-c", "print('a')"), name="a")
+	b = Task(("python", "-c", "print('b')"), name="b")
+	session = _session({"p": Parallel(a, b, name="p")}, None, tmp_path, rich=True)
+	result = await serve.run_call(session, {"task": "p", "under": 1.0})
+	assert "untimed (run the task normally once to record an estimate): b" in _text(result)
+	assert result.structuredContent is not None
+	excluded = result.structuredContent["budget"]["excluded"]
+	assert next(e for e in excluded if e["name"] == "b")["reason"] == "untimed"
+
+
+async def test_run_call_under_no_task_no_default_errors(tmp_path: Path) -> None:
+	session = _session({"lint": PASS}, None, tmp_path)
+	result = await serve.run_call(session, {"under": 1.0})
+	assert result.isError is True
+	assert "no task given and no Config default_task" in _text(result)
+
+
+async def test_run_call_under_rejects_args(tmp_path: Path) -> None:
+	session = _session({"lint": PASS}, Config(default_task=PASS), tmp_path)
+	result = await serve.run_call(session, {"under": 1.0, "args": ["-v"]})
+	assert result.isError is True
+	assert "'args'" in _text(result)
+
+
+async def test_run_call_missing_task_errors(tmp_path: Path) -> None:
+	session = _session({"lint": PASS}, None, tmp_path)
+	result = await serve.run_call(session, {})
+	assert result.isError is True
+	assert "requires 'task'" in _text(result)
+
+
+async def test_run_call_under_unknown_task_errors(tmp_path: Path) -> None:
+	session = _session({"lint": PASS}, None, tmp_path)
+	result = await serve.run_call(session, {"task": "nope", "under": 1.0})
+	assert result.isError is True
+	assert "no task named 'nope'" in _text(result)
+
+
+async def test_run_call_under_applies_matrix_override(tmp_path: Path) -> None:
+	node = Parallel(Task("echo {PY}", name="t"), matrix={"PY": ("3.12", "3.13")}, name="m")
+	session = _session({"m": node}, None, tmp_path)
+	result = await serve.run_call(
+		session, {"task": "m", "under": 1.0, "matrix_overrides": {"PY": ["3.13"]}}
+	)
+	assert result.isError is False
+	assert "Nothing ran" in _text(result)
+
+
+async def test_run_call_under_bad_matrix_override_errors(tmp_path: Path) -> None:
+	node = Parallel(Task("echo {PY}", name="t"), matrix={"PY": ("3.12",)}, name="m")
+	session = _session({"m": node}, None, tmp_path)
+	result = await serve.run_call(
+		session, {"task": "m", "under": 1.0, "matrix_overrides": {"NOPE": ["x"]}}
+	)
+	assert result.isError is True
+	assert "unknown matrix axis" in _text(result)
 
 
 def test_create_run_log_dir_namespaces_by_task_and_is_idempotent(tmp_path: Path) -> None:

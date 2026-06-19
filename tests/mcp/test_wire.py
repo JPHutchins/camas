@@ -50,7 +50,10 @@ def test_run_request_rejects_bad_verbosity() -> None:
 
 def test_run_input_schema_splices_task_enum() -> None:
 	schema = run_input_schema(("lint", "test", "check"))
-	assert schema["properties"]["task"]["enum"] == ["lint", "test", "check"]
+	task_enum = next(
+		b["enum"] for b in schema["properties"]["task"]["anyOf"] if b.get("type") == "string"
+	)
+	assert task_enum == ["lint", "test", "check"]
 	assert schema["additionalProperties"] is False
 	assert schema["properties"]["verbosity"]["enum"] == ["summary", "failures", "full"]
 
