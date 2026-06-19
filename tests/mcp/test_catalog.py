@@ -47,9 +47,16 @@ def test_config_without_defaults_yields_no_markers() -> None:
 	assert (resp.default, resp.github_default) == (None, None)
 
 
-def test_matrix_axes_reported_as_lists() -> None:
+def test_matrix_axes_reported_with_unexpanded_preview_by_default() -> None:
 	node = Parallel(Task("test {PY}"), matrix={"PY": ("3.13", "3.14")}, name="m")
 	resp = to_list_response({"m": node}, None)
+	assert resp.tasks[0].matrix_axes == {"PY": ["3.13", "3.14"]}
+	assert resp.tasks[0].command_preview == 'Parallel(Task("test {PY}"), name="m")'
+
+
+def test_expand_inlines_every_matrix_leaf() -> None:
+	node = Parallel(Task("test {PY}"), matrix={"PY": ("3.13", "3.14")}, name="m")
+	resp = to_list_response({"m": node}, None, expand=True)
 	assert resp.tasks[0].matrix_axes == {"PY": ["3.13", "3.14"]}
 	assert resp.tasks[0].command_preview == (
 		'Parallel(Task("test 3.13", name="test 3.13 [PY=3.13]"), '

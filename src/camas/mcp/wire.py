@@ -117,6 +117,21 @@ class DocsResponse(BaseModel):
 	"""The package ``__init__.py`` docstring: a worked, doctested authoring tutorial."""
 
 
+class ListRequest(BaseModel):
+	"""Arguments to ``camas_list``."""
+
+	model_config = ConfigDict(extra="forbid")
+
+	expand_matrix: bool = Field(
+		default=False,
+		description=(
+			"Expand matrix tasks into their full per-axis command tree. Off by default: the "
+			"preview keeps the unexpanded template and the axes are reported under matrix_axes, "
+			"which is far smaller for a matrix over many values."
+		),
+	)
+
+
 class RunRequest(BaseModel):
 	"""Arguments to ``camas_run``."""
 

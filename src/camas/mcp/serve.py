@@ -189,7 +189,7 @@ async def call(session: Session, name: str, arguments: dict[str, Any]) -> types.
 	"""Dispatch a ``tools/call`` to the matching handler, or a tool error for an unknown name."""
 	match parse_tool(name):
 		case ToolName.LIST:
-			return list_call(session)
+			return list_call(session, arguments)
 		case ToolName.RUN:
 			return await run_call(session, arguments)
 		case ToolName.CHECK:
@@ -250,18 +250,20 @@ def tools(task_names: tuple[str, ...], compat: Compat) -> Tools:
 			name=ToolName.LIST.value,
 			description=textwrap.dedent("""\
 				List THIS project's camas-defined tasks: each task's name, help text, its
-				fully-resolved, matrix-expanded command expression (every leaf, recursively),
-				and any matrix axes it expands across (versions, targets, toolchains,
-				platforms — whatever the project declares). Two tasks are flagged: the default
-				(what the developer runs while working) and the github default — the exact task
-				this project's CI runs (camas is the single definition shared by local and CI),
-				so running it locally before you commit or push reproduces CI exactly. Tasks
-				whose leaves have been timed also carry an estimated duration and their slowest
-				leaf, so you can pick a quick task for the inner loop and the thorough one before
-				committing. Use this first to discover valid task names for camas_run; it is the
-				source of truth. Read-only; runs nothing.
+				command expression, and any matrix axes it expands across (versions, targets,
+				toolchains, platforms — whatever the project declares). Matrix tasks show the
+				unexpanded template by default (their axis values are listed separately, which
+				keeps discovery compact); pass expand_matrix=true to inline every resolved leaf
+				recursively. Two tasks are flagged: the default (what the developer runs while
+				working) and the github default — the exact task this project's CI runs (camas
+				is the single definition shared by local and CI), so running it locally before
+				you commit or push reproduces CI exactly. Tasks whose leaves have been timed also
+				carry an estimated duration and their slowest leaf, so you can pick a quick task
+				for the inner loop and the thorough one before committing. Use this first to
+				discover valid task names for camas_run; it is the source of truth. Read-only;
+				runs nothing.
 			""").strip(),
-			input_schema=NO_ARGS_SCHEMA,
+			input_schema=wire.ListRequest.model_json_schema(),
 			output_model=wire.ListResponse,
 			title="List camas tasks",
 			annotations=LIST_ANNOTATIONS,
@@ -328,14 +330,20 @@ def tools(task_names: tuple[str, ...], compat: Compat) -> Tools:
 	)
 
 
-def list_call(session: Session) -> types.CallToolResult:
+def list_call(session: Session, arguments: dict[str, Any]) -> types.CallToolResult:
 	"""Handle ``camas_list``: the project's task catalog, or a load error."""
+	try:
+		req = wire.ListRequest.model_validate(arguments)
+	except ValidationError as e:
+		return error_result(f"invalid camas_list arguments:\n{e}")
 	match session.project:
 		case LoadErr(source=source, exception=exception):
 			return error_result(format_load_error_hint(source, exception))
 		case LoadOk(tasks=tasks, config=config):
-			resp = to_list_response(tasks, config, timings.load(session.camas_dir))
-			return success(list_text(resp), resp, session.compat)
+			resp = to_list_response(
+				tasks, config, timings.load(session.camas_dir), expand=req.expand_matrix
+			)
+			return success(list_text(resp, expand_matrix=req.expand_matrix), resp, session.compat)
 		case _:
 			assert_never(session.project)
 
@@ -455,7 +463,7 @@ def failing_log_links(
 	)
 
 
-def list_text(resp: wire.ListResponse) -> str:
+def list_text(resp: wire.ListResponse, *, expand_matrix: bool) -> str:
 	"""The load-bearing agent-facing summary for ``camas_list``."""
 	lines = [f"{len(resp.tasks)} task(s) defined. Call camas_run with one of these names."]
 	if resp.default is not None:
@@ -478,6 +486,12 @@ def list_text(resp: wire.ListResponse) -> str:
 		timing = timing_note(t) if t.estimated_s is not None else ""
 		lines.append(f"  {t.name.ljust(width)}{marks}{help_note}{matrix}{timing}")
 		lines.append(f"      {t.command_preview}")
+	if not expand_matrix and any(t.matrix_axes for t in resp.tasks):
+		lines.append("")
+		lines.append(
+			"Matrix previews collapsed to templates; call camas_list with expand_matrix=true "
+			"for the fully-expanded per-leaf tree."
+		)
 	return "\n".join(lines)
 
 

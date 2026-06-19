@@ -128,6 +128,8 @@ def test_tools_default_omits_rich_fields() -> None:
 	assert (tool_docs.title, tool_docs.outputSchema, tool_docs.annotations) == (None, None, None)
 	assert tool_check.inputSchema == serve.NO_ARGS_SCHEMA
 	assert tool_docs.inputSchema == serve.NO_ARGS_SCHEMA
+	assert tool_list.inputSchema["properties"]["expand_matrix"]["type"] == "boolean"
+	assert tool_list.inputSchema["additionalProperties"] is False
 
 
 def test_tools_rich_includes_title_annotations_and_schema() -> None:
@@ -155,27 +157,54 @@ def test_list_call_text_lists_tasks_and_markers(tmp_path: Path) -> None:
 	session = _session(
 		{"ci": ci, "lint": PASS}, Config(default_task=ci, github_task=PASS), tmp_path
 	)
-	result = serve.list_call(session)
+	result = serve.list_call(session, {})
 	assert result.isError is False
 	text = _text(result)
 	assert "default (developer's task): ci" in text
 	assert "github default" in text
 	assert "lint" in text
+	assert "expand_matrix=true" not in text
 	assert result.structuredContent is None
 
 
 def test_list_call_load_error(tmp_path: Path) -> None:
 	session = Session(LoadErr(tmp_path / "tasks.py", RuntimeError("boom")), tmp_path, Compat())
-	result = serve.list_call(session)
+	result = serve.list_call(session, {})
 	assert result.isError is True
 	assert "camas --check" in _text(result)
 
 
 def test_list_call_structured_when_rich(tmp_path: Path) -> None:
 	session = _session({"lint": PASS}, None, tmp_path, rich=True)
-	result = serve.list_call(session)
+	result = serve.list_call(session, {})
 	assert result.structuredContent is not None
 	assert result.structuredContent["tasks"][0]["name"] == "lint"
+
+
+_MATRIX = Parallel(Task("test {PY}"), matrix={"PY": ("3.13", "3.14")}, name="m")
+
+
+def test_list_call_default_collapses_matrix(tmp_path: Path) -> None:
+	result = serve.list_call(_session({"m": _MATRIX}, None, tmp_path), {})
+	text = _text(result)
+	assert "test {PY}" in text
+	assert "[PY=3.13]" not in text
+	assert "(matrix: PY=3.13/3.14)" in text
+	assert "expand_matrix=true" in text
+
+
+def test_list_call_expand_matrix_inlines_leaves(tmp_path: Path) -> None:
+	result = serve.list_call(_session({"m": _MATRIX}, None, tmp_path), {"expand_matrix": True})
+	text = _text(result)
+	assert "[PY=3.13]" in text
+	assert "[PY=3.14]" in text
+	assert "expand_matrix=true" not in text
+
+
+def test_list_call_invalid_arguments_is_tool_error(tmp_path: Path) -> None:
+	result = serve.list_call(_session({"m": _MATRIX}, None, tmp_path), {"expand_matrix": "nope"})
+	assert result.isError is True
+	assert "invalid camas_list arguments" in _text(result)
 
 
 async def test_run_call_pass(tmp_path: Path) -> None:
@@ -258,7 +287,7 @@ async def test_run_call_dry_run_records_no_timing(tmp_path: Path) -> None:
 async def test_list_reflects_recorded_timing(tmp_path: Path) -> None:
 	session = _session({"lint": PASS}, None, tmp_path)
 	await serve.run_call(session, {"task": "lint"})
-	assert "n=1" in _text(serve.list_call(session))
+	assert "n=1" in _text(serve.list_call(session, {}))
 
 
 async def test_run_call_unknown_task_is_tool_error(tmp_path: Path) -> None:
@@ -597,7 +626,7 @@ def test_list_text_renders_matrix_and_no_markers() -> None:
 		),
 		default=None,
 	)
-	text = serve.list_text(resp)
+	text = serve.list_text(resp, expand_matrix=False)
 	assert "default" not in text
 	assert "(matrix: PY=3.13/3.14)" in text
 
@@ -613,7 +642,7 @@ def test_list_text_shows_help_and_expansion_together() -> None:
 		),
 		default=None,
 	)
-	text = serve.list_text(resp)
+	text = serve.list_text(resp, expand_matrix=False)
 	assert "Lint sources" in text
 	assert 'Task("ruff check .", name="lint")' in text
 
@@ -639,7 +668,7 @@ def test_list_text_shows_timing_with_slowest_leaf() -> None:
 		),
 		default=None,
 	)
-	assert "[~32.00s, slowest test 31.90s, n=2]" in serve.list_text(resp)
+	assert "[~32.00s, slowest test 31.90s, n=2]" in serve.list_text(resp, expand_matrix=False)
 
 
 def test_list_text_omits_slowest_when_it_is_the_task_itself() -> None:
@@ -656,7 +685,7 @@ def test_list_text_omits_slowest_when_it_is_the_task_itself() -> None:
 		),
 		default=None,
 	)
-	line = serve.list_text(resp)
+	line = serve.list_text(resp, expand_matrix=False)
 	assert "[~0.20s, n=1]" in line
 	assert "slowest" not in line
 
@@ -684,6 +713,16 @@ async def test_in_memory_round_trip(tmp_path: Path) -> None:
 		assert "PASSED" in _text(run)
 		unknown = await client.call_tool("camas_run", {"task": "lint", "dry_run": True})
 		assert "fully-resolved plan" in _text(unknown)
+
+
+async def test_list_via_client_expands_matrix_on_request(tmp_path: Path) -> None:
+	session = _session({"m": _MATRIX}, None, tmp_path)
+	async with create_connected_server_and_client_session(serve.build_server(session)) as client:
+		collapsed = _text(await client.call_tool("camas_list", {}))
+		assert "[PY=3.13]" not in collapsed
+		expanded = _text(await client.call_tool("camas_list", {"expand_matrix": True}))
+		assert "[PY=3.13]" in expanded
+		assert "[PY=3.14]" in expanded
 
 
 async def test_call_unknown_tool_is_error(tmp_path: Path) -> None:
