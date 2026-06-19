@@ -7,14 +7,16 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from camas import Config, Parallel, Task
+from camas import Config, Parallel, Sequential, Task
+from camas.core import timings
 from camas.core.color import WHITE
 from camas.core.completion import RunResult
-from camas.main.dispatch import dispatch, print_interrupt_banner
+from camas.main.dispatch import dispatch, print_interrupt_banner, run_under
 from camas.main.state import LoadOk
 
 if TYPE_CHECKING:
 	from collections.abc import Mapping
+	from pathlib import Path
 
 	from camas.v0.effect import Effect
 	from camas.v0.task import TaskNode
@@ -205,3 +207,63 @@ def test_interrupted_run_prints_banner_and_exits_130(
 	with pytest.raises(SystemExit, match="130"):
 		dispatch(_state({}, Config(default_task=Task("true"))), [])
 	assert "Ctrl-C (3) received - exiting" in capsys.readouterr().out
+
+
+def test_dispatch_under_no_timings_runs_nothing(capsys: pytest.CaptureFixture[str]) -> None:
+	with pytest.raises(SystemExit, match="0"):
+		dispatch(_state({"check": Parallel(Task("a"), Task("b"))}), ["check", "--under", "1s"])
+	out = capsys.readouterr().out
+	assert "2 untimed" in out
+	assert "Nothing fits the budget" in out
+
+
+def test_dispatch_under_rejects_passthrough(capsys: pytest.CaptureFixture[str]) -> None:
+	with pytest.raises(SystemExit, match="2"):
+		dispatch(_state({"t": Task("pytest", name="t")}), ["t", "--under", "1s", "--", "-v"])
+	assert "passthrough args cannot be combined with --under" in capsys.readouterr().err
+
+
+def test_dispatch_under_bad_jobs_env_errors(
+	monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	monkeypatch.setenv("CAMAS_JOBS", "nope")
+	with pytest.raises(SystemExit, match="2"):
+		dispatch(_state({"t": Task("echo", name="t")}), ["t", "--under", "1s"])
+	assert "CAMAS_JOBS" in capsys.readouterr().err
+
+
+def _camas_with_timings(tmp_path: Path, leaves: list[tuple[str, float]]) -> Path:
+	camas = tmp_path / ".camas"
+	camas.mkdir()
+	timings.record(camas, leaves)
+	return camas
+
+
+def test_run_under_dry_run_shows_plan(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+	camas = _camas_with_timings(tmp_path, [("fmt", 0.1), ("lint", 0.2), ("slow", 9.0)])
+	source = Sequential(
+		Task("echo fmt", name="fmt", mutates=True),
+		Parallel(Task("echo lint", name="lint"), Task("echo slow", name="slow")),
+	)
+	code = run_under(
+		source, 1.0, camas_dir=camas, effects=(), jobs=None, dry_run=True, passthrough=()
+	)
+	assert code == 0
+	out = capsys.readouterr().out
+	assert "selected 2 leaf(s)" in out
+	assert "over budget: slow ~9.00s" in out
+
+
+def test_run_under_executes_selected(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+	camas = _camas_with_timings(tmp_path, [("a", 0.1)])
+	source = Parallel(
+		Task(("python", "-c", "print('a')"), name="a"),
+		Task(("python", "-c", "print('b')"), name="b"),
+	)
+	code = run_under(
+		source, 1.0, camas_dir=camas, effects=(), jobs=None, dry_run=False, passthrough=()
+	)
+	assert code == 0
+	assert (
+		"untimed (run the task normally once to record an estimate): b" in capsys.readouterr().out
+	)

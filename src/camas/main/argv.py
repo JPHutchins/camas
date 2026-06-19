@@ -65,13 +65,14 @@ def apply_passthrough(task: TaskNode, args: tuple[str, ...]) -> Task:
 	Task(cmd="pytest -k 'a b'", name=None, env={}, cwd=None)
 	"""
 	match task:
-		case Task(cmd=cmd, name=name, env=env, cwd=cwd, help=help):
+		case Task(cmd=cmd, name=name, env=env, cwd=cwd, help=help, mutates=mutates):
 			return Task(
 				cmd=f"{cmd} {shlex.join(args)}" if isinstance(cmd, str) else cmd + args,
 				name=name,
 				env=env,
 				cwd=cwd,
 				help=help,
+				mutates=mutates,
 			)
 		case Sequential() | Parallel():
 			raise ValueError(

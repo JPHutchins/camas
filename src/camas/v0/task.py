@@ -33,6 +33,10 @@ class Task:
 	``help`` is an optional one-line description shown in ``--list`` output and
 	``camas <task> --help`` instead of the bare command.
 
+	``mutates`` marks a leaf that writes the workspace (a formatter or auto-fixer).
+	The ``--under`` budget scheduler runs such leaves sequentially, before the
+	read-only group, so they never race a checker over the same files.
+
 	>>> Task("echo hi")
 	Task(cmd='echo hi', name=None, env={}, cwd=None)
 	>>> Task(("ruff", "check", "."), name="lint")
@@ -43,6 +47,8 @@ class Task:
 	True
 	>>> Task("ruff check .", help="Lint all sources").help
 	'Lint all sources'
+	>>> Task("ruff format .", mutates=True)
+	Task(cmd='ruff format .', name=None, env={}, cwd=None, mutates=True)
 	>>> hash(Task("a")) == hash(Task("a"))
 	True
 	>>> {Task("a", env={"K": "v"}), Task("a", env={"K": "v"})} == {Task("a", env={"K": "v"})}
@@ -54,6 +60,7 @@ class Task:
 	env: Mapping[str, str]
 	cwd: Path | None
 	help: str | None
+	mutates: bool
 
 	def __init__(
 		self,
@@ -62,6 +69,7 @@ class Task:
 		env: Mapping[str, str] = _EMPTY_ENV,
 		cwd: str | Path | None = None,
 		help: str | None = None,
+		mutates: bool = False,
 	) -> None:
 		put = object.__setattr__
 		put(self, "cmd", cmd)
@@ -69,15 +77,30 @@ class Task:
 		put(self, "env", env)
 		put(self, "cwd", Path(cwd) if isinstance(cwd, str) else cwd)
 		put(self, "help", help)
+		put(self, "mutates", mutates)
 
 	def __hash__(self) -> int:
-		return hash((self.cmd, self.name, tuple(sorted(self.env.items())), self.cwd, self.help))
+		return hash(
+			(
+				self.cmd,
+				self.name,
+				tuple(sorted(self.env.items())),
+				self.cwd,
+				self.help,
+				self.mutates,
+			)
+		)
 
 	def __repr__(self) -> str:
-		base = (
-			f"Task(cmd={self.cmd!r}, name={self.name!r}, env={dict(self.env)!r}, cwd={self.cwd!r}"
+		parts = (
+			f"cmd={self.cmd!r}",
+			f"name={self.name!r}",
+			f"env={dict(self.env)!r}",
+			f"cwd={self.cwd!r}",
+			*([f"help={self.help!r}"] if self.help is not None else []),
+			*(["mutates=True"] if self.mutates else []),
 		)
-		return f"{base}, help={self.help!r})" if self.help is not None else f"{base})"
+		return f"Task({', '.join(parts)})"
 
 
 @dataclass(frozen=True, slots=True, init=False, repr=False)

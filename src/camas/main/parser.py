@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import importlib.metadata
 import os
+import re
 import sys
 from typing import TYPE_CHECKING, Any, Final
 
@@ -100,6 +101,45 @@ def positive_jobs(raw: str) -> int:
 	if n < 1:
 		raise argparse.ArgumentTypeError(f"--jobs must be >= 1, got {n}")
 	return n
+
+
+_DURATION: Final = re.compile(r"\s*(\d+(?:\.\d+)?)\s*(ms|s|m|h)?\s*")
+
+
+def parse_duration(raw: str) -> float:
+	"""Validate ``--under`` as an argparse ``type``: a positive duration in seconds.
+
+	Accepts a bare number (seconds) or a ``ms``/``s``/``m``/``h`` suffix.
+
+	Raises:
+		ArgumentTypeError: when ``raw`` is not a positive duration.
+
+	>>> parse_duration("1.5s")
+	1.5
+	>>> parse_duration("500ms")
+	0.5
+	>>> parse_duration("2m")
+	120.0
+	>>> parse_duration("3")
+	3.0
+	"""
+	m = _DURATION.fullmatch(raw)
+	if m is None:
+		raise argparse.ArgumentTypeError(
+			f"--under expects a duration like '1s', '500ms', '2m', got {raw!r}"
+		)
+	value = float(m.group(1))
+	if value <= 0:
+		raise argparse.ArgumentTypeError(f"--under must be positive, got {raw!r}")
+	match m.group(2):
+		case "ms":
+			return value / 1000.0
+		case "m":
+			return value * 60.0
+		case "h":
+			return value * 3600.0
+		case _:
+			return value
 
 
 def resolve_jobs(cli_jobs: int | None) -> int | None:
@@ -263,11 +303,33 @@ def build_parser(state: TasksState = EMPTY_STATE) -> argparse.ArgumentParser:
 		"fan-out, so --jobs can only slow a run down; reach for it only when a "
 		"wide matrix oversubscribes the machine (CPU/RAM/disk)",
 	)
+	parser.add_argument(
+		"--under",
+		type=parse_duration,
+		default=None,
+		metavar="DURATION",
+		help="run only the task's leaves whose timed estimate fits DURATION (e.g. 1s, "
+		"500ms, 2m), mutating leaves (formatters) first then the read-only rest in "
+		"parallel; untimed leaves are skipped. Operates on the named task, or the "
+		"Config default when none is given",
+	)
 	return parser
 
 
 RESERVED_FLAGS: Final = frozenset(
-	{"help", "version", "dry-run", "list", "tree", "check", "init", "effects", "matrix", "jobs"}
+	{
+		"help",
+		"version",
+		"dry-run",
+		"list",
+		"tree",
+		"check",
+		"init",
+		"effects",
+		"matrix",
+		"jobs",
+		"under",
+	}
 )
 
 

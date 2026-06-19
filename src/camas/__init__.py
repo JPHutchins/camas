@@ -22,6 +22,14 @@ rarely needed (the cmd or tree usually self-documents; this codebase
 uses ``help=`` only in a handful of places), but available for
 cryptic commands.
 
+``Task`` additionally accepts ``mutates=True`` to mark a leaf that
+writes the workspace (a formatter or auto-fixer). ``camas --under=<dur>``
+(e.g. ``--under=1s``, ``--under=500ms``) then runs only the leaves whose
+recorded timing fits the budget — the marked, mutating ones first in
+sequence, then the read-only rest in parallel — a fast, self-pruning
+inner-loop subset of a task. ``camas_run`` exposes the same budget as its
+``under`` argument.
+
 ``Config`` is project configuration, discovered by type: bind
 ``_ = Config(default_task=...)`` and bare ``camas`` runs that task
 (``github_task`` takes over under GitHub Actions).

@@ -99,6 +99,16 @@ def eval_opt_str(node: ast.expr | None) -> str | None:
 			raise ValueError(f"expected str or None, got {ast.dump(node)}")
 
 
+def eval_opt_bool(node: ast.expr | None) -> bool:
+	match node:
+		case None:
+			return False
+		case ast.Constant(value=bool() as b):
+			return b
+		case _:
+			raise ValueError(f"expected bool literal, got {ast.dump(node)}")
+
+
 def eval_env(node: ast.expr | None) -> dict[str, str]:
 	match node:
 		case None:
@@ -205,6 +215,7 @@ def eval_node(
 						env=eval_env(kw.get("env")),
 						cwd=eval_opt_str(kw.get("cwd")),
 						help=eval_opt_str(kw.get("help")),
+						mutates=eval_opt_bool(kw.get("mutates")),
 					)
 				case "Sequential" | "Parallel":
 					ctor = Sequential if name == "Sequential" else Parallel
@@ -289,6 +300,8 @@ def to_expression(node: TaskNode) -> str:
 	'Task("ruff check .")'
 	>>> to_expression(Task("ruff", name="lint"))
 	'Task("ruff", name="lint")'
+	>>> to_expression(Task("ruff format .", mutates=True))
+	'Task("ruff format .", mutates=True)'
 	>>> to_expression(Sequential(Task("a"), Task("b")))
 	'Sequential(Task("a"), Task("b"))'
 	>>> to_expression(Parallel(Task("a"), Task("b"), name="checks"))
@@ -297,8 +310,8 @@ def to_expression(node: TaskNode) -> str:
 	'Sequential(Parallel(Task("a"), name="p"), Task("b"), name="s")'
 	"""
 	match node:
-		case Task(cmd=cmd, name=name):
-			return f"Task({quote(join_command(cmd))}{name_kwarg(name)})"
+		case Task(cmd=cmd, name=name, mutates=mutates):
+			return f"Task({quote(join_command(cmd))}{name_kwarg(name)}{mutates_kwarg(mutates)})"
 		case Sequential(tasks=tasks, name=name):
 			return f"Sequential({render_members(tasks)}{name_kwarg(name)})"
 		case Parallel(tasks=tasks, name=name):
@@ -313,6 +326,10 @@ def render_members(tasks: tuple[TaskNode, ...]) -> str:
 
 def name_kwarg(name: str | None) -> str:
 	return f", name={quote(name)}" if name is not None else ""
+
+
+def mutates_kwarg(mutates: bool) -> str:
+	return ", mutates=True" if mutates else ""
 
 
 def quote(value: str) -> str:

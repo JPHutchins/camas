@@ -47,8 +47,8 @@ def assign_key_name(node: TaskNode | Ref, key: str) -> TaskNode | Ref:
 	Ref(name='bar')
 	"""
 	match node:
-		case Task(cmd=cmd, name=None, env=env, cwd=cwd, help=help):
-			return Task(cmd=cmd, name=key, env=env, cwd=cwd, help=help)
+		case Task(cmd=cmd, name=None, env=env, cwd=cwd, help=help, mutates=mutates):
+			return Task(cmd=cmd, name=key, env=env, cwd=cwd, help=help, mutates=mutates)
 		case Sequential(tasks=tasks, name=None, matrix=matrix, env=env, cwd=cwd, help=help):
 			return Sequential(*tasks, name=key, matrix=matrix, env=env, cwd=cwd, help=help)
 		case Parallel(tasks=tasks, name=None, matrix=matrix, env=env, cwd=cwd, help=help):

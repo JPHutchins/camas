@@ -53,6 +53,24 @@ class LeafReport(BaseModel):
 	"""Filesystem path to this leaf's full output log, when one was written."""
 
 
+class ExcludedLeaf(BaseModel):
+	"""A leaf a time budget did not run, and why."""
+
+	name: str
+	reason: Literal["over_budget", "untimed"]
+	estimated_s: float | None = None
+	"""The leaf's observed estimate; null when it has never been timed."""
+
+
+class BudgetReport(BaseModel):
+	"""How a ``camas_run`` time budget (``under``) partitioned the task's leaves."""
+
+	budget_s: float
+	selected: tuple[str, ...]
+	"""Leaves whose estimate fit the budget — the ones that were scheduled to run."""
+	excluded: tuple[ExcludedLeaf, ...]
+
+
 class RunResponse(BaseModel):
 	"""Structured result of a run — camas's ``RunResult``, faithfully on the wire."""
 
@@ -64,6 +82,8 @@ class RunResponse(BaseModel):
 	interrupt_count: int
 	leaves: tuple[LeafReport, ...]
 	truncated: bool = False
+	budget: BudgetReport | None = None
+	"""Present when the run was time-budgeted (``camas_run`` with ``under``)."""
 
 
 class TaskInfo(BaseModel):
@@ -137,7 +157,19 @@ class RunRequest(BaseModel):
 
 	model_config = ConfigDict(extra="forbid")
 
-	task: str = Field(description="Task name to run — one of the names returned by camas_list.")
+	task: str | None = Field(
+		default=None,
+		description="Task name to run — one of the names returned by camas_list. May be "
+		"omitted only with 'under', which then budgets the project's default task.",
+	)
+	under: float | None = Field(
+		default=None,
+		gt=0,
+		description="Wall-clock budget in seconds: run only the leaves whose recorded "
+		"estimate fits, mutating leaves (formatters) first then the read-only rest in "
+		"parallel. Untimed leaves are skipped. Omit 'task' to budget the default task; "
+		"the 'budget' field of the response reports what was selected and excluded.",
+	)
 	dry_run: bool = Field(
 		default=False,
 		description="Preview the fully-resolved task tree without executing anything.",
@@ -165,12 +197,17 @@ class RunRequest(BaseModel):
 def run_input_schema(task_names: tuple[str, ...]) -> dict[str, Any]:
 	"""``RunRequest``'s JSON Schema with the live task-name ``enum`` spliced into ``task``.
 
+	``task`` is ``str | None`` (a budget run may omit it), so the enum lands on the
+	string branch of the ``anyOf`` rather than the property itself.
+
 	>>> schema = run_input_schema(("lint", "test"))
-	>>> schema["properties"]["task"]["enum"]
+	>>> next(b["enum"] for b in schema["properties"]["task"]["anyOf"] if b.get("type") == "string")
 	['lint', 'test']
 	>>> schema["additionalProperties"]
 	False
 	"""
-	schema = RunRequest.model_json_schema()
-	schema["properties"]["task"]["enum"] = list(task_names)
+	schema: dict[str, Any] = RunRequest.model_json_schema()
+	for branch in schema["properties"]["task"]["anyOf"]:
+		if branch.get("type") == "string":
+			branch["enum"] = list(task_names)
 	return schema
