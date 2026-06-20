@@ -24,7 +24,11 @@ Options:
 
 
 def main(argv: list[str]) -> None:
-	"""Route ``camas mcp [-h|init|--rich|...]``; ``init`` exits with its own code."""
+	"""Route ``camas mcp [-h|init|--rich|...]``; ``init`` exits with its own code.
+
+	Raises:
+		ModuleNotFoundError: if a dependency other than the optional ``mcp`` extra is missing.
+	"""
 	if "-h" in argv or "--help" in argv:
 		print(HELP)
 		return
@@ -32,6 +36,12 @@ def main(argv: list[str]) -> None:
 		from .scaffold import write_mcp_json
 
 		sys.exit(write_mcp_json(argv[1:]))
-	from .serve import serve_stdio
+	try:
+		from .serve import serve_stdio
+	except ModuleNotFoundError as e:
+		if e.name != "mcp":
+			raise
+		print("camas mcp: requires feature camas[mcp]", file=sys.stderr)
+		sys.exit(2)
 
 	serve_stdio(argv)
