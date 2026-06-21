@@ -225,6 +225,9 @@ jobs:
         python: ["311", "312", "313", "314"]
       fail-fast: false
     runs-on: ${{ matrix.os }}
+    # Builds normally finish in <5 min; cap so a stuck runner can't hang for the
+    # 6-hour default (the rest of CI then waits on it).
+    timeout-minutes: 10
     continue-on-error: true
     steps:
       - uses: actions/checkout@v5
