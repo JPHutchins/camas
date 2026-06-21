@@ -106,3 +106,23 @@ def test_mcp_cli_help_prints_usage(capsys: pytest.CaptureFixture[str]) -> None:
 
 	main(["--help"])
 	assert "camas mcp" in capsys.readouterr().out
+
+
+def test_mcp_dash_init_errors_with_hint(capsys: pytest.CaptureFixture[str]) -> None:
+	from camas.mcp.cli import main
+
+	with pytest.raises(SystemExit) as exc:
+		main(["--init"])
+	assert exc.value.code == 2
+	err = capsys.readouterr().err
+	assert "--init" in err
+	assert "camas mcp init" in err
+
+
+def test_mcp_unexpected_arg_errors(capsys: pytest.CaptureFixture[str]) -> None:
+	from camas.mcp.cli import main
+
+	with pytest.raises(SystemExit) as exc:
+		main(["serve"])
+	assert exc.value.code == 2
+	assert "unexpected argument" in capsys.readouterr().err

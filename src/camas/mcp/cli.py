@@ -24,7 +24,7 @@ Options:
 
 
 def main(argv: list[str]) -> None:
-	"""Route ``camas mcp [-h|init|--rich|...]``; ``init`` exits with its own code.
+	"""Route ``camas mcp [-h|init|--rich]``; ``init`` and an unexpected argument exit with a code.
 
 	Raises:
 		ModuleNotFoundError: if a dependency other than the optional ``mcp`` extra is missing.
@@ -36,6 +36,15 @@ def main(argv: list[str]) -> None:
 		from .scaffold import write_mcp_json
 
 		sys.exit(write_mcp_json(argv[1:]))
+	unexpected = [arg for arg in argv if arg != "--rich"]
+	if unexpected:
+		hint = " (did you mean 'camas mcp init'?)" if "--init" in unexpected else ""
+		print(
+			f"camas mcp: unexpected argument(s): {' '.join(unexpected)}{hint}\n"
+			"Usage: camas mcp [--rich]  or  camas mcp init [--rich]  (camas mcp --help for more)",
+			file=sys.stderr,
+		)
+		sys.exit(2)
 	try:
 		from .serve import serve_stdio
 	except ModuleNotFoundError as e:
