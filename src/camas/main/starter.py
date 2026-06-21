@@ -37,17 +37,18 @@ greet = Parallel(
 	help="say hello to everyone at once",
 )
 
-# Sequential runs in order, short-circuiting on the first failure;
-# Parallel runs concurrently. They nest freely.
+# Sequential runs in order, short-circuiting on the first failure; Parallel
+# runs concurrently. They nest freely. The binding name is the task name
+# (this defines `ci`); pass name= only to rename or to name a nested,
+# anonymous group like the Parallel below.
 ci = Sequential(
 	hello,
 	Parallel(greet, "python --version"),
-	name="ci",
 )
 
-# Discovered by type (the binding name never matters): bare `camas` runs
-# default_task — or github_task under GitHub Actions, falling back to
-# default_task when unset.
+# Config is discovered by type, under any binding name (here `_`): bare
+# `camas` runs default_task — or github_task under GitHub Actions, falling
+# back to default_task when unset.
 _ = Config(default_task=ci)
 
 # The PEP 723 standalone flow (see the docstring): running this file directly

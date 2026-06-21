@@ -6,7 +6,8 @@ Define your task tree in ``tasks.py``. ``camas <name>`` runs a task by
 name, ``camas --list`` enumerates them, ``camas --help`` shows
 everything (tasks + effects + hints), ``camas --effects`` lists the
 available output renderers, ``camas --tree`` prints every task's full
-expansion, and ``--AXIS VAL`` overrides a matrix axis from the CLI.
+expansion, ``camas --init`` scaffolds a commented starter ``tasks.py``
+when none exists, and ``--AXIS VAL`` overrides a matrix axis from the CLI.
 
 A leaf is *any* shell command. The doctests below all run
 ``python -c ...`` snippets only because every CI environment has
@@ -15,6 +16,12 @@ Python; in your real ``tasks.py``, write the actual command::
     Task("ruff check .")
     Task("cargo test", cwd=Path("rust"))
     Task("npm test")
+
+A module-level ``Task``/``Sequential``/``Parallel`` binding takes its
+**variable name** as the task name — ``lint = Task("ruff check .")``
+defines task ``lint`` — so ``name=`` is only for renaming or for naming a
+nested, anonymous group. (The ``[tool.camas.tasks]`` TOML form makes this
+explicit: the table key is the name.)
 
 ``Task``/``Sequential``/``Parallel`` also accept a ``help="..."``
 kwarg that overrides what ``camas --list`` prints for that task —
@@ -28,11 +35,23 @@ writes the workspace (a formatter or auto-fixer). ``camas --under=<dur>``
 recorded timing fits the budget — the marked, mutating ones first in
 sequence, then the read-only rest in parallel — a fast, self-pruning
 inner-loop subset of a task. ``camas_run`` exposes the same budget as its
-``under`` argument.
+``under`` argument. That subset is what a pre-commit / git-hook wants;
+untimed leaves are excluded, so an empty cache (a fresh clone) runs
+nothing under a budget until the task has run once unbudgeted.
+
+Two authoring idioms the engine can't enforce: ``tasks.py`` is
+real Python, so source matrix axis values from the project's single
+source of truth (e.g. read ``.python-version``) instead of hardcoding a
+list that drifts; and model independent, read-only work as ``Parallel``
+(wall-clock ``max``, not ``sum``) — a ``&&`` chain in a previous runner
+was *sequencing*, not a dependency, so reach for ``Sequential`` only for
+real ordering (a mutating step, or one that consumes a prior's output).
 
 ``Config`` is project configuration, discovered by type: bind
 ``_ = Config(default_task=...)`` and bare ``camas`` runs that task
-(``github_task`` takes over under GitHub Actions).
+(``github_task`` takes over under GitHub Actions) — so a CI step is just
+``camas`` (or ``uv run camas``), which won't go stale if you change
+``github_task``.
 
 These five are the unversioned alias for the latest API generation; to
 pin a generation, import from its namespace (``camas.v0``). See the
