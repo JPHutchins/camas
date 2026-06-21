@@ -57,6 +57,29 @@ def test_errors_when_no_portable_launcher(
 	assert "not on PATH" in err
 	assert "uv add camas" in err
 	assert not (tmp_path / ".mcp.json").exists()
+	assert not (tmp_path / ".camas").exists()
+
+
+def test_creates_camas_dir_with_gitignore(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	monkeypatch.chdir(tmp_path)
+	monkeypatch.setattr("shutil.which", _which("camas"))
+	assert write_mcp_json([]) == 0
+	assert (tmp_path / ".camas" / ".gitignore").read_text(encoding="utf-8") == "*\n"
+	assert "created" in capsys.readouterr().out.lower()
+
+
+def test_existing_camas_dir_left_intact(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	monkeypatch.chdir(tmp_path)
+	monkeypatch.setattr("shutil.which", _which("camas"))
+	(tmp_path / ".camas").mkdir()
+	(tmp_path / ".camas" / "timings.txt").write_text("0\n", encoding="utf-8")
+	assert write_mcp_json([]) == 0
+	assert (tmp_path / ".camas" / "timings.txt").read_text(encoding="utf-8") == "0\n"
+	assert "created" not in capsys.readouterr().out.lower()
 
 
 def test_merges_preserving_other_servers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

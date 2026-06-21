@@ -11,6 +11,9 @@ import sys
 from pathlib import Path
 from typing import Any, Final, cast
 
+from ..core.timings import ensure_camas_dir
+from ..v0.config import DEFAULT_CAMAS_DIR
+
 SERVER_NAME: Final = "camas"
 
 
@@ -36,10 +39,18 @@ def write_mcp_json(argv: list[str]) -> int:
 	command, args = launcher
 	servers[SERVER_NAME] = {"type": "stdio", "command": command, "args": args}
 	mcp_json_path.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
+	camas_dir: Final = Path.cwd() / DEFAULT_CAMAS_DIR
+	camas_note: Final = (
+		f"  created {camas_dir} for run logs and timing estimates; delete it to opt out.\n"
+		if not camas_dir.exists()
+		else ""
+	)
+	ensure_camas_dir(camas_dir)
 	print(
 		f"Wrote the {SERVER_NAME!r} MCP server to {mcp_json_path}\n"
-		f"  command: {command} {' '.join(args)}\n\n"
-		f"{portability_note(command)} Reload Claude Code, approve the server, "
+		f"  command: {command} {' '.join(args)}\n"
+		f"{camas_note}"
+		f"\n{portability_note(command)} Reload Claude Code, approve the server, "
 		"then ask it to call camas_list."
 	)
 	return 0
