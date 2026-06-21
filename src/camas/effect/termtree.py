@@ -26,7 +26,15 @@ from ..core.color import (
 	YELLOW,
 )
 from ..core.leaf_state import KILL_PRESSES, LeafInfo
-from ..core.render import DisplayRow, GroupHeader, flatten_rows, render_tree_prefix, strip_ansi
+from ..core.render import (
+	DisplayRow,
+	GroupHeader,
+	flatten_rows,
+	render_tree_prefix,
+	strip_ansi,
+	take_cols,
+	visual_width,
+)
 from ..core.task import task_label
 from ..core.traversal import flatten_leaves
 from ..v0.completion import Finished, Skipped, Stopped
@@ -36,24 +44,29 @@ from ..v0.task_event import TaskEvent
 
 
 def truncate_middle(text: str, max_width: int) -> str:
-	"""Middle-truncate with '...' to ``max_width`` (result length ``min(len(text), max_width)``).
+	"""Middle-truncate with '...' so the result's :func:`visual_width` is ``<= max_width``.
+
+	Budgets terminal columns, not code points, so a wide glyph (CJK, emoji) can't push the
+	result past ``max_width`` and wrap the row (issue #64).
 
 	>>> truncate_middle("hello world!", 9)
 	'hel...ld!'
 	>>> truncate_middle("built", 2)
 	'..'
+	>>> truncate_middle("你好世界你好", 7)
+	'你...好'
 	"""
-	if len(text) <= max_width:
+	if visual_width(text) <= max_width:
 		return text
 	if max_width < 3:
 		return "..."[: max(max_width, 0)]
-	side: Final = (max_width - 3) // 2
-	return text[:side] + "..." + text[len(text) - (max_width - 3 - side) :]
+	left: Final = (max_width - 3) // 2
+	return take_cols(text, left) + "..." + take_cols(text, max_width - 3 - left, from_end=True)
 
 
 def fit_label(text: str, max_width: int) -> str:
 	"""Return ``text`` unchanged if it fits; otherwise middle-truncate to ``max_width``."""
-	return text if len(text) <= max_width else truncate_middle(text, max(max_width, 3))
+	return text if visual_width(text) <= max_width else truncate_middle(text, max(max_width, 3))
 
 
 CLEAR_LINE: Final = "\033[K"
@@ -244,10 +257,10 @@ def render_lines(
 					f"\r{GREY}{truncate_middle(f'{prefix}{label}', term_width - 1)}{CLEAR_LINE}{RESET}"
 				)
 			case LeafInfo(task=task):
-				name = fit_label(task_label(task), max(display_width - len(prefix), 0))
+				name = fit_label(task_label(task), max(display_width - visual_width(prefix), 0))
 				state = states[leaf_idx]
 				leaf_idx += 1
-				gap = max(display_width - len(prefix) - len(name), 0)
+				gap = max(display_width - visual_width(prefix) - visual_width(name), 0)
 				header = f"{GREY}{prefix}{RESET}{BOLD}{name}{RESET}"
 				match state:
 					case Completed(completion=completion):
@@ -261,7 +274,7 @@ def render_lines(
 									if gap > 2 and stream_line
 									else ""
 								)
-								padding = " " * max(gap - len(stream), 0)
+								padding = " " * max(gap - visual_width(stream), 0)
 								lines.append(
 									f"\r{header}{GREY}{stream}{RESET}{padding} {CYAN}|{color}{status}{CYAN}|{RESET} {elapsed:7.3f}s{CLEAR_LINE}"
 								)
@@ -277,7 +290,7 @@ def render_lines(
 									if gap > 2 and stream_line
 									else ""
 								)
-								padding = " " * max(gap - len(stream), 0)
+								padding = " " * max(gap - visual_width(stream), 0)
 								lines.append(
 									f"\r{header}{GREY}{stream}{RESET}{padding} {CYAN}|{DARK_RED} STOP {CYAN}|{RESET} {elapsed:7.3f}s{CLEAR_LINE}"
 								)
@@ -290,7 +303,7 @@ def render_lines(
 							if gap > 2 and stream_line
 							else ""
 						)
-						padding = " " * max(gap - len(stream), 0)
+						padding = " " * max(gap - visual_width(stream), 0)
 						lines.append(
 							f"\r{header}{GREY}{stream}{RESET}{padding} {CYAN}|{CAMAS_VIOLET}{spin}{CYAN}|{RESET} {elapsed:7.3f}s{CLEAR_LINE}"
 						)
@@ -302,7 +315,7 @@ def render_lines(
 							if gap > 2 and stream_line
 							else ""
 						)
-						padding = " " * max(gap - len(stream), 0)
+						padding = " " * max(gap - visual_width(stream), 0)
 						lines.append(
 							f"\r{header}{GREY}{stream}{RESET}{padding} {CYAN}|{interrupt_status(presses)}{CYAN}|{RESET} {elapsed:7.3f}s{CLEAR_LINE}"
 						)

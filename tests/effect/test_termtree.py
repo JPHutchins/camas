@@ -13,7 +13,7 @@ import pytest
 
 from camas import Parallel, Sequential, Task
 from camas.core.leaf_state import KILL_PRESSES
-from camas.core.render import flatten_rows, strip_ansi
+from camas.core.render import flatten_rows, strip_ansi, visual_width
 from camas.effect.termtree import (
 	STATUS_COL_WIDTH,
 	Termtree,
@@ -419,6 +419,54 @@ def test_render_lines_never_exceed_term_width_for_long_matrix_names(
 		assert visible_width(line) < term_width, (
 			f"line {visible_width(line)} chars exceeds term_width {term_width}: {line!r}"
 		)
+
+
+@pytest.mark.parametrize("term_width", [60, 72, 80, 94, 100, 120])
+def test_render_lines_never_wrap_on_wide_char_output(term_width: int) -> None:
+	"""Regression for #64: a leaf whose output holds wide glyphs (CJK, emoji) must not
+	render a line wider than the terminal. ``len`` undercounts a wide glyph (1 vs 2
+	columns), so a row sized by ``len`` wraps to a second physical row — and the live
+	repaint, which moves the cursor up by the *logical* line count, then never overwrites
+	the top row, stacking a copy of the group header every frame.
+
+	This mirrors the issue's tree (a mutating ``format`` then parallel read-only checks),
+	with ``pydoclint``'s real ``🎉 No violations 🎉`` output. Measured against display
+	width, not ``len`` — the existing :func:`visible_width` helper counts code points and
+	would not catch the wrap.
+	"""
+	fmt = Task(("python", "-c", "pass"), name="format")
+	ruff = Task(("python", "-c", "pass"), name="ruff check .")
+	doclint = Task(("python", "-c", "pass"), name="pydoclint src/pkg")
+	typecheck = Task(("python", "-c", "pass"), name="typecheck")
+	tree = Sequential(fmt, Parallel(ruff, doclint, typecheck))
+	rows = flatten_rows(tree)
+	states: tuple[LeafState, ...] = (
+		Completed(fmt, Finished(0, 0.03, (b"70 files left unchanged\n",))),
+		Completed(ruff, Finished(0, 0.03, (b"All checks passed!\n",))),
+		Completed(doclint, Finished(0, 0.38, ("\U0001f389 No violations \U0001f389\n".encode(),))),
+		Completed(typecheck, Finished(0, 0.53, (b"Success: no issues found\n",))),
+	)
+	display_width = term_width - STATUS_COL_WIDTH - 1
+	lines = render_lines(rows, states, term_width, display_width, TS, 0.0)
+	for line in lines:
+		assert visual_width(strip_ansi(line)) <= term_width, (
+			f"line is {visual_width(strip_ansi(line))} display cols, term_width {term_width}: "
+			f"{strip_ansi(line)!r}"
+		)
+
+
+@pytest.mark.parametrize("term_width", [40, 60, 80])
+def test_render_lines_never_wrap_on_wide_char_name(term_width: int) -> None:
+	"""Regression for #64 on the name column: a wide-glyph task name must middle-truncate
+	by display width, not code points, so the leaf row never overflows."""
+	task = Task(("python", "-c", "pass"), name="构建 数据库 发布 " * 6)
+	tree = Parallel(task)
+	rows = flatten_rows(tree)
+	states: tuple[LeafState, ...] = (Completed(task, Finished(0, 0.1, (b"ok\n",))),)
+	display_width = term_width - STATUS_COL_WIDTH - 1
+	lines = render_lines(rows, states, term_width, display_width, TS, 0.0)
+	for line in lines:
+		assert visual_width(strip_ansi(line)) <= term_width
 
 
 def test_strip_ansi_removes_color_codes() -> None:

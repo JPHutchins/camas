@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import re
 import sys
+import unicodedata
 from typing import TYPE_CHECKING, Final, NamedTuple, TypeAlias
 
 if sys.version_info >= (3, 11):
@@ -45,6 +46,47 @@ def strip_ansi(text: str) -> str:
 	'green\ttext'
 	"""
 	return ANSI_ESCAPE.sub("", text)
+
+
+def char_cols(ch: str) -> int:
+	"""Terminal columns one character occupies: 2 for East-Asian wide/fullwidth, else 1."""
+	return 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+
+
+def visual_width(text: str) -> int:
+	r"""Terminal columns ``text`` occupies — wide glyphs (CJK, most emoji) count as 2, not 1.
+
+	``len`` counts code points; a row sized by ``len`` that contains wide glyphs renders
+	wider than computed and wraps, desyncing the live repaint's cursor math (issue #64).
+
+	>>> visual_width("abc")
+	3
+	>>> visual_width("你好")
+	4
+	"""
+	return sum(char_cols(ch) for ch in text)
+
+
+def take_cols(text: str, cols: int, *, from_end: bool = False) -> str:
+	"""The longest prefix (or suffix, ``from_end``) of ``text`` fitting ``cols`` columns.
+
+	Never splits a wide glyph, so the result's :func:`visual_width` is ``<= cols``.
+
+	>>> take_cols("hello", 3)
+	'hel'
+	>>> take_cols("hello", 3, from_end=True)
+	'llo'
+	>>> take_cols("你好世", 3)
+	'你'
+	"""
+	used = 0
+	kept: list[str] = []
+	for ch in reversed(text) if from_end else text:
+		if used + (w := char_cols(ch)) > cols:
+			break
+		kept.append(ch)
+		used += w
+	return "".join(reversed(kept)) if from_end else "".join(kept)
 
 
 def color_on() -> bool:
