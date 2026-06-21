@@ -78,6 +78,8 @@ def take_cols(text: str, cols: int, *, from_end: bool = False) -> str:
 	'llo'
 	>>> take_cols("你好世", 3)
 	'你'
+	>>> take_cols("ok", 9)
+	'ok'
 	"""
 	used = 0
 	kept: list[str] = []
