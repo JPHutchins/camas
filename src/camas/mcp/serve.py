@@ -169,6 +169,8 @@ def build_server(session: Session) -> Server[object]:
 			available tasks and what each one runs, camas_run to run one, camas_check to
 			validate the tasks definition after you edit it, and camas_docs for how to
 			author tasks. Call camas_list first; it is the source of truth for task names.
+			If the project has no tasks file yet, scaffold a commented starter with
+			`camas --init` before authoring one by hand.
 		""").strip(),
 	)
 
@@ -592,7 +594,8 @@ def list_text(resp: wire.ListResponse, *, expand_matrix: bool) -> str:
 	if resp.github_default is not None:
 		lines.append(
 			f"github default (exactly what CI runs; run before committing/pushing): "
-			f"{resp.github_default}"
+			f"{resp.github_default}. A bare `camas` runs it under GitHub Actions, so a CI "
+			f"step is just `camas` — naming the task there is redundant."
 		)
 	lines.append("")
 	width = max((len(t.name) for t in resp.tasks), default=0)
@@ -677,7 +680,7 @@ def check_text(resp: wire.CheckResponse) -> str:
 		case "no_tasks":
 			return (
 				"camas_check: no tasks.py or [tool.camas.tasks] found in this project. "
-				"Call camas_docs for how to author one."
+				"Run `camas --init` to scaffold a commented starter, or call camas_docs to author one."
 			)
 		case _:
 			assert_never(resp.status)
