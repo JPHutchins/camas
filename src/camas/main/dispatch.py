@@ -22,6 +22,7 @@ from ..core.budget import plan_under
 from ..core.execution import run
 from ..core.matrix import matrix_axes, override_matrix
 from ..core.render import print_tree
+from ..core.scope import with_default_paths
 from ..core.task import task_label
 from ..v0.config import Config
 from .argv import apply_passthrough, parse_axis_values, parse_matrix_kv, split_passthrough
@@ -121,7 +122,7 @@ def run_under(
 	if plan.node is None:
 		return 0
 	if dry_run:
-		print_tree(plan.node, show_cmd=True)
+		print_tree(with_default_paths(plan.node), show_cmd=True)
 		return 0
 	return finish_run(asyncio.run(run(plan.node, effects=effects, jobs=jobs)))
 
@@ -367,7 +368,7 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 				print(f"error: {e}", file=sys.stderr)
 				sys.exit(2)
 			if args.dry_run:
-				print_tree(task, show_cmd=True)
+				print_tree(with_default_paths(task), show_cmd=True)
 				sys.exit(0)
 			try:
 				jobs: Final = resolve_jobs(args.jobs)

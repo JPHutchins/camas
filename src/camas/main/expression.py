@@ -216,6 +216,7 @@ def eval_node(
 						cwd=eval_opt_str(kw.get("cwd")),
 						help=eval_opt_str(kw.get("help")),
 						mutates=eval_opt_bool(kw.get("mutates")),
+						paths=eval_opt_str(kw.get("paths")),
 					)
 				case "Sequential" | "Parallel":
 					ctor = Sequential if name == "Sequential" else Parallel
