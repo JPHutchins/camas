@@ -22,7 +22,7 @@ from ..core.budget import plan_under
 from ..core.execution import run
 from ..core.matrix import matrix_axes, override_matrix
 from ..core.render import print_tree
-from ..core.scope import with_default_paths
+from ..core.scope import scope_to_changed, with_default_paths
 from ..core.task import task_label
 from ..v0.config import Config
 from .argv import apply_passthrough, parse_axis_values, parse_matrix_kv, split_passthrough
@@ -339,6 +339,17 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 				except ValueError as e:
 					print(f"error: {e}", file=sys.stderr)
 					sys.exit(2)
+
+			if args.paths is not None:
+				changed = tuple(p for raw in args.paths for p in parse_axis_values(raw))
+				scoped = scope_to_changed(resolved, changed) if changed else None
+				if scoped is None:
+					print(
+						f"No task leaf covers {', '.join(changed) or '(no paths given)'}"
+						" — nothing to run."
+					)
+					sys.exit(0)
+				resolved = scoped
 
 			if args.under is not None:
 				try:
