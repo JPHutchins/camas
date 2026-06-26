@@ -198,6 +198,33 @@ Durations are `1s`, `500ms`, `2m`, `1h`, or a bare number of seconds. Leaves wit
 
 **For agents**, `camas_run` exposes the same budget as its `under` argument (omit `task` to budget the project default), and the response's `budget` field reports what was selected and excluded — a tight, time-boxed validate loop over structured MCP.
 
+## Path scoping (`--paths`)
+
+`camas --paths <path>…` scopes a run to changed paths instead of the whole tree. A leaf opts in by writing the `{paths}` placeholder in its command and declaring its scope with `paths=` — a directory prefix, or a `(changed) -> paths` callable:
+
+```python
+py = Task("ruff format {paths}", mutates=True, paths="src")
+web = Task("prettier --write {paths}", mutates=True, paths="web")
+fix = Sequential(py, web)
+```
+
+Without the flag, every `{paths}` resolves to its full-run default (`ruff format src`). With it, each leaf runs only over the changed files it covers, and a leaf that covers none is dropped — `--paths` is repeatable, or comma-separated:
+
+```
+camas fix --paths web/app.ts          # prettier only
+camas fix --paths src/a.py,src/b.py   # ruff only
+```
+
+This is the entry point for a Claude Code `FileChanged` hook — point it at your fixing task and it fixes only what changed, zero model tokens:
+
+```jsonc
+// .claude/settings.json
+{ "hooks": { "FileChanged": [
+  { "hooks": [{ "type": "command", "command": "camas fix --paths ${file_path}" }] } ] } }
+```
+
+When no leaf covers any changed path, the run is a no-op (exits 0).
+
 ## Effects plugins
 
 Define an `Effect` in your `tasks.py` and it's discovered automatically — usable by name from `--effects` and listed under `camas --effects`. See [examples/effect-plugin/](https://github.com/JPHutchins/camas/tree/main/tests/fixtures/effect-plugin) for a typed `Tail` effect that streams per-task output as it arrives.

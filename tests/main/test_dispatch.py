@@ -267,3 +267,26 @@ def test_run_under_executes_selected(tmp_path: Path, capsys: pytest.CaptureFixtu
 	assert (
 		"untimed (run the task normally once to record an estimate): b" in capsys.readouterr().out
 	)
+
+
+def test_dispatch_paths_scopes_to_changed(capsys: pytest.CaptureFixture[str]) -> None:
+	task = Task("ruff check {paths}", name="lint", paths=".")
+	with pytest.raises(SystemExit, match="0"):
+		dispatch(_state({"lint": task}), ["--dry-run", "lint", "--paths", "src/app.py"])
+	assert "ruff check src/app.py" in capsys.readouterr().out
+
+
+def test_dispatch_paths_no_match_skips(capsys: pytest.CaptureFixture[str]) -> None:
+	task = Task("cargo check {paths}", name="rust", paths="rust")
+	with pytest.raises(SystemExit, match="0"):
+		dispatch(_state({"rust": task}), ["rust", "--paths", "src/app.py"])
+	out = capsys.readouterr().out
+	assert "src/app.py" in out
+	assert "nothing to run" in out
+
+
+def test_dispatch_paths_empty_skips(capsys: pytest.CaptureFixture[str]) -> None:
+	task = Task("ruff check {paths}", name="lint", paths=".")
+	with pytest.raises(SystemExit, match="0"):
+		dispatch(_state({"lint": task}), ["lint", "--paths", ""])
+	assert "(no paths given)" in capsys.readouterr().out
