@@ -11,7 +11,12 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, TypeAlias
 
 if TYPE_CHECKING:
-	from collections.abc import Mapping
+	from collections.abc import Callable, Mapping
+
+
+PathScope: TypeAlias = "Callable[[tuple[str, ...]], tuple[str, ...]]"
+"""Maps the changed paths to the args injected at ``{paths}``: called with ``()`` for a
+full run (return the default target), with the changed set otherwise (``()`` → skip)."""
 
 
 _EMPTY_ENV: Mapping[str, str] = MappingProxyType({})
@@ -37,6 +42,10 @@ class Task:
 	The ``--under`` budget scheduler runs such leaves sequentially, before the
 	read-only group, so they never race a checker over the same files.
 
+	``paths`` opts a leaf into ``{paths}`` substitution (:mod:`camas.core.scope`): a
+	directory-prefix string (``"."``) or a ``(changed) -> tuple[str, ...]`` callable that
+	maps the changed files into the command; ``None`` leaves the command untouched.
+
 	>>> Task("echo hi")
 	Task(cmd='echo hi', name=None, env={}, cwd=None)
 	>>> Task(("ruff", "check", "."), name="lint")
@@ -49,6 +58,8 @@ class Task:
 	'Lint all sources'
 	>>> Task("ruff format .", mutates=True)
 	Task(cmd='ruff format .', name=None, env={}, cwd=None, mutates=True)
+	>>> Task("ruff format {paths}", mutates=True, paths=".")
+	Task(cmd='ruff format {paths}', name=None, env={}, cwd=None, mutates=True, paths='.')
 	>>> hash(Task("a")) == hash(Task("a"))
 	True
 	>>> {Task("a", env={"K": "v"}), Task("a", env={"K": "v"})} == {Task("a", env={"K": "v"})}
@@ -61,6 +72,7 @@ class Task:
 	cwd: Path | None
 	help: str | None
 	mutates: bool
+	paths: str | PathScope | None
 
 	def __init__(
 		self,
@@ -70,6 +82,7 @@ class Task:
 		cwd: str | Path | None = None,
 		help: str | None = None,
 		mutates: bool = False,
+		paths: str | PathScope | None = None,
 	) -> None:
 		put = object.__setattr__
 		put(self, "cmd", cmd)
@@ -78,6 +91,7 @@ class Task:
 		put(self, "cwd", Path(cwd) if isinstance(cwd, str) else cwd)
 		put(self, "help", help)
 		put(self, "mutates", mutates)
+		put(self, "paths", paths)
 
 	def __hash__(self) -> int:
 		return hash(
@@ -88,6 +102,7 @@ class Task:
 				self.cwd,
 				self.help,
 				self.mutates,
+				self.paths,
 			)
 		)
 
@@ -99,6 +114,7 @@ class Task:
 			f"cwd={self.cwd!r}",
 			*([f"help={self.help!r}"] if self.help is not None else []),
 			*(["mutates=True"] if self.mutates else []),
+			*([f"paths={self.paths!r}"] if self.paths is not None else []),
 		)
 		return f"Task({', '.join(parts)})"
 

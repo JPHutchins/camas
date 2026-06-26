@@ -153,6 +153,7 @@ def test_eval_node_threads_every_public_constructor_kwarg() -> None:
 		"help": ("help='h'", "help", "h"),
 		"mutates": ("mutates=True", "mutates", True),
 		"matrix": ("matrix={'X': ('1',)}", "matrix", {"X": ("1",)}),
+		"paths": ("paths='.'", "paths", "."),
 	}
 	for cls, prefix, variadic in (
 		(Task, "Task('c', ", "cmd"),

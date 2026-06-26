@@ -32,6 +32,7 @@ from ..v0.task_event import CompletedEvent, OutputEvent, StartedEvent, TaskEvent
 from .completion import RunResult, TaskResult
 from .leaf_state import KILL_PRESSES, next_state, to_interrupting
 from .matrix import expand_matrix, resolve_cmd
+from .scope import with_default_paths
 from .task import task_label
 from .traversal import flatten_leaves, subtree_leaf_indices
 
@@ -253,7 +254,7 @@ async def run(
 	if jobs is not None and jobs < 1:
 		raise ValueError(f"jobs must be >= 1, got {jobs}")
 	limiter: Final[Limiter] = asyncio.Semaphore(jobs) if jobs is not None else nullcontext()
-	expanded: Final = expand_matrix(task)
+	expanded: Final = with_default_paths(expand_matrix(task))
 	leaf_infos: Final = flatten_leaves(expanded)
 	leaves: Final = tuple(info.task for info in leaf_infos)
 	index_map: Final = {id(info.task): i for i, info in enumerate(leaf_infos)}
