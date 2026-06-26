@@ -46,19 +46,19 @@ ci = Sequential(
 	Parallel(greet, "python --version"),
 )
 
-# The agent fix node: your deterministic, behavior-preserving auto-fixers, with {paths} so a
-# run scopes to the changed files. `camas fix --paths <file>` runs it (the camas Claude Code
-# plugin's FileChanged hook does this on every edit, for free); replace the placeholder with
-# your real fixers, e.g.:
-#   fix = Task("ruff check --fix {paths}", mutates=True, paths=".")
-#   fix = Parallel(Task("ruff format {paths}", mutates=True), Task("ruff check --fix {paths}", mutates=True), paths=".")
-fix = Task('python -c "" {paths}', name="fix", mutates=True, paths=".")
+# Your deterministic, behavior-preserving auto-fixers, with {paths} so a run scopes to the
+# changed files. Register the node (named anything) to Config.agent.fix below; the camas Claude
+# Code plugin's FileChanged hook runs it on every edit via `camas mcp fix --paths <file>`, for
+# free. Replace the placeholder with your real fixers, e.g.:
+#   autofix = Task("ruff check --fix {paths}", mutates=True, paths=".")
+#   autofix = Parallel(Task("ruff format {paths}", mutates=True), Task("ruff check --fix {paths}", mutates=True), paths=".")
+autofix = Task('python -c "" {paths}', name="autofix", mutates=True, paths=".")
 
 # Config is discovered by type, under any binding name (here `_`): bare `camas` runs
 # default_task — or github_task under GitHub Actions, falling back to default_task when unset.
-# agent= wires the Claude Code plugin: agent.fix is the FileChanged autofix node above; the
-# gate checks default_task (override with Claude(fix=..., check=...)).
-_ = Config(default_task=ci, agent=Claude(fix=fix))
+# agent= wires the Claude Code plugin: agent.fix is the registered FileChanged autofix node
+# above; the gate checks default_task (override with Claude(fix=..., check=...)).
+_ = Config(default_task=ci, agent=Claude(fix=autofix))
 
 # The PEP 723 standalone flow (see the docstring): running this file directly
 # (`uv run tasks.py <task>`) dispatches through camas. Inert when the `camas`

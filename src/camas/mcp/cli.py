@@ -14,6 +14,8 @@ camas mcp — serve this project's tasks to AI agents over the Model Context Pro
 Usage:
   camas mcp [--rich]        run the MCP stdio server (an MCP client launches this)
   camas mcp init [--rich]   write this project's .mcp.json entry for the camas server
+  camas mcp fix [--paths P]… run the registered agent fix node (Config.agent.fix) over the
+                              changed paths — the FileChanged autofix; no-op if unregistered
   camas mcp gate [task]     run the gate once, headless — print the verdict as JSON, exit
     [--paths P]… [--under N]  0 (continue) / 2 (block); scope to --paths or a PostToolBatch
                               event on stdin (the command-hook entry; parallel + benchmark)
@@ -39,6 +41,10 @@ def main(argv: list[str]) -> None:
 		from .scaffold import write_mcp_json
 
 		sys.exit(write_mcp_json(argv[1:]))
+	if argv and argv[0] == "fix":
+		from ..main.dispatch import fix_cli
+
+		sys.exit(fix_cli(argv[1:]))
 	if argv and argv[0] == "gate":
 		try:
 			from .serve import gate_cli

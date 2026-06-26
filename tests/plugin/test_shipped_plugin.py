@@ -35,7 +35,7 @@ def test_filechanged_hook_runs_the_deterministic_autofix() -> None:
 	hooks = json.loads((_PLUGIN / "hooks" / "hooks.json").read_text())["hooks"]
 	fc = hooks["FileChanged"][0]["hooks"][0]
 	assert fc["type"] == "command"
-	assert "camas fix" in fc["command"]
+	assert "camas mcp fix" in fc["command"]
 
 
 def test_marketplace_points_at_the_shipped_plugin() -> None:

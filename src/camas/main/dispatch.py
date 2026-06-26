@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import os
 import re
@@ -133,6 +134,39 @@ def finish_run(result: RunResult) -> int:
 	if result.interrupt_count:
 		print_interrupt_banner(result.interrupt_count)
 	return result.returncode
+
+
+def fix_cli(argv: list[str]) -> int:
+	"""``camas mcp fix [--paths P]…``: run the project's *registered* agent fix node
+	(``Config.agent.fix`` — whatever the user named it), scoped to the changed paths. This is
+	the FileChanged autofix entry, in the ``camas mcp`` namespace so it never collides with a
+	user's own ``camas <task>``. A clean no-op (exit 0) when no fix node is registered — without
+	registration there is simply nothing for the hook to run.
+	"""
+	parser = argparse.ArgumentParser(
+		prog="camas mcp fix", description="Run the registered agent fix node."
+	)
+	parser.add_argument(
+		"--paths",
+		action="append",
+		default=[],
+		metavar="PATH",
+		help="changed path to scope to (repeatable)",
+	)
+	args = parser.parse_args(argv)
+	state, _ = resolve_tasks_source([])
+	if not isinstance(state, LoadOk) or state.config is None:
+		return 0
+	node = state.config.gate_fix()
+	if node is None:
+		return 0
+	base = state.source.parent if state.source is not None else Path.cwd()
+	changed = to_changed(args.paths, base)
+	expanded = expand_matrix(node)
+	scoped = scope_to_changed(expanded, changed) if changed else with_default_paths(expanded)
+	if scoped is None:
+		return 0
+	return finish_run(asyncio.run(run(scoped, effects=(), jobs=None)))
 
 
 def print_interrupt_banner(count: int) -> None:
@@ -290,10 +324,7 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 				sys.exit(0)
 
 			resolved: TaskNode
-			fix_node = effective_config.gate_fix() if args.expression == "fix" else None
-			if fix_node is not None:
-				resolved = fix_node
-			elif args.expression is None:
+			if args.expression is None:
 				if default_node is None:
 					parser.print_help()
 					sys.stdout.flush()

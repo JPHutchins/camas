@@ -7,11 +7,11 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from camas import Claude, Config, Parallel, Sequential, Task
+from camas import Config, Parallel, Sequential, Task
 from camas.core import timings
 from camas.core.color import WHITE
 from camas.core.completion import RunResult
-from camas.main.dispatch import dispatch, print_interrupt_banner, run_under
+from camas.main.dispatch import dispatch, fix_cli, print_interrupt_banner, run_under
 from camas.main.state import LoadOk
 
 if TYPE_CHECKING:
@@ -287,10 +287,53 @@ def test_run_under_all_over_budget_runs_nothing(
 	assert "All leaves exceed the budget — nothing to run." in capsys.readouterr().out
 
 
-def test_dispatch_fix_resolves_agent_fix() -> None:
-	fix = Task(("python", "-c", "pass"), name="fix", mutates=True)
-	with pytest.raises(SystemExit, match="0"):
-		dispatch(_state({}, Config(agent=Claude(fix=fix))), ["fix", "--effects", "()"])
+_TIDY = (
+	"from camas import Claude, Config, Task\n"
+	'tidy = Task(("python", "-c", "import pathlib; pathlib.Path(\'fixed.txt\').write_text(\'done\')"),'
+	' name="tidy", mutates=True, paths={scope!r})\n'
+	"_ = Config(agent=Claude(fix=tidy))\n"
+)
+
+
+def test_fix_cli_runs_registered_agent_fix(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+	# the registered node is named "tidy", not "fix" — fix_cli resolves Config.agent.fix by reference
+	(tmp_path / "tasks.py").write_text(_TIDY.format(scope="."))
+	monkeypatch.chdir(tmp_path)
+	assert fix_cli(["--paths", "x.py"]) == 0
+	assert (tmp_path / "fixed.txt").read_text() == "done"
+
+
+def test_fix_cli_no_paths_runs_the_full_node(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	(tmp_path / "tasks.py").write_text(_TIDY.format(scope="."))
+	monkeypatch.chdir(tmp_path)
+	assert fix_cli([]) == 0
+	assert (tmp_path / "fixed.txt").read_text() == "done"
+
+
+def test_fix_cli_noop_without_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+	monkeypatch.chdir(tmp_path)
+	assert fix_cli(["--paths", "x.py"]) == 0
+
+
+def test_fix_cli_noop_without_registered_fix(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	(tmp_path / "tasks.py").write_text(
+		"from camas import Config, Task\n_ = Config(default_task=Task('echo hi'))\n"
+	)
+	monkeypatch.chdir(tmp_path)
+	assert fix_cli(["--paths", "x.py"]) == 0
+
+
+def test_fix_cli_noop_when_scope_covers_nothing(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	(tmp_path / "tasks.py").write_text(_TIDY.format(scope="src"))
+	monkeypatch.chdir(tmp_path)
+	assert fix_cli(["--paths", "docs/readme.md"]) == 0
+	assert not (tmp_path / "fixed.txt").exists()
 
 
 def test_dispatch_paths_scopes_to_changed(capsys: pytest.CaptureFixture[str]) -> None:

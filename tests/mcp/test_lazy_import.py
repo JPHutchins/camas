@@ -102,6 +102,23 @@ def test_entrypoint_mcp_gate_branch_invokes_gate_cli(monkeypatch: pytest.MonkeyP
 	assert calls == [["--paths", "a.py"]]
 
 
+def test_entrypoint_mcp_fix_branch_invokes_fix_cli(monkeypatch: pytest.MonkeyPatch) -> None:
+	from camas.main import dispatch, main
+
+	calls: list[list[str]] = []
+
+	def fake_fix_cli(argv: list[str]) -> int:
+		calls.append(argv)
+		return 0
+
+	monkeypatch.setattr(dispatch, "fix_cli", fake_fix_cli)
+	monkeypatch.setattr("sys.argv", ["camas", "mcp", "fix", "--paths", "a.py"])
+	with pytest.raises(SystemExit) as exc:
+		main()
+	assert exc.value.code == 0
+	assert calls == [["--paths", "a.py"]]
+
+
 def test_entrypoint_mcp_gate_branch_missing_extra_exits_with_feature_hint(
 	monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
