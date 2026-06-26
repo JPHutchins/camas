@@ -321,8 +321,8 @@ def build_parser(state: TasksState = EMPTY_STATE) -> argparse.ArgumentParser:
 		default=None,
 		metavar="PATH[,PATH...]",
 		help="scope the run to these changed paths (repeatable): inject them into each "
-		"leaf's {paths} and drop leaves that match none. The entry point a FileChanged "
-		"hook drives, e.g. camas fix --paths ${file_path}",
+		"leaf's {paths} and drop leaves that match none, e.g. camas check --paths src/a.py. "
+		"A FileChanged hook drives the agent fix node this way via camas mcp fix --paths <file>",
 	)
 	return parser
 

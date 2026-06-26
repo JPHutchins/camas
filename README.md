@@ -189,12 +189,12 @@ lint = Task("ruff check .")
 
 ```
 $ camas --under=1s --dry-run
-Time budget 1.00s — selected 6 leaf(s), excluded 2 (2 over budget, 0 untimed).
+Time budget 1.00s — running 6 leaf(s) (0 unmeasured), excluded 2 over budget.
   over budget: pyright ~4.57s, coverage ~20.98s
 fix → fmt → (mypy | ty | zuban | pyrefly)
 ```
 
-Durations are `1s`, `500ms`, `2m`, `1h`, or a bare number of seconds. Leaves with no recorded timing yet are excluded (a budget can't bound them — run the task once normally to time them). The budget is per-leaf: a leaf is selected when its own estimate fits, so the parallel group's wall-clock stays near the budget.
+Durations are `1s`, `500ms`, `2m`, `1h`, or a bare number of seconds. Only leaves *measured* to exceed the budget are excluded; a leaf with no recorded timing yet runs anyway (and is thereby measured) — skipping it would keep it forever untimed. The budget is per-leaf: a measured leaf runs when its own estimate fits, so the parallel group's wall-clock stays near the budget.
 
 **For agents**, `camas_run` exposes the same budget as its `under` argument (omit `task` to budget the project default), and the response's `budget` field reports what was selected and excluded — a tight, time-boxed validate loop over structured MCP.
 
