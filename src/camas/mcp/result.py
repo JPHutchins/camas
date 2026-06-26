@@ -191,9 +191,6 @@ def report(task: Task, result: TaskResult, *, verbosity: Verbosity, tail: int) -
 
 
 def to_gate_response(outcome: GateOutcome, budget: wire.BudgetReport | None) -> wire.GateResponse:
-	"""The wire ``GateResponse`` for a gate run: the routing decision, the residual class, and the
-	failing residual's per-leaf report (failures-only) when one survived the autofix.
-	"""
 	diagnostics = (
 		to_run_response(outcome.residual_node, outcome.residual_result, verbosity="failures")
 		if outcome.residual_node is not None and outcome.residual_result is not None

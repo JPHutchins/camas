@@ -1,14 +1,8 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""The SA-delegation gate: scope a task to the changed paths, apply the deterministic autofix,
-run the remaining checks, and return a binary verdict — ``autofixed`` when nothing survives the
-fixers, ``needs_reasoning`` when a residual does.
-
-:func:`run_gate` is the entry point the ``camas_gate`` MCP tool drives (for a ``PostToolBatch``
-hook). It composes the existing primitives — :func:`scope_to_changed` to narrow the tree,
-:func:`plan_under` to time-box the checks, :func:`run` to execute — and classifies the result;
-the deep policy (the ``mechanical_delegatable`` tier) is deferred to its own layer.
+"""The SA-delegation gate: scope a task to the changed paths, autofix, run the remaining checks,
+and classify the residual ``autofixed`` vs ``needs_reasoning`` for a ``PostToolBatch`` hook.
 """
 
 from __future__ import annotations
@@ -43,13 +37,10 @@ class GateOutcome(NamedTuple):
 	"""A gate run's verdict and the residual that produced it."""
 
 	residual_class: ResidualClass
-	"""``autofixed`` when no residual survived the fixers; ``needs_reasoning`` otherwise."""
 	residual_node: TaskNode | None
-	"""The failing run's node — the source of the diagnostics; ``None`` when nothing failed."""
+	"""The failing run's node and result, paired — both set on ``needs_reasoning``, both ``None`` otherwise."""
 	residual_result: RunResult | None
-	"""The failing run's result; ``None`` when nothing failed."""
 	budget: BudgetPlan | None
-	"""The checks' budget partition when the run was time-boxed (``under``), else ``None``."""
 
 
 def decision_of(residual_class: ResidualClass) -> Decision:
@@ -113,33 +104,23 @@ async def run_gate(
 	jobs: int | None = None,
 	timings: Mapping[TaskLabel, TaskTiming] | None = None,
 ) -> GateOutcome:
-	"""Scope ``node`` to ``changed``, autofix, run the checks, and classify the residual.
-
-	The ``mutates=True`` leaves run first (the free deterministic fixes); if they error the code
-	is already broken — ``needs_reasoning``. The remaining read-only leaves then run over the
-	fixed workspace, time-boxed by ``under`` when given; a surviving failure is the residual that
-	needs reasoning. An empty ``changed`` gates the whole task; a leaf covering nothing is
-	dropped, and a node that scopes to nothing is a no-op ``autofixed``.
-	"""
+	"""Scope ``node`` to ``changed``, autofix, run the remaining checks, and classify the residual."""
 	scoped = scope_to_changed(node, changed)
 	if scoped is None:
 		return GateOutcome("autofixed", None, None, None)
 	mutating = filter_by_mutates(scoped, mutates=True)
-	if mutating is not None:
-		autofix = await run(mutating, jobs=jobs, interactive=False)
-		if autofix.returncode != 0:
-			return GateOutcome("needs_reasoning", mutating, autofix, None)
+	if (
+		mutating is not None
+		and (autofix := await run(mutating, jobs=jobs, interactive=False)).returncode != 0
+	):
+		return GateOutcome("needs_reasoning", mutating, autofix, None)
 	readonly = filter_by_mutates(scoped, mutates=False)
 	if readonly is None:
 		return GateOutcome("autofixed", None, None, None)
-	if under is not None:
-		plan = plan_under(readonly, under, timings or {})
-		checks_node, budget = plan.node, plan
-	else:
-		checks_node, budget = readonly, None
+	plan = plan_under(readonly, under, timings or {}) if under is not None else None
+	checks_node = plan.node if plan is not None else readonly
 	if checks_node is None:
-		return GateOutcome("autofixed", None, None, budget)
-	checks = await run(checks_node, jobs=jobs, interactive=False)
-	if checks.returncode != 0:
-		return GateOutcome("needs_reasoning", checks_node, checks, budget)
-	return GateOutcome("autofixed", None, None, budget)
+		return GateOutcome("autofixed", None, None, plan)
+	if (checks := await run(checks_node, jobs=jobs, interactive=False)).returncode != 0:
+		return GateOutcome("needs_reasoning", checks_node, checks, plan)
+	return GateOutcome("autofixed", None, None, plan)
