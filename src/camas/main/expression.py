@@ -130,6 +130,8 @@ def eval_agent_format(node: ast.expr | None) -> AgentFormat | None:
 			if args_node is None or kind_node is None:
 				raise ValueError("AgentFormat requires args and kind")
 			return AgentFormat(eval_str_lit(args_node), _output_kind(kind_node))
+		case ast.Tuple(elts=[args_node, kind_node]):
+			return AgentFormat(eval_str_lit(args_node), _output_kind(kind_node))
 		case _:
 			raise ValueError(f"agent_format must be AgentFormat(args, kind), got {ast.dump(node)}")
 

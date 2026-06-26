@@ -188,6 +188,12 @@ def test_eval_node_rejects_non_agent_format_value() -> None:
 		parse_expression("Task('c', agent_format='sarif')")
 
 
+def test_eval_node_accepts_agent_format_tuple_shorthand() -> None:
+	node = parse_expression("Task('c', agent_format=('--x', 'sarif'))")
+	assert isinstance(node, Task)
+	assert node.agent_format == AgentFormat("--x", "sarif")
+
+
 def test_parse_top_level_tuple_with_bare_strings() -> None:
 	assert parse_expression('("a", "b", "c")') == Sequential(Task("a"), Task("b"), Task("c"))
 

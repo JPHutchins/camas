@@ -66,6 +66,7 @@ class Task:
 
 	``agent_format`` is the agent-only structured-output variant (:class:`AgentFormat`): the gate
 	appends its ``args`` and tags the diagnostics ``kind``; a human run leaves the command as-is.
+	A bare ``(args, kind)`` tuple is coerced to an :class:`AgentFormat`.
 
 	>>> Task("echo hi")
 	Task(cmd='echo hi', name=None, env={}, cwd=None)
@@ -83,6 +84,8 @@ class Task:
 	Task(cmd='ruff format {paths}', name=None, env={}, cwd=None, mutates=True, paths='.')
 	>>> Task("ruff check .", agent_format=AgentFormat("--output-format sarif", "sarif"))
 	Task(cmd='ruff check .', name=None, env={}, cwd=None, agent_format=AgentFormat(args='--output-format sarif', kind='sarif'))
+	>>> Task("ruff check .", agent_format=("--output-format sarif", "sarif")).agent_format
+	AgentFormat(args='--output-format sarif', kind='sarif')
 	>>> hash(Task("a")) == hash(Task("a"))
 	True
 	>>> {Task("a", env={"K": "v"}), Task("a", env={"K": "v"})} == {Task("a", env={"K": "v"})}
@@ -107,7 +110,7 @@ class Task:
 		help: str | None = None,
 		mutates: bool = False,
 		paths: str | PathScope | None = None,
-		agent_format: AgentFormat | None = None,
+		agent_format: AgentFormat | tuple[str, OutputKind] | None = None,
 	) -> None:
 		put = object.__setattr__
 		put(self, "cmd", cmd)
@@ -117,7 +120,13 @@ class Task:
 		put(self, "help", help)
 		put(self, "mutates", mutates)
 		put(self, "paths", paths)
-		put(self, "agent_format", agent_format)
+		put(
+			self,
+			"agent_format",
+			agent_format
+			if agent_format is None or isinstance(agent_format, AgentFormat)
+			else AgentFormat(*agent_format),
+		)
 
 	def __hash__(self) -> int:
 		return hash(
