@@ -20,6 +20,7 @@ from ..v0.task import AgentFormat, OutputKind, Parallel, Sequential, Task, TaskN
 
 if TYPE_CHECKING:
 	from collections.abc import Mapping
+	from pathlib import Path
 
 	from ..v0.task import PathScope
 
@@ -341,14 +342,26 @@ def to_expression(node: TaskNode) -> str:
 	'Sequential(Parallel(Task("a"), name="p"), Task("b"), name="s")'
 	>>> to_expression(Task("ruff check {paths}", name="lint", paths="src"))
 	'Task("ruff check {paths}", name="lint", paths="src")'
+	>>> to_expression(Task("test", cwd="rust", help="run tests"))
+	'Task("test", cwd="rust", help="run tests")'
 	>>> from camas.v0.task import AgentFormat
 	>>> to_expression(Task("ruff check .", agent_format=AgentFormat("--output-format sarif", "sarif")))
 	'Task("ruff check .", agent_format=AgentFormat("--output-format sarif", "sarif"))'
 	"""
 	match node:
-		case Task(cmd=cmd, name=name, mutates=mutates, paths=paths, agent_format=agent_format):
+		case Task(
+			cmd=cmd,
+			name=name,
+			env=env,
+			cwd=cwd,
+			help=help,
+			mutates=mutates,
+			paths=paths,
+			agent_format=agent_format,
+		):
 			return (
-				f"Task({quote(join_command(cmd))}{name_kwarg(name)}{mutates_kwarg(mutates)}"
+				f"Task({quote(join_command(cmd))}{name_kwarg(name)}{env_kwarg(env)}"
+				f"{cwd_kwarg(cwd)}{help_kwarg(help)}{mutates_kwarg(mutates)}"
 				f"{paths_kwarg(paths)}{agent_format_kwarg(agent_format)})"
 			)
 		case Sequential(tasks=tasks, name=name):
@@ -365,6 +378,18 @@ def render_members(tasks: tuple[TaskNode, ...]) -> str:
 
 def name_kwarg(name: str | None) -> str:
 	return f", name={quote(name)}" if name is not None else ""
+
+
+def env_kwarg(env: Mapping[str, str]) -> str:
+	return f", env={dict(env)!r}" if env else ""
+
+
+def cwd_kwarg(cwd: Path | None) -> str:
+	return f", cwd={quote(cwd.as_posix())}" if cwd is not None else ""
+
+
+def help_kwarg(help: str | None) -> str:
+	return f", help={quote(help)}" if help is not None else ""
 
 
 def mutates_kwarg(mutates: bool) -> str:

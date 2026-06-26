@@ -19,6 +19,22 @@ def test_to_expression_marks_callable_paths() -> None:
 	assert rendered == 'Task("ruff {paths}", paths=<callable>)'
 
 
+def test_to_expression_round_trips_every_field() -> None:
+	"""The full round-trip #85 asked for: every constructor field survives to_expression →
+	parse_expression (a callable scope is the sole non-round-trippable, by design)."""
+	task = Task(
+		"ruff check {paths}",
+		name="lint",
+		env={"CI": "1"},
+		cwd="rust",
+		help="lint it",
+		mutates=True,
+		paths=".",
+		agent_format=AgentFormat("--out sarif", "sarif"),
+	)
+	assert parse_expression(to_expression(task)) == task
+
+
 @pytest.mark.parametrize(
 	("expr", "expected"),
 	[
