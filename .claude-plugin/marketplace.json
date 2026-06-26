@@ -7,7 +7,7 @@
     {
       "name": "camas",
       "source": "./agent/claude/plugin",
-      "description": "The camas SA-delegation gate: deterministic autofix + residual-only surfacing."
+      "description": "The camas gate \u2014 deterministic autofix on every change, plus residual-only surfacing after each batch."
     }
   ]
 }

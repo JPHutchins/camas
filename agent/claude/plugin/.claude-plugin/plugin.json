@@ -1,5 +1,5 @@
 {
   "name": "camas",
-  "description": "Static-analysis delegation gate: after each batch of edits, camas applies its deterministic fixes for free and surfaces only the residual that needs reasoning.",
+  "description": "The camas gate: applies the deterministic fixes for free after each change, and surfaces only the residual that needs reasoning.",
   "version": "0.1.0"
 }

@@ -1,5 +1,15 @@
 {
   "hooks": {
+    "FileChanged": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "camas fix --paths ${file_path}"
+          }
+        ]
+      }
+    ],
     "PostToolBatch": [
       {
         "matcher": "Edit|Write|MultiEdit|NotebookEdit",

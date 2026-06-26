@@ -34,6 +34,13 @@ def test_gate_hook_targets_the_real_gate_tool() -> None:
 	assert hook["tool"] == ToolName.GATE.value
 
 
+def test_filechanged_hook_runs_the_deterministic_autofix() -> None:
+	hooks = json.loads((_PLUGIN / "hooks" / "hooks.json").read_text())["hooks"]
+	fc = hooks["FileChanged"][0]["hooks"][0]
+	assert fc["type"] == "command"
+	assert "camas fix" in fc["command"]
+
+
 def test_marketplace_points_at_the_shipped_plugin() -> None:
 	catalog = json.loads((_REPO / ".claude-plugin" / "marketplace.json").read_text())
 	entry = next(p for p in catalog["plugins"] if p["name"] == "camas")
