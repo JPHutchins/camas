@@ -55,7 +55,7 @@ def assign_key_name(node: TaskNode | Ref, key: str) -> TaskNode | Ref:
 			help=help,
 			mutates=mutates,
 			paths=paths,
-			output_kind=output_kind,
+			agent_format=agent_format,
 		):
 			return Task(
 				cmd=cmd,
@@ -65,7 +65,7 @@ def assign_key_name(node: TaskNode | Ref, key: str) -> TaskNode | Ref:
 				help=help,
 				mutates=mutates,
 				paths=paths,
-				output_kind=output_kind,
+				agent_format=agent_format,
 			)
 		case Sequential(tasks=tasks, name=None, matrix=matrix, env=env, cwd=cwd, help=help):
 			return Sequential(*tasks, name=key, matrix=matrix, env=env, cwd=cwd, help=help)

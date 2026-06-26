@@ -73,7 +73,7 @@ def apply_passthrough(task: TaskNode, args: tuple[str, ...]) -> Task:
 			help=help,
 			mutates=mutates,
 			paths=paths,
-			output_kind=output_kind,
+			agent_format=agent_format,
 		):
 			return Task(
 				cmd=f"{cmd} {shlex.join(args)}" if isinstance(cmd, str) else cmd + args,
@@ -83,7 +83,7 @@ def apply_passthrough(task: TaskNode, args: tuple[str, ...]) -> Task:
 				help=help,
 				mutates=mutates,
 				paths=paths,
-				output_kind=output_kind,
+				agent_format=agent_format,
 			)
 		case Sequential() | Parallel():
 			raise ValueError(

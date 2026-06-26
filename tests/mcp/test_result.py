@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from camas import Parallel, Sequential, Task
+from camas import AgentFormat, Parallel, Sequential, Task
 from camas.core.completion import RunResult, TaskResult
 from camas.core.execution import run
 from camas.mcp import wire
@@ -88,7 +88,9 @@ def test_stopped_leaf_maps_to_wire_stopped() -> None:
 
 
 def test_agent_envelope_finished_carries_verbatim_payload() -> None:
-	task = Task("ruff check . --output-format sarif", name="lint", output_kind="sarif")
+	task = Task(
+		"ruff check .", name="lint", agent_format=AgentFormat("--output-format sarif", "sarif")
+	)
 	env = to_agent_envelope(task, TaskResult("lint", Finished(1, 0.1, (b"E1\n", b"E2\n"))))
 	assert (env.name, env.exit_code, env.output_kind) == ("lint", 1, "sarif")
 	assert env.payload == "E1\nE2"

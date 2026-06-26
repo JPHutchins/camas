@@ -108,7 +108,7 @@ def specialize_task(task: Task, binding: MatrixBinding, suffix: str) -> Task:
 		help=substitute_help(task.help, binding),
 		mutates=task.mutates,
 		paths=substitute_paths(task.paths, binding),
-		output_kind=task.output_kind,
+		agent_format=task.agent_format,
 	)
 
 
@@ -340,7 +340,7 @@ def expand_matrix(
 				help=task.help,
 				mutates=task.mutates,
 				paths=task.paths,
-				output_kind=task.output_kind,
+				agent_format=task.agent_format,
 			)
 		case Sequential(tasks=tasks, matrix=matrix, env=env, cwd=cwd):
 			seq_env: Final = parent_env | env

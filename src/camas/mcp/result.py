@@ -202,7 +202,7 @@ def to_agent_envelope(task: Task, result: TaskResult, *, tail: int = 50) -> wire
 	return wire.AgentEnvelope(
 		name=result.name,
 		exit_code=comp.returncode,
-		output_kind=task.output_kind,
+		output_kind=task.agent_format.kind if task.agent_format is not None else "raw",
 		payload="\n".join(decoded.lines),
 		truncated=decoded.truncated,
 	)
