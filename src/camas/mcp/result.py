@@ -9,6 +9,7 @@ import shlex
 import sys
 from typing import TYPE_CHECKING, Literal, NamedTuple
 
+from ..core.gate import decision_of
 from ..core.matrix import expand_matrix
 from ..core.render import strip_ansi
 from ..core.traversal import flatten_leaves
@@ -35,6 +36,7 @@ if TYPE_CHECKING:
 	from pathlib import Path
 
 	from ..core.completion import RunResult, TaskResult
+	from ..core.gate import GateOutcome
 	from ..main.state import TasksState
 	from ..v0.completion import Completion
 	from ..v0.task import Task, TaskNode
@@ -185,4 +187,18 @@ def report(task: Task, result: TaskResult, *, verbosity: Verbosity, tail: int) -
 		cwd=str(task.cwd) if task.cwd is not None else None,
 		completion=completion,
 		truncated=decoded.truncated,
+	)
+
+
+def to_gate_response(outcome: GateOutcome, budget: wire.BudgetReport | None) -> wire.GateResponse:
+	diagnostics = (
+		to_run_response(outcome.residual_node, outcome.residual_result, verbosity="failures")
+		if outcome.residual_node is not None and outcome.residual_result is not None
+		else None
+	)
+	return wire.GateResponse(
+		decision=decision_of(outcome.residual_class),
+		residual_class=outcome.residual_class,
+		diagnostics=diagnostics,
+		budget=budget,
 	)

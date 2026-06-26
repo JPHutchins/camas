@@ -211,3 +211,58 @@ def run_input_schema(task_names: tuple[str, ...]) -> dict[str, Any]:
 		if branch.get("type") == "string":
 			branch["enum"] = list(task_names)
 	return schema
+
+
+class GateRequest(BaseModel):
+	"""Arguments to ``camas_gate``."""
+
+	model_config = ConfigDict(extra="forbid")
+
+	paths: list[str] = Field(
+		default_factory=list,
+		description="Changed paths to scope the gate to — a FileChanged/PostToolBatch hook's "
+		"edited files. Empty gates the whole task; each leaf's {paths} is injected with the "
+		"files it covers and leaves covering nothing are dropped.",
+	)
+	task: str | None = Field(
+		default=None,
+		description="Task to gate — one of the names from camas_list. Omit to gate the project's "
+		"default task.",
+	)
+	under: float | None = Field(
+		default=None,
+		gt=0,
+		description="Wall-clock budget in seconds for the checks (the read-only leaves); the "
+		"deterministic autofix always runs. Untimed leaves are skipped.",
+	)
+	jobs: int | None = Field(
+		default=None, ge=1, description="Max concurrent leaf subprocesses; null = unbounded."
+	)
+
+
+class GateResponse(BaseModel):
+	"""The SA-delegation gate's verdict: how to route the batch, and the residual that decided it."""
+
+	decision: Literal["continue", "block"]
+	"""``block`` when a residual needs reasoning (a PostToolBatch hook surfaces it), else ``continue``."""
+	residual_class: Literal["autofixed", "needs_reasoning"]
+	diagnostics: RunResponse | None = None
+	"""The failing residual run (failures-only); null when the autofix left nothing to reason about."""
+	budget: BudgetReport | None = None
+	"""How ``under`` partitioned the checks, when a budget was given."""
+
+
+def gate_input_schema(task_names: tuple[str, ...]) -> dict[str, Any]:
+	"""``GateRequest``'s JSON Schema with the live task-name ``enum`` spliced into ``task``.
+
+	>>> schema = gate_input_schema(("lint", "test"))
+	>>> next(b["enum"] for b in schema["properties"]["task"]["anyOf"] if b.get("type") == "string")
+	['lint', 'test']
+	>>> schema["additionalProperties"]
+	False
+	"""
+	schema: dict[str, Any] = GateRequest.model_json_schema()
+	for branch in schema["properties"]["task"]["anyOf"]:
+		if branch.get("type") == "string":
+			branch["enum"] = list(task_names)
+	return schema
