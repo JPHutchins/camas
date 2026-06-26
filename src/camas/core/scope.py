@@ -11,15 +11,16 @@ files the leaf covers, and a leaf that covers none of them is dropped.
 
 :func:`with_default_paths` resolves the full-run default and is applied before every run.
 :func:`scope_to_changed` resolves and prunes against a changed set — the entry point for
-the gate (#67/#69). Detecting the changed set is the caller's job; paths match POSIX,
-relative to the same root.
+the gate (#67/#69). Detecting the changed set is the caller's job; :func:`to_changed`
+normalizes an externally-supplied set (absolute hook paths, CLI ``--paths``) to the
+repo-relative POSIX form the matcher expects.
 """
 
 from __future__ import annotations
 
 import shlex
 import sys
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Final
 
 if sys.version_info >= (3, 11):
@@ -30,10 +31,32 @@ else:  # pragma: no cover
 from ..v0.task import Parallel, Sequential, Task
 
 if TYPE_CHECKING:
+	from collections.abc import Iterable
+
 	from ..v0.task import PathScope, TaskNode
 
 
 PATHS_TOKEN: Final = "{paths}"
+
+
+def to_changed(raw: Iterable[str], base: Path) -> tuple[str, ...]:
+	"""Normalize externally-supplied changed paths to the repo-relative POSIX form
+	:func:`scope_to_changed` matches: resolve each against ``base`` (a hook's ``${file_path}``
+	is absolute), drop any that fall outside it. The boundary every changed set passes through —
+	the CLI ``--paths``, the gate request, and the ``PostToolBatch`` event all carry raw paths.
+
+	>>> import tempfile, os
+	>>> d = Path(tempfile.mkdtemp()); _ = (d / "src").mkdir()
+	>>> _ = (d / "src" / "a.py").write_text(""); _ = (d / "b.py").write_text("")
+	>>> to_changed([str(d / "src" / "a.py"), "b.py", "/elsewhere/x.py"], d)
+	('src/a.py', 'b.py')
+	"""
+	root = base.resolve()
+	return tuple(
+		rp.relative_to(root).as_posix()
+		for r in raw
+		if (rp := (root / r).resolve()).is_relative_to(root)
+	)
 
 
 def _within(path: str, prefix: str) -> bool:
@@ -76,14 +99,40 @@ def _inject(cmd: str | tuple[str, ...], parts: tuple[str, ...]) -> str | tuple[s
 	'ruff format a.py b.py'
 	>>> _inject(("ruff", "format", "{paths}"), ("a.py", "b.py"))
 	('ruff', 'format', 'a.py', 'b.py')
+	>>> _inject("ruff format {paths}", ())
+	'ruff format'
 	"""
 	match cmd:
 		case str():
+			if not parts:
+				return cmd.replace(" " + PATHS_TOKEN, "").replace(PATHS_TOKEN, "")
 			return cmd.replace(PATHS_TOKEN, shlex.join(parts))
 		case tuple():
 			return tuple(p for tok in cmd for p in (parts if tok == PATHS_TOKEN else (tok,)))
 		case _:
 			assert_never(cmd)
+
+
+def _rebase_to_cwd(parts: tuple[str, ...], cwd: Path | None) -> tuple[str, ...]:
+	"""Rebase repo-relative injected paths into a leaf's ``cwd`` frame, so a tool that runs from
+	a subdir (``cargo`` in ``src-tauri``) gets paths relative to where it runs. A part outside
+	``cwd`` is left as-is — a prefix/cwd mismatch is the author's to resolve.
+
+	>>> from pathlib import Path
+	>>> _rebase_to_cwd(("src-tauri/src/main.rs", "outside/x"), Path("src-tauri"))
+	('src/main.rs', 'outside/x')
+	>>> _rebase_to_cwd(("a.py",), None)
+	('a.py',)
+	"""
+	if cwd is None:
+		return parts
+	root = PurePosixPath(cwd.as_posix())
+	return tuple(
+		PurePosixPath(p).relative_to(root).as_posix()
+		if PurePosixPath(p).is_relative_to(root)
+		else p
+		for p in parts
+	)
 
 
 def _resolve_leaf(task: Task, changed: tuple[str, ...]) -> Task | None:
@@ -95,7 +144,7 @@ def _resolve_leaf(task: Task, changed: tuple[str, ...]) -> Task | None:
 			if changed and not parts:
 				return None
 			return Task(
-				cmd=_inject(task.cmd, parts),
+				cmd=_inject(task.cmd, _rebase_to_cwd(parts, task.cwd)),
 				name=task.name,
 				env=task.env,
 				cwd=task.cwd,
@@ -158,3 +207,16 @@ def with_default_paths(node: TaskNode) -> TaskNode:
 	Task(cmd='mypy .', name=None, env={}, cwd=None)
 	"""
 	return scope_to_changed(node, ()) or node
+
+
+def resolve_default_leaf(task: Task) -> Task:
+	"""``task`` with its ``{paths}`` resolved to the full-run default — the form a normal run
+	records its timing under. The timing lookup keys on this so a ``{paths}``-template leaf
+	reuses its recorded (unscoped) estimate instead of missing the cache.
+
+	>>> resolve_default_leaf(Task("ruff check {paths}", paths=".")).cmd
+	'ruff check .'
+	>>> resolve_default_leaf(Task("mypy .")).cmd
+	'mypy .'
+	"""
+	return _resolve_leaf(task, ()) or task

@@ -12,6 +12,7 @@ from typing import IO, TYPE_CHECKING, Final, NamedTuple, TypeAlias
 
 from ..v0.completion import Finished, Skipped, Stopped
 from ..v0.task import Parallel, Sequential, Task
+from .scope import resolve_default_leaf
 from .task import task_label
 
 if sys.version_info >= (3, 11):
@@ -80,7 +81,7 @@ def estimate(node: TaskNode, timings: Mapping[TaskLabel, TaskTiming]) -> Estimat
 	"""
 	match node:
 		case Task():
-			label = task_label(node)
+			label = task_label(resolve_default_leaf(node))
 			timing = timings.get(label)
 			if timing is None:
 				return None

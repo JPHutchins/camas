@@ -200,22 +200,22 @@ Durations are `1s`, `500ms`, `2m`, `1h`, or a bare number of seconds. Leaves wit
 
 ## Path scoping (`--paths`)
 
-`camas --paths <path>…` scopes a run to changed paths instead of the whole tree. A leaf opts in by writing the `{paths}` placeholder in its command and declaring its scope with `paths=` — a directory prefix, or a `(changed) -> paths` callable:
+`camas <task> --paths <path>…` scopes a run to changed paths instead of the whole tree. A leaf opts in by writing the `{paths}` placeholder in its command and declaring its scope with `paths=` — a directory prefix, or a `(changed) -> paths` callable:
 
 ```python
 py = Task("ruff format {paths}", mutates=True, paths="src")
 web = Task("prettier --write {paths}", mutates=True, paths="web")
-fix = Sequential(py, web)
+_ = Config(agent=Claude(fix=Sequential(py, web)))
 ```
 
-Without the flag, every `{paths}` resolves to its full-run default (`ruff format src`). With it, each leaf runs only over the changed files it covers, and a leaf that covers none is dropped — `--paths` is repeatable, or comma-separated:
+`agent.fix` is the project's deterministic auto-fix node; `camas fix` runs it (no task need be *named* `fix`). Without `--paths`, every `{paths}` resolves to its full-run default (`ruff format src`). With it, each leaf runs only over the changed files it covers, and a leaf that covers none is dropped — `--paths` is repeatable, or comma-separated:
 
 ```
 camas fix --paths web/app.ts          # prettier only
 camas fix --paths src/a.py,src/b.py   # ruff only
 ```
 
-This is the entry point for a Claude Code `FileChanged` hook — point it at your fixing task and it fixes only what changed, zero model tokens:
+This is the FileChanged half of the camas Claude Code plugin — it fixes only what changed, zero model tokens. Install the plugin (`/plugin marketplace add JPHutchins/camas`), or wire the hook by hand:
 
 ```jsonc
 // .claude/settings.json

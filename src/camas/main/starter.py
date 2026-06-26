@@ -20,7 +20,7 @@ Both are inert under plain ``camas``; delete them if you don't want the
 standalone path.
 """
 
-from camas import Config, Parallel, Sequential, Task, run_cli
+from camas import Claude, Config, Parallel, Sequential, Task, run_cli
 
 # A leaf is any shell command, shlex-split (so quote the -c payload). A bare
 # string inside Sequential/Parallel coerces to an anonymous Task; tuple form
@@ -46,10 +46,19 @@ ci = Sequential(
 	Parallel(greet, "python --version"),
 )
 
-# Config is discovered by type, under any binding name (here `_`): bare
-# `camas` runs default_task — or github_task under GitHub Actions, falling
-# back to default_task when unset.
-_ = Config(default_task=ci)
+# The agent fix node: your deterministic, behavior-preserving auto-fixers, with {paths} so a
+# run scopes to the changed files. `camas fix --paths <file>` runs it (the camas Claude Code
+# plugin's FileChanged hook does this on every edit, for free); replace the placeholder with
+# your real fixers, e.g.:
+#   fix = Task("ruff check --fix {paths}", mutates=True, paths=".")
+#   fix = Parallel(Task("ruff format {paths}", mutates=True), Task("ruff check --fix {paths}", mutates=True), paths=".")
+fix = Task('python -c "" {paths}', name="fix", mutates=True, paths=".")
+
+# Config is discovered by type, under any binding name (here `_`): bare `camas` runs
+# default_task — or github_task under GitHub Actions, falling back to default_task when unset.
+# agent= wires the Claude Code plugin: agent.fix is the FileChanged autofix node above; the
+# gate checks default_task (override with Claude(fix=..., check=...)).
+_ = Config(default_task=ci, agent=Claude(fix=fix))
 
 # The PEP 723 standalone flow (see the docstring): running this file directly
 # (`uv run tasks.py <task>`) dispatches through camas. Inert when the `camas`

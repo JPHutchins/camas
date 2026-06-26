@@ -14,6 +14,9 @@ camas mcp — serve this project's tasks to AI agents over the Model Context Pro
 Usage:
   camas mcp [--rich]        run the MCP stdio server (an MCP client launches this)
   camas mcp init [--rich]   write this project's .mcp.json entry for the camas server
+  camas mcp gate [task]     run the gate once, headless — print the verdict as JSON, exit
+    [--paths P]… [--under N]  0 (continue) / 2 (block); scope to --paths or a PostToolBatch
+                              event on stdin (the command-hook entry; parallel + benchmark)
 
 Options:
   --rich        emit the 2025-11-25 tool fields (title, annotations, outputSchema) and
@@ -36,6 +39,15 @@ def main(argv: list[str]) -> None:
 		from .scaffold import write_mcp_json
 
 		sys.exit(write_mcp_json(argv[1:]))
+	if argv and argv[0] == "gate":
+		try:
+			from .serve import gate_cli
+		except ModuleNotFoundError as e:
+			if e.name != "mcp":
+				raise
+			print("camas mcp gate: requires feature camas[mcp]", file=sys.stderr)
+			sys.exit(2)
+		sys.exit(gate_cli(argv[1:]))
 	unexpected = [arg for arg in argv if arg != "--rich"]
 	if unexpected:
 		hint = " (did you mean 'camas mcp init'?)" if "--init" in unexpected else ""

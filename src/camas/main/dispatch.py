@@ -20,9 +20,9 @@ else:  # pragma: no cover
 from ..core import timings
 from ..core.budget import plan_under
 from ..core.execution import run
-from ..core.matrix import matrix_axes, override_matrix
+from ..core.matrix import expand_matrix, matrix_axes, override_matrix
 from ..core.render import print_tree
-from ..core.scope import scope_to_changed, with_default_paths
+from ..core.scope import scope_to_changed, to_changed, with_default_paths
 from ..core.task import task_label
 from ..v0.config import Config
 from .argv import apply_passthrough, parse_axis_values, parse_matrix_kv, split_passthrough
@@ -81,11 +81,12 @@ def dispatch_arg(arg: str, tasks: Mapping[str, TaskNode]) -> TaskNode:
 
 
 def budget_summary_lines(plan: BudgetPlan) -> list[str]:
-	"""The ``--under`` summary: how many leaves fit the budget, and what was excluded."""
-	excluded = len(plan.over_budget) + len(plan.untimed)
+	"""The ``--under`` summary: how many leaves run (and which are unmeasured), and what was
+	excluded as measured-over-budget.
+	"""
 	lines = [
-		f"Time budget {plan.budget_s:.2f}s — selected {len(plan.fits)} leaf(s), "
-		f"excluded {excluded} ({len(plan.over_budget)} over budget, {len(plan.untimed)} untimed)."
+		f"Time budget {plan.budget_s:.2f}s — running {len(plan.fits) + len(plan.untimed)} leaf(s) "
+		f"({len(plan.untimed)} unmeasured), excluded {len(plan.over_budget)} over budget."
 	]
 	if plan.over_budget:
 		lines.append(
@@ -94,11 +95,11 @@ def budget_summary_lines(plan: BudgetPlan) -> list[str]:
 		)
 	if plan.untimed:
 		lines.append(
-			"  untimed (run the task normally once to record an estimate): "
+			"  unmeasured (running to record an estimate): "
 			+ ", ".join(task_label(u.task) for u in plan.untimed)
 		)
 	if plan.node is None:
-		lines.append("Nothing fits the budget — nothing to run.")
+		lines.append("All leaves exceed the budget — nothing to run.")
 	return lines
 
 
@@ -289,7 +290,10 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 				sys.exit(0)
 
 			resolved: TaskNode
-			if args.expression is None:
+			fix_node = effective_config.gate_fix() if args.expression == "fix" else None
+			if fix_node is not None:
+				resolved = fix_node
+			elif args.expression is None:
 				if default_node is None:
 					parser.print_help()
 					sys.stdout.flush()
@@ -341,11 +345,13 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 					sys.exit(2)
 
 			if args.paths is not None:
-				changed = tuple(p for raw in args.paths for p in parse_axis_values(raw))
-				scoped = scope_to_changed(resolved, changed) if changed else None
+				base = source.parent if source is not None else Path.cwd()
+				raw_changed = tuple(p for raw in args.paths for p in parse_axis_values(raw))
+				changed = to_changed(raw_changed, base)
+				scoped = scope_to_changed(expand_matrix(resolved), changed) if changed else None
 				if scoped is None:
 					print(
-						f"No task leaf covers {', '.join(changed) or '(no paths given)'}"
+						f"No task leaf covers {', '.join(raw_changed) or '(no paths given)'}"
 						" — nothing to run."
 					)
 					sys.exit(0)

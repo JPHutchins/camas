@@ -17,7 +17,7 @@ else:  # pragma: no cover
 	import tomli as tomllib
 	from typing_extensions import assert_never
 
-from ..v0.config import Config
+from ..v0.config import Agent, Claude, Config
 from ..v0.effect import Effect
 from ..v0.task import Parallel, Sequential, Task, TaskNode
 from .expression import Ref, parse_task_value, resolve_refs
@@ -192,17 +192,25 @@ def name_scope_config(scope: Mapping[str, object]) -> Config | None:
 		if not name.startswith("_") and isinstance(val, Task | Sequential | Parallel)
 	}
 
-	def promote_field(node: TaskNode | None) -> TaskNode | None:
-		if node is None:
-			return None
+	def promote_required(node: TaskNode) -> TaskNode:
 		name = name_by_id.get(id(node))
 		return promoted[name] if name is not None else node
+
+	def promote_field(node: TaskNode | None) -> TaskNode | None:
+		return None if node is None else promote_required(node)
+
+	def promote_agent(agent: Agent | None) -> Agent | None:
+		if agent is None:
+			return None
+		return Claude(fix=promote_required(agent.fix), check=promote_field(agent.check))
 
 	return Config(
 		default_task=promote_field(config.default_task),
 		github_task=promote_field(config.github_task),
 		default_effects=config.default_effects,
 		default_github_effects=config.default_github_effects,
+		camas_dir=config.camas_dir,
+		agent=promote_agent(config.agent),
 	)
 
 

@@ -164,7 +164,7 @@ def test_tools_rich_includes_title_annotations_and_schema() -> None:
 	assert tool_gate.title == "SA-delegation gate"
 	assert tool_gate.outputSchema is not None
 	assert tool_gate.annotations is not None
-	assert tool_gate.annotations.destructiveHint is True
+	assert tool_gate.annotations.readOnlyHint is True
 
 
 def test_list_call_text_lists_tasks_and_markers(tmp_path: Path) -> None:
@@ -558,7 +558,7 @@ async def test_run_call_under_selects_runs_and_reports(tmp_path: Path) -> None:
 	result = await serve.run_call(session, {"under": 1.0})
 	assert result.isError is False
 	text = _text(result)
-	assert "Time budget 1.00s — selected 2 leaf(s)" in text
+	assert "Time budget 1.00s — running 2 leaf(s)" in text
 	assert "over budget: slow ~9.00s" in text
 	assert "PASSED" in text
 	assert result.structuredContent is not None
@@ -593,10 +593,9 @@ async def test_run_call_under_reports_untimed(tmp_path: Path) -> None:
 	b = Task(("python", "-c", "print('b')"), name="b")
 	session = _session({"p": Parallel(a, b, name="p")}, None, tmp_path, rich=True)
 	result = await serve.run_call(session, {"task": "p", "under": 1.0})
-	assert "untimed (run the task normally once to record an estimate): b" in _text(result)
+	assert "unmeasured (running to record an estimate): b" in _text(result)
 	assert result.structuredContent is not None
-	excluded = result.structuredContent["budget"]["excluded"]
-	assert next(e for e in excluded if e["name"] == "b")["reason"] == "untimed"
+	assert "b" in result.structuredContent["budget"]["unmeasured"]
 
 
 async def test_run_call_under_no_task_no_default_errors(tmp_path: Path) -> None:
@@ -634,7 +633,7 @@ async def test_run_call_under_applies_matrix_override(tmp_path: Path) -> None:
 		session, {"task": "m", "under": 1.0, "matrix_overrides": {"PY": ["3.13"]}}
 	)
 	assert result.isError is False
-	assert "Nothing ran" in _text(result)
+	assert "running 1 leaf(s)" in _text(result)
 
 
 async def test_run_call_under_bad_matrix_override_errors(tmp_path: Path) -> None:

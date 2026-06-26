@@ -9,8 +9,14 @@ from pathlib import Path
 import pytest
 
 from camas import AgentFormat, Parallel, Sequential, Task
-from camas.main.expression import parse_expression
+from camas.main.expression import parse_expression, to_expression
 from camas.v0.task import Group
+
+
+def test_to_expression_marks_callable_paths() -> None:
+	"""A callable scope has no source, so it renders as a non-parseable marker (preview only)."""
+	rendered = to_expression(Task("ruff {paths}", paths=lambda c: c))
+	assert rendered == 'Task("ruff {paths}", paths=<callable>)'
 
 
 @pytest.mark.parametrize(

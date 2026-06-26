@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from camas import Config, Parallel, Sequential, Task
+from camas import Claude, Config, Parallel, Sequential, Task
 from camas.core import timings
 from camas.core.color import WHITE
 from camas.core.completion import RunResult
@@ -209,12 +209,15 @@ def test_interrupted_run_prints_banner_and_exits_130(
 	assert "Ctrl-C (3) received - exiting" in capsys.readouterr().out
 
 
-def test_dispatch_under_no_timings_runs_nothing(capsys: pytest.CaptureFixture[str]) -> None:
+def test_dispatch_under_no_timings_runs_untimed(capsys: pytest.CaptureFixture[str]) -> None:
+	noop = ("python", "-c", "pass")
 	with pytest.raises(SystemExit, match="0"):
-		dispatch(_state({"check": Parallel(Task("a"), Task("b"))}), ["check", "--under", "1s"])
+		dispatch(
+			_state({"check": Parallel(Task(noop, name="a"), Task(noop, name="b"))}),
+			["check", "--under", "1s"],
+		)
 	out = capsys.readouterr().out
-	assert "2 untimed" in out
-	assert "Nothing fits the budget" in out
+	assert "2 unmeasured" in out
 
 
 def test_dispatch_under_rejects_passthrough(capsys: pytest.CaptureFixture[str]) -> None:
@@ -250,7 +253,7 @@ def test_run_under_dry_run_shows_plan(tmp_path: Path, capsys: pytest.CaptureFixt
 	)
 	assert code == 0
 	out = capsys.readouterr().out
-	assert "selected 2 leaf(s)" in out
+	assert "running 2 leaf(s)" in out
 	assert "over budget: slow ~9.00s" in out
 
 
@@ -264,9 +267,30 @@ def test_run_under_executes_selected(tmp_path: Path, capsys: pytest.CaptureFixtu
 		source, 1.0, camas_dir=camas, effects=(), jobs=None, dry_run=False, passthrough=()
 	)
 	assert code == 0
-	assert (
-		"untimed (run the task normally once to record an estimate): b" in capsys.readouterr().out
+	assert "unmeasured (running to record an estimate): b" in capsys.readouterr().out
+
+
+def test_run_under_all_over_budget_runs_nothing(
+	tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+	camas = _camas_with_timings(tmp_path, [("slow", 9.0)])
+	code = run_under(
+		Parallel(Task("echo slow", name="slow")),
+		0.5,
+		camas_dir=camas,
+		effects=(),
+		jobs=None,
+		dry_run=False,
+		passthrough=(),
 	)
+	assert code == 0
+	assert "All leaves exceed the budget — nothing to run." in capsys.readouterr().out
+
+
+def test_dispatch_fix_resolves_agent_fix() -> None:
+	fix = Task(("python", "-c", "pass"), name="fix", mutates=True)
+	with pytest.raises(SystemExit, match="0"):
+		dispatch(_state({}, Config(agent=Claude(fix=fix))), ["fix", "--effects", "()"])
 
 
 def test_dispatch_paths_scopes_to_changed(capsys: pytest.CaptureFixture[str]) -> None:

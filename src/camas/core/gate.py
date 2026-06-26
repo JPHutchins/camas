@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""The SA-delegation gate: scope a task to the changed paths, autofix, run the remaining checks,
-and classify the residual ``autofixed`` vs ``needs_reasoning`` for a ``PostToolBatch`` hook.
+"""The SA-delegation gate: scope the check node to the changed paths, run the checks, and
+classify the residual ``green`` vs ``needs_reasoning`` for a ``PostToolBatch`` hook. The gate
+never mutates — the deterministic fixers run separately on ``FileChanged`` (``camas fix``).
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from typing import TYPE_CHECKING, Literal, NamedTuple, TypeAlias
 from ..v0.task import Parallel, Sequential, Task
 from .budget import plan_under
 from .execution import run
+from .matrix import expand_matrix
 from .scope import scope_to_changed
 
 if sys.version_info >= (3, 11):
@@ -31,71 +33,36 @@ if TYPE_CHECKING:
 	from .timings import TaskLabel, TaskTiming
 
 
-ResidualClass: TypeAlias = Literal["autofixed", "needs_reasoning"]
+ResidualClass: TypeAlias = Literal["green", "needs_reasoning"]
 Decision: TypeAlias = Literal["continue", "block"]
 
 
 class GateOutcome(NamedTuple):
-	"""A gate run's verdict and the residual that produced it."""
+	"""A gate run's verdict and the check run that produced it."""
 
 	residual_class: ResidualClass
-	residual_node: TaskNode | None
-	"""The failing run's node and result, paired — both set on ``needs_reasoning``, both ``None`` otherwise."""
-	residual_result: RunResult | None
+	node: TaskNode | None
+	"""The check node that ran and its result, paired — both set when a run happened (whether
+	``green`` or ``needs_reasoning``), both ``None`` when nothing ran. Diagnostics derive from
+	them only on ``needs_reasoning``.
+	"""
+	result: RunResult | None
 	budget: BudgetPlan | None
 
 
 def decision_of(residual_class: ResidualClass) -> Decision:
 	"""The ``PostToolBatch`` routing for a class: a surviving residual blocks, else continue.
 
-	>>> decision_of("autofixed"), decision_of("needs_reasoning")
+	>>> decision_of("green"), decision_of("needs_reasoning")
 	('continue', 'block')
 	"""
 	match residual_class:
-		case "autofixed":
+		case "green":
 			return "continue"
 		case "needs_reasoning":
 			return "block"
 		case _:
 			assert_never(residual_class)
-
-
-def filter_by_mutates(node: TaskNode, *, mutates: bool) -> TaskNode | None:
-	"""``node`` with only the leaves whose ``mutates`` equals ``mutates``, emptied groups pruned.
-
-	>>> chk = Task("ruff check .", name="lint")
-	>>> filter_by_mutates(chk, mutates=True) is None
-	True
-	>>> filter_by_mutates(chk, mutates=False) is chk
-	True
-	"""
-	match node:
-		case Task():
-			return node if node.mutates == mutates else None
-		case Sequential(tasks=children, name=name, matrix=matrix, env=env, cwd=cwd, help=help):
-			kept = tuple(
-				k
-				for k in (filter_by_mutates(c, mutates=mutates) for c in children)
-				if k is not None
-			)
-			return (
-				Sequential(*kept, name=name, matrix=matrix, env=env, cwd=cwd, help=help)
-				if kept
-				else None
-			)
-		case Parallel(tasks=children, name=name, matrix=matrix, env=env, cwd=cwd, help=help):
-			kept = tuple(
-				k
-				for k in (filter_by_mutates(c, mutates=mutates) for c in children)
-				if k is not None
-			)
-			return (
-				Parallel(*kept, name=name, matrix=matrix, env=env, cwd=cwd, help=help)
-				if kept
-				else None
-			)
-		case _:
-			assert_never(node)
 
 
 def with_agent_format(node: TaskNode) -> TaskNode:
@@ -149,24 +116,24 @@ async def run_gate(
 	jobs: int | None = None,
 	timings: Mapping[TaskLabel, TaskTiming] | None = None,
 ) -> GateOutcome:
-	"""Scope ``node`` to ``changed``, autofix, run the remaining checks, and classify the residual."""
-	scoped = scope_to_changed(node, changed)
+	"""Run the check ``node`` over the ``changed`` paths and classify the residual.
+
+	The check node is expanded, time-boxed (``under``), scoped to ``changed``, and run; the gate
+	never mutates. Untimed leaves are run (and thereby measured); only leaves measured to exceed
+	``under`` are skipped. ``green`` means the checks passed — or the change touched nothing the
+	checks cover, or every leaf was measured too slow for ``under``; ``needs_reasoning`` means a
+	check still fails. Budgeting precedes scoping so each leaf's estimate reuses its unscoped
+	record (a scoped run is no slower than the whole).
+	"""
+	expanded = expand_matrix(node)
+	plan = plan_under(expanded, under, timings or {}) if under is not None else None
+	budgeted = plan.node if plan is not None else expanded
+	if budgeted is None:
+		return GateOutcome("green", None, None, plan)
+	scoped = scope_to_changed(budgeted, changed)
 	if scoped is None:
-		return GateOutcome("autofixed", None, None, None)
-	scoped = with_agent_format(scoped)
-	mutating = filter_by_mutates(scoped, mutates=True)
-	if (
-		mutating is not None
-		and (autofix := await run(mutating, jobs=jobs, interactive=False)).returncode != 0
-	):
-		return GateOutcome("needs_reasoning", mutating, autofix, None)
-	readonly = filter_by_mutates(scoped, mutates=False)
-	if readonly is None:
-		return GateOutcome("autofixed", None, None, None)
-	plan = plan_under(readonly, under, timings or {}) if under is not None else None
-	checks_node = plan.node if plan is not None else readonly
-	if checks_node is None:
-		return GateOutcome("autofixed", None, None, plan)
-	if (checks := await run(checks_node, jobs=jobs, interactive=False)).returncode != 0:
-		return GateOutcome("needs_reasoning", checks_node, checks, plan)
-	return GateOutcome("autofixed", None, None, plan)
+		return GateOutcome("green", None, None, plan)
+	checks_node = with_agent_format(scoped)
+	checks = await run(checks_node, jobs=jobs, interactive=False)
+	residual: ResidualClass = "needs_reasoning" if checks.returncode != 0 else "green"
+	return GateOutcome(residual, checks_node, checks, plan)

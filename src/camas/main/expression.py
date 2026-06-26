@@ -21,6 +21,8 @@ from ..v0.task import AgentFormat, OutputKind, Parallel, Sequential, Task, TaskN
 if TYPE_CHECKING:
 	from collections.abc import Mapping
 
+	from ..v0.task import PathScope
+
 
 class Ref(NamedTuple):
 	"""Parser-only sentinel for a task referenced by name inside a config expression.
@@ -337,10 +339,18 @@ def to_expression(node: TaskNode) -> str:
 	'Parallel(Task("a"), Task("b"), name="checks")'
 	>>> to_expression(Sequential(Parallel(Task("a"), name="p"), Task("b"), name="s"))
 	'Sequential(Parallel(Task("a"), name="p"), Task("b"), name="s")'
+	>>> to_expression(Task("ruff check {paths}", name="lint", paths="src"))
+	'Task("ruff check {paths}", name="lint", paths="src")'
+	>>> from camas.v0.task import AgentFormat
+	>>> to_expression(Task("ruff check .", agent_format=AgentFormat("--output-format sarif", "sarif")))
+	'Task("ruff check .", agent_format=AgentFormat("--output-format sarif", "sarif"))'
 	"""
 	match node:
-		case Task(cmd=cmd, name=name, mutates=mutates):
-			return f"Task({quote(join_command(cmd))}{name_kwarg(name)}{mutates_kwarg(mutates)})"
+		case Task(cmd=cmd, name=name, mutates=mutates, paths=paths, agent_format=agent_format):
+			return (
+				f"Task({quote(join_command(cmd))}{name_kwarg(name)}{mutates_kwarg(mutates)}"
+				f"{paths_kwarg(paths)}{agent_format_kwarg(agent_format)})"
+			)
 		case Sequential(tasks=tasks, name=name):
 			return f"Sequential({render_members(tasks)}{name_kwarg(name)})"
 		case Parallel(tasks=tasks, name=name):
@@ -359,6 +369,23 @@ def name_kwarg(name: str | None) -> str:
 
 def mutates_kwarg(mutates: bool) -> str:
 	return ", mutates=True" if mutates else ""
+
+
+def paths_kwarg(paths: str | PathScope | None) -> str:
+	"""A str scope round-trips; a callable scope has no source, so it renders as a
+	non-parseable marker (this preview is informational, never re-evaluated by camas).
+	"""
+	if paths is None:
+		return ""
+	if isinstance(paths, str):
+		return f", paths={quote(paths)}"
+	return ", paths=<callable>"
+
+
+def agent_format_kwarg(agent_format: AgentFormat | None) -> str:
+	if agent_format is None:
+		return ""
+	return f", agent_format=AgentFormat({quote(agent_format.args)}, {quote(agent_format.kind)})"
 
 
 def quote(value: str) -> str:

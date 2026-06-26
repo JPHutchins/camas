@@ -11,8 +11,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from camas.mcp.serve import ToolName
-
 _REPO = Path(__file__).resolve().parents[2]
 _PLUGIN = _REPO / "agent" / "claude" / "plugin"
 
@@ -26,12 +24,11 @@ def test_bundled_mcp_server_launches_camas_mcp() -> None:
 	assert (server["command"], server["args"]) == ("camas", ["mcp"])
 
 
-def test_gate_hook_targets_the_real_gate_tool() -> None:
+def test_gate_hook_runs_camas_mcp_gate() -> None:
 	hooks = json.loads((_PLUGIN / "hooks" / "hooks.json").read_text())["hooks"]
 	hook = hooks["PostToolBatch"][0]["hooks"][0]
-	assert hook["type"] == "mcp_tool"
-	assert hook["server"] == "camas"
-	assert hook["tool"] == ToolName.GATE.value
+	assert hook["type"] == "command"
+	assert "camas mcp gate" in hook["command"]
 
 
 def test_filechanged_hook_runs_the_deterministic_autofix() -> None:

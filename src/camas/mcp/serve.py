@@ -5,9 +5,12 @@
 
 from __future__ import annotations
 
+import argparse
 import asyncio
+import json
 import os
 import re
+import shlex
 import sys
 import textwrap
 from contextlib import redirect_stdout
@@ -15,7 +18,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from importlib.metadata import version
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Final, NamedTuple
+from typing import TYPE_CHECKING, Any, Final, NamedTuple, cast
 
 from mcp import types
 from mcp.server.lowlevel import Server
@@ -28,6 +31,7 @@ from ..core.execution import run
 from ..core.gate import run_gate
 from ..core.matrix import override_matrix
 from ..core.render import render_tree_lines, strip_ansi
+from ..core.scope import to_changed
 from ..core.task import task_label
 from ..main.argv import apply_passthrough
 from ..main.format import format_load_error_hint
@@ -74,9 +78,7 @@ RUN_ANNOTATIONS: Final = types.ToolAnnotations(
 )
 CHECK_ANNOTATIONS: Final = types.ToolAnnotations(readOnlyHint=True, openWorldHint=False)
 DOCS_ANNOTATIONS: Final = types.ToolAnnotations(readOnlyHint=True, openWorldHint=False)
-GATE_ANNOTATIONS: Final = types.ToolAnnotations(
-	readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=True
-)
+GATE_ANNOTATIONS: Final = types.ToolAnnotations(readOnlyHint=True, openWorldHint=False)
 
 
 class Compat(NamedTuple):
@@ -348,13 +350,12 @@ def tools(task_names: tuple[str, ...], compat: Compat) -> Tools:
 			name=ToolName.GATE.value,
 			description=textwrap.dedent("""\
 				The SA-delegation gate, for a PostToolBatch hook: scope THIS project's checks to the
-				files just changed, apply the deterministic autofix (the mutates=True leaves —
-				formatters, import sorting) for free, run the remaining checks over the fixed
-				workspace, and return a binary verdict. residual_class is 'autofixed' (decision
-				'continue') when nothing survives the fixers, or 'needs_reasoning' (decision 'block')
-				when a check still fails — then diagnostics carries the failing leaves. Pass paths=[…]
-				(the changed files) to scope; omit to gate the whole task. under=<seconds> time-boxes
-				the checks; the autofix always runs. Mutates the workspace (it runs formatters).
+				files just changed, run them, and return a binary verdict. It does not mutate — the
+				deterministic fixers run separately on FileChanged (camas fix). residual_class is
+				'green' (decision 'continue') when the checks pass, or 'needs_reasoning' (decision
+				'block') when a check still fails — then diagnostics carries the failing leaves. Pass
+				paths=[…] (the changed files) to scope; omit to gate the whole check node. under=<seconds>
+				time-boxes the checks: leaves measured to exceed it are skipped, untimed leaves run.
 			""").strip(),
 			input_schema=wire.gate_input_schema(task_names),
 			output_model=wire.GateResponse,
@@ -520,19 +521,42 @@ def budget_source(
 	return default
 
 
+def gate_source(tasks: Mapping[str, TaskNode], config: Config | None, task: str | None) -> TaskNode:
+	"""The node the gate checks: the named task, else the agent's ``check`` node (or the default).
+
+	Raises:
+		ValueError: when ``task`` names no task, or no task is named and no check node
+			(``Config.agent.check`` or ``default_task``) exists.
+	"""
+	if task is not None:
+		if task not in tasks:
+			known = ", ".join(sorted(tasks)) or "none"
+			raise ValueError(f"no task named {task!r} (known: {known})")
+		return tasks[task]
+	check = config.gate_check(github=False) if config is not None else None
+	if check is None:
+		raise ValueError(
+			"no task given and no check node (Config.agent.check or default_task) to gate"
+		)
+	return check
+
+
 def to_budget_report(plan: BudgetPlan) -> wire.BudgetReport:
-	"""The wire ``BudgetReport`` for a plan: the selected leaves and the excluded ones."""
+	"""The wire ``BudgetReport`` for a plan: the leaves that run (fitting + unmeasured) and the
+	over-budget leaves that don't.
+	"""
 	return wire.BudgetReport(
 		budget_s=plan.budget_s,
-		selected=tuple(task_label(f.task) for f in plan.fits),
-		excluded=(
-			*(
-				wire.ExcludedLeaf(
-					name=task_label(o.task), reason="over_budget", estimated_s=o.estimated_s
-				)
-				for o in plan.over_budget
-			),
-			*(wire.ExcludedLeaf(name=task_label(u.task), reason="untimed") for u in plan.untimed),
+		selected=(
+			*(task_label(f.task) for f in plan.fits),
+			*(task_label(u.task) for u in plan.untimed),
+		),
+		unmeasured=tuple(task_label(u.task) for u in plan.untimed),
+		excluded=tuple(
+			wire.ExcludedLeaf(
+				name=task_label(o.task), reason="over_budget", estimated_s=o.estimated_s
+			)
+			for o in plan.over_budget
 		),
 	)
 
@@ -543,19 +567,18 @@ def attach_budget(resp: wire.RunResponse, report: wire.BudgetReport) -> wire.Run
 
 
 def budget_headline(report: wire.BudgetReport) -> str:
-	"""The load-bearing budget summary: leaves selected, and what was excluded and why."""
-	over = tuple(e for e in report.excluded if e.reason == "over_budget")
-	untimed = tuple(e for e in report.excluded if e.reason == "untimed")
+	"""The load-bearing budget summary: leaves running (and which are unmeasured), and which
+	were excluded as measured-over-budget.
+	"""
 	lines = [
-		f"Time budget {report.budget_s:.2f}s — selected {len(report.selected)} leaf(s), "
-		f"excluded {len(report.excluded)} ({len(over)} over budget, {len(untimed)} untimed)."
+		f"Time budget {report.budget_s:.2f}s — running {len(report.selected)} leaf(s) "
+		f"({len(report.unmeasured)} unmeasured), excluded {len(report.excluded)} over budget."
 	]
-	if over:
-		lines.append("  over budget: " + ", ".join(excluded_note(e) for e in over))
-	if untimed:
+	if report.excluded:
+		lines.append("  over budget: " + ", ".join(excluded_note(e) for e in report.excluded))
+	if report.unmeasured:
 		lines.append(
-			"  untimed (run the task normally once to record an estimate): "
-			+ ", ".join(excluded_note(e) for e in untimed)
+			"  unmeasured (running to record an estimate): " + ", ".join(report.unmeasured)
 		)
 	return "\n".join(lines)
 
@@ -859,25 +882,27 @@ async def gate_for(
 	except ValidationError as e:
 		return error_result(f"invalid camas_gate arguments:\n{e}")
 	try:
-		node = budget_source(tasks, config, req.task)
+		node = gate_source(tasks, config, req.task)
 	except ValueError as e:
 		return error_result(str(e))
+	changed = to_changed(req.paths, session.base)
 	outcome = await run_gate(
 		node,
-		tuple(req.paths),
+		changed,
 		under=req.under,
 		jobs=req.jobs,
 		timings=timings.load(session.camas_dir),
 	)
 	budget = to_budget_report(outcome.budget) if outcome.budget is not None else None
-	resp = to_gate_response(outcome, budget)
+	rerun = wire.GateRerun(task=req.task, paths=changed, under=req.under)
+	resp = to_gate_response(outcome, budget, rerun)
 	return success(gate_text(resp), resp, session.compat)
 
 
 def gate_text(resp: wire.GateResponse) -> str:
 	"""The load-bearing agent-facing summary for ``camas_gate`` — verdict, budget, residual."""
 	headline = (
-		"CONTINUE — autofixed; no residual needs reasoning"
+		"CONTINUE — checks green; no residual needs reasoning"
 		if resp.decision == "continue"
 		else "BLOCK — a residual needs reasoning"
 	)
@@ -889,4 +914,123 @@ def gate_text(resp: wire.GateResponse) -> str:
 		for env in resp.diagnostics:
 			lines.append(f"  {env.name} (exit {env.exit_code}, {env.output_kind})")
 			lines.extend(f"    {line}" for line in env.payload.splitlines())
+			if env.truncated:
+				lines.append("    … earlier output truncated")
+	if resp.decision == "block":
+		lines.extend(["", f"Re-gate this scope: {rerun_command(resp.rerun)}"])
 	return "\n".join(lines)
+
+
+def rerun_command(rerun: wire.GateRerun) -> str:
+	"""The ``camas mcp gate`` invocation that reproduces a verdict — the handle a higher tier
+	or the main agent re-issues against the same scope.
+	"""
+	task = (rerun.task,) if rerun.task is not None else ()
+	paths = tuple(arg for p in rerun.paths for arg in ("--paths", p))
+	under = ("--under", str(rerun.under)) if rerun.under is not None else ()
+	return shlex.join(("camas", "mcp", "gate", *task, *paths, *under))
+
+
+class GateArgs(NamedTuple):
+	"""Parsed ``camas mcp gate`` arguments."""
+
+	task: str | None
+	paths: tuple[str, ...]
+	under: float | None
+	jobs: int | None
+
+
+def parse_gate_args(argv: list[str]) -> GateArgs:
+	"""Parse ``camas mcp gate [task] [--paths P]… [--under N] [--jobs N]``."""
+	parser = argparse.ArgumentParser(
+		prog="camas mcp gate", description="Run the gate once, headless."
+	)
+	parser.add_argument(
+		"task", nargs="?", default=None, help="task to gate; omit for the check node"
+	)
+	parser.add_argument(
+		"--paths",
+		action="append",
+		default=[],
+		metavar="PATH",
+		help="changed path to scope to (repeatable)",
+	)
+	parser.add_argument(
+		"--under", type=float, default=None, metavar="SECONDS", help="wall-clock budget"
+	)
+	parser.add_argument("--jobs", type=int, default=None, metavar="N", help="max concurrent leaves")
+	ns = parser.parse_args(argv)
+	return GateArgs(task=ns.task, paths=tuple(ns.paths), under=ns.under, jobs=ns.jobs)
+
+
+def _event_get(obj: object, key: str) -> object:
+	"""``obj[key]`` for a parsed-JSON object, else ``None`` — narrows JSON's ``Any`` to ``object``."""
+	return cast("dict[str, object]", obj).get(key) if isinstance(obj, dict) else None
+
+
+def changed_from_stdin() -> tuple[str, ...]:
+	"""The edited files in a ``PostToolBatch`` event piped on stdin (the command-hook delivery),
+	de-duplicated in order; ``()`` when stdin is a tty, empty, or not such an event.
+	"""
+	if sys.stdin.isatty():
+		return ()
+	raw = sys.stdin.read().strip()
+	if not raw:
+		return ()
+	try:
+		event: object = json.loads(raw)
+	except json.JSONDecodeError:
+		return ()
+	calls = _event_get(event, "tool_calls")
+	if not isinstance(calls, list):
+		return ()
+	edited = (
+		_event_get(_event_get(call, "tool_input"), key)
+		for call in cast("list[object]", calls)
+		for key in ("file_path", "path", "notebook_path")
+	)
+	return tuple(dict.fromkeys(f for f in edited if isinstance(f, str)))
+
+
+def gate_cli(argv: list[str]) -> int:
+	"""Run the gate once, headless: scope this project's checks to the changed paths (``--paths``,
+	else the files in a ``PostToolBatch`` event on stdin), print the ``GateResponse`` as JSON to
+	stdout, and exit ``0`` (continue) / ``2`` (block) — on a block the agent-facing summary goes
+	to stderr. The process-isolated, machine-readable gate entry: the ``PostToolBatch`` command
+	hook, parallel fixers, and the benchmark all drive it.
+	"""
+	args = parse_gate_args(argv)
+	base = project_base()
+	state = resolve_project_quiet(base)
+	match state:
+		case LoadErr(source=source, exception=exception):
+			print(f"camas mcp gate: cannot load {source}: {exception}", file=sys.stderr)
+			return 2
+		case LoadOk(tasks=tasks, config=config):
+			return run_gate_cli(args, base, tasks, config)
+		case _:
+			assert_never(state)
+
+
+def run_gate_cli(
+	args: GateArgs, base: Path, tasks: Mapping[str, TaskNode], config: Config | None
+) -> int:
+	"""Resolve the check node, run the gate over the changed paths, emit the verdict."""
+	try:
+		node = gate_source(tasks, config, args.task)
+	except ValueError as e:
+		print(f"camas mcp gate: {e}", file=sys.stderr)
+		return 2
+	changed = to_changed(args.paths or changed_from_stdin(), base)
+	camas_dir = (config if config is not None else Config()).camas_path(base)
+	outcome = asyncio.run(
+		run_gate(node, changed, under=args.under, jobs=args.jobs, timings=timings.load(camas_dir))
+	)
+	budget = to_budget_report(outcome.budget) if outcome.budget is not None else None
+	rerun = wire.GateRerun(task=args.task, paths=changed, under=args.under)
+	resp = to_gate_response(outcome, budget, rerun)
+	print(resp.model_dump_json(indent=2))
+	if resp.decision == "block":
+		print(gate_text(resp), file=sys.stderr)
+		return 2
+	return 0

@@ -54,10 +54,10 @@ class LeafReport(BaseModel):
 
 
 class ExcludedLeaf(BaseModel):
-	"""A leaf a time budget did not run, and why."""
+	"""A leaf a time budget did not run — measured to exceed the budget."""
 
 	name: str
-	reason: Literal["over_budget", "untimed"]
+	reason: Literal["over_budget"]
 	estimated_s: float | None = None
 	"""The leaf's observed estimate; null when it has never been timed."""
 
@@ -67,7 +67,11 @@ class BudgetReport(BaseModel):
 
 	budget_s: float
 	selected: tuple[str, ...]
-	"""Leaves whose estimate fit the budget — the ones that were scheduled to run."""
+	"""Leaves that run: those whose estimate fit the budget, plus any unmeasured ones."""
+	unmeasured: tuple[str, ...] = ()
+	"""The selected leaves with no prior estimate — run to record one, since skipping them
+	would keep them forever unmeasured.
+	"""
 	excluded: tuple[ExcludedLeaf, ...]
 
 
@@ -232,8 +236,8 @@ class GateRequest(BaseModel):
 	under: float | None = Field(
 		default=None,
 		gt=0,
-		description="Wall-clock budget in seconds for the checks (the read-only leaves); the "
-		"deterministic autofix always runs. Untimed leaves are skipped.",
+		description="Wall-clock budget in seconds for the checks: leaves measured to exceed it are "
+		"skipped; untimed leaves run (and get measured). The gate never mutates.",
 	)
 	jobs: int | None = Field(
 		default=None, ge=1, description="Max concurrent leaf subprocesses; null = unbounded."
@@ -252,16 +256,31 @@ class AgentEnvelope(BaseModel):
 	truncated: bool = False
 
 
+class GateRerun(BaseModel):
+	"""The exact gate invocation that produced a verdict — a self-describing handle a higher
+	fixer tier (or the main agent) re-issues to re-gate the same scope.
+	"""
+
+	task: str | None = None
+	"""The named task gated, or null for the project's check node."""
+	paths: tuple[str, ...] = ()
+	"""The (repo-relative) changed paths the run was scoped to; empty means the whole check node."""
+	under: float | None = None
+	"""The wall-clock budget applied, if any."""
+
+
 class GateResponse(BaseModel):
 	"""The SA-delegation gate's verdict: how to route the batch, and the residual that decided it."""
 
 	decision: Literal["continue", "block"]
 	"""``block`` when a residual needs reasoning (a PostToolBatch hook surfaces it), else ``continue``."""
-	residual_class: Literal["autofixed", "needs_reasoning"]
+	residual_class: Literal["green", "needs_reasoning"]
 	diagnostics: tuple[AgentEnvelope, ...] | None = None
-	"""The failing leaves as AgentJSON envelopes (failures-only); null when nothing survived the fixers."""
+	"""The failing leaves as AgentJSON envelopes (failures-only); null when the checks pass."""
 	budget: BudgetReport | None = None
 	"""How ``under`` partitioned the checks, when a budget was given."""
+	rerun: GateRerun
+	"""The invocation that produced this verdict — the handle to re-gate the same scope."""
 
 
 def gate_input_schema(task_names: tuple[str, ...]) -> dict[str, Any]:

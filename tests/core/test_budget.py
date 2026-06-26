@@ -51,10 +51,10 @@ def test_plan_under_partitions_and_schedules() -> None:
 	assert plan.untimed == ()
 
 
-def test_plan_under_excludes_untimed() -> None:
+def test_plan_under_runs_untimed() -> None:
 	a, b = Task("a", name="a"), Task("b", name="b")
 	plan = plan_under(Parallel(a, b), 5.0, {"a": TaskTiming(0.1, 1)})
-	assert plan.node == Parallel(a)
+	assert plan.node == Parallel(a, b)
 	assert [u.task for u in plan.untimed] == [b]
 
 

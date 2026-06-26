@@ -156,10 +156,12 @@ def command_of(task: Task) -> str:
 	return task.cmd if isinstance(task.cmd, str) else shlex.join(task.cmd)
 
 
-def decode(output: Sequence[bytes], tail: int) -> Decoded:
-	"""Decode merged stdout/stderr to ANSI-free lines, tail-truncated to ``tail``."""
+def decode(output: Sequence[bytes], tail: int | None) -> Decoded:
+	"""Decode merged stdout/stderr to ANSI-free lines, tail-truncated to ``tail`` (``None`` keeps
+	all lines — for a structured payload that must pass verbatim).
+	"""
 	lines = [strip_ansi(b.decode("utf-8", errors="replace")).rstrip("\n") for b in output]
-	if len(lines) > tail:
+	if tail is not None and len(lines) > tail:
 		return Decoded(lines[-tail:], truncated=True)
 	return Decoded(lines, truncated=False)
 
@@ -192,9 +194,11 @@ def report(task: Task, result: TaskResult, *, verbosity: Verbosity, tail: int) -
 
 def to_agent_envelope(task: Task, result: TaskResult, *, tail: int = 50) -> wire.AgentEnvelope:
 	comp = result.completion
+	kind = task.agent_format.kind if task.agent_format is not None else "raw"
+	cap = tail if kind == "raw" else None
 	match comp:
 		case Finished(output=output) | Stopped(output=output):
-			decoded = decode(output, tail)
+			decoded = decode(output, cap)
 		case Skipped():
 			decoded = Decoded([], truncated=False)
 		case _:
@@ -202,26 +206,32 @@ def to_agent_envelope(task: Task, result: TaskResult, *, tail: int = 50) -> wire
 	return wire.AgentEnvelope(
 		name=result.name,
 		exit_code=comp.returncode,
-		output_kind=task.agent_format.kind if task.agent_format is not None else "raw",
+		output_kind=kind,
 		payload="\n".join(decoded.lines),
 		truncated=decoded.truncated,
 	)
 
 
 def agent_envelopes(node: TaskNode, result: RunResult) -> tuple[wire.AgentEnvelope, ...]:
-	"""The failing leaves of a finished run as AgentJSON envelopes, in DFS order."""
+	"""The failing leaves of a finished run as AgentJSON envelopes, in DFS order. A ``Skipped``
+	leaf never ran, so it is not a failure to surface — only its blocker is.
+	"""
 	leaves = tuple(info.task for info in flatten_leaves(expand_matrix(node)))
 	return tuple(
 		to_agent_envelope(task, tr)
 		for task, tr in zip(leaves, result.results, strict=True)
-		if tr.completion.returncode != 0
+		if not isinstance(tr.completion, Skipped) and tr.completion.returncode != 0
 	)
 
 
-def to_gate_response(outcome: GateOutcome, budget: wire.BudgetReport | None) -> wire.GateResponse:
+def to_gate_response(
+	outcome: GateOutcome, budget: wire.BudgetReport | None, rerun: wire.GateRerun
+) -> wire.GateResponse:
 	diagnostics = (
-		agent_envelopes(outcome.residual_node, outcome.residual_result)
-		if outcome.residual_node is not None and outcome.residual_result is not None
+		agent_envelopes(outcome.node, outcome.result)
+		if outcome.residual_class == "needs_reasoning"
+		and outcome.node is not None
+		and outcome.result is not None
 		else None
 	)
 	return wire.GateResponse(
@@ -229,4 +239,5 @@ def to_gate_response(outcome: GateOutcome, budget: wire.BudgetReport | None) -> 
 		residual_class=outcome.residual_class,
 		diagnostics=diagnostics,
 		budget=budget,
+		rerun=rerun,
 	)
