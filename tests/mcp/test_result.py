@@ -9,8 +9,8 @@ from camas import Parallel, Sequential, Task
 from camas.core.completion import RunResult, TaskResult
 from camas.core.execution import run
 from camas.mcp import wire
-from camas.mcp.result import to_run_response
-from camas.v0.completion import Stopped
+from camas.mcp.result import agent_envelopes, to_agent_envelope, to_run_response
+from camas.v0.completion import Finished, Skipped, Stopped
 
 if TYPE_CHECKING:
 	from camas.mcp.result import Verbosity
@@ -85,3 +85,34 @@ def test_stopped_leaf_maps_to_wire_stopped() -> None:
 	assert isinstance(comp, wire.Stopped)
 	assert comp.output == ["bye"]
 	assert (resp.passed, resp.failed, resp.skipped, resp.interrupt_count) == (0, 1, 0, 1)
+
+
+def test_agent_envelope_finished_carries_verbatim_payload() -> None:
+	task = Task("ruff check . --output-format sarif", name="lint", output_kind="sarif")
+	env = to_agent_envelope(task, TaskResult("lint", Finished(1, 0.1, (b"E1\n", b"E2\n"))))
+	assert (env.name, env.exit_code, env.output_kind) == ("lint", 1, "sarif")
+	assert env.payload == "E1\nE2"
+	assert env.truncated is False
+
+
+def test_agent_envelope_skipped_has_empty_payload() -> None:
+	env = to_agent_envelope(Task("x", name="x"), TaskResult("x", Skipped(1, "dep")))
+	assert env.exit_code == 1
+	assert env.payload == ""
+
+
+def test_agent_envelope_stopped_carries_partial_output() -> None:
+	env = to_agent_envelope(
+		Task("x", name="x"), TaskResult("x", Stopped(130, 0.1, (b"partial\n",)))
+	)
+	assert env.exit_code == 130
+	assert env.payload == "partial"
+
+
+async def test_agent_envelopes_are_failures_only() -> None:
+	node = Parallel(
+		Task(("python", "-c", "pass"), name="ok"),
+		Task(("python", "-c", "raise SystemExit(1)"), name="bad"),
+	)
+	envelopes = agent_envelopes(node, await run(node, interactive=False))
+	assert tuple(e.name for e in envelopes) == ("bad",)

@@ -154,6 +154,7 @@ def test_eval_node_threads_every_public_constructor_kwarg() -> None:
 		"mutates": ("mutates=True", "mutates", True),
 		"matrix": ("matrix={'X': ('1',)}", "matrix", {"X": ("1",)}),
 		"paths": ("paths='.'", "paths", "."),
+		"output_kind": ("output_kind='sarif'", "output_kind", "sarif"),
 	}
 	for cls, prefix, variadic in (
 		(Task, "Task('c', ", "cmd"),
@@ -166,6 +167,11 @@ def test_eval_node_threads_every_public_constructor_kwarg() -> None:
 
 
 # Parser-side fluent syntax: strings inside literals and the README one-liner.
+
+
+def test_eval_node_rejects_unknown_output_kind() -> None:
+	with pytest.raises(SystemExit, match="2"):
+		parse_expression("Task('c', output_kind='bogus')")
 
 
 def test_parse_top_level_tuple_with_bare_strings() -> None:

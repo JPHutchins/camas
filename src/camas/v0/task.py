@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, TypeAlias
+from typing import TYPE_CHECKING, Literal, TypeAlias
 
 if TYPE_CHECKING:
 	from collections.abc import Callable, Mapping
@@ -17,6 +17,11 @@ if TYPE_CHECKING:
 PathScope: TypeAlias = "Callable[[tuple[str, ...]], tuple[str, ...]]"
 """Maps the changed paths to the args injected at ``{paths}``: called with ``()`` for a
 full run (return the default target), with the changed set otherwise (``()`` → skip)."""
+
+
+OutputKind: TypeAlias = Literal["sarif", "rdjson", "lsp", "junit", "tap", "raw"]
+"""The standard a leaf's command emits its diagnostics in — the agent-facing format camas
+tags and passes through verbatim, never parsing. ``raw`` (the default) is plain text."""
 
 
 _EMPTY_ENV: Mapping[str, str] = MappingProxyType({})
@@ -46,6 +51,9 @@ class Task:
 	directory-prefix string (``"."``) or a ``(changed) -> tuple[str, ...]`` callable that
 	maps the changed files into the command; ``None`` leaves the command untouched.
 
+	``output_kind`` tags the diagnostic standard the command emits (``sarif``, ``lsp``, …);
+	the gate and the ``AgentJSON`` envelope carry the output under that tag, verbatim.
+
 	>>> Task("echo hi")
 	Task(cmd='echo hi', name=None, env={}, cwd=None)
 	>>> Task(("ruff", "check", "."), name="lint")
@@ -60,6 +68,8 @@ class Task:
 	Task(cmd='ruff format .', name=None, env={}, cwd=None, mutates=True)
 	>>> Task("ruff format {paths}", mutates=True, paths=".")
 	Task(cmd='ruff format {paths}', name=None, env={}, cwd=None, mutates=True, paths='.')
+	>>> Task("ruff check . --output-format sarif", output_kind="sarif")
+	Task(cmd='ruff check . --output-format sarif', name=None, env={}, cwd=None, output_kind='sarif')
 	>>> hash(Task("a")) == hash(Task("a"))
 	True
 	>>> {Task("a", env={"K": "v"}), Task("a", env={"K": "v"})} == {Task("a", env={"K": "v"})}
@@ -73,6 +83,7 @@ class Task:
 	help: str | None
 	mutates: bool
 	paths: str | PathScope | None
+	output_kind: OutputKind
 
 	def __init__(
 		self,
@@ -83,6 +94,7 @@ class Task:
 		help: str | None = None,
 		mutates: bool = False,
 		paths: str | PathScope | None = None,
+		output_kind: OutputKind = "raw",
 	) -> None:
 		put = object.__setattr__
 		put(self, "cmd", cmd)
@@ -92,6 +104,7 @@ class Task:
 		put(self, "help", help)
 		put(self, "mutates", mutates)
 		put(self, "paths", paths)
+		put(self, "output_kind", output_kind)
 
 	def __hash__(self) -> int:
 		return hash(
@@ -103,6 +116,7 @@ class Task:
 				self.help,
 				self.mutates,
 				self.paths,
+				self.output_kind,
 			)
 		)
 
@@ -115,6 +129,7 @@ class Task:
 			*([f"help={self.help!r}"] if self.help is not None else []),
 			*(["mutates=True"] if self.mutates else []),
 			*([f"paths={self.paths!r}"] if self.paths is not None else []),
+			*([f"output_kind={self.output_kind!r}"] if self.output_kind != "raw" else []),
 		)
 		return f"Task({', '.join(parts)})"
 

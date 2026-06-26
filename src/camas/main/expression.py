@@ -16,7 +16,7 @@ if sys.version_info >= (3, 11):
 else:  # pragma: no cover
 	from typing_extensions import assert_never
 
-from ..v0.task import Parallel, Sequential, Task, TaskNode
+from ..v0.task import OutputKind, Parallel, Sequential, Task, TaskNode
 
 if TYPE_CHECKING:
 	from collections.abc import Mapping
@@ -107,6 +107,18 @@ def eval_opt_bool(node: ast.expr | None) -> bool:
 			return b
 		case _:
 			raise ValueError(f"expected bool literal, got {ast.dump(node)}")
+
+
+def eval_output_kind(node: ast.expr | None) -> OutputKind:
+	match node:
+		case None:
+			return "raw"
+		case ast.Constant(value="sarif" | "rdjson" | "lsp" | "junit" | "tap" | "raw" as kind):
+			return kind
+		case _:
+			raise ValueError(
+				f"output_kind must be one of sarif/rdjson/lsp/junit/tap/raw, got {ast.dump(node)}"
+			)
 
 
 def eval_env(node: ast.expr | None) -> dict[str, str]:
@@ -217,6 +229,7 @@ def eval_node(
 						help=eval_opt_str(kw.get("help")),
 						mutates=eval_opt_bool(kw.get("mutates")),
 						paths=eval_opt_str(kw.get("paths")),
+						output_kind=eval_output_kind(kw.get("output_kind")),
 					)
 				case "Sequential" | "Parallel":
 					ctor = Sequential if name == "Sequential" else Parallel

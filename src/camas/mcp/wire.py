@@ -240,14 +240,26 @@ class GateRequest(BaseModel):
 	)
 
 
+class AgentEnvelope(BaseModel):
+	"""One task's agent-facing result: its exit code and the tool's output tagged by the
+	standard it is in (``output_kind``) and passed through verbatim — camas never parses it.
+	"""
+
+	name: str
+	exit_code: int
+	output_kind: Literal["sarif", "rdjson", "lsp", "junit", "tap", "raw"]
+	payload: str
+	truncated: bool = False
+
+
 class GateResponse(BaseModel):
 	"""The SA-delegation gate's verdict: how to route the batch, and the residual that decided it."""
 
 	decision: Literal["continue", "block"]
 	"""``block`` when a residual needs reasoning (a PostToolBatch hook surfaces it), else ``continue``."""
 	residual_class: Literal["autofixed", "needs_reasoning"]
-	diagnostics: RunResponse | None = None
-	"""The failing residual run (failures-only); null when the autofix left nothing to reason about."""
+	diagnostics: tuple[AgentEnvelope, ...] | None = None
+	"""The failing leaves as AgentJSON envelopes (failures-only); null when nothing survived the fixers."""
 	budget: BudgetReport | None = None
 	"""How ``under`` partitioned the checks, when a budget was given."""
 
