@@ -1,0 +1,27 @@
+{
+  "hooks": {
+    "FileChanged": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "camas fix --paths ${file_path}"
+          }
+        ]
+      }
+    ],
+    "PostToolBatch": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "camas",
+            "tool": "camas_gate",
+            "input": {}
+          }
+        ]
+      }
+    ]
+  }
+}

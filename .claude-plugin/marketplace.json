@@ -1,0 +1,13 @@
+{
+  "name": "camas",
+  "owner": {
+    "name": "JP Hutchins"
+  },
+  "plugins": [
+    {
+      "name": "camas",
+      "source": "./agent/claude/plugin",
+      "description": "The camas gate \u2014 deterministic autofix on every change, plus residual-only surfacing after each batch."
+    }
+  ]
+}
