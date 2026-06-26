@@ -25,6 +25,7 @@ from pydantic import AnyUrl, BaseModel, ValidationError
 from ..core import timings
 from ..core.budget import plan_under
 from ..core.execution import run
+from ..core.gate import run_gate
 from ..core.matrix import override_matrix
 from ..core.render import render_tree_lines, strip_ansi
 from ..core.task import task_label
@@ -37,7 +38,7 @@ from ..v0.config import Config
 from . import wire
 from .catalog import to_list_response
 from .docs import to_docs_response
-from .result import to_check_response, to_plan_response, to_run_response
+from .result import to_check_response, to_gate_response, to_plan_response, to_run_response
 
 if sys.version_info >= (3, 11):
 	from typing import assert_never
@@ -59,6 +60,7 @@ class ToolName(Enum):
 	RUN = "camas_run"
 	CHECK = "camas_check"
 	DOCS = "camas_docs"
+	GATE = "camas_gate"
 
 
 NO_ARGS_SCHEMA: Final[dict[str, Any]] = {
@@ -72,6 +74,9 @@ RUN_ANNOTATIONS: Final = types.ToolAnnotations(
 )
 CHECK_ANNOTATIONS: Final = types.ToolAnnotations(readOnlyHint=True, openWorldHint=False)
 DOCS_ANNOTATIONS: Final = types.ToolAnnotations(readOnlyHint=True, openWorldHint=False)
+GATE_ANNOTATIONS: Final = types.ToolAnnotations(
+	readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=True
+)
 
 
 class Compat(NamedTuple):
@@ -201,6 +206,8 @@ async def call(session: Session, name: str, arguments: dict[str, Any]) -> types.
 			return check_call(session)
 		case ToolName.DOCS:
 			return docs_call(session)
+		case ToolName.GATE:
+			return await gate_call(session, arguments)
 		case _:
 			known = ", ".join(repr(tool.value) for tool in ToolName)
 			return error_result(f"unknown tool {name!r}; expected one of: {known}")
@@ -223,6 +230,7 @@ class Tools(NamedTuple):
 	execution: types.Tool
 	validation: types.Tool
 	docs: types.Tool
+	gate: types.Tool
 
 
 def tool_def(
@@ -334,6 +342,24 @@ def tools(task_names: tuple[str, ...], compat: Compat) -> Tools:
 			output_model=wire.DocsResponse,
 			title="How to author camas tasks",
 			annotations=DOCS_ANNOTATIONS,
+		),
+		gate=tool_def(
+			compat,
+			name=ToolName.GATE.value,
+			description=textwrap.dedent("""\
+				The SA-delegation gate, for a PostToolBatch hook: scope THIS project's checks to the
+				files just changed, apply the deterministic autofix (the mutates=True leaves —
+				formatters, import sorting) for free, run the remaining checks over the fixed
+				workspace, and return a binary verdict. residual_class is 'autofixed' (decision
+				'continue') when nothing survives the fixers, or 'needs_reasoning' (decision 'block')
+				when a check still fails — then diagnostics carries the failing leaves. Pass paths=[…]
+				(the changed files) to scope; omit to gate the whole task. under=<seconds> time-boxes
+				the checks; the autofix always runs. Mutates the workspace (it runs formatters).
+			""").strip(),
+			input_schema=wire.gate_input_schema(task_names),
+			output_model=wire.GateResponse,
+			title="SA-delegation gate",
+			annotations=GATE_ANNOTATIONS,
 		),
 	)
 
@@ -699,7 +725,11 @@ def docs_text(resp: wire.DocsResponse) -> str:
 
 def success(
 	text: str,
-	model: wire.ListResponse | wire.RunResponse | wire.CheckResponse | wire.DocsResponse,
+	model: wire.ListResponse
+	| wire.RunResponse
+	| wire.CheckResponse
+	| wire.DocsResponse
+	| wire.GateResponse,
 	compat: Compat,
 	*,
 	links: tuple[types.ResourceLink, ...] = (),
@@ -804,3 +834,58 @@ def slug(name: str) -> str:
 
 def decode_log(output: Sequence[bytes]) -> str:
 	return strip_ansi("".join(chunk.decode("utf-8", errors="replace") for chunk in output))
+
+
+async def gate_call(session: Session, arguments: dict[str, Any]) -> types.CallToolResult:
+	"""Handle ``camas_gate``: scope to the changed paths, autofix, run the checks, classify."""
+	match session.project:
+		case LoadErr(source=source, exception=exception):
+			return error_result(format_load_error_hint(source, exception))
+		case LoadOk(tasks=tasks, config=config):
+			return await gate_for(session, tasks, config, arguments)
+		case _:
+			assert_never(session.project)
+
+
+async def gate_for(
+	session: Session,
+	tasks: Mapping[str, TaskNode],
+	config: Config | None,
+	arguments: dict[str, Any],
+) -> types.CallToolResult:
+	"""Validate, resolve the gated task, run the gate, and build the verdict."""
+	try:
+		req = wire.GateRequest.model_validate(arguments)
+	except ValidationError as e:
+		return error_result(f"invalid camas_gate arguments:\n{e}")
+	try:
+		node = budget_source(tasks, config, req.task)
+	except ValueError as e:
+		return error_result(str(e))
+	outcome = await run_gate(
+		node,
+		tuple(req.paths),
+		under=req.under,
+		jobs=req.jobs,
+		timings=timings.load(session.camas_dir),
+	)
+	budget = to_budget_report(outcome.budget) if outcome.budget is not None else None
+	resp = to_gate_response(outcome, budget)
+	return success(gate_text(resp), resp, session.compat)
+
+
+def gate_text(resp: wire.GateResponse) -> str:
+	"""The load-bearing agent-facing summary for ``camas_gate`` — verdict, budget, residual."""
+	headline = (
+		"CONTINUE — autofixed; no residual needs reasoning"
+		if resp.decision == "continue"
+		else "BLOCK — a residual needs reasoning"
+	)
+	lines: list[str] = [f"camas_gate: {headline} (residual_class={resp.residual_class})"]
+	if resp.budget is not None:
+		lines.extend(["", budget_headline(resp.budget)])
+	if resp.diagnostics is not None:
+		lines.extend(["", "Residual (failing checks):"])
+		for leaf in resp.diagnostics.leaves:
+			lines.extend(leaf_lines(leaf, None))
+	return "\n".join(lines)
