@@ -7,6 +7,8 @@ and classify the residual ``autofixed`` vs ``needs_reasoning`` for a ``PostToolB
 
 from __future__ import annotations
 
+import dataclasses
+import shlex
 import sys
 from typing import TYPE_CHECKING, Literal, NamedTuple, TypeAlias
 
@@ -96,6 +98,49 @@ def filter_by_mutates(node: TaskNode, *, mutates: bool) -> TaskNode | None:
 			assert_never(node)
 
 
+def with_agent_format(node: TaskNode) -> TaskNode:
+	"""Append each leaf's ``agent_format.args`` to its command — the agent-only structured-output
+	variant the gate runs; a human run never applies this, so ``cmd`` is otherwise untouched.
+
+	>>> from camas.v0.task import AgentFormat
+	>>> with_agent_format(Task("ruff check .", agent_format=AgentFormat("--output-format sarif", "sarif"))).cmd
+	'ruff check . --output-format sarif'
+	>>> with_agent_format(Task("ruff check .")).cmd
+	'ruff check .'
+	"""
+	match node:
+		case Task():
+			if node.agent_format is None:
+				return node
+			args = node.agent_format.args
+			cmd = (
+				f"{node.cmd} {args}"
+				if isinstance(node.cmd, str)
+				else (*node.cmd, *shlex.split(args))
+			)
+			return dataclasses.replace(node, cmd=cmd)
+		case Sequential(tasks=children, name=name, matrix=matrix, env=env, cwd=cwd, help=help):
+			return Sequential(
+				*(with_agent_format(c) for c in children),
+				name=name,
+				matrix=matrix,
+				env=env,
+				cwd=cwd,
+				help=help,
+			)
+		case Parallel(tasks=children, name=name, matrix=matrix, env=env, cwd=cwd, help=help):
+			return Parallel(
+				*(with_agent_format(c) for c in children),
+				name=name,
+				matrix=matrix,
+				env=env,
+				cwd=cwd,
+				help=help,
+			)
+		case _:
+			assert_never(node)
+
+
 async def run_gate(
 	node: TaskNode,
 	changed: tuple[str, ...],
@@ -108,6 +153,7 @@ async def run_gate(
 	scoped = scope_to_changed(node, changed)
 	if scoped is None:
 		return GateOutcome("autofixed", None, None, None)
+	scoped = with_agent_format(scoped)
 	mutating = filter_by_mutates(scoped, mutates=True)
 	if (
 		mutating is not None

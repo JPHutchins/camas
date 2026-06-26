@@ -5,8 +5,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from camas import Parallel, Sequential, Task
-from camas.core.gate import GateOutcome, decision_of, filter_by_mutates, run_gate
+from camas import AgentFormat, Parallel, Sequential, Task
+from camas.core.gate import (
+	GateOutcome,
+	decision_of,
+	filter_by_mutates,
+	run_gate,
+	with_agent_format,
+)
 from camas.core.task import task_label
 from camas.core.timings import TaskTiming
 
@@ -76,3 +82,32 @@ async def test_gate_budget_runs_fitting_check() -> None:
 	)
 	assert out.residual_class == "autofixed"
 	assert out.budget is not None
+
+
+def test_with_agent_format_appends_to_tuple_command() -> None:
+	t = Task(("ruff", "check", "."), agent_format=AgentFormat("--output-format sarif", "sarif"))
+	result = with_agent_format(t)
+	assert isinstance(result, Task)
+	assert result.cmd == ("ruff", "check", ".", "--output-format", "sarif")
+
+
+def test_with_agent_format_recurses_groups_and_leaves_plain_untouched() -> None:
+	fmt = Task("ruff check .", name="lint", agent_format=AgentFormat("--out sarif", "sarif"))
+	plain = Task("mypy .", name="types")
+	out = with_agent_format(Sequential(fmt, plain))
+	assert isinstance(out, Sequential)
+	first, second = out.tasks
+	assert isinstance(first, Task)
+	assert isinstance(second, Task)
+	assert first.cmd == "ruff check . --out sarif"
+	assert second.cmd == "mypy ."
+
+
+async def test_gate_tags_residual_with_agent_format_kind() -> None:
+	chk = Task(
+		("python", "-c", "import sys; sys.exit(1)"),
+		name="lint",
+		agent_format=AgentFormat("--quiet", "sarif"),
+	)
+	out = await run_gate(Parallel(chk), ())
+	assert out.residual_class == "needs_reasoning"

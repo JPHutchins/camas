@@ -102,6 +102,7 @@ def _resolve_leaf(task: Task, changed: tuple[str, ...]) -> Task | None:
 				help=task.help,
 				mutates=task.mutates,
 				paths=task.paths,
+				agent_format=task.agent_format,
 			)
 
 

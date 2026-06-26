@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from camas import Parallel, Sequential, Task
+from camas import AgentFormat, Parallel, Sequential, Task
 from camas.main.expression import parse_expression
 from camas.v0.task import Group
 
@@ -154,6 +154,11 @@ def test_eval_node_threads_every_public_constructor_kwarg() -> None:
 		"mutates": ("mutates=True", "mutates", True),
 		"matrix": ("matrix={'X': ('1',)}", "matrix", {"X": ("1",)}),
 		"paths": ("paths='.'", "paths", "."),
+		"agent_format": (
+			"agent_format=AgentFormat('--x', 'sarif')",
+			"agent_format",
+			AgentFormat("--x", "sarif"),
+		),
 	}
 	for cls, prefix, variadic in (
 		(Task, "Task('c', ", "cmd"),
@@ -166,6 +171,27 @@ def test_eval_node_threads_every_public_constructor_kwarg() -> None:
 
 
 # Parser-side fluent syntax: strings inside literals and the README one-liner.
+
+
+def test_eval_node_rejects_unknown_agent_format_kind() -> None:
+	with pytest.raises(SystemExit, match="2"):
+		parse_expression("Task('c', agent_format=AgentFormat('--x', 'bogus'))")
+
+
+def test_eval_node_rejects_incomplete_agent_format() -> None:
+	with pytest.raises(SystemExit, match="2"):
+		parse_expression("Task('c', agent_format=AgentFormat('--x'))")
+
+
+def test_eval_node_rejects_non_agent_format_value() -> None:
+	with pytest.raises(SystemExit, match="2"):
+		parse_expression("Task('c', agent_format='sarif')")
+
+
+def test_eval_node_accepts_agent_format_tuple_shorthand() -> None:
+	node = parse_expression("Task('c', agent_format=('--x', 'sarif'))")
+	assert isinstance(node, Task)
+	assert node.agent_format == AgentFormat("--x", "sarif")
 
 
 def test_parse_top_level_tuple_with_bare_strings() -> None:

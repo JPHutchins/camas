@@ -190,9 +190,37 @@ def report(task: Task, result: TaskResult, *, verbosity: Verbosity, tail: int) -
 	)
 
 
+def to_agent_envelope(task: Task, result: TaskResult, *, tail: int = 50) -> wire.AgentEnvelope:
+	comp = result.completion
+	match comp:
+		case Finished(output=output) | Stopped(output=output):
+			decoded = decode(output, tail)
+		case Skipped():
+			decoded = Decoded([], truncated=False)
+		case _:
+			assert_never(comp)
+	return wire.AgentEnvelope(
+		name=result.name,
+		exit_code=comp.returncode,
+		output_kind=task.agent_format.kind if task.agent_format is not None else "raw",
+		payload="\n".join(decoded.lines),
+		truncated=decoded.truncated,
+	)
+
+
+def agent_envelopes(node: TaskNode, result: RunResult) -> tuple[wire.AgentEnvelope, ...]:
+	"""The failing leaves of a finished run as AgentJSON envelopes, in DFS order."""
+	leaves = tuple(info.task for info in flatten_leaves(expand_matrix(node)))
+	return tuple(
+		to_agent_envelope(task, tr)
+		for task, tr in zip(leaves, result.results, strict=True)
+		if tr.completion.returncode != 0
+	)
+
+
 def to_gate_response(outcome: GateOutcome, budget: wire.BudgetReport | None) -> wire.GateResponse:
 	diagnostics = (
-		to_run_response(outcome.residual_node, outcome.residual_result, verbosity="failures")
+		agent_envelopes(outcome.residual_node, outcome.residual_result)
 		if outcome.residual_node is not None and outcome.residual_result is not None
 		else None
 	)

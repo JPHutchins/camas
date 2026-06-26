@@ -16,7 +16,7 @@ if sys.version_info >= (3, 11):
 else:  # pragma: no cover
 	from typing_extensions import assert_never
 
-from ..v0.task import Parallel, Sequential, Task, TaskNode
+from ..v0.task import AgentFormat, OutputKind, Parallel, Sequential, Task, TaskNode
 
 if TYPE_CHECKING:
 	from collections.abc import Mapping
@@ -107,6 +107,33 @@ def eval_opt_bool(node: ast.expr | None) -> bool:
 			return b
 		case _:
 			raise ValueError(f"expected bool literal, got {ast.dump(node)}")
+
+
+def _output_kind(node: ast.expr) -> OutputKind:
+	match node:
+		case ast.Constant(value="sarif" | "rdjson" | "lsp" | "junit" | "tap" | "raw" as kind):
+			return kind
+		case _:
+			raise ValueError(
+				f"AgentFormat kind must be sarif/rdjson/lsp/junit/tap/raw, got {ast.dump(node)}"
+			)
+
+
+def eval_agent_format(node: ast.expr | None) -> AgentFormat | None:
+	match node:
+		case None:
+			return None
+		case ast.Call(func=ast.Name(id="AgentFormat"), args=call_args, keywords=call_kw):
+			kw = {k.arg: k.value for k in call_kw if k.arg is not None}
+			args_node = call_args[0] if call_args else kw.get("args")
+			kind_node = call_args[1] if len(call_args) > 1 else kw.get("kind")
+			if args_node is None or kind_node is None:
+				raise ValueError("AgentFormat requires args and kind")
+			return AgentFormat(eval_str_lit(args_node), _output_kind(kind_node))
+		case ast.Tuple(elts=[args_node, kind_node]):
+			return AgentFormat(eval_str_lit(args_node), _output_kind(kind_node))
+		case _:
+			raise ValueError(f"agent_format must be AgentFormat(args, kind), got {ast.dump(node)}")
 
 
 def eval_env(node: ast.expr | None) -> dict[str, str]:
@@ -217,6 +244,7 @@ def eval_node(
 						help=eval_opt_str(kw.get("help")),
 						mutates=eval_opt_bool(kw.get("mutates")),
 						paths=eval_opt_str(kw.get("paths")),
+						agent_format=eval_agent_format(kw.get("agent_format")),
 					)
 				case "Sequential" | "Parallel":
 					ctor = Sequential if name == "Sequential" else Parallel

@@ -886,6 +886,7 @@ def gate_text(resp: wire.GateResponse) -> str:
 		lines.extend(["", budget_headline(resp.budget)])
 	if resp.diagnostics is not None:
 		lines.extend(["", "Residual (failing checks):"])
-		for leaf in resp.diagnostics.leaves:
-			lines.extend(leaf_lines(leaf, None))
+		for env in resp.diagnostics:
+			lines.append(f"  {env.name} (exit {env.exit_code}, {env.output_kind})")
+			lines.extend(f"    {line}" for line in env.payload.splitlines())
 	return "\n".join(lines)
