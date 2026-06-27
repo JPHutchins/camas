@@ -59,8 +59,8 @@ def test_expand_inlines_every_matrix_leaf() -> None:
 	resp = to_list_response({"m": node}, None, expand=True)
 	assert resp.tasks[0].matrix_axes == {"PY": ["3.13", "3.14"]}
 	assert resp.tasks[0].command_preview == (
-		'Parallel(Task("test 3.13", name="test 3.13 [PY=3.13]"), '
-		'Task("test 3.14", name="test 3.14 [PY=3.14]"), name="m")'
+		"Parallel(Task(\"test 3.13\", name=\"test 3.13 [PY=3.13]\", env={'PY': '3.13'}), "
+		'Task("test 3.14", name="test 3.14 [PY=3.14]", env={\'PY\': \'3.14\'}), name="m")'
 	)
 
 

@@ -8,10 +8,33 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, TypeAlias
+from typing import TYPE_CHECKING, Literal, NamedTuple, TypeAlias
 
 if TYPE_CHECKING:
-	from collections.abc import Mapping
+	from collections.abc import Callable, Mapping
+
+
+PathScope: TypeAlias = "Callable[[tuple[str, ...]], tuple[str, ...]]"
+"""Maps the changed paths to the args injected at ``{paths}``: called with ``()`` for a
+full run (return the default target), with the changed set otherwise (``()`` → skip)."""
+
+
+OutputKind: TypeAlias = Literal["sarif", "rdjson", "lsp", "junit", "tap", "raw"]
+"""The standard a leaf's command emits its diagnostics in — the agent-facing format camas
+tags and passes through verbatim, never parsing. ``raw`` (the default) is plain text."""
+
+
+class AgentFormat(NamedTuple):
+	"""A leaf's agent-only structured-output variant: ``args`` (a producing flag the user
+	supplies — camas never infers it) appended to the command, and the ``kind`` of diagnostics
+	it makes the tool emit. Applied only when an agent runs; a human run leaves the command as-is.
+
+	>>> AgentFormat("--output-format sarif", "sarif")
+	AgentFormat(args='--output-format sarif', kind='sarif')
+	"""
+
+	args: str
+	kind: OutputKind
 
 
 _EMPTY_ENV: Mapping[str, str] = MappingProxyType({})
@@ -37,6 +60,14 @@ class Task:
 	The ``--under`` budget scheduler runs such leaves sequentially, before the
 	read-only group, so they never race a checker over the same files.
 
+	``paths`` opts a leaf into ``{paths}`` substitution (:mod:`camas.core.scope`): a
+	directory-prefix string (``"."``) or a ``(changed) -> tuple[str, ...]`` callable that
+	maps the changed files into the command; ``None`` leaves the command untouched.
+
+	``agent_format`` is the agent-only structured-output variant (:class:`AgentFormat`): the gate
+	appends its ``args`` and tags the diagnostics ``kind``; a human run leaves the command as-is.
+	A bare ``(args, kind)`` tuple is coerced to an :class:`AgentFormat`.
+
 	>>> Task("echo hi")
 	Task(cmd='echo hi', name=None, env={}, cwd=None)
 	>>> Task(("ruff", "check", "."), name="lint")
@@ -49,6 +80,12 @@ class Task:
 	'Lint all sources'
 	>>> Task("ruff format .", mutates=True)
 	Task(cmd='ruff format .', name=None, env={}, cwd=None, mutates=True)
+	>>> Task("ruff format {paths}", mutates=True, paths=".")
+	Task(cmd='ruff format {paths}', name=None, env={}, cwd=None, mutates=True, paths='.')
+	>>> Task("ruff check .", agent_format=AgentFormat("--output-format sarif", "sarif"))
+	Task(cmd='ruff check .', name=None, env={}, cwd=None, agent_format=AgentFormat(args='--output-format sarif', kind='sarif'))
+	>>> Task("ruff check .", agent_format=("--output-format sarif", "sarif")).agent_format
+	AgentFormat(args='--output-format sarif', kind='sarif')
 	>>> hash(Task("a")) == hash(Task("a"))
 	True
 	>>> {Task("a", env={"K": "v"}), Task("a", env={"K": "v"})} == {Task("a", env={"K": "v"})}
@@ -61,6 +98,8 @@ class Task:
 	cwd: Path | None
 	help: str | None
 	mutates: bool
+	paths: str | PathScope | None
+	agent_format: AgentFormat | None
 
 	def __init__(
 		self,
@@ -70,6 +109,8 @@ class Task:
 		cwd: str | Path | None = None,
 		help: str | None = None,
 		mutates: bool = False,
+		paths: str | PathScope | None = None,
+		agent_format: AgentFormat | tuple[str, OutputKind] | None = None,
 	) -> None:
 		put = object.__setattr__
 		put(self, "cmd", cmd)
@@ -78,6 +119,14 @@ class Task:
 		put(self, "cwd", Path(cwd) if isinstance(cwd, str) else cwd)
 		put(self, "help", help)
 		put(self, "mutates", mutates)
+		put(self, "paths", paths)
+		put(
+			self,
+			"agent_format",
+			agent_format
+			if agent_format is None or isinstance(agent_format, AgentFormat)
+			else AgentFormat(*agent_format),
+		)
 
 	def __hash__(self) -> int:
 		return hash(
@@ -88,6 +137,8 @@ class Task:
 				self.cwd,
 				self.help,
 				self.mutates,
+				self.paths,
+				self.agent_format,
 			)
 		)
 
@@ -99,6 +150,8 @@ class Task:
 			f"cwd={self.cwd!r}",
 			*([f"help={self.help!r}"] if self.help is not None else []),
 			*(["mutates=True"] if self.mutates else []),
+			*([f"paths={self.paths!r}"] if self.paths is not None else []),
+			*([f"agent_format={self.agent_format!r}"] if self.agent_format is not None else []),
 		)
 		return f"Task({', '.join(parts)})"
 

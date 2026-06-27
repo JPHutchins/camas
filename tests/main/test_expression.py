@@ -8,9 +8,31 @@ from pathlib import Path
 
 import pytest
 
-from camas import Parallel, Sequential, Task
-from camas.main.expression import parse_expression
+from camas import AgentFormat, Parallel, Sequential, Task
+from camas.main.expression import parse_expression, to_expression
 from camas.v0.task import Group
+
+
+def test_to_expression_marks_callable_paths() -> None:
+	"""A callable scope has no source, so it renders as a non-parseable marker (preview only)."""
+	rendered = to_expression(Task("ruff {paths}", paths=lambda c: c))
+	assert rendered == 'Task("ruff {paths}", paths=<callable>)'
+
+
+def test_to_expression_round_trips_every_field() -> None:
+	"""The full round-trip #85 asked for: every constructor field survives to_expression →
+	parse_expression (a callable scope is the sole non-round-trippable, by design)."""
+	task = Task(
+		"ruff check {paths}",
+		name="lint",
+		env={"CI": "1"},
+		cwd="rust",
+		help="lint it",
+		mutates=True,
+		paths=".",
+		agent_format=AgentFormat("--out sarif", "sarif"),
+	)
+	assert parse_expression(to_expression(task)) == task
 
 
 @pytest.mark.parametrize(
@@ -153,6 +175,12 @@ def test_eval_node_threads_every_public_constructor_kwarg() -> None:
 		"help": ("help='h'", "help", "h"),
 		"mutates": ("mutates=True", "mutates", True),
 		"matrix": ("matrix={'X': ('1',)}", "matrix", {"X": ("1",)}),
+		"paths": ("paths='.'", "paths", "."),
+		"agent_format": (
+			"agent_format=AgentFormat('--x', 'sarif')",
+			"agent_format",
+			AgentFormat("--x", "sarif"),
+		),
 	}
 	for cls, prefix, variadic in (
 		(Task, "Task('c', ", "cmd"),
@@ -165,6 +193,27 @@ def test_eval_node_threads_every_public_constructor_kwarg() -> None:
 
 
 # Parser-side fluent syntax: strings inside literals and the README one-liner.
+
+
+def test_eval_node_rejects_unknown_agent_format_kind() -> None:
+	with pytest.raises(SystemExit, match="2"):
+		parse_expression("Task('c', agent_format=AgentFormat('--x', 'bogus'))")
+
+
+def test_eval_node_rejects_incomplete_agent_format() -> None:
+	with pytest.raises(SystemExit, match="2"):
+		parse_expression("Task('c', agent_format=AgentFormat('--x'))")
+
+
+def test_eval_node_rejects_non_agent_format_value() -> None:
+	with pytest.raises(SystemExit, match="2"):
+		parse_expression("Task('c', agent_format='sarif')")
+
+
+def test_eval_node_accepts_agent_format_tuple_shorthand() -> None:
+	node = parse_expression("Task('c', agent_format=('--x', 'sarif'))")
+	assert isinstance(node, Task)
+	assert node.agent_format == AgentFormat("--x", "sarif")
 
 
 def test_parse_top_level_tuple_with_bare_strings() -> None:

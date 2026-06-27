@@ -75,11 +75,13 @@ def test_dispatch_init_under_load_err(tmp_path: Path, monkeypatch: pytest.Monkey
 def test_starter_loads_with_config_default(tmp_path: Path) -> None:
 	write_starter_tasks_py(tmp_path)
 	loaded = load_tasks_from_py(tmp_path / "tasks.py")
-	assert set(loaded.tasks) == {"hello", "greet", "ci"}
+	assert set(loaded.tasks) == {"hello", "greet", "ci", "autofix"}
 	assert loaded.scope_effects == {}
 	assert loaded.config is not None
 	assert loaded.config.default_task == loaded.tasks["ci"]
 	assert isinstance(loaded.config.default_task, Sequential)
+	assert loaded.config.agent is not None
+	assert loaded.config.agent.fix == loaded.tasks["autofix"]
 
 
 def test_starter_runs_to_completion(tmp_path: Path) -> None:

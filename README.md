@@ -189,14 +189,36 @@ lint = Task("ruff check .")
 
 ```
 $ camas --under=1s --dry-run
-Time budget 1.00s — selected 6 leaf(s), excluded 2 (2 over budget, 0 untimed).
+Time budget 1.00s — running 6 leaf(s) (0 unmeasured), excluded 2 over budget.
   over budget: pyright ~4.57s, coverage ~20.98s
 fix → fmt → (mypy | ty | zuban | pyrefly)
 ```
 
-Durations are `1s`, `500ms`, `2m`, `1h`, or a bare number of seconds. Leaves with no recorded timing yet are excluded (a budget can't bound them — run the task once normally to time them). The budget is per-leaf: a leaf is selected when its own estimate fits, so the parallel group's wall-clock stays near the budget.
+Durations are `1s`, `500ms`, `2m`, `1h`, or a bare number of seconds. Only leaves *measured* to exceed the budget are excluded; a leaf with no recorded timing yet runs anyway (and is thereby measured) — skipping it would keep it forever untimed. The budget is per-leaf: a measured leaf runs when its own estimate fits, so the parallel group's wall-clock stays near the budget.
 
 **For agents**, `camas_run` exposes the same budget as its `under` argument (omit `task` to budget the project default), and the response's `budget` field reports what was selected and excluded — a tight, time-boxed validate loop over structured MCP.
+
+## Path scoping (`--paths`)
+
+`camas <task> --paths <path>…` scopes a run to changed paths instead of the whole tree. A leaf opts in by writing the `{paths}` placeholder in its command and declaring its scope with `paths=` — a directory prefix, or a `(changed) -> paths` callable:
+
+```python
+py = Task("ruff format {paths}", mutates=True, paths="src")
+web = Task("prettier --write {paths}", mutates=True, paths="web")
+_ = Config(agent=Claude(fix=Sequential(py, web)))
+```
+
+`--paths` works on any task — `camas check --paths src/a.py`. Without it, every `{paths}` resolves to its full-run default (`ruff format src`); with it, each leaf runs only over the changed files it covers, and a leaf that covers none is dropped (`--paths` is repeatable, or comma-separated).
+
+For the Claude Code plugin, you **register** the auto-fix node — whatever you named it — to `Config.agent.fix`; the FileChanged hook runs *that* node over the just-changed file, zero model tokens. Install the plugin (`/plugin marketplace add JPHutchins/camas`), or wire the hook by hand:
+
+```jsonc
+// .claude/settings.json
+{ "hooks": { "FileChanged": [
+  { "hooks": [{ "type": "command", "command": "camas mcp fix --paths ${file_path}" }] } ] } }
+```
+
+`camas mcp fix` runs the registered `Config.agent.fix` node (not a task named `fix` — that's just `camas fix`, your own task); with no fix registered it is a clean no-op, so the hook is harmless without it.
 
 ## Effects plugins
 

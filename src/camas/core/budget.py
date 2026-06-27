@@ -34,7 +34,9 @@ class OverBudget(NamedTuple):
 
 
 class Untimed(NamedTuple):
-	"""A leaf with no recorded estimate — excluded from a strict budget."""
+	"""A leaf with no recorded estimate — run anyway (and thereby measured), since skipping it
+	would keep it forever unmeasured.
+	"""
 
 	task: Task
 
@@ -74,15 +76,17 @@ def classify(task: Task, budget_s: float, timings: Mapping[TaskLabel, TaskTiming
 def plan_under(
 	node: TaskNode, budget_s: float, timings: Mapping[TaskLabel, TaskTiming]
 ) -> BudgetPlan:
-	"""Partition ``node``'s expanded, de-duplicated leaves by ``budget_s``; untimed leaves
-	are excluded, since a budget can't bound a leaf it has never measured.
+	"""Partition ``node``'s expanded, de-duplicated leaves by ``budget_s``. Only leaves measured
+	to exceed the budget are excluded; untimed leaves are run (and thereby measured), since a
+	budget that skipped them would keep them forever unmeasured.
 	"""
 	leaves = tuple(dict.fromkeys(info.task for info in flatten_leaves(expand_matrix(node))))
 	dispositions = tuple(classify(leaf, budget_s, timings) for leaf in leaves)
 	fits = tuple(d for d in dispositions if isinstance(d, Fits))
 	over_budget = tuple(d for d in dispositions if isinstance(d, OverBudget))
 	untimed = tuple(d for d in dispositions if isinstance(d, Untimed))
-	return BudgetPlan(budget_s, schedule(tuple(f.task for f in fits)), fits, over_budget, untimed)
+	runnable = tuple(d.task for d in dispositions if not isinstance(d, OverBudget))
+	return BudgetPlan(budget_s, schedule(runnable), fits, over_budget, untimed)
 
 
 def schedule(fitting: tuple[Task, ...]) -> TaskNode | None:

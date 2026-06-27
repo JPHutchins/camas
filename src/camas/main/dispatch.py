@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import os
 import re
@@ -20,8 +21,9 @@ else:  # pragma: no cover
 from ..core import timings
 from ..core.budget import plan_under
 from ..core.execution import run
-from ..core.matrix import matrix_axes, override_matrix
+from ..core.matrix import expand_matrix, matrix_axes, override_matrix
 from ..core.render import print_tree
+from ..core.scope import scope_to_changed, to_changed, with_default_paths
 from ..core.task import task_label
 from ..v0.config import Config
 from .argv import apply_passthrough, parse_axis_values, parse_matrix_kv, split_passthrough
@@ -80,11 +82,12 @@ def dispatch_arg(arg: str, tasks: Mapping[str, TaskNode]) -> TaskNode:
 
 
 def budget_summary_lines(plan: BudgetPlan) -> list[str]:
-	"""The ``--under`` summary: how many leaves fit the budget, and what was excluded."""
-	excluded = len(plan.over_budget) + len(plan.untimed)
+	"""The ``--under`` summary: how many leaves run (and which are unmeasured), and what was
+	excluded as measured-over-budget.
+	"""
 	lines = [
-		f"Time budget {plan.budget_s:.2f}s — selected {len(plan.fits)} leaf(s), "
-		f"excluded {excluded} ({len(plan.over_budget)} over budget, {len(plan.untimed)} untimed)."
+		f"Time budget {plan.budget_s:.2f}s — running {len(plan.fits) + len(plan.untimed)} leaf(s) "
+		f"({len(plan.untimed)} unmeasured), excluded {len(plan.over_budget)} over budget."
 	]
 	if plan.over_budget:
 		lines.append(
@@ -93,11 +96,11 @@ def budget_summary_lines(plan: BudgetPlan) -> list[str]:
 		)
 	if plan.untimed:
 		lines.append(
-			"  untimed (run the task normally once to record an estimate): "
+			"  unmeasured (running to record an estimate): "
 			+ ", ".join(task_label(u.task) for u in plan.untimed)
 		)
 	if plan.node is None:
-		lines.append("Nothing fits the budget — nothing to run.")
+		lines.append("All leaves exceed the budget — nothing to run.")
 	return lines
 
 
@@ -121,7 +124,7 @@ def run_under(
 	if plan.node is None:
 		return 0
 	if dry_run:
-		print_tree(plan.node, show_cmd=True)
+		print_tree(with_default_paths(plan.node), show_cmd=True)
 		return 0
 	return finish_run(asyncio.run(run(plan.node, effects=effects, jobs=jobs)))
 
@@ -131,6 +134,39 @@ def finish_run(result: RunResult) -> int:
 	if result.interrupt_count:
 		print_interrupt_banner(result.interrupt_count)
 	return result.returncode
+
+
+def fix_cli(argv: list[str]) -> int:
+	"""``camas mcp fix [--paths P]…``: run the project's *registered* agent fix node
+	(``Config.agent.fix`` — whatever the user named it), scoped to the changed paths. This is
+	the FileChanged autofix entry, in the ``camas mcp`` namespace so it never collides with a
+	user's own ``camas <task>``. A clean no-op (exit 0) when no fix node is registered — without
+	registration there is simply nothing for the hook to run.
+	"""
+	parser = argparse.ArgumentParser(
+		prog="camas mcp fix", description="Run the registered agent fix node."
+	)
+	parser.add_argument(
+		"--paths",
+		action="append",
+		default=[],
+		metavar="PATH",
+		help="changed path to scope to (repeatable)",
+	)
+	args = parser.parse_args(argv)
+	state, _ = resolve_tasks_source([])
+	if not isinstance(state, LoadOk) or state.config is None:
+		return 0
+	node = state.config.gate_fix()
+	if node is None:
+		return 0
+	base = state.source.parent if state.source is not None else Path.cwd()
+	changed = to_changed(args.paths, base)
+	expanded = expand_matrix(node)
+	scoped = scope_to_changed(expanded, changed) if changed else with_default_paths(expanded)
+	if scoped is None:
+		return 0
+	return finish_run(asyncio.run(run(scoped, effects=(), jobs=None)))
 
 
 def print_interrupt_banner(count: int) -> None:
@@ -339,6 +375,19 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 					print(f"error: {e}", file=sys.stderr)
 					sys.exit(2)
 
+			if args.paths is not None:
+				base = source.parent if source is not None else Path.cwd()
+				raw_changed = tuple(p for raw in args.paths for p in parse_axis_values(raw))
+				changed = to_changed(raw_changed, base)
+				scoped = scope_to_changed(expand_matrix(resolved), changed) if changed else None
+				if scoped is None:
+					print(
+						f"No task leaf covers {', '.join(raw_changed) or '(no paths given)'}"
+						" — nothing to run."
+					)
+					sys.exit(0)
+				resolved = scoped
+
 			if args.under is not None:
 				try:
 					budget_jobs: Final = resolve_jobs(args.jobs)
@@ -367,7 +416,7 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 				print(f"error: {e}", file=sys.stderr)
 				sys.exit(2)
 			if args.dry_run:
-				print_tree(task, show_cmd=True)
+				print_tree(with_default_paths(task), show_cmd=True)
 				sys.exit(0)
 			try:
 				jobs: Final = resolve_jobs(args.jobs)

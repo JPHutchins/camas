@@ -16,10 +16,13 @@ if sys.version_info >= (3, 11):
 else:  # pragma: no cover
 	from typing_extensions import assert_never
 
-from ..v0.task import Parallel, Sequential, Task, TaskNode
+from ..v0.task import AgentFormat, OutputKind, Parallel, Sequential, Task, TaskNode
 
 if TYPE_CHECKING:
 	from collections.abc import Mapping
+	from pathlib import Path
+
+	from ..v0.task import PathScope
 
 
 class Ref(NamedTuple):
@@ -107,6 +110,33 @@ def eval_opt_bool(node: ast.expr | None) -> bool:
 			return b
 		case _:
 			raise ValueError(f"expected bool literal, got {ast.dump(node)}")
+
+
+def _output_kind(node: ast.expr) -> OutputKind:
+	match node:
+		case ast.Constant(value="sarif" | "rdjson" | "lsp" | "junit" | "tap" | "raw" as kind):
+			return kind
+		case _:
+			raise ValueError(
+				f"AgentFormat kind must be sarif/rdjson/lsp/junit/tap/raw, got {ast.dump(node)}"
+			)
+
+
+def eval_agent_format(node: ast.expr | None) -> AgentFormat | None:
+	match node:
+		case None:
+			return None
+		case ast.Call(func=ast.Name(id="AgentFormat"), args=call_args, keywords=call_kw):
+			kw = {k.arg: k.value for k in call_kw if k.arg is not None}
+			args_node = call_args[0] if call_args else kw.get("args")
+			kind_node = call_args[1] if len(call_args) > 1 else kw.get("kind")
+			if args_node is None or kind_node is None:
+				raise ValueError("AgentFormat requires args and kind")
+			return AgentFormat(eval_str_lit(args_node), _output_kind(kind_node))
+		case ast.Tuple(elts=[args_node, kind_node]):
+			return AgentFormat(eval_str_lit(args_node), _output_kind(kind_node))
+		case _:
+			raise ValueError(f"agent_format must be AgentFormat(args, kind), got {ast.dump(node)}")
 
 
 def eval_env(node: ast.expr | None) -> dict[str, str]:
@@ -216,6 +246,8 @@ def eval_node(
 						cwd=eval_opt_str(kw.get("cwd")),
 						help=eval_opt_str(kw.get("help")),
 						mutates=eval_opt_bool(kw.get("mutates")),
+						paths=eval_opt_str(kw.get("paths")),
+						agent_format=eval_agent_format(kw.get("agent_format")),
 					)
 				case "Sequential" | "Parallel":
 					ctor = Sequential if name == "Sequential" else Parallel
@@ -308,10 +340,30 @@ def to_expression(node: TaskNode) -> str:
 	'Parallel(Task("a"), Task("b"), name="checks")'
 	>>> to_expression(Sequential(Parallel(Task("a"), name="p"), Task("b"), name="s"))
 	'Sequential(Parallel(Task("a"), name="p"), Task("b"), name="s")'
+	>>> to_expression(Task("ruff check {paths}", name="lint", paths="src"))
+	'Task("ruff check {paths}", name="lint", paths="src")'
+	>>> to_expression(Task("test", cwd="rust", help="run tests"))
+	'Task("test", cwd="rust", help="run tests")'
+	>>> from camas.v0.task import AgentFormat
+	>>> to_expression(Task("ruff check .", agent_format=AgentFormat("--output-format sarif", "sarif")))
+	'Task("ruff check .", agent_format=AgentFormat("--output-format sarif", "sarif"))'
 	"""
 	match node:
-		case Task(cmd=cmd, name=name, mutates=mutates):
-			return f"Task({quote(join_command(cmd))}{name_kwarg(name)}{mutates_kwarg(mutates)})"
+		case Task(
+			cmd=cmd,
+			name=name,
+			env=env,
+			cwd=cwd,
+			help=help,
+			mutates=mutates,
+			paths=paths,
+			agent_format=agent_format,
+		):
+			return (
+				f"Task({quote(join_command(cmd))}{name_kwarg(name)}{env_kwarg(env)}"
+				f"{cwd_kwarg(cwd)}{help_kwarg(help)}{mutates_kwarg(mutates)}"
+				f"{paths_kwarg(paths)}{agent_format_kwarg(agent_format)})"
+			)
 		case Sequential(tasks=tasks, name=name):
 			return f"Sequential({render_members(tasks)}{name_kwarg(name)})"
 		case Parallel(tasks=tasks, name=name):
@@ -328,8 +380,37 @@ def name_kwarg(name: str | None) -> str:
 	return f", name={quote(name)}" if name is not None else ""
 
 
+def env_kwarg(env: Mapping[str, str]) -> str:
+	return f", env={dict(env)!r}" if env else ""
+
+
+def cwd_kwarg(cwd: Path | None) -> str:
+	return f", cwd={quote(cwd.as_posix())}" if cwd is not None else ""
+
+
+def help_kwarg(help: str | None) -> str:
+	return f", help={quote(help)}" if help is not None else ""
+
+
 def mutates_kwarg(mutates: bool) -> str:
 	return ", mutates=True" if mutates else ""
+
+
+def paths_kwarg(paths: str | PathScope | None) -> str:
+	"""A str scope round-trips; a callable scope has no source, so it renders as a
+	non-parseable marker (this preview is informational, never re-evaluated by camas).
+	"""
+	if paths is None:
+		return ""
+	if isinstance(paths, str):
+		return f", paths={quote(paths)}"
+	return ", paths=<callable>"
+
+
+def agent_format_kwarg(agent_format: AgentFormat | None) -> str:
+	if agent_format is None:
+		return ""
+	return f", agent_format=AgentFormat({quote(agent_format.args)}, {quote(agent_format.kind)})"
 
 
 def quote(value: str) -> str:

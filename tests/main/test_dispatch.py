@@ -11,7 +11,7 @@ from camas import Config, Parallel, Sequential, Task
 from camas.core import timings
 from camas.core.color import WHITE
 from camas.core.completion import RunResult
-from camas.main.dispatch import dispatch, print_interrupt_banner, run_under
+from camas.main.dispatch import dispatch, fix_cli, print_interrupt_banner, run_under
 from camas.main.state import LoadOk
 
 if TYPE_CHECKING:
@@ -209,12 +209,15 @@ def test_interrupted_run_prints_banner_and_exits_130(
 	assert "Ctrl-C (3) received - exiting" in capsys.readouterr().out
 
 
-def test_dispatch_under_no_timings_runs_nothing(capsys: pytest.CaptureFixture[str]) -> None:
+def test_dispatch_under_no_timings_runs_untimed(capsys: pytest.CaptureFixture[str]) -> None:
+	noop = ("python", "-c", "pass")
 	with pytest.raises(SystemExit, match="0"):
-		dispatch(_state({"check": Parallel(Task("a"), Task("b"))}), ["check", "--under", "1s"])
+		dispatch(
+			_state({"check": Parallel(Task(noop, name="a"), Task(noop, name="b"))}),
+			["check", "--under", "1s"],
+		)
 	out = capsys.readouterr().out
-	assert "2 untimed" in out
-	assert "Nothing fits the budget" in out
+	assert "2 unmeasured" in out
 
 
 def test_dispatch_under_rejects_passthrough(capsys: pytest.CaptureFixture[str]) -> None:
@@ -250,7 +253,7 @@ def test_run_under_dry_run_shows_plan(tmp_path: Path, capsys: pytest.CaptureFixt
 	)
 	assert code == 0
 	out = capsys.readouterr().out
-	assert "selected 2 leaf(s)" in out
+	assert "running 2 leaf(s)" in out
 	assert "over budget: slow ~9.00s" in out
 
 
@@ -264,6 +267,93 @@ def test_run_under_executes_selected(tmp_path: Path, capsys: pytest.CaptureFixtu
 		source, 1.0, camas_dir=camas, effects=(), jobs=None, dry_run=False, passthrough=()
 	)
 	assert code == 0
-	assert (
-		"untimed (run the task normally once to record an estimate): b" in capsys.readouterr().out
+	assert "unmeasured (running to record an estimate): b" in capsys.readouterr().out
+
+
+def test_run_under_all_over_budget_runs_nothing(
+	tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+	camas = _camas_with_timings(tmp_path, [("slow", 9.0)])
+	code = run_under(
+		Parallel(Task("echo slow", name="slow")),
+		0.5,
+		camas_dir=camas,
+		effects=(),
+		jobs=None,
+		dry_run=False,
+		passthrough=(),
 	)
+	assert code == 0
+	assert "All leaves exceed the budget — nothing to run." in capsys.readouterr().out
+
+
+_TIDY = (
+	"from camas import Claude, Config, Task\n"
+	'tidy = Task(("python", "-c", "import pathlib; pathlib.Path(\'fixed.txt\').write_text(\'done\')"),'
+	' name="tidy", mutates=True, paths={scope!r})\n'
+	"_ = Config(agent=Claude(fix=tidy))\n"
+)
+
+
+def test_fix_cli_runs_registered_agent_fix(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+	# the registered node is named "tidy", not "fix" — fix_cli resolves Config.agent.fix by reference
+	(tmp_path / "tasks.py").write_text(_TIDY.format(scope="."))
+	monkeypatch.chdir(tmp_path)
+	assert fix_cli(["--paths", "x.py"]) == 0
+	assert (tmp_path / "fixed.txt").read_text() == "done"
+
+
+def test_fix_cli_no_paths_runs_the_full_node(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	(tmp_path / "tasks.py").write_text(_TIDY.format(scope="."))
+	monkeypatch.chdir(tmp_path)
+	assert fix_cli([]) == 0
+	assert (tmp_path / "fixed.txt").read_text() == "done"
+
+
+def test_fix_cli_noop_without_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+	monkeypatch.chdir(tmp_path)
+	assert fix_cli(["--paths", "x.py"]) == 0
+
+
+def test_fix_cli_noop_without_registered_fix(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	(tmp_path / "tasks.py").write_text(
+		"from camas import Config, Task\n_ = Config(default_task=Task('echo hi'))\n"
+	)
+	monkeypatch.chdir(tmp_path)
+	assert fix_cli(["--paths", "x.py"]) == 0
+
+
+def test_fix_cli_noop_when_scope_covers_nothing(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	(tmp_path / "tasks.py").write_text(_TIDY.format(scope="src"))
+	monkeypatch.chdir(tmp_path)
+	assert fix_cli(["--paths", "docs/readme.md"]) == 0
+	assert not (tmp_path / "fixed.txt").exists()
+
+
+def test_dispatch_paths_scopes_to_changed(capsys: pytest.CaptureFixture[str]) -> None:
+	task = Task("ruff check {paths}", name="lint", paths=".")
+	with pytest.raises(SystemExit, match="0"):
+		dispatch(_state({"lint": task}), ["--dry-run", "lint", "--paths", "src/app.py"])
+	assert "ruff check src/app.py" in capsys.readouterr().out
+
+
+def test_dispatch_paths_no_match_skips(capsys: pytest.CaptureFixture[str]) -> None:
+	task = Task("cargo check {paths}", name="rust", paths="rust")
+	with pytest.raises(SystemExit, match="0"):
+		dispatch(_state({"rust": task}), ["rust", "--paths", "src/app.py"])
+	out = capsys.readouterr().out
+	assert "src/app.py" in out
+	assert "nothing to run" in out
+
+
+def test_dispatch_paths_empty_skips(capsys: pytest.CaptureFixture[str]) -> None:
+	task = Task("ruff check {paths}", name="lint", paths=".")
+	with pytest.raises(SystemExit, match="0"):
+		dispatch(_state({"lint": task}), ["lint", "--paths", ""])
+	assert "(no paths given)" in capsys.readouterr().out

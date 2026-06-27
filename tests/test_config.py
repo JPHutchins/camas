@@ -5,10 +5,12 @@ from __future__ import annotations
 
 import pytest
 
-from camas import Config, Task
+from camas import Claude, Config, Task
 
 DEFAULT = Task("default", name="default")
 GH = Task("gh", name="gh")
+FIX = Task("fix", name="fix", mutates=True)
+CHECK = Task("check", name="check")
 
 
 @pytest.mark.parametrize(
@@ -45,3 +47,17 @@ def test_effects_returns_per_environment_override() -> None:
 	config = Config(default_effects=local, default_github_effects=gh)
 	assert config.effects(github=False) is local
 	assert config.effects(github=True) is gh
+
+
+def test_gate_check_prefers_agent_check_else_bare_task() -> None:
+	assert (
+		Config(default_task=DEFAULT, agent=Claude(fix=FIX, check=CHECK)).gate_check(github=False)
+		is CHECK
+	)
+	assert Config(default_task=DEFAULT, agent=Claude(fix=FIX)).gate_check(github=False) is DEFAULT
+	assert Config(default_task=DEFAULT).gate_check(github=False) is DEFAULT
+
+
+def test_gate_fix_is_the_agent_fix_node_or_none() -> None:
+	assert Config(agent=Claude(fix=FIX)).gate_fix() is FIX
+	assert Config(default_task=DEFAULT).gate_fix() is None

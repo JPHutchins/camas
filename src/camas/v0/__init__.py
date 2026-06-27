@@ -4,8 +4,11 @@
 
 import typing
 
+from .config import Agent as Agent
+from .config import Claude as Claude
 from .config import Config as Config
 from .effect import Effect as Effect
+from .task import AgentFormat as AgentFormat
 from .task import Parallel as Parallel
 from .task import Sequential as Sequential
 from .task import Task as Task

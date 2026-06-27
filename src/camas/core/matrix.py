@@ -23,6 +23,8 @@ from .task import MatrixBinding, VarBinding, task_label
 if TYPE_CHECKING:
 	from collections.abc import Mapping
 
+	from ..v0.task import PathScope
+
 
 def resolve_cmd(cmd: str | tuple[str, ...]) -> tuple[str, ...]:
 	"""Resolve a command to a tuple of argv tokens, splitting shell strings with shlex.
@@ -75,6 +77,12 @@ def substitute_help(help: str | None, binding: MatrixBinding) -> str | None:
 	return substitute_in_str(help, binding) if help is not None else None
 
 
+def substitute_paths(
+	paths: str | PathScope | None, binding: MatrixBinding
+) -> str | PathScope | None:
+	return substitute_in_str(paths, binding) if isinstance(paths, str) else paths
+
+
 def specialize_task(task: Task, binding: MatrixBinding, suffix: str) -> Task:
 	"""Specialize a leaf Task with concrete variable values from a matrix binding.
 
@@ -82,6 +90,8 @@ def specialize_task(task: Task, binding: MatrixBinding, suffix: str) -> Task:
 	Task(cmd='test 3.14', name='test 3.14 [PY=3.14]', env={'PY': '3.14'}, cwd=None)
 	>>> specialize_task(Task("go", env={"VENV": ".venv-{PY}"}), (VarBinding("PY", "3.14"),), "[PY=3.14]").env
 	{'VENV': '.venv-3.14', 'PY': '3.14'}
+	>>> specialize_task(Task("t {paths}", paths="pkg-{PY}"), (VarBinding("PY", "3.14"),), "[PY=3.14]").paths
+	'pkg-3.14'
 	"""
 	match task.cmd:
 		case str():
@@ -97,6 +107,8 @@ def specialize_task(task: Task, binding: MatrixBinding, suffix: str) -> Task:
 		cwd=substitute_cwd(task.cwd, binding),
 		help=substitute_help(task.help, binding),
 		mutates=task.mutates,
+		paths=substitute_paths(task.paths, binding),
+		agent_format=task.agent_format,
 	)
 
 
@@ -327,6 +339,8 @@ def expand_matrix(
 				cwd=task.cwd if task.cwd is not None else ancestor_cwd,
 				help=task.help,
 				mutates=task.mutates,
+				paths=task.paths,
+				agent_format=task.agent_format,
 			)
 		case Sequential(tasks=tasks, matrix=matrix, env=env, cwd=cwd):
 			seq_env: Final = parent_env | env

@@ -125,7 +125,7 @@ def test_task_names_empty_on_load_error(tmp_path: Path) -> None:
 
 
 def test_tools_default_omits_rich_fields() -> None:
-	tool_list, tool_run, tool_check, tool_docs = serve.tools(
+	tool_list, tool_run, tool_check, tool_docs, tool_gate = serve.tools(
 		("a", "b"), Compat(emit_structured=False)
 	)
 	assert (tool_list.title, tool_list.outputSchema, tool_list.annotations) == (None, None, None)
@@ -137,10 +137,14 @@ def test_tools_default_omits_rich_fields() -> None:
 	assert tool_docs.inputSchema == serve.NO_ARGS_SCHEMA
 	assert tool_list.inputSchema["properties"]["expand_matrix"]["type"] == "boolean"
 	assert tool_list.inputSchema["additionalProperties"] is False
+	assert (tool_gate.title, tool_gate.outputSchema, tool_gate.annotations) == (None, None, None)
+	assert _task_enum(tool_gate.inputSchema) == ["a", "b"]
 
 
 def test_tools_rich_includes_title_annotations_and_schema() -> None:
-	tool_list, tool_run, tool_check, tool_docs = serve.tools((), Compat(emit_structured=True))
+	tool_list, tool_run, tool_check, tool_docs, tool_gate = serve.tools(
+		(), Compat(emit_structured=True)
+	)
 	assert tool_list.title == "List camas tasks"
 	assert tool_list.annotations is not None
 	assert tool_list.annotations.readOnlyHint is True
@@ -157,6 +161,10 @@ def test_tools_rich_includes_title_annotations_and_schema() -> None:
 	assert tool_docs.outputSchema is not None
 	assert tool_docs.annotations is not None
 	assert tool_docs.annotations.readOnlyHint is True
+	assert tool_gate.title == "SA-delegation gate"
+	assert tool_gate.outputSchema is not None
+	assert tool_gate.annotations is not None
+	assert tool_gate.annotations.readOnlyHint is True
 
 
 def test_list_call_text_lists_tasks_and_markers(tmp_path: Path) -> None:
@@ -550,7 +558,7 @@ async def test_run_call_under_selects_runs_and_reports(tmp_path: Path) -> None:
 	result = await serve.run_call(session, {"under": 1.0})
 	assert result.isError is False
 	text = _text(result)
-	assert "Time budget 1.00s — selected 2 leaf(s)" in text
+	assert "Time budget 1.00s — running 2 leaf(s)" in text
 	assert "over budget: slow ~9.00s" in text
 	assert "PASSED" in text
 	assert result.structuredContent is not None
@@ -585,10 +593,9 @@ async def test_run_call_under_reports_untimed(tmp_path: Path) -> None:
 	b = Task(("python", "-c", "print('b')"), name="b")
 	session = _session({"p": Parallel(a, b, name="p")}, None, tmp_path, rich=True)
 	result = await serve.run_call(session, {"task": "p", "under": 1.0})
-	assert "untimed (run the task normally once to record an estimate): b" in _text(result)
+	assert "unmeasured (running to record an estimate): b" in _text(result)
 	assert result.structuredContent is not None
-	excluded = result.structuredContent["budget"]["excluded"]
-	assert next(e for e in excluded if e["name"] == "b")["reason"] == "untimed"
+	assert "b" in result.structuredContent["budget"]["unmeasured"]
 
 
 async def test_run_call_under_no_task_no_default_errors(tmp_path: Path) -> None:
@@ -626,7 +633,7 @@ async def test_run_call_under_applies_matrix_override(tmp_path: Path) -> None:
 		session, {"task": "m", "under": 1.0, "matrix_overrides": {"PY": ["3.13"]}}
 	)
 	assert result.isError is False
-	assert "Nothing ran" in _text(result)
+	assert "running 1 leaf(s)" in _text(result)
 
 
 async def test_run_call_under_bad_matrix_override_errors(tmp_path: Path) -> None:
@@ -826,6 +833,7 @@ async def test_in_memory_round_trip(tmp_path: Path) -> None:
 			"camas_run",
 			"camas_check",
 			"camas_docs",
+			"camas_gate",
 		}
 		catalog = await client.call_tool("camas_list", {})
 		assert "lint" in _text(catalog)
@@ -917,3 +925,54 @@ async def test_run_via_client_picks_up_new_task_without_check(tmp_path: Path) ->
 
 def _text(result: types.CallToolResult) -> str:
 	return "\n".join(block.text for block in result.content if isinstance(block, types.TextContent))
+
+
+GATE_FIX = Task(("python", "-c", "print('fixed')"), name="fmt", mutates=True)
+
+
+async def test_gate_call_load_error(tmp_path: Path) -> None:
+	session = Session(
+		LoadErr(source=tmp_path / "tasks.py", exception=RuntimeError("boom")), tmp_path, Compat()
+	)
+	result = await serve.call(session, "camas_gate", {})
+	assert result.isError
+
+
+async def test_gate_call_invalid_args(tmp_path: Path) -> None:
+	node = Parallel(GATE_FIX, PASS)
+	session = _session({"all": node}, Config(default_task=node), tmp_path)
+	result = await serve.call(session, "camas_gate", {"bogus": 1})
+	assert result.isError
+	assert "invalid camas_gate arguments" in _text(result)
+
+
+async def test_gate_call_no_task_no_default_errors(tmp_path: Path) -> None:
+	session = _session({"x": PASS}, None, tmp_path)
+	result = await serve.call(session, "camas_gate", {})
+	assert result.isError
+
+
+async def test_gate_call_continue_when_checks_pass(tmp_path: Path) -> None:
+	node = Parallel(GATE_FIX, PASS)
+	session = _session({"all": node}, Config(default_task=node), tmp_path)
+	result = await serve.call(session, "camas_gate", {})
+	assert not result.isError
+	assert "CONTINUE" in _text(result)
+
+
+async def test_gate_call_block_when_check_fails(tmp_path: Path) -> None:
+	node = Parallel(GATE_FIX, FAIL)
+	session = _session({"all": node}, Config(default_task=node), tmp_path)
+	result = await serve.call(session, "camas_gate", {"task": "all"})
+	text = _text(result)
+	assert not result.isError
+	assert "BLOCK" in text
+	assert "bad" in text
+
+
+async def test_gate_call_with_budget_reports_partition(tmp_path: Path) -> None:
+	node = Parallel(GATE_FIX, PASS)
+	session = _session({"all": node}, Config(default_task=node), tmp_path)
+	result = await serve.call(session, "camas_gate", {"under": 1.0})
+	assert not result.isError
+	assert "Time budget" in _text(result)

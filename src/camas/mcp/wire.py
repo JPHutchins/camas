@@ -54,10 +54,10 @@ class LeafReport(BaseModel):
 
 
 class ExcludedLeaf(BaseModel):
-	"""A leaf a time budget did not run, and why."""
+	"""A leaf a time budget did not run — measured to exceed the budget."""
 
 	name: str
-	reason: Literal["over_budget", "untimed"]
+	reason: Literal["over_budget"]
 	estimated_s: float | None = None
 	"""The leaf's observed estimate; null when it has never been timed."""
 
@@ -67,7 +67,11 @@ class BudgetReport(BaseModel):
 
 	budget_s: float
 	selected: tuple[str, ...]
-	"""Leaves whose estimate fit the budget — the ones that were scheduled to run."""
+	"""Leaves that run: those whose estimate fit the budget, plus any unmeasured ones."""
+	unmeasured: tuple[str, ...] = ()
+	"""The selected leaves with no prior estimate — run to record one, since skipping them
+	would keep them forever unmeasured.
+	"""
 	excluded: tuple[ExcludedLeaf, ...]
 
 
@@ -207,6 +211,88 @@ def run_input_schema(task_names: tuple[str, ...]) -> dict[str, Any]:
 	False
 	"""
 	schema: dict[str, Any] = RunRequest.model_json_schema()
+	for branch in schema["properties"]["task"]["anyOf"]:
+		if branch.get("type") == "string":
+			branch["enum"] = list(task_names)
+	return schema
+
+
+class GateRequest(BaseModel):
+	"""Arguments to ``camas_gate``."""
+
+	model_config = ConfigDict(extra="forbid")
+
+	paths: list[str] = Field(
+		default_factory=list,
+		description="Changed paths to scope the gate to — a FileChanged/PostToolBatch hook's "
+		"edited files. Empty gates the whole task; each leaf's {paths} is injected with the "
+		"files it covers and leaves covering nothing are dropped.",
+	)
+	task: str | None = Field(
+		default=None,
+		description="Task to gate — one of the names from camas_list. Omit to gate the project's "
+		"default task.",
+	)
+	under: float | None = Field(
+		default=None,
+		gt=0,
+		description="Wall-clock budget in seconds for the checks: leaves measured to exceed it are "
+		"skipped; untimed leaves run (and get measured). The gate never mutates.",
+	)
+	jobs: int | None = Field(
+		default=None, ge=1, description="Max concurrent leaf subprocesses; null = unbounded."
+	)
+
+
+class AgentEnvelope(BaseModel):
+	"""One task's agent-facing result: its exit code and the tool's output tagged by the
+	standard it is in (``output_kind``) and passed through verbatim — camas never parses it.
+	"""
+
+	name: str
+	exit_code: int
+	output_kind: Literal["sarif", "rdjson", "lsp", "junit", "tap", "raw"]
+	payload: str
+	truncated: bool = False
+
+
+class GateRerun(BaseModel):
+	"""The exact gate invocation that produced a verdict — a self-describing handle a higher
+	fixer tier (or the main agent) re-issues to re-gate the same scope.
+	"""
+
+	task: str | None = None
+	"""The named task gated, or null for the project's check node."""
+	paths: tuple[str, ...] = ()
+	"""The (repo-relative) changed paths the run was scoped to; empty means the whole check node."""
+	under: float | None = None
+	"""The wall-clock budget applied, if any."""
+
+
+class GateResponse(BaseModel):
+	"""The SA-delegation gate's verdict: how to route the batch, and the residual that decided it."""
+
+	decision: Literal["continue", "block"]
+	"""``block`` when a residual needs reasoning (a PostToolBatch hook surfaces it), else ``continue``."""
+	residual_class: Literal["green", "needs_reasoning"]
+	diagnostics: tuple[AgentEnvelope, ...] | None = None
+	"""The failing leaves as AgentJSON envelopes (failures-only); null when the checks pass."""
+	budget: BudgetReport | None = None
+	"""How ``under`` partitioned the checks, when a budget was given."""
+	rerun: GateRerun
+	"""The invocation that produced this verdict — the handle to re-gate the same scope."""
+
+
+def gate_input_schema(task_names: tuple[str, ...]) -> dict[str, Any]:
+	"""``GateRequest``'s JSON Schema with the live task-name ``enum`` spliced into ``task``.
+
+	>>> schema = gate_input_schema(("lint", "test"))
+	>>> next(b["enum"] for b in schema["properties"]["task"]["anyOf"] if b.get("type") == "string")
+	['lint', 'test']
+	>>> schema["additionalProperties"]
+	False
+	"""
+	schema: dict[str, Any] = GateRequest.model_json_schema()
 	for branch in schema["properties"]["task"]["anyOf"]:
 		if branch.get("type") == "string":
 			branch["enum"] = list(task_names)

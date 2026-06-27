@@ -230,6 +230,8 @@ def build_parser(state: TasksState = EMPTY_STATE) -> argparse.ArgumentParser:
 	True
 	>>> "task | expression" in build_parser(LoadOk({"all": Task("x")}, None, {})).format_usage()
 	True
+	>>> build_parser().parse_args(["fix", "--paths", "a.py", "--paths", "b.py"]).paths
+	['a.py', 'b.py']
 	"""
 	tasks_for_metavar: Mapping[str, TaskNode] = state.tasks if isinstance(state, LoadOk) else {}
 	config: Final = (
@@ -313,6 +315,15 @@ def build_parser(state: TasksState = EMPTY_STATE) -> argparse.ArgumentParser:
 		"parallel; untimed leaves are skipped. Operates on the named task, or the "
 		"Config default when none is given",
 	)
+	parser.add_argument(
+		"--paths",
+		action="append",
+		default=None,
+		metavar="PATH[,PATH...]",
+		help="scope the run to these changed paths (repeatable): inject them into each "
+		"leaf's {paths} and drop leaves that match none, e.g. camas check --paths src/a.py. "
+		"A FileChanged hook drives the agent fix node this way via camas mcp fix --paths <file>",
+	)
 	return parser
 
 
@@ -329,6 +340,7 @@ RESERVED_FLAGS: Final = frozenset(
 		"matrix",
 		"jobs",
 		"under",
+		"paths",
 	}
 )
 

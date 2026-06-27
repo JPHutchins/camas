@@ -1,0 +1,5 @@
+{
+  "name": "camas",
+  "description": "The camas gate: applies the deterministic fixes for free after each change, and surfaces only the residual that needs reasoning.",
+  "version": "0.1.0"
+}
