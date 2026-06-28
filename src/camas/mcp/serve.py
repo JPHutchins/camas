@@ -938,6 +938,7 @@ class GateArgs(NamedTuple):
 	paths: tuple[str, ...]
 	under: float | None
 	jobs: int | None
+	dry_run: bool = False
 
 
 def parse_gate_args(argv: list[str]) -> GateArgs:
@@ -959,8 +960,14 @@ def parse_gate_args(argv: list[str]) -> GateArgs:
 		"--under", type=float, default=None, metavar="SECONDS", help="wall-clock budget"
 	)
 	parser.add_argument("--jobs", type=int, default=None, metavar="N", help="max concurrent leaves")
+	parser.add_argument(
+		"--dry-run",
+		action="store_true",
+		default=False,
+		help="print the resolved path-scoped leaf plan without executing",
+	)
 	ns = parser.parse_args(argv)
-	return GateArgs(task=ns.task, paths=tuple(ns.paths), under=ns.under, jobs=ns.jobs)
+	return GateArgs(task=ns.task, paths=tuple(ns.paths), under=ns.under, jobs=ns.jobs, dry_run=ns.dry_run)
 
 
 def _event_get(obj: object, key: str) -> object:
