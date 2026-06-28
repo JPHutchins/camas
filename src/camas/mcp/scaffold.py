@@ -126,7 +126,7 @@ def write_hooks(argv: list[str]) -> int:
 			"hooks": [
 				{
 					"type": "command",
-					"command": f"{launcher} mcp fix --paths ${{file_path}}",
+					"command": f"{launcher} fix --paths ${{file_path}}",
 				}
 			]
 		}
@@ -137,16 +137,17 @@ def write_hooks(argv: list[str]) -> int:
 			"hooks": [
 				{
 					"type": "command",
-					"command": f"{launcher} mcp gate",
+					"command": f"{launcher} gate",
 				}
 			],
 		}
 	]
+	settings_path.parent.mkdir(parents=True, exist_ok=True)
 	settings_path.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
 	print(
 		f"Wrote camas hooks to {settings_path}\n"
-		f"  FileChanged:    {launcher} mcp fix --paths ${{file_path}}\n"
-		f"  PostToolBatch:  {launcher} mcp gate\n"
+		f"  FileChanged:    {launcher} fix --paths ${{file_path}}\n"
+		f"  PostToolBatch:  {launcher} gate\n"
 		f"\nReload Claude Code for hooks to take effect."
 	)
 	return 0
