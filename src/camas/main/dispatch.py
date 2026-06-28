@@ -22,7 +22,7 @@ from ..core import timings
 from ..core.budget import plan_under
 from ..core.execution import run
 from ..core.matrix import expand_matrix, matrix_axes, override_matrix
-from ..core.render import print_tree
+from ..core.render import print_tree, render_tree_lines
 from ..core.scope import scope_to_changed, to_changed, with_default_paths
 from ..core.task import task_label
 from ..v0.config import Config
@@ -153,6 +153,12 @@ def fix_cli(argv: list[str]) -> int:
 		metavar="PATH",
 		help="changed path to scope to (repeatable)",
 	)
+	parser.add_argument(
+		"--dry-run",
+		action="store_true",
+		default=False,
+		help="print the resolved path-scoped leaf plan without executing",
+	)
 	args = parser.parse_args(argv)
 	state, _ = resolve_tasks_source([])
 	if not isinstance(state, LoadOk) or state.config is None:
@@ -164,6 +170,13 @@ def fix_cli(argv: list[str]) -> int:
 	changed = to_changed(args.paths, base)
 	expanded = expand_matrix(node)
 	scoped = scope_to_changed(expanded, changed) if changed else with_default_paths(expanded)
+	if args.dry_run:
+		if scoped is None:
+			print("No leaves cover the changed paths — nothing would run.")
+		else:
+			plan = "\n".join(render_tree_lines(scoped, show_cmd=True, color=False))
+			print(f"Dry run — resolved path-scoped plan, nothing executed:\n{plan}")
+		return 0
 	if scoped is None:
 		return 0
 	return finish_run(asyncio.run(run(scoped, effects=(), jobs=None)))
