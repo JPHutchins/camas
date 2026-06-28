@@ -336,6 +336,28 @@ def test_fix_cli_noop_when_scope_covers_nothing(
 	assert not (tmp_path / "fixed.txt").exists()
 
 
+def test_fix_cli_dry_run_shows_plan(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	(tmp_path / "tasks.py").write_text(_TIDY.format(scope="."))
+	monkeypatch.chdir(tmp_path)
+	assert fix_cli(["--paths", "x.py", "--dry-run"]) == 0
+	out = capsys.readouterr().out
+	assert "Dry run" in out
+	assert not (tmp_path / "fixed.txt").exists()
+
+
+def test_fix_cli_dry_run_no_match(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	(tmp_path / "tasks.py").write_text(_TIDY.format(scope="src"))
+	monkeypatch.chdir(tmp_path)
+	assert fix_cli(["--paths", "docs/readme.md", "--dry-run"]) == 0
+	out = capsys.readouterr().out
+	assert "No leaves cover" in out
+	assert "nothing would run" in out
+
+
 def test_dispatch_paths_scopes_to_changed(capsys: pytest.CaptureFixture[str]) -> None:
 	task = Task("ruff check {paths}", name="lint", paths=".")
 	with pytest.raises(SystemExit, match="0"):

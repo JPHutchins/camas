@@ -169,3 +169,30 @@ def test_changed_from_stdin_dict_without_tool_calls(monkeypatch: pytest.MonkeyPa
 def test_changed_from_stdin_non_dict_event(monkeypatch: pytest.MonkeyPatch) -> None:
 	monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps([1, 2])))
 	assert serve.changed_from_stdin() == ()
+
+
+def test_gate_cli_dry_run_shows_plan(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	_chdir_project(tmp_path, monkeypatch, "FIXME")
+	(tmp_path / "sample.py").write_text("ok = 1\n")
+	assert serve.gate_cli(["--paths", "sample.py", "--dry-run"]) == 0
+	out = capsys.readouterr().out
+	assert "Dry run" in out
+	assert "check" in out
+
+
+def test_gate_cli_dry_run_no_match(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+	monkeypatch.chdir(tmp_path)
+	(tmp_path / "tasks.py").write_text(
+		"from camas import Config, Task\n"
+		'check = Task("echo scope-miss", name="check", paths="src")\n'
+		"_ = Config(default_task=check)\n"
+	)
+	assert serve.gate_cli(["--paths", "unrelated.txt", "--dry-run"]) == 0
+	out = capsys.readouterr().out
+	assert "No leaves cover" in out
+	assert "nothing would run" in out
