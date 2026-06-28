@@ -164,7 +164,8 @@ class RunRequest(BaseModel):
 	task: str | None = Field(
 		default=None,
 		description="Task name to run — one of the names returned by camas_list. May be "
-		"omitted only with 'under', which then budgets the project's default task.",
+		"omitted with 'under' (budgets the default task) or with 'dry_run' (previews "
+		"the default task).",
 	)
 	under: float | None = Field(
 		default=None,
