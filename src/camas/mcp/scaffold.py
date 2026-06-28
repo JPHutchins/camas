@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 import shutil
 import sys
 from pathlib import Path
@@ -15,6 +16,7 @@ from ..core.timings import ensure_camas_dir
 from ..v0.config import DEFAULT_CAMAS_DIR
 
 SERVER_NAME: Final = "camas"
+SETTINGS_PATH: Final = Path(".claude/settings.json")
 
 
 def write_mcp_json(argv: list[str]) -> int:
@@ -80,9 +82,71 @@ def portability_note(command: str) -> str:
 
 
 def parse_json_object(path: Path) -> dict[str, Any] | None:
-	"""Parse an existing ``.mcp.json`` as a JSON object; ``None`` if unreadable or not one."""
+	"""Parse an existing JSON file as a JSON object; ``None`` if unreadable or not one."""
 	try:
 		loaded: object = json.loads(path.read_text(encoding="utf-8"))
 	except (OSError, json.JSONDecodeError):
 		return None
 	return cast("dict[str, Any]", loaded) if isinstance(loaded, dict) else None
+
+
+def launch_command_str(*, rich: bool) -> str | None:
+	"""The most portable launch command as a single shell string, or ``None``."""
+	pair = launch_command(rich=rich)
+	if pair is None:
+		return None
+	cmd, args = pair
+	return shlex.join((cmd, *args))
+
+
+def write_hooks(argv: list[str]) -> int:
+	"""Write ``FileChanged`` / ``PostToolBatch`` hook entries into ``.claude/settings.json``
+	using the same ``launch_command()`` resolution as the MCP server entry.
+	"""
+	settings_path = Path.cwd() / SETTINGS_PATH
+	existing = parse_json_object(settings_path) if settings_path.exists() else {}
+	if existing is None:
+		print(f"error: {settings_path} is not a readable JSON object", file=sys.stderr)
+		return 2
+	launcher = launch_command_str(rich="--rich" in argv)
+	if launcher is None:
+		print(
+			f"error: cannot write portable hooks — no uv.lock found and camas is not "
+			"on PATH.\n  Add camas to a uv project (uv add camas) or install it on PATH, "
+			"then retry.",
+			file=sys.stderr,
+		)
+		return 2
+	hooks = existing.setdefault("hooks", {})
+	if not isinstance(hooks, dict):
+		print(f"error: {settings_path} has a non-object 'hooks'", file=sys.stderr)
+		return 2
+	hooks["FileChanged"] = [
+		{
+			"hooks": [
+				{
+					"type": "command",
+					"command": f"{launcher} mcp fix --paths ${{file_path}}",
+				}
+			]
+		}
+	]
+	hooks["PostToolBatch"] = [
+		{
+			"matcher": "Edit|Write|MultiEdit|NotebookEdit",
+			"hooks": [
+				{
+					"type": "command",
+					"command": f"{launcher} mcp gate",
+				}
+			],
+		}
+	]
+	settings_path.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
+	print(
+		f"Wrote camas hooks to {settings_path}\n"
+		f"  FileChanged:    {launcher} mcp fix --paths ${{file_path}}\n"
+		f"  PostToolBatch:  {launcher} mcp gate\n"
+		f"\nReload Claude Code for hooks to take effect."
+	)
+	return 0
