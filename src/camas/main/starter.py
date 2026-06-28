@@ -52,12 +52,30 @@ ci = Sequential(
 # free. Replace the placeholder with your real fixers, e.g.:
 #   autofix = Task("ruff check --fix {paths}", mutates=True, paths=".")
 #   autofix = Parallel(Task("ruff format {paths}", mutates=True), Task("ruff check --fix {paths}", mutates=True), paths=".")
+#
+# Mark mutating leaves mutates=True so --under runs them first in sequence (fast inner loop).
+# paths= lets {paths} be injected with the changed file — the scope the FileChanged hook passes.
 autofix = Task('python -c "" {paths}', name="autofix", mutates=True, paths=".")
+
+# AgentFormat appends structured-output flags when the GATE runs a leaf — the agent reads
+# machine-readable diagnostics (sarif, junit, etc.) instead of scraped text. A human
+# `camas lint` never sees these extra flags, so the cmd shown in --list stays clean.
+#   from camas.v0.task import AgentFormat
+#   lint = Task("ruff check .", agent_format=AgentFormat("--output-format sarif", "sarif"))
 
 # Config is discovered by type, under any binding name (here `_`): bare `camas` runs
 # default_task — or github_task under GitHub Actions, falling back to default_task when unset.
-# agent= wires the Claude Code plugin: agent.fix is the registered FileChanged autofix node
-# above; the gate checks default_task (override with Claude(fix=..., check=...)).
+#
+# agent= wires the Claude Code plugin's two-hook gate:
+#   fix:   the deterministic autofix node above — the FileChanged hook runs it on every edit
+#          (`camas mcp fix --paths <file>`). Declared explicitly, never derived from mutates=
+#          (a mutating leaf may be codegen, not a fixer).
+#   check: the node the PostToolBatch gate checks (`camas mcp gate`). None (the default)
+#          defers to default_task; set it to a different node for a faster gate subset.
+#
+# The gate scopes check leaves to the changed paths, appends their agent_format args (if any),
+# time-boxes by --under, and classifies the residual green vs needs_reasoning. The gate never
+# mutates — all mutation lives in the fix node on FileChanged.
 _ = Config(default_task=ci, agent=Claude(fix=autofix))
 
 # The PEP 723 standalone flow (see the docstring): running this file directly

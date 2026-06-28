@@ -329,6 +329,39 @@ https://github.com/JPHutchins/camas/blob/main/tests
 
 Effect protocol: subclass ``Effect`` (see ``examples/effect-plugin/``). Per-task
 help: ``camas <task> --help``.
+
+**Agent integration** (the camas Claude Code plugin)::
+
+    from camas import Claude, Config
+    from camas.v0.task import AgentFormat
+
+    # The deterministic, behavior-preserving autofix node the FileChanged
+    # hook runs on every edit (scoped, zero tokens). Mutates=True so
+    # --under runs it first; paths= so it scopes to the changed file.
+    autofix = Parallel(
+        Task("ruff format {paths}", mutates=True, paths="."),
+        Task("ruff check --fix {paths}", mutates=True, paths="."),
+    )
+
+    # The check node the PostToolBatch gate runs. When a leaf carries
+    # agent_format=, the gate appends those flags (machine-readable output
+    # like sarif or junit) so the agent gets structured diagnostics; a
+    # human ``camas lint`` never sees these extra flags.
+    checks = Parallel(
+        Task("ruff check .",
+             agent_format=AgentFormat("--output-format sarif", "sarif")),
+        Task("pytest",
+             agent_format=AgentFormat("--junitxml=-", "junit")),
+    )
+
+    _ = Config(default_task=checks, agent=Claude(fix=autofix))
+    # agent.check defaults to default_task; set explicitly to gate a
+    # different node: agent=Claude(fix=autofix, check=fast_checks)
+
+The plugin's ``FileChanged`` hook runs ``camas mcp fix --paths <file>`` on
+every edit. ``PostToolBatch`` runs ``camas mcp gate`` after tool batches,
+scoping the check node to the changed files and time-boxing by ``--under``.
+The gate is read-only (it never mutates); the fixers do all mutation.
 """
 
 import typing
