@@ -19,23 +19,26 @@ def test_plugin_manifest_is_named_camas() -> None:
 	assert json.loads((_PLUGIN / ".claude-plugin" / "plugin.json").read_text())["name"] == "camas"
 
 
-def test_bundled_mcp_server_launches_camas_mcp() -> None:
+def test_bundled_mcp_server_is_a_portable_stdio_entry() -> None:
 	server = json.loads((_PLUGIN / ".mcp.json").read_text())["mcpServers"]["camas"]
-	assert (server["command"], server["args"]) == ("camas", ["mcp"])
+	assert server["type"] == "stdio"
+	assert server["command"] in ("camas", "uvx", "uv")
+	assert "mcp" in server["args"]
 
 
-def test_gate_hook_runs_camas_mcp_gate() -> None:
+def test_gate_hook_runs_mcp_gate() -> None:
 	hooks = json.loads((_PLUGIN / "hooks" / "hooks.json").read_text())["hooks"]
 	hook = hooks["PostToolBatch"][0]["hooks"][0]
 	assert hook["type"] == "command"
-	assert "camas mcp gate" in hook["command"]
+	assert "mcp gate" in hook["command"]
 
 
-def test_filechanged_hook_runs_the_deterministic_autofix() -> None:
+def test_filechanged_hook_runs_mcp_fix() -> None:
 	hooks = json.loads((_PLUGIN / "hooks" / "hooks.json").read_text())["hooks"]
 	fc = hooks["FileChanged"][0]["hooks"][0]
 	assert fc["type"] == "command"
-	assert "camas mcp fix" in fc["command"]
+	assert "mcp fix" in fc["command"]
+	assert "${file_path}" in fc["command"]
 
 
 def test_marketplace_points_at_the_shipped_plugin() -> None:
