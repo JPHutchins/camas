@@ -5,18 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "camas mcp fix --paths ${file_path}"
-          }
-        ]
-      }
-    ],
-    "PostToolBatch": [
-      {
-        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "camas mcp gate"
+            "command": "uvx camas[all] mcp fix --paths ${file_path}"
           }
         ]
       }
