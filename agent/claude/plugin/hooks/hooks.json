@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uvx camas[all] mcp fix --paths ${file_path}"
+            "command": "camas mcp fix --paths ${file_path}"
           }
         ]
       }
