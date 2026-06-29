@@ -278,6 +278,25 @@ async def test_run_call_dry_run_names_anonymous_leaf_by_command(tmp_path: Path) 
 	assert result.structuredContent["leaves"][0]["cwd"] == "work"
 
 
+async def test_run_call_dry_run_no_task_previews_default(tmp_path: Path) -> None:
+	"""camas_run(dry_run=true) with no task resolves and previews the default task."""
+	default_task = Task(("python", "-c", "print('default')"), name="ci")
+	config = Config(default_task=default_task)
+	session = _session({"ci": default_task}, config, tmp_path)
+	result = await serve.run_call(session, {"dry_run": True})
+	assert result.isError is False
+	assert "fully-resolved plan" in _text(result)
+
+
+async def test_run_call_dry_run_no_task_no_default_errors(tmp_path: Path) -> None:
+	"""camas_run(dry_run=true) with no task and no config default still errors."""
+	config = Config()  # no default_task
+	session = _session({"ci": PASS}, config, tmp_path)
+	result = await serve.run_call(session, {"dry_run": True})
+	assert result.isError is True
+	assert "requires 'task'" in _text(result)
+
+
 async def test_run_call_log_path_in_structured_content_when_rich(tmp_path: Path) -> None:
 	session = _session({"bad": FAIL}, None, tmp_path, rich=True)
 	result = await serve.run_call(session, {"task": "bad"})

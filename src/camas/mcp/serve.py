@@ -421,7 +421,7 @@ async def run_for(
 	if req.under is not None:
 		return await run_budget(session, tasks, config, req, req.under)
 	try:
-		name, node = resolve_run_node(tasks, req)
+		name, node = resolve_run_node(tasks, req, config)
 	except ValueError as e:
 		return error_result(str(e))
 	if req.dry_run:
@@ -435,16 +435,25 @@ async def run_for(
 	)
 
 
-def resolve_run_node(tasks: Mapping[str, TaskNode], req: wire.RunRequest) -> tuple[str, TaskNode]:
+def resolve_run_node(
+	tasks: Mapping[str, TaskNode], req: wire.RunRequest, config: Config | None = None
+) -> tuple[str, TaskNode]:
 	"""The ``(name, node)`` to run: looked up by name, then matrix-overridden and
 	passthrough-appended.
 
+	When ``dry_run=true`` and ``task`` is omitted, resolves the project's default task
+	so a bare dry-run previews it without erroring.
+
 	Raises:
-		ValueError: when ``req.task`` is omitted (only ``under`` may omit it), names no
-			task, an override targets an unknown matrix axis, or passthrough args are
-			applied to a non-leaf task.
+		ValueError: when ``req.task`` is omitted outside a dry-run, names no task, an
+			override targets an unknown matrix axis, or passthrough args are applied to
+			a non-leaf task.
 	"""
 	if req.task is None:
+		if req.dry_run and config is not None:
+			default = config.gate_check(github=False)
+			if default is not None:
+				return "default task", default
 		raise ValueError("camas_run requires 'task' (or pass 'under' to budget the default task)")
 	if req.task not in tasks:
 		known = ", ".join(sorted(tasks)) or "none"
