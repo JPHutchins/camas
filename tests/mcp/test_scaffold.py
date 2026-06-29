@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from camas.mcp.scaffold import write_mcp_json
+from camas.mcp.scaffold import launch_command_str, write_hooks, write_mcp_json
 
 if TYPE_CHECKING:
 	from collections.abc import Callable
@@ -149,3 +149,111 @@ def test_mcp_unexpected_arg_errors(capsys: pytest.CaptureFixture[str]) -> None:
 		main(["serve"])
 	assert exc.value.code == 2
 	assert "unexpected argument" in capsys.readouterr().err
+
+
+def test_launch_command_str_uv_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+	monkeypatch.chdir(tmp_path)
+	(tmp_path / "uv.lock").write_text("")
+	monkeypatch.setattr("shutil.which", _which("uv", "camas"))
+	assert launch_command_str(rich=False) == "uv run camas mcp"
+
+
+def test_launch_command_str_camas_on_path(monkeypatch: pytest.MonkeyPatch) -> None:
+	monkeypatch.setattr("shutil.which", _which("camas"))
+	assert launch_command_str(rich=False) == "camas mcp"
+
+
+def test_launch_command_str_rich(monkeypatch: pytest.MonkeyPatch) -> None:
+	monkeypatch.setattr("shutil.which", _which("camas"))
+	assert launch_command_str(rich=True) == "camas mcp --rich"
+
+
+def test_launch_command_str_none_when_no_launcher(monkeypatch: pytest.MonkeyPatch) -> None:
+	monkeypatch.setattr("shutil.which", _which())
+	assert launch_command_str(rich=False) is None
+
+
+def test_write_hooks_writes_settings_json(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	monkeypatch.chdir(tmp_path)
+	monkeypatch.setattr("shutil.which", _which("camas"))
+	assert write_hooks([]) == 0
+	settings = json.loads((tmp_path / ".claude" / "settings.json").read_text())
+	file_changed = settings["hooks"]["FileChanged"][0]["hooks"][0]
+	assert file_changed["type"] == "command"
+	assert file_changed["command"] == "camas mcp fix --paths ${file_path}"
+	post_tool = settings["hooks"]["PostToolBatch"][0]["hooks"][0]
+	assert post_tool["type"] == "command"
+	assert post_tool["command"] == "camas mcp gate"
+	assert "Wrote camas hooks" in capsys.readouterr().out
+
+
+def test_write_hooks_errors_when_no_launcher(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	monkeypatch.chdir(tmp_path)
+	monkeypatch.setattr("shutil.which", _which())
+	assert write_hooks([]) == 2
+	err = capsys.readouterr().err
+	assert "not on PATH" in err
+	assert "uv add camas" in err
+	assert not (tmp_path / ".claude" / "settings.json").exists()
+
+
+def test_write_hooks_errors_on_malformed_settings(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	monkeypatch.chdir(tmp_path)
+	monkeypatch.setattr("shutil.which", _which("camas"))
+	(tmp_path / ".claude").mkdir(parents=True)
+	(tmp_path / ".claude" / "settings.json").write_bytes(b"\x00not json")
+	assert write_hooks([]) == 2
+
+
+def test_write_hooks_errors_on_non_object_root(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	monkeypatch.chdir(tmp_path)
+	monkeypatch.setattr("shutil.which", _which("camas"))
+	(tmp_path / ".claude").mkdir(parents=True)
+	(tmp_path / ".claude" / "settings.json").write_text("[]")
+	assert write_hooks([]) == 2
+
+
+def test_write_hooks_errors_on_non_object_hooks(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	monkeypatch.chdir(tmp_path)
+	monkeypatch.setattr("shutil.which", _which("camas"))
+	(tmp_path / ".claude").mkdir(parents=True)
+	(tmp_path / ".claude" / "settings.json").write_text(json.dumps({"hooks": "not an object"}))
+	assert write_hooks([]) == 2
+
+
+def test_write_hooks_merges_existing_settings(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	monkeypatch.chdir(tmp_path)
+	monkeypatch.setattr("shutil.which", _which("camas"))
+	(tmp_path / ".claude").mkdir(parents=True)
+	(tmp_path / ".claude" / "settings.json").write_text(
+		json.dumps({"other_key": "value", "hooks": {}})
+	)
+	assert write_hooks([]) == 0
+	settings = json.loads((tmp_path / ".claude" / "settings.json").read_text())
+	assert settings["other_key"] == "value"
+	assert "FileChanged" in settings["hooks"]
+
+
+def test_mcp_cli_init_hooks_routes_to_write_hooks(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	from camas.mcp.cli import main
+
+	monkeypatch.chdir(tmp_path)
+	monkeypatch.setattr("shutil.which", _which("camas"))
+	with pytest.raises(SystemExit) as exc:
+		main(["init", "--hooks"])
+	assert exc.value.code == 0
+	assert (tmp_path / ".claude" / "settings.json").exists()

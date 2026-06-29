@@ -6,15 +6,45 @@
 from __future__ import annotations
 
 import json
+import shlex
 import shutil
 import sys
 from pathlib import Path
-from typing import Any, Final, cast
+from typing import Any, Final, Literal, cast
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from ..core.timings import ensure_camas_dir
 from ..v0.config import DEFAULT_CAMAS_DIR
 
 SERVER_NAME: Final = "camas"
+SETTINGS_PATH: Final = Path(".claude/settings.json")
+
+
+class HookCommand(BaseModel):
+	"""A single hook command entry in ``.claude/settings.json``."""
+
+	model_config = ConfigDict(extra="forbid")
+
+	type: Literal["command"]
+	command: str
+
+
+class HookGroup(BaseModel):
+	"""A group of hooks that fire on the same event, with an optional matcher."""
+
+	model_config = ConfigDict(extra="forbid")
+
+	hooks: list[HookCommand]
+	matcher: str | None = None
+
+
+class SettingsFile(BaseModel):
+	"""A ``.claude/settings.json`` file — validated, with extra fields preserved."""
+
+	model_config = ConfigDict(extra="allow")
+
+	hooks: dict[str, list[HookGroup]] = Field(default_factory=dict)
 
 
 def write_mcp_json(argv: list[str]) -> int:
@@ -80,9 +110,79 @@ def portability_note(command: str) -> str:
 
 
 def parse_json_object(path: Path) -> dict[str, Any] | None:
-	"""Parse an existing ``.mcp.json`` as a JSON object; ``None`` if unreadable or not one."""
+	"""Parse an existing JSON file as a JSON object; ``None`` if unreadable or not one."""
 	try:
 		loaded: object = json.loads(path.read_text(encoding="utf-8"))
 	except (OSError, json.JSONDecodeError):
 		return None
 	return cast("dict[str, Any]", loaded) if isinstance(loaded, dict) else None
+
+
+def launch_command_str(*, rich: bool) -> str | None:
+	"""The most portable launch command as a single shell string, or ``None``."""
+	pair = launch_command(rich=rich)
+	if pair is None:
+		return None
+	cmd, args = pair
+	return shlex.join((cmd, *args))
+
+
+def write_hooks(argv: list[str]) -> int:
+	"""Write ``FileChanged`` / ``PostToolBatch`` hook entries into ``.claude/settings.json``
+	using the same ``launch_command()`` resolution as the MCP server entry.
+	"""
+	settings_path = Path.cwd() / SETTINGS_PATH
+	try:
+		raw: object = json.loads(settings_path.read_text(encoding="utf-8"))
+	except OSError:
+		raw = {}
+	except json.JSONDecodeError:
+		print(f"error: {settings_path} is not valid JSON", file=sys.stderr)
+		return 2
+	if not isinstance(raw, dict):
+		print(f"error: {settings_path} is not a JSON object", file=sys.stderr)
+		return 2
+	try:
+		settings = SettingsFile.model_validate(raw)
+	except Exception as e:
+		print(f"error: {settings_path}: {e}", file=sys.stderr)
+		return 2
+	launcher = launch_command_str(rich="--rich" in argv)
+	if launcher is None:
+		print(
+			"error: cannot write portable hooks — no uv.lock found and camas is not "
+			"on PATH.\n  Add camas to a uv project (uv add camas) or install it on PATH, "
+			"then retry.",
+			file=sys.stderr,
+		)
+		return 2
+	settings.hooks["FileChanged"] = [
+		HookGroup(
+			hooks=[
+				HookCommand(
+					type="command",
+					command=f"{launcher} fix --paths ${{file_path}}",
+				)
+			]
+		)
+	]
+	settings.hooks["PostToolBatch"] = [
+		HookGroup(
+			matcher="Edit|Write|MultiEdit|NotebookEdit",
+			hooks=[
+				HookCommand(
+					type="command",
+					command=f"{launcher} gate",
+				)
+			],
+		)
+	]
+	settings_path.parent.mkdir(parents=True, exist_ok=True)
+	settings_path.write_text(settings.model_dump_json(indent=2) + "\n", encoding="utf-8")
+	print(
+		f"Wrote camas hooks to {settings_path}\n"
+		f"  FileChanged:    {launcher} fix --paths ${{file_path}}\n"
+		f"  PostToolBatch:  {launcher} gate\n"
+		f"\nReload Claude Code for hooks to take effect."
+	)
+	return 0
