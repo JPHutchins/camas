@@ -10,13 +10,41 @@ import shlex
 import shutil
 import sys
 from pathlib import Path
-from typing import Any, Final, cast
+from typing import Any, Final, Literal, cast
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from ..core.timings import ensure_camas_dir
 from ..v0.config import DEFAULT_CAMAS_DIR
 
 SERVER_NAME: Final = "camas"
 SETTINGS_PATH: Final = Path(".claude/settings.json")
+
+
+class HookCommand(BaseModel):
+	"""A single hook command entry in ``.claude/settings.json``."""
+
+	model_config = ConfigDict(extra="forbid")
+
+	type: Literal["command"]
+	command: str
+
+
+class HookGroup(BaseModel):
+	"""A group of hooks that fire on the same event, with an optional matcher."""
+
+	model_config = ConfigDict(extra="forbid")
+
+	hooks: list[HookCommand]
+	matcher: str | None = None
+
+
+class SettingsFile(BaseModel):
+	"""A ``.claude/settings.json`` file — validated, with extra fields preserved."""
+
+	model_config = ConfigDict(extra="allow")
+
+	hooks: dict[str, list[HookGroup]] = Field(default_factory=dict)
 
 
 def write_mcp_json(argv: list[str]) -> int:
@@ -104,46 +132,53 @@ def write_hooks(argv: list[str]) -> int:
 	using the same ``launch_command()`` resolution as the MCP server entry.
 	"""
 	settings_path = Path.cwd() / SETTINGS_PATH
-	existing = parse_json_object(settings_path) if settings_path.exists() else {}
-	if existing is None:
-		print(f"error: {settings_path} is not a readable JSON object", file=sys.stderr)
+	try:
+		raw: object = json.loads(settings_path.read_text(encoding="utf-8"))
+	except OSError:
+		raw = {}
+	except json.JSONDecodeError:
+		print(f"error: {settings_path} is not valid JSON", file=sys.stderr)
+		return 2
+	if not isinstance(raw, dict):
+		print(f"error: {settings_path} is not a JSON object", file=sys.stderr)
+		return 2
+	try:
+		settings = SettingsFile.model_validate(raw)
+	except Exception as e:
+		print(f"error: {settings_path}: {e}", file=sys.stderr)
 		return 2
 	launcher = launch_command_str(rich="--rich" in argv)
 	if launcher is None:
 		print(
-			f"error: cannot write portable hooks — no uv.lock found and camas is not "
+			"error: cannot write portable hooks — no uv.lock found and camas is not "
 			"on PATH.\n  Add camas to a uv project (uv add camas) or install it on PATH, "
 			"then retry.",
 			file=sys.stderr,
 		)
 		return 2
-	hooks = existing.setdefault("hooks", {})
-	if not isinstance(hooks, dict):
-		print(f"error: {settings_path} has a non-object 'hooks'", file=sys.stderr)
-		return 2
-	hooks["FileChanged"] = [
-		{
-			"hooks": [
-				{
-					"type": "command",
-					"command": f"{launcher} fix --paths ${{file_path}}",
-				}
+	settings.hooks["FileChanged"] = [
+		HookGroup(
+			hooks=[
+				HookCommand(
+					type="command",
+					command=f"{launcher} fix --paths ${{file_path}}",
+				)
 			]
-		}
+		)
 	]
-	hooks["PostToolBatch"] = [
-		{
-			"matcher": "Edit|Write|MultiEdit|NotebookEdit",
-			"hooks": [
-				{
-					"type": "command",
-					"command": f"{launcher} gate",
-				}
+	settings.hooks["PostToolBatch"] = [
+		HookGroup(
+			matcher="Edit|Write|MultiEdit|NotebookEdit",
+			hooks=[
+				HookCommand(
+					type="command",
+					command=f"{launcher} gate",
+				)
 			],
-		}
+		)
 	]
 	settings_path.parent.mkdir(parents=True, exist_ok=True)
-	settings_path.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
+	settings_path.write_text(settings.model_dump_json(indent=2) + "\n", encoding="utf-8")
 	print(
 		f"Wrote camas hooks to {settings_path}\n"
 		f"  FileChanged:    {launcher} fix --paths ${{file_path}}\n"

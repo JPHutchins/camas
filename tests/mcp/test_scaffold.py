@@ -211,15 +211,23 @@ def test_write_hooks_errors_on_malformed_settings(
 	assert write_hooks([]) == 2
 
 
+def test_write_hooks_errors_on_non_object_root(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	monkeypatch.chdir(tmp_path)
+	monkeypatch.setattr("shutil.which", _which("camas"))
+	(tmp_path / ".claude").mkdir(parents=True)
+	(tmp_path / ".claude" / "settings.json").write_text("[]")
+	assert write_hooks([]) == 2
+
+
 def test_write_hooks_errors_on_non_object_hooks(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
 	monkeypatch.chdir(tmp_path)
 	monkeypatch.setattr("shutil.which", _which("camas"))
 	(tmp_path / ".claude").mkdir(parents=True)
-	(tmp_path / ".claude" / "settings.json").write_text(
-		json.dumps({"hooks": "not an object"})
-	)
+	(tmp_path / ".claude" / "settings.json").write_text(json.dumps({"hooks": "not an object"}))
 	assert write_hooks([]) == 2
 
 
