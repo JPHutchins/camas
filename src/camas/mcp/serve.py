@@ -967,7 +967,9 @@ def parse_gate_args(argv: list[str]) -> GateArgs:
 		help="print the resolved path-scoped leaf plan without executing",
 	)
 	ns = parser.parse_args(argv)
-	return GateArgs(task=ns.task, paths=tuple(ns.paths), under=ns.under, jobs=ns.jobs, dry_run=ns.dry_run)
+	return GateArgs(
+		task=ns.task, paths=tuple(ns.paths), under=ns.under, jobs=ns.jobs, dry_run=ns.dry_run
+	)
 
 
 def _event_get(obj: object, key: str) -> object:
@@ -1031,9 +1033,7 @@ def run_gate_cli(
 	changed = to_changed(args.paths or changed_from_stdin(), base)
 	if args.dry_run:
 		expanded = expand_matrix(node)
-		scoped = (
-			scope_to_changed(expanded, changed) if changed else with_default_paths(expanded)
-		)
+		scoped = scope_to_changed(expanded, changed) if changed else with_default_paths(expanded)
 		if scoped is None:
 			print("No leaves cover the changed paths — nothing would run.")
 		else:
