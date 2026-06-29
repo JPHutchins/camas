@@ -24,11 +24,9 @@ def test_bundled_mcp_server_launches_camas_mcp() -> None:
 	assert (server["command"], server["args"]) == ("camas", ["mcp"])
 
 
-def test_gate_hook_runs_camas_mcp_gate() -> None:
+def test_post_tool_batch_hook_is_absent() -> None:
 	hooks = json.loads((_PLUGIN / "hooks" / "hooks.json").read_text())["hooks"]
-	hook = hooks["PostToolBatch"][0]["hooks"][0]
-	assert hook["type"] == "command"
-	assert "camas mcp gate" in hook["command"]
+	assert "PostToolBatch" not in hooks
 
 
 def test_filechanged_hook_runs_the_deterministic_autofix() -> None:
