@@ -29,9 +29,9 @@ from ..core import timings
 from ..core.budget import plan_under
 from ..core.execution import run
 from ..core.gate import run_gate
-from ..core.matrix import override_matrix
+from ..core.matrix import expand_matrix, override_matrix
 from ..core.render import render_tree_lines, strip_ansi
-from ..core.scope import to_changed
+from ..core.scope import scope_to_changed, to_changed, with_default_paths
 from ..core.task import task_label
 from ..main.argv import apply_passthrough
 from ..main.format import format_load_error_hint
@@ -947,6 +947,7 @@ class GateArgs(NamedTuple):
 	paths: tuple[str, ...]
 	under: float | None
 	jobs: int | None
+	dry_run: bool = False
 
 
 def parse_gate_args(argv: list[str]) -> GateArgs:
@@ -968,8 +969,16 @@ def parse_gate_args(argv: list[str]) -> GateArgs:
 		"--under", type=float, default=None, metavar="SECONDS", help="wall-clock budget"
 	)
 	parser.add_argument("--jobs", type=int, default=None, metavar="N", help="max concurrent leaves")
+	parser.add_argument(
+		"--dry-run",
+		action="store_true",
+		default=False,
+		help="print the resolved path-scoped leaf plan without executing",
+	)
 	ns = parser.parse_args(argv)
-	return GateArgs(task=ns.task, paths=tuple(ns.paths), under=ns.under, jobs=ns.jobs)
+	return GateArgs(
+		task=ns.task, paths=tuple(ns.paths), under=ns.under, jobs=ns.jobs, dry_run=ns.dry_run
+	)
 
 
 def _event_get(obj: object, key: str) -> object:
@@ -1031,6 +1040,15 @@ def run_gate_cli(
 		print(f"camas mcp gate: {e}", file=sys.stderr)
 		return 2
 	changed = to_changed(args.paths or changed_from_stdin(), base)
+	if args.dry_run:
+		expanded = expand_matrix(node)
+		scoped = scope_to_changed(expanded, changed) if changed else with_default_paths(expanded)
+		if scoped is None:
+			print("No leaves cover the changed paths — nothing would run.")
+		else:
+			plan = "\n".join(render_tree_lines(scoped, show_cmd=True, color=False))
+			print(f"Dry run — resolved path-scoped plan, nothing executed:\n{plan}")
+		return 0
 	camas_dir = (config if config is not None else Config()).camas_path(base)
 	outcome = asyncio.run(
 		run_gate(node, changed, under=args.under, jobs=args.jobs, timings=timings.load(camas_dir))
