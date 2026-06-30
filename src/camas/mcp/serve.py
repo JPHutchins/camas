@@ -349,7 +349,7 @@ def tools(task_names: tuple[str, ...], compat: Compat) -> Tools:
 			compat,
 			name=ToolName.GATE.value,
 			description=textwrap.dedent("""\
-				The SA-delegation gate, for a PostToolBatch hook: scope THIS project's checks to the
+				The SA-delegation gate: scope THIS project's checks to the
 				files just changed, run them, and return a binary verdict. It does not mutate — the
 				deterministic fixers run separately on FileChanged (camas fix). residual_class is
 				'green' (decision 'continue') when the checks pass, or 'needs_reasoning' (decision
@@ -987,7 +987,7 @@ def _event_get(obj: object, key: str) -> object:
 
 
 def changed_from_stdin() -> tuple[str, ...]:
-	"""The edited files in a ``PostToolBatch`` event piped on stdin (the command-hook delivery),
+	"""The edited files in a ``PostToolBatch`` event piped on stdin (e.g. a hand-wired hook),
 	de-duplicated in order; ``()`` when stdin is a tty, empty, or not such an event.
 	"""
 	if sys.stdin.isatty():
@@ -1014,8 +1014,8 @@ def gate_cli(argv: list[str]) -> int:
 	"""Run the gate once, headless: scope this project's checks to the changed paths (``--paths``,
 	else the files in a ``PostToolBatch`` event on stdin), print the ``GateResponse`` as JSON to
 	stdout, and exit ``0`` (continue) / ``2`` (block) — on a block the agent-facing summary goes
-	to stderr. The process-isolated, machine-readable gate entry: the ``PostToolBatch`` command
-	hook, parallel fixers, and the benchmark all drive it.
+	to stderr. The process-isolated, machine-readable gate entry that the camas-fixer subagent
+	(via Bash) and the benchmark drive.
 	"""
 	args = parse_gate_args(argv)
 	base = project_base()

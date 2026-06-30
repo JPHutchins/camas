@@ -128,8 +128,8 @@ def launch_command_str(*, rich: bool) -> str | None:
 
 
 def write_hooks(argv: list[str]) -> int:
-	"""Write ``FileChanged`` / ``PostToolBatch`` hook entries into ``.claude/settings.json``
-	using the same ``launch_command()`` resolution as the MCP server entry.
+	"""Write the ``FileChanged`` autofix hook into ``.claude/settings.json`` using the same
+	``launch_command()`` resolution as the MCP server entry.
 	"""
 	settings_path = Path.cwd() / SETTINGS_PATH
 	try:
@@ -166,23 +166,11 @@ def write_hooks(argv: list[str]) -> int:
 			]
 		)
 	]
-	settings.hooks["PostToolBatch"] = [
-		HookGroup(
-			matcher="Edit|Write|MultiEdit|NotebookEdit",
-			hooks=[
-				HookCommand(
-					type="command",
-					command=f"{launcher} gate",
-				)
-			],
-		)
-	]
 	settings_path.parent.mkdir(parents=True, exist_ok=True)
 	settings_path.write_text(settings.model_dump_json(indent=2) + "\n", encoding="utf-8")
 	print(
-		f"Wrote camas hooks to {settings_path}\n"
+		f"Wrote the camas FileChanged autofix hook to {settings_path}\n"
 		f"  FileChanged:    {launcher} fix --paths ${{file_path}}\n"
-		f"  PostToolBatch:  {launcher} gate\n"
-		f"\nReload Claude Code for hooks to take effect."
+		f"\nReload Claude Code for the hook to take effect."
 	)
 	return 0

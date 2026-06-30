@@ -7,7 +7,7 @@
     {
       "name": "camas",
       "source": "./agent/claude/plugin",
-      "description": "The camas gate \u2014 deterministic autofix on every change, plus residual-only surfacing after each batch."
+      "description": "The camas gate \u2014 deterministic autofix on every change, plus a cheap fixer subagent that drives changed files to green off the main agent's context."
     }
   ]
 }

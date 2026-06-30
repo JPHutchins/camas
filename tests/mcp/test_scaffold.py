@@ -183,10 +183,8 @@ def test_write_hooks_writes_settings_json(
 	file_changed = settings["hooks"]["FileChanged"][0]["hooks"][0]
 	assert file_changed["type"] == "command"
 	assert file_changed["command"] == "camas mcp fix --paths ${file_path}"
-	post_tool = settings["hooks"]["PostToolBatch"][0]["hooks"][0]
-	assert post_tool["type"] == "command"
-	assert post_tool["command"] == "camas mcp gate"
-	assert "Wrote camas hooks" in capsys.readouterr().out
+	assert "PostToolBatch" not in settings["hooks"]
+	assert "FileChanged autofix hook" in capsys.readouterr().out
 
 
 def test_write_hooks_errors_when_no_launcher(
