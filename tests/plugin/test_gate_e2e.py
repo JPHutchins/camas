@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
 """End-to-end gate "sandbox": a real tasks.py in a tmp project, driven through the
-``camas_gate`` MCP tool (what the plugin's PostToolBatch hook calls). The gate is check-only —
+``camas_gate`` MCP tool (what the camas-fixer subagent runs). The gate is check-only —
 it runs the project's check node over the workspace and classifies green vs needs_reasoning,
 and it never mutates. tmp_path is auto-removed."""
 

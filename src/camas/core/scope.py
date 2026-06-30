@@ -43,7 +43,7 @@ def to_changed(raw: Iterable[str], base: Path) -> tuple[str, ...]:
 	"""Normalize externally-supplied changed paths to the repo-relative POSIX form
 	:func:`scope_to_changed` matches: resolve each against ``base`` (a hook's ``${file_path}``
 	is absolute), drop any that fall outside it. The boundary every changed set passes through —
-	the CLI ``--paths``, the gate request, and the ``PostToolBatch`` event all carry raw paths.
+	the CLI ``--paths``, the ``camas_gate`` request, and a hook's files all carry raw paths.
 
 	>>> import tempfile, os
 	>>> d = Path(tempfile.mkdtemp()); _ = (d / "src").mkdir()

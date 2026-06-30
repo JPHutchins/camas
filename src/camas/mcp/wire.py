@@ -225,7 +225,7 @@ class GateRequest(BaseModel):
 
 	paths: list[str] = Field(
 		default_factory=list,
-		description="Changed paths to scope the gate to — a FileChanged/PostToolBatch hook's "
+		description="Changed paths to scope the gate to — the camas-fixer subagent passes the "
 		"edited files. Empty gates the whole task; each leaf's {paths} is injected with the "
 		"files it covers and leaves covering nothing are dropped.",
 	)
@@ -274,7 +274,7 @@ class GateResponse(BaseModel):
 	"""The SA-delegation gate's verdict: how to route the batch, and the residual that decided it."""
 
 	decision: Literal["continue", "block"]
-	"""``block`` when a residual needs reasoning (a PostToolBatch hook surfaces it), else ``continue``."""
+	"""``block`` when a residual needs reasoning, else ``continue`` when the checks pass."""
 	residual_class: Literal["green", "needs_reasoning"]
 	diagnostics: tuple[AgentEnvelope, ...] | None = None
 	"""The failing leaves as AgentJSON envelopes (failures-only); null when the checks pass."""

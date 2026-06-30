@@ -19,8 +19,8 @@ Usage:
   camas mcp fix [--paths P]… run the registered agent fix node (Config.agent.fix) over the
                               changed paths — the FileChanged autofix; no-op if unregistered
   camas mcp gate [task]     run the gate once, headless — print the verdict as JSON, exit
-    [--paths P]… [--under N]  0 (continue) / 2 (block); scope to --paths or a PostToolBatch
-                              event on stdin (the command-hook entry; parallel + benchmark)
+    [--paths P]… [--under N]  0 (continue) / 2 (block); scope to --paths or a piped
+                              PostToolBatch event (the camas-fixer subagent + benchmark)
 
 Options:
   --rich        emit the 2025-11-25 tool fields (title, annotations, outputSchema) and

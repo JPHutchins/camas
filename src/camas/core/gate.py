@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
 """The SA-delegation gate: scope the check node to the changed paths, run the checks, and
-classify the residual ``green`` vs ``needs_reasoning`` for a ``PostToolBatch`` hook. The gate
+classify the residual ``green`` vs ``needs_reasoning``. The gate
 never mutates — the deterministic fixers run separately on ``FileChanged`` (``camas fix``).
 """
 
@@ -51,7 +51,7 @@ class GateOutcome(NamedTuple):
 
 
 def decision_of(residual_class: ResidualClass) -> Decision:
-	"""The ``PostToolBatch`` routing for a class: a surviving residual blocks, else continue.
+	"""The routing for a residual class: a surviving residual blocks, else continue.
 
 	>>> decision_of("green"), decision_of("needs_reasoning")
 	('continue', 'block')
