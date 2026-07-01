@@ -5,19 +5,22 @@ from __future__ import annotations
 
 import json
 import sys
-from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
 from camas import Parallel, Sequential, Task
-from camas.core.effect import Effect
-from camas.core.task import TaskNode
 from camas.main.dispatch import dispatch
 from camas.main.github_matrix import emit, format_matrix_json, to_matrix_object
 from camas.main.parser import RESERVED_DESTS, RESERVED_FLAGS, build_parser
 from camas.main.state import LoadOk
+
+if TYPE_CHECKING:
+	from collections.abc import Mapping
+
+	from camas.v0.effect import Effect
+	from camas.v0.task import TaskNode
 
 jsonschema = pytest.importorskip("jsonschema")
 """Python 3.15 currently cannot install ``jsonschema`` because its transitive

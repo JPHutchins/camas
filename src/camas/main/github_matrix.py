@@ -32,18 +32,21 @@ for pipes — so ``camas matrix --github-matrix`` reads cleanly in a shell
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from typing import TYPE_CHECKING
 
 from ..core.matrix import matrix_axes
-from ..core.task import TaskNode
+
+if TYPE_CHECKING:
+	from collections.abc import Mapping
+
+	from ..v0.task import TaskNode
 
 
 def to_matrix_object(task: TaskNode) -> dict[str, list[str]]:
 	"""Project a task's matrix axes into a GHA-compatible object-of-arrays.
 
-	Raises ``ValueError`` when the task has no matrix axes or any axis has no
-	values — ``--github-matrix`` requires at least one cell to emit a workflow
-	GHA will accept (the schema mandates ``minItems: 1`` on every axis array).
+	Raises:
+		ValueError: when the task has no matrix axes, or any axis has no values.
 
 	>>> from camas import Parallel, Task
 	>>> to_matrix_object(Parallel(Task("test"), matrix={"PY": ("3.12", "3.13")}))
