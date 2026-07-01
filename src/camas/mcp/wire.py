@@ -141,6 +141,20 @@ class DocsResponse(BaseModel):
 	"""The package ``__init__.py`` docstring: a worked, doctested authoring tutorial."""
 
 
+class InitResponse(BaseModel):
+	"""Outcome of scaffolding a starter ``tasks.py`` — created fresh, or an existing one left
+	untouched.
+	"""
+
+	status: Literal["created", "exists"]
+	path: str
+	"""The ``tasks.py`` path: the file written, or the existing one left in place."""
+	content: str | None = None
+	"""The scaffolded starter's content when ``status`` is ``created``; ``null`` when a
+	``tasks.py`` already existed.
+	"""
+
+
 class ListRequest(BaseModel):
 	"""Arguments to ``camas_list``."""
 
