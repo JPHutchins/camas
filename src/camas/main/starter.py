@@ -57,7 +57,8 @@ autofix = Task('python -c "" {paths}', name="autofix", mutates=True, paths=".")
 # Config is discovered by type, under any binding name (here `_`): bare `camas` runs
 # default_task — or github_task under GitHub Actions, falling back to default_task when unset.
 # agent= wires the Claude Code plugin: agent.fix is the registered FileChanged autofix node
-# above; the gate checks default_task (override with Claude(fix=..., check=...)).
+# above; the gate checks default_task (override with Claude(fix=..., check=...)). A checking
+# leaf can add agent_format=("--output-format sarif", "sarif") for machine-readable gate output.
 _ = Config(default_task=ci, agent=Claude(fix=autofix))
 
 # The PEP 723 standalone flow (see the docstring): running this file directly
