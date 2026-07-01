@@ -125,7 +125,7 @@ def test_task_names_empty_on_load_error(tmp_path: Path) -> None:
 
 
 def test_tools_default_omits_rich_fields() -> None:
-	tool_list, tool_run, tool_check, tool_docs, tool_gate = serve.tools(
+	tool_list, tool_run, tool_check, tool_docs, tool_gate, tool_init = serve.tools(
 		("a", "b"), Compat(emit_structured=False)
 	)
 	assert (tool_list.title, tool_list.outputSchema, tool_list.annotations) == (None, None, None)
@@ -139,10 +139,12 @@ def test_tools_default_omits_rich_fields() -> None:
 	assert tool_list.inputSchema["additionalProperties"] is False
 	assert (tool_gate.title, tool_gate.outputSchema, tool_gate.annotations) == (None, None, None)
 	assert _task_enum(tool_gate.inputSchema) == ["a", "b"]
+	assert (tool_init.title, tool_init.outputSchema, tool_init.annotations) == (None, None, None)
+	assert tool_init.inputSchema == serve.NO_ARGS_SCHEMA
 
 
 def test_tools_rich_includes_title_annotations_and_schema() -> None:
-	tool_list, tool_run, tool_check, tool_docs, tool_gate = serve.tools(
+	tool_list, tool_run, tool_check, tool_docs, tool_gate, tool_init = serve.tools(
 		(), Compat(emit_structured=True)
 	)
 	assert tool_list.title == "List camas tasks"
@@ -165,6 +167,10 @@ def test_tools_rich_includes_title_annotations_and_schema() -> None:
 	assert tool_gate.outputSchema is not None
 	assert tool_gate.annotations is not None
 	assert tool_gate.annotations.readOnlyHint is True
+	assert tool_init.title == "Scaffold a starter tasks.py"
+	assert tool_init.outputSchema is not None
+	assert tool_init.annotations is not None
+	assert tool_init.annotations.readOnlyHint is False
 
 
 def test_list_call_text_lists_tasks_and_markers(tmp_path: Path) -> None:
@@ -853,6 +859,7 @@ async def test_in_memory_round_trip(tmp_path: Path) -> None:
 			"camas_check",
 			"camas_docs",
 			"camas_gate",
+			"camas_init",
 		}
 		catalog = await client.call_tool("camas_list", {})
 		assert "lint" in _text(catalog)

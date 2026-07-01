@@ -35,6 +35,7 @@ from ..core.scope import scope_to_changed, to_changed, with_default_paths
 from ..core.task import task_label
 from ..main.argv import apply_passthrough
 from ..main.format import format_load_error_hint
+from ..main.init import create_starter_tasks_py, starter_text
 from ..main.state import EMPTY_STATE, LoadErr, LoadOk, TasksState
 from ..main.tasks import load_tasks, load_tasks_from_py
 from ..v0.completion import Finished, Skipped, Stopped
@@ -65,6 +66,7 @@ class ToolName(Enum):
 	CHECK = "camas_check"
 	DOCS = "camas_docs"
 	GATE = "camas_gate"
+	INIT = "camas_init"
 
 
 NO_ARGS_SCHEMA: Final[dict[str, Any]] = {
@@ -79,6 +81,9 @@ RUN_ANNOTATIONS: Final = types.ToolAnnotations(
 CHECK_ANNOTATIONS: Final = types.ToolAnnotations(readOnlyHint=True, openWorldHint=False)
 DOCS_ANNOTATIONS: Final = types.ToolAnnotations(readOnlyHint=True, openWorldHint=False)
 GATE_ANNOTATIONS: Final = types.ToolAnnotations(readOnlyHint=True, openWorldHint=False)
+INIT_ANNOTATIONS: Final = types.ToolAnnotations(
+	readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False
+)
 
 
 class Compat(NamedTuple):
@@ -177,7 +182,7 @@ def build_server(session: Session) -> Server[object]:
 			validate the tasks definition after you edit it, and camas_docs for how to
 			author tasks. Call camas_list first; it is the source of truth for task names.
 			If the project has no tasks file yet, scaffold a commented starter with
-			`camas --init` before authoring one by hand.
+			camas_init (the MCP mirror of `camas --init`) before authoring one by hand.
 		""").strip(),
 	)
 
@@ -210,6 +215,8 @@ async def call(session: Session, name: str, arguments: dict[str, Any]) -> types.
 			return docs_call(session)
 		case ToolName.GATE:
 			return await gate_call(session, arguments)
+		case ToolName.INIT:
+			return init_call(session)
 		case _:
 			known = ", ".join(repr(tool.value) for tool in ToolName)
 			return error_result(f"unknown tool {name!r}; expected one of: {known}")
@@ -233,6 +240,7 @@ class Tools(NamedTuple):
 	validation: types.Tool
 	docs: types.Tool
 	gate: types.Tool
+	init: types.Tool
 
 
 def tool_def(
@@ -258,7 +266,7 @@ def tool_def(
 
 
 def tools(task_names: tuple[str, ...], compat: Compat) -> Tools:
-	"""The four tool definitions, with ``task_names`` spliced into ``camas_run``'s ``task`` enum."""
+	"""The six tool definitions, with ``task_names`` spliced into ``camas_run``'s ``task`` enum."""
 	return Tools(
 		discovery=tool_def(
 			compat,
@@ -362,6 +370,25 @@ def tools(task_names: tuple[str, ...], compat: Compat) -> Tools:
 			title="SA-delegation gate",
 			annotations=GATE_ANNOTATIONS,
 		),
+		init=tool_def(
+			compat,
+			name=ToolName.INIT.value,
+			description=textwrap.dedent("""\
+				Scaffold a commented starter tasks.py in THIS project's root when it has none — the
+				MCP mirror of `camas --init`, for driving camas purely over the MCP. Writes the same
+				worked template (leaf tasks, Sequential/Parallel composition, a matrix, a Config
+				default task, and the Claude agent integration) with cross-platform placeholder
+				commands, creates the .camas/ run-log and timing directory beside it, and returns the
+				path plus the file's content so you can edit from there. Refuses to overwrite an
+				existing tasks.py (returns status 'exists', file untouched). The tasks it creates are
+				immediately runnable via camas_run — no restart. Then read camas_docs and validate
+				edits with camas_check.
+			""").strip(),
+			input_schema=NO_ARGS_SCHEMA,
+			output_model=wire.InitResponse,
+			title="Scaffold a starter tasks.py",
+			annotations=INIT_ANNOTATIONS,
+		),
 	)
 
 
@@ -394,6 +421,22 @@ def docs_call(session: Session) -> types.CallToolResult:
 	"""Handle ``camas_docs``: the camas authoring tutorial."""
 	resp = to_docs_response()
 	return success(docs_text(resp), resp, session.compat)
+
+
+def init_call(session: Session) -> types.CallToolResult:
+	"""Handle ``camas_init``: scaffold a commented starter ``tasks.py`` in the project root,
+	refusing to overwrite an existing one, and re-resolve so the new tasks are immediately live.
+	"""
+	try:
+		created = create_starter_tasks_py(session.base)
+	except FileExistsError:
+		resp = wire.InitResponse(status="exists", path=str(session.base / "tasks.py"))
+		return success(init_text(resp), resp, session.compat)
+	except OSError as e:
+		return error_result(f"camas_init: could not scaffold tasks.py: {e}")
+	session.project = resolve_project_quiet(session.base)
+	resp = wire.InitResponse(status="created", path=str(created), content=starter_text())
+	return success(init_text(resp), resp, session.compat)
 
 
 async def run_call(session: Session, arguments: dict[str, Any]) -> types.CallToolResult:
@@ -738,7 +781,7 @@ def check_text(resp: wire.CheckResponse) -> str:
 		case "no_tasks":
 			return (
 				"camas_check: no tasks.py or [tool.camas.tasks] found in this project. "
-				"Run `camas --init` to scaffold a commented starter, or call camas_docs to author one."
+				"Call camas_init to scaffold a commented starter, or camas_docs to author one."
 			)
 		case _:
 			assert_never(resp.status)
@@ -755,13 +798,33 @@ def docs_text(resp: wire.DocsResponse) -> str:
 	)
 
 
+def init_text(resp: wire.InitResponse) -> str:
+	"""The load-bearing agent-facing summary for ``camas_init``."""
+	match resp.status:
+		case "created":
+			return (
+				f"Scaffolded a starter tasks.py at:\n  {resp.path}\n"
+				"Replace its placeholder commands with your real ones (see camas_docs), then "
+				"validate with camas_check and list with camas_list. The scaffolded file:\n\n"
+				f"{resp.content}"
+			)
+		case "exists":
+			return (
+				f"A tasks.py already exists at:\n  {resp.path}\nLeft untouched. "
+				"Use camas_list to see its tasks, or camas_docs + camas_check to edit it."
+			)
+		case _:
+			assert_never(resp.status)
+
+
 def success(
 	text: str,
 	model: wire.ListResponse
 	| wire.RunResponse
 	| wire.CheckResponse
 	| wire.DocsResponse
-	| wire.GateResponse,
+	| wire.GateResponse
+	| wire.InitResponse,
 	compat: Compat,
 	*,
 	links: tuple[types.ResourceLink, ...] = (),

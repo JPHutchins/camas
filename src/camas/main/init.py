@@ -24,18 +24,27 @@ def starter_text() -> str:
 	return (Path(__file__).parent / "starter.py").read_text(encoding="utf-8")
 
 
+def create_starter_tasks_py(directory: Path) -> Path:
+	"""Exclusive-create the starter ``tasks.py`` in ``directory`` and the camas directory beside
+	it; return the ``tasks.py`` path. Never overwrites — an existing ``tasks.py`` raises
+	``FileExistsError``; any other IO failure raises its ``OSError``.
+	"""
+	target: Final = directory / "tasks.py"
+	with target.open("x", encoding="utf-8") as f:
+		f.write(starter_text())
+	ensure_camas_dir(directory / DEFAULT_CAMAS_DIR)
+	return target
+
+
 def write_starter_tasks_py(directory: Path) -> int:
 	"""Write :func:`starter_text` to ``directory/tasks.py`` and create the camas
 	directory beside it — the exit code for ``camas --init``. Exclusive create: an
 	existing ``tasks.py`` is never touched, and any ``OSError`` (exists, permissions,
 	...) becomes a clean error exit.
 	"""
-	target: Final = directory / "tasks.py"
 	camas_dir: Final = directory / DEFAULT_CAMAS_DIR
 	try:
-		with target.open("x", encoding="utf-8") as f:
-			f.write(starter_text())
-		ensure_camas_dir(camas_dir)
+		target = create_starter_tasks_py(directory)
 	except OSError as e:
 		print(f"error: {e}", file=sys.stderr)
 		return 2
