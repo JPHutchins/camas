@@ -1,11 +1,14 @@
 # Canonical camas Nix derivation. Consumed by:
-#   1. this repo's flake.nix (passes `src = ../.` and a git-rev-based version)
+#   1. this repo's flake.nix (passes `src = ./.` and a git-rev-based version)
 #   2. (future) nixpkgs `pkgs/by-name/ca/camas/package.nix`, which inlines this
 #      file's body with `src = fetchFromGitHub {...}` and a hardcoded `version`
 #      matching the released tag.
 #
-# When publishing to nixpkgs, copy this file's body and replace the two args
-# below with let-bindings. Keep the rest identical.
+# optional-dependencies mirrors pyproject.toml's [project.optional-dependencies]
+# by reading it from `src` at eval time, so the extras never drift. That read is
+# a plain path lookup here (src = ./.); a nixpkgs port whose src is a fetcher
+# would turn it into import-from-derivation, so when porting, inline
+# optional-dependencies as a literal alongside a hardcoded `src` and `version`.
 {
   lib,
   python3Packages,
@@ -16,16 +19,35 @@
 }:
 
 let
-  optional-dependencies = {
-    github_checks = [ python3Packages.httpx ];
-    check = [ python3Packages.ty ];
-    mcp = [ python3Packages.mcp ];
-    all = lib.concatAttrValues (lib.removeAttrs optional-dependencies [ "all" ]);
-  };
+  pname = "camas";
+
+  pyprojectExtras = (lib.importTOML (src + "/pyproject.toml")).project.optional-dependencies;
+
+  parseSpec =
+    spec:
+    if lib.hasPrefix "${pname}[" spec then
+      {
+        self = lib.splitString "," (lib.removeSuffix "]" (lib.removePrefix "${pname}[" spec));
+      }
+    else
+      { pkg = builtins.head (builtins.match "([A-Za-z0-9._-]+).*" spec); };
+
+  resolveExtra =
+    extra:
+    lib.unique (
+      lib.concatMap (
+        spec:
+        let
+          parsed = parseSpec spec;
+        in
+        if parsed ? self then lib.concatMap resolveExtra parsed.self else [ python3Packages.${parsed.pkg} ]
+      ) pyprojectExtras.${extra}
+    );
+
+  optional-dependencies = lib.mapAttrs (extra: _: resolveExtra extra) pyprojectExtras;
 in
 python3Packages.buildPythonApplication {
-  pname = "camas";
-  inherit version src;
+  inherit pname version src;
   pyproject = true;
 
   env = {
