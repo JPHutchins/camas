@@ -21,7 +21,7 @@ def test_plugin_manifest_is_named_camas() -> None:
 
 def test_bundled_mcp_server_launches_camas_mcp() -> None:
 	server = json.loads((_PLUGIN / ".mcp.json").read_text())["mcpServers"]["camas"]
-	assert (server["command"], server["args"]) == ("camas", ["mcp"])
+	assert (server["command"], server["args"]) == ("uvx", ["camas[mcp]", "mcp"])
 
 
 def test_post_tool_batch_hook_is_absent() -> None:
@@ -33,7 +33,7 @@ def test_filechanged_hook_runs_the_deterministic_autofix() -> None:
 	hooks = json.loads((_PLUGIN / "hooks" / "hooks.json").read_text())["hooks"]
 	fc = hooks["FileChanged"][0]["hooks"][0]
 	assert fc["type"] == "command"
-	assert "camas mcp fix" in fc["command"]
+	assert fc["command"] == "uvx 'camas[mcp]' mcp fix --paths ${file_path}"
 
 
 def test_marketplace_points_at_the_shipped_plugin() -> None:
