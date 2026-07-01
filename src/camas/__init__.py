@@ -57,6 +57,21 @@ These five are the unversioned alias for the latest API generation; to
 pin a generation, import from its namespace (``camas.v0``). See the
 README's Versioning section.
 
+``Config(agent=Claude(fix=..., check=...))`` wires the Claude Code
+plugin's gate. ``fix`` is the deterministic, behavior-preserving autofix
+node the ``FileChanged`` hook runs over each changed file (scope it with
+``{paths}``; zero model tokens) — declared, not inferred from
+``mutates=``, since a mutating leaf may be a compiler or codegen rather
+than a fixer. ``check`` is the node the gate validates (``None`` defers
+to ``default_task``/``github_task``), scoped by ``--paths`` and
+time-boxed by ``--under``; the plugin delegates it to a background
+``camas-fixer`` subagent that drives the changed scope to green off the
+main agent's context, rather than blocking on a hook. A checking leaf
+may add ``agent_format=("--output-format sarif", "sarif")`` (kinds:
+``sarif``, ``rdjson``, ``lsp``, ``junit``, ``tap``, ``raw``) so the gate
+collects machine-readable diagnostics — appended only on gate runs, not
+human runs.
+
 **LLM agents:** prefer the MCP::
 
     $ camas mcp [--help | --rich]
