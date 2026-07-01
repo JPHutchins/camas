@@ -88,6 +88,8 @@ dev = [
 "taskgroup>=0.2",
 "tomli>=2",
 "typing_extensions>=4.12",
+"jsonschema>=4,<5; python_version < '3.15'",
+"types-jsonschema; python_version < '3.15'",
 ]
 
 [tool.pytest.ini_options]
