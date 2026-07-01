@@ -143,6 +143,30 @@ The downside is that fork PRs get a read-only `GITHUB_TOKEN` from GitHub and can
 
 **When not to bother.** OSS gets free runners — just GHA-matrix them in parallel for faster wall-clock time. The cost is small: you give up either SSOT (matrix definition moves into YAML) or per-leaf-UI granularity (one PR check entry per runner instead of per leaf) — pick one. What *is* a deal-breaker for OSS is fork PRs: external-contributor PRs return 403 from the Checks API, so per-leaf entries silently don't appear. The `github-checks-demo` job is marked `continue-on-error` so it doesn't block CI when that happens, but `GitHubChecks` isn't a workable OSS solution.
 
+### GitHub Actions matrix (`--github-matrix`)
+
+Fan out across N runners *without* giving up SSOT — the tradeoff the previous section forces on OSS. `--github-matrix` emits a matrix-bearing task's axes as the JSON object-of-arrays GHA's `strategy.matrix` expects, so a `discover` job sources the fan-out from `tasks.py` and downstream jobs consume it with `fromJSON` — the matrix is defined once, never re-encoded in YAML.
+
+```yaml
+discover:
+  runs-on: ubuntu-latest
+  outputs:
+    matrix: ${{ steps.emit.outputs.matrix }}
+  steps:
+    - uses: actions/checkout@v5
+    - uses: astral-sh/setup-uv@v6
+    - id: emit
+      run: echo "matrix=$(uv run camas matrix --github-matrix)" >> $GITHUB_OUTPUT
+
+check:
+  needs: discover
+  strategy:
+    matrix:
+      python: ${{ fromJSON(needs.discover.outputs.matrix).PY }}
+```
+
+Consume the whole object (`matrix: ${{ fromJSON(...) }}`), or one axis at a time (`python: ${{ fromJSON(...).PY }}` — the latter combines with extra YAML-side axes like `os`). Output is TTY-aware: indented for interactive preview, compact one-liner for `>> $GITHUB_OUTPUT`. CLI overrides still apply — `camas matrix --github-matrix --PY 3.13` emits the filtered matrix. This repo dogfoods it: the [`discover`/`check` jobs](https://github.com/JPHutchins/camas/blob/main/.github/workflows/ci.yaml) fan out across the Python versions in `.python-version`, the single source.
+
 ### Machine-readable report (`Ctrf`)
 
 For a CI artifact or input to an AI code review, add the `Ctrf` effect (opt-in extra: `camas[ctrf]`). It writes the run as a [CTRF](https://ctrf.io) JSON report — each leaf a test with status, duration, output, command, and exit code. `path=` writes a file; the default is stdout.
@@ -418,7 +442,7 @@ $ camas build --help
 <summary>output</summary>
 
 ```
-usage: camas build [-h] [--dry-run] [--effects EFFECTS] [--FLAG VAL[,VAL...]]
+usage: camas build [-h] [--dry-run | --github-matrix] [--effects EFFECTS] [--FLAG VAL[,VAL...]]
 
 Debug and release builds (FLAG='-- --debug' debug, FLAG='' release)
 
