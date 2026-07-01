@@ -2,8 +2,9 @@
   "mcpServers": {
     "camas": {
       "type": "stdio",
-      "command": "camas",
+      "command": "uvx",
       "args": [
+        "camas[mcp]",
         "mcp"
       ]
     }
