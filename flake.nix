@@ -16,6 +16,10 @@
       ];
       forAllSystems = lib.genAttrs systems;
 
+      extraNames = builtins.attrNames (lib.importTOML ./pyproject.toml).project.optional-dependencies;
+      perExtra = builtins.filter (extra: extra != "all") extraNames;
+      withExtraName = extra: "with-${lib.replaceStrings [ "_" ] [ "-" ] extra}";
+
       version = "0.0.0+${self.shortRev or self.dirtyShortRev or "unknown"}";
 
       mkCamas =
@@ -36,42 +40,21 @@
         in
         {
           default = mkCamas pkgs { };
-          with-github-checks = mkCamas pkgs { extras = [ "github_checks" ]; };
-          with-check = mkCamas pkgs { extras = [ "check" ]; };
-          with-mcp = mkCamas pkgs { extras = [ "mcp" ]; };
-          all = mkCamas pkgs {
-            extras = [
-              "github_checks"
-              "check"
-              "mcp"
-            ];
-          };
+          all = mkCamas pkgs { extras = [ "all" ]; };
           interpreted = mkCamas pkgs { withMypyC = false; };
         }
+        // lib.listToAttrs (
+          map (extra: lib.nameValuePair (withExtraName extra) (mkCamas pkgs { extras = [ extra ]; })) perExtra
+        )
       );
 
-      apps = forAllSystems (system: {
-        default = {
+      apps = forAllSystems (
+        system:
+        lib.mapAttrs (_: pkg: {
           type = "app";
-          program = "${self.packages.${system}.default}/bin/camas";
-        };
-        with-github-checks = {
-          type = "app";
-          program = "${self.packages.${system}.with-github-checks}/bin/camas";
-        };
-        with-check = {
-          type = "app";
-          program = "${self.packages.${system}.with-check}/bin/camas";
-        };
-        all = {
-          type = "app";
-          program = "${self.packages.${system}.all}/bin/camas";
-        };
-        interpreted = {
-          type = "app";
-          program = "${self.packages.${system}.interpreted}/bin/camas";
-        };
-      });
+          program = "${pkg}/bin/camas";
+        }) self.packages.${system}
+      );
 
       devShells = forAllSystems (
         system:
@@ -109,13 +92,10 @@
                 nixfmt --check ${./flake.nix} ${./nix/package.nix}
                 touch $out
               '';
-
-          package = self.packages.${system}.default;
-          package-with-github-checks = self.packages.${system}.with-github-checks;
-          package-with-check = self.packages.${system}.with-check;
-          package-all = self.packages.${system}.all;
-          package-interpreted = self.packages.${system}.interpreted;
         }
+        // lib.mapAttrs' (
+          name: pkg: lib.nameValuePair ("package" + lib.optionalString (name != "default") "-${name}") pkg
+        ) self.packages.${system}
       );
 
       formatter = forAllSystems (
