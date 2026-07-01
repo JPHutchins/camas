@@ -143,6 +143,14 @@ The downside is that fork PRs get a read-only `GITHUB_TOKEN` from GitHub and can
 
 **When not to bother.** OSS gets free runners — just GHA-matrix them in parallel for faster wall-clock time. The cost is small: you give up either SSOT (matrix definition moves into YAML) or per-leaf-UI granularity (one PR check entry per runner instead of per leaf) — pick one. What *is* a deal-breaker for OSS is fork PRs: external-contributor PRs return 403 from the Checks API, so per-leaf entries silently don't appear. The `github-checks-demo` job is marked `continue-on-error` so it doesn't block CI when that happens, but `GitHubChecks` isn't a workable OSS solution.
 
+### Machine-readable report (`Ctrf`)
+
+For a CI artifact or input to an AI code review, add the `Ctrf` effect (opt-in extra: `camas[ctrf]`). It writes the run as a [CTRF](https://ctrf.io) JSON report — each leaf a test with status, duration, output, command, and exit code. `path=` writes a file; the default is stdout.
+
+```sh
+uv run --extra ctrf camas check --effects='(Status(output_mode="errors"), Ctrf(path="ctrf-report.json"))'
+```
+
 ## Config
 
 Bind a `Config` in `tasks.py` and bare `camas` (no arguments) runs its `default_task`:

@@ -62,9 +62,19 @@ def test_parse_effects_rejects_non_effect_value() -> None:
 def test_discover_effects_returns_builtin_set() -> None:
 	constructors, effects = discover_effects()
 	names = {n for n, _ in effects}
-	assert names == {"Summary", "Termtree", "GitHubChecks", "Status", "Timings"}
+	assert names == {"Summary", "Termtree", "GitHubChecks", "Status", "Timings", "Ctrf"}
 	assert "Auto" in constructors
 	assert "Fixed" in constructors
+
+
+def test_discover_effects_survives_missing_optional_dep(monkeypatch: pytest.MonkeyPatch) -> None:
+	monkeypatch.setitem(sys.modules, "msgspec", None)
+	discover_effects.cache_clear()
+	try:
+		_, effects = discover_effects()
+	finally:
+		discover_effects.cache_clear()
+	assert "Ctrf" in {n for n, _ in effects}
 
 
 def test_parse_effects_constructs_github_checks_with_kwarg() -> None:
@@ -123,16 +133,16 @@ def test_isinstance_effect_branch_in_discovery(monkeypatch: pytest.MonkeyPatch) 
 	import camas.effect as effect_pkg
 	from camas.effect.summary import Summary
 
-	plugin = types.ModuleType("camas.effect._test_plugin")
+	plugin = types.ModuleType("camas.effect.plugin_fixture")
 	setattr(plugin, "my_effect", Summary())  # noqa: B010
-	monkeypatch.setitem(sys.modules, "camas.effect._test_plugin", plugin)
+	monkeypatch.setitem(sys.modules, "camas.effect.plugin_fixture", plugin)
 
 	real_iter = pkgutil.iter_modules
 	finders = [info.module_finder for info in real_iter(list(effect_pkg.__path__))]
 
 	def fake_iter(path: list[str]) -> Iterator[ModuleInfo]:
 		yield from real_iter(path)
-		yield ModuleInfo(finders[0], "_test_plugin", False)
+		yield ModuleInfo(finders[0], "plugin_fixture", False)
 
 	monkeypatch.setattr(pkgutil, "iter_modules", fake_iter)
 	discover_effects.cache_clear()
