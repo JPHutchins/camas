@@ -14,20 +14,23 @@ if use_mypyc:
 
 	# core/ stays interpreted: Effect's @runtime_checkable Protocol and Group's
 	# @dataclass-generated __eq__ don't survive compilation.
-	# github_checks.py stays interpreted: its optional httpx dep isn't available
-	# in the isolated build env, so mypy/mypyc compilation can't resolve it.
+	# github_checks.py stays interpreted: its optional httpx dep isn't available in
+	# the isolated build env, so mypy/mypyc compilation can't resolve it. ctrf.py
+	# stays interpreted for the same reason via the msgspec-backed _ctrf_model it
+	# lazy-imports; _ctrf_model itself is already skipped by the [!_] glob below.
 	# check.py and state.py stay interpreted: mypyc's NamedTuple codegen rejects
 	# the built-in ``Exception`` as a field type (KeyError: 'Exception' at import).
 	# starter.py stays interpreted: it is the --init template, shipped as plain
 	# source and read back as text by init.py.
 	_main_excluded = {"check.py", "state.py", "starter.py"}
+	_effect_excluded = {"github_checks.py", "ctrf.py"}
 	ext_modules = mypycify(
 		[
 			*(str(p) for p in Path("src/camas/main").glob("*.py") if p.name not in _main_excluded),
 			*(
 				str(p)
 				for p in Path("src/camas/effect").glob("[!_]*.py")
-				if p.name != "github_checks.py"
+				if p.name not in _effect_excluded
 			),
 		],
 		opt_level="3",

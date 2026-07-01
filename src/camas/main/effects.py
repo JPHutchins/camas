@@ -42,6 +42,8 @@ def discover_effects() -> tuple[Mapping[str, Any], tuple[tuple[str, Any], ...]]:
 	constructors: dict[str, Any] = {}
 	effects: list[tuple[str, Any]] = []
 	for _, modname, _ in pkgutil.iter_modules(effect_pkg.__path__):
+		if modname.startswith("_"):
+			continue
 		mod = importlib.import_module(f"{effect_pkg.__name__}.{modname}")
 		for name, obj in vars(mod).items():
 			if name.startswith("_") or obj is Effect:
