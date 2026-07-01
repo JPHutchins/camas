@@ -170,6 +170,14 @@ _ = Config(
 
 `Config` is discovered by type, so the binding's name never matters — `_` by convention. Defining two is an error.
 
+Because `github_task` reproduces CI, running it before a push catches a CI failure locally. If it is a named task, a one-line git hook guards every push:
+
+```sh
+echo 'exec camas check' > .git/hooks/pre-push && chmod +x .git/hooks/pre-push
+```
+
+`git push --no-verify` still bypasses it deliberately. An LLM agent needs no hook — `camas_list` reports the CI task as `github_default`, so it runs `camas_run` with that name before pushing.
+
 ## Time budget (`--under`)
 
 Once camas has timed a task's leaves (the `.camas/` cache, surfaced by `camas --list`), `camas --under=<duration>` runs only the leaves whose estimate fits a wall-clock budget — the fast inner-loop subset, picked for you instead of by hand.

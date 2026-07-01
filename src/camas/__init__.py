@@ -51,7 +51,10 @@ real ordering (a mutating step, or one that consumes a prior's output).
 ``_ = Config(default_task=...)`` and bare ``camas`` runs that task
 (``github_task`` takes over under GitHub Actions) — so a CI step is just
 ``camas`` (or ``uv run camas``), which won't go stale if you change
-``github_task``.
+``github_task``. That same ``github_task`` reproduces CI locally — run it
+before you push to catch a CI failure first: ``camas_list`` surfaces it as
+``github_default`` for an agent to ``camas_run``, and a named CI task
+doubles as a one-line git ``pre-push`` hook.
 
 These five are the unversioned alias for the latest API generation; to
 pin a generation, import from its namespace (``camas.v0``). See the
