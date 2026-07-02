@@ -152,8 +152,8 @@ def fix_cli(argv: list[str]) -> int:
 		"--paths",
 		action="append",
 		default=[],
-		metavar="PATH",
-		help="changed path to scope to (repeatable)",
+		metavar="PATH[,PATH...]",
+		help="changed paths to scope to (repeatable, comma-separated)",
 	)
 	parser.add_argument(
 		"--dry-run",
@@ -395,12 +395,11 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 
 			if args.paths is not None:
 				base = source.parent if source is not None else Path.cwd()
-				raw_changed = tuple(p for raw in args.paths for p in parse_axis_values(raw))
-				changed = to_changed(raw_changed, base)
+				changed = to_changed(args.paths, base)
 				scoped = scope_to_changed(expand_matrix(resolved), changed) if changed else None
 				if scoped is None:
 					print(
-						f"No task leaf covers {', '.join(raw_changed) or '(no paths given)'}"
+						f"No task leaf covers {', '.join(changed) or '(no paths given)'}"
 						" — nothing to run."
 					)
 					sys.exit(0)

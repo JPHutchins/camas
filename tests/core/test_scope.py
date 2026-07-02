@@ -3,8 +3,13 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from camas import Parallel, Sequential, Task
-from camas.core.scope import scope_to_changed, with_default_paths
+from camas.core.scope import scope_to_changed, to_changed, with_default_paths
+
+if TYPE_CHECKING:
+	from pathlib import Path
 
 
 def _cmd(node: object) -> str | tuple[str, ...]:
@@ -95,3 +100,17 @@ def test_backslash_changed_paths_are_normalized() -> None:
 def test_paths_with_spaces_are_shell_quoted_in_string_command() -> None:
 	fmt = Task("ruff format {paths}", name="fmt", paths=".")
 	assert _cmd(scope_to_changed(fmt, ("a b.py",))) == "ruff format 'a b.py'"
+
+
+def test_to_changed_drops_blank_entries(tmp_path: Path) -> None:
+	"""#132: a blank ``--paths`` entry (or a hook delivering an empty path) contributes nothing,
+	rather than resolving to ``.`` and widening a scoped run to the whole tree."""
+	assert to_changed(["", "  "], tmp_path) == ()
+	assert to_changed(["", "a.py"], tmp_path) == ("a.py",)
+
+
+def test_to_changed_splits_comma_separated_entries(tmp_path: Path) -> None:
+	"""#132: one comma-joined entry scopes identically to the same paths passed separately, so
+	``--paths a,b`` matches across every entrypoint that routes through ``to_changed``."""
+	assert to_changed(["a.py,b.py"], tmp_path) == ("a.py", "b.py")
+	assert to_changed(["a.py,b.py"], tmp_path) == to_changed(["a.py", "b.py"], tmp_path)

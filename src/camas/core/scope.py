@@ -41,21 +41,28 @@ PATHS_TOKEN: Final = "{paths}"
 
 def to_changed(raw: Iterable[str], base: Path) -> tuple[str, ...]:
 	"""Normalize externally-supplied changed paths to the repo-relative POSIX form
-	:func:`scope_to_changed` matches: resolve each against ``base`` (a hook's stdin paths are
-	absolute), drop any that fall outside it. The boundary every changed set passes through —
-	the CLI ``--paths``, the ``camas_gate`` request, and a hook's files all carry raw paths.
+	:func:`scope_to_changed` matches: split comma-separated entries, drop blanks, resolve each
+	against ``base`` (a hook's stdin paths are absolute), and drop any that fall outside it. The
+	single boundary every changed set passes through — the CLI ``--paths``, the ``camas_gate``
+	request, and a hook's files all normalize here, so identical input scopes identically.
 
 	>>> import tempfile, os
 	>>> d = Path(tempfile.mkdtemp()); _ = (d / "src").mkdir()
 	>>> _ = (d / "src" / "a.py").write_text(""); _ = (d / "b.py").write_text("")
 	>>> to_changed([str(d / "src" / "a.py"), "b.py", "/elsewhere/x.py"], d)
 	('src/a.py', 'b.py')
+	>>> to_changed(["src/a.py,b.py"], d)
+	('src/a.py', 'b.py')
+	>>> to_changed(["", "  ", "b.py"], d)
+	('b.py',)
 	"""
 	root = base.resolve()
 	return tuple(
 		rp.relative_to(root).as_posix()
 		for r in raw
-		if (rp := (root / r).resolve()).is_relative_to(root)
+		for e in r.split(",")
+		if (entry := e.strip())
+		if (rp := (root / entry).resolve()).is_relative_to(root)
 	)
 
 
