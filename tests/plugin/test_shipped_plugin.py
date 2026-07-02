@@ -59,3 +59,18 @@ def test_plugin_version_matches_package_version() -> None:
 		f"plugin.json version {manifest['version']!r} != package version {scm_version!r}. "
 		f"Run: uv run python agent/claude/plugin/sync_version.py"
 	)
+
+
+def test_plugin_version_enforcement_matches_when_tagged(
+	monkeypatch: pytest.MonkeyPatch,
+) -> None:
+	monkeypatch.setattr("setuptools_scm.get_version", lambda: "0.1.99")
+	manifest_path = _PLUGIN / ".claude-plugin" / "plugin.json"
+	saved = manifest_path.read_text(encoding="utf-8")
+	try:
+		manifest_path.write_text(
+			json.dumps({"name": "camas", "version": "0.1.99"}), encoding="utf-8"
+		)
+		test_plugin_version_matches_package_version()
+	finally:
+		manifest_path.write_text(saved, encoding="utf-8")
