@@ -19,6 +19,14 @@ on:
     workflows: ["Claude Code review (collect)"]
     types: [completed]
 
+# Cancel a superseded review: the head ref isn't on a workflow_run event the usual way, so key on
+# the triggering run's head repo + branch (fork branches with the same name don't collide) — this
+# resolves to the same key across the collect→review handoff for a given PR head. Cancelling
+# mid-review is safe: only the terminal comment job writes the sticky comment.
+concurrency:
+  group: claude-review-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: true
+
 jobs:
   review:
     if: ${{ github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success' }}
@@ -31,6 +39,7 @@ jobs:
       - uses: actions/checkout@v7 # trusted base branch — never the PR's code
         with:
           fetch-depth: 0
+          persist-credentials: false # nothing after this needs authenticated git; keep the token out of .git/config where Phase 2's untrusted code could read it
 
       - uses: actions/download-artifact@v8
         with:
@@ -43,14 +52,22 @@ jobs:
         with:
           node-version: "22"
 
-      - uses: astral-sh/setup-uv@v8.2.0
+      # uv comes from PyPI (already allowlisted) rather than astral-sh/setup-uv, which resolves
+      # versions via raw.githubusercontent.com and pulls the binary from releases.astral.sh — both
+      # would need allowlisting. harden-runner enforces from its pre-step, so the lock covers setup
+      # too regardless of step order; every host setup touches must be on the allowlist below.
+      - name: Install uv (pinned)
+        run: |
+          pipx install --force uv==0.9.15
+          echo "$(pipx environment --value PIPX_BIN_DIR)" >> "$GITHUB_PATH"
+      - run: uv --version
 
       - run: npm install -g @anthropic-ai/claude-code@2.1.197
 
-      # Lock egress AFTER trusted setup (whose downloads we don't want to fight) and BEFORE any
-      # untrusted code runs — the triage reads the diff, phase 2 applies and executes it. Only
-      # hosts the review needs are allowed; a blocked host appears in this step's run summary, so
-      # add it here, or set egress-policy to audit for a first run to discover the full list.
+      # harden-runner enforces its egress block from the pre-step, so step order is moot: the lock
+      # covers setup and the untrusted triage/phase-2 alike, and every host the job touches must be
+      # on this allowlist — the cross-run download-artifact (api.github.com), uv wheels (PyPI),
+      # claude-code (npm), and DeepSeek. A blocked host shows in this step's run summary.
       - name: Lock network egress
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
@@ -59,8 +76,10 @@ jobs:
             api.deepseek.com:443
             pypi.org:443
             files.pythonhosted.org:443
+            registry.npmjs.org:443
             github.com:443
             objects.githubusercontent.com:443
+            api.github.com:443
 
       - name: Phase 1 — data-only security triage of the diff
         id: triage
@@ -80,12 +99,12 @@ jobs:
             --json-schema '{"type":"object","properties":{"safe":{"type":"boolean"},"reasons":{"type":"string"}},"required":["safe","reasons"],"additionalProperties":false}' \
             >triage.json
           jq -c '.structured_output' triage.json
-          {
-            echo "safe=$(jq -r '.structured_output.safe' triage.json)"
-            echo "reasons<<TRIAGE_EOF"
-            jq -r '.structured_output.reasons' triage.json
-            echo "TRIAGE_EOF"
-          } >>"$GITHUB_OUTPUT"
+          # Emit ONLY a strict, independent boolean to $GITHUB_OUTPUT — never the untrusted
+          # reasons. The gate opens solely on the literal "true", produced only when the JSON
+          # value is exactly boolean true; null, missing, or any other value fails closed. Later
+          # steps read reasons from triage.json, so a crafted reasons payload cannot smuggle a
+          # second safe= output. See #137.
+          echo "safe=$(jq -r 'if .structured_output.safe == true then "true" else "false" end' triage.json)" >>"$GITHUB_OUTPUT"
 
       - name: Phase 2 — apply the diff and run the agentic review
         if: ${{ steps.triage.outputs.safe == 'true' }}
@@ -98,6 +117,11 @@ jobs:
           ANTHROPIC_DEFAULT_HAIKU_MODEL: deepseek-v4-flash
           CLAUDE_CODE_SUBAGENT_MODEL: deepseek-v4-flash
           CLAUDE_CODE_EFFORT_LEVEL: max
+          # The agent's own `uv run` cannot take a --python flag, so pin the runner's system Python
+          # via env: UV_PYTHON avoids the .python-version default (3.14) and UV_PYTHON_DOWNLOADS
+          # never lets a missing interpreter fail fast rather than fetch one from a blocked host.
+          UV_PYTHON: "3.12"
+          UV_PYTHON_DOWNLOADS: never
         run: |
           git apply --3way pr/pr.diff || git apply pr/pr.diff
           claude -p "/code-review" \
@@ -112,7 +136,6 @@ jobs:
         if: ${{ always() }}
         env:
           SAFE: ${{ steps.triage.outputs.safe }}
-          REASONS: ${{ steps.triage.outputs.reasons }}
         run: |
           mkdir -p findings
           if [ -s out.md ]; then
@@ -120,8 +143,14 @@ jobs:
           elif [ "$SAFE" = "true" ]; then
             { echo "### ⚠️ Claude Code review did not complete"; echo; echo "The diff passed the security triage but the review produced no output — the diff may not apply cleanly, or the agent errored. See the workflow logs."; } >findings/findings.md
           else
-            { echo "### 🛑 Claude Code review skipped by the security gate"; echo; echo "The diff was flagged as unsafe to apply and execute, so the agentic review did not run:"; echo; printf '%s\n' "$REASONS" | sed 's/^/> /'; } >findings/findings.md
+            # Reasons is untrusted (it reflects the diff); read it from the triage JSON file, never
+            # from a step output, and pipe it straight to sed so it is never interpolated into a
+            # command. See #137.
+            { echo "### 🛑 Claude Code review skipped by the security gate"; echo; echo "The diff was flagged as unsafe to apply and execute, so the agentic review did not run:"; echo; [ -s triage.json ] && jq -r '.structured_output.reasons // ""' triage.json | sed 's/^/> /'; } >findings/findings.md
           fi
+          # Defense in depth on the output channel (#136): scrub any sk-…-shaped key the untrusted
+          # Phase 2 might have surfaced into the markdown before it is uploaded and posted.
+          sed -i -E 's/sk-[A-Za-z0-9_-]{16,}/[REDACTED]/g' findings/findings.md
 
       - uses: actions/upload-artifact@v7
         if: ${{ always() }}

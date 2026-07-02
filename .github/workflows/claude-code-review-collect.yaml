@@ -7,9 +7,19 @@ name: Claude Code review (collect)
 # workflow, so there is a single code path to maintain.
 on:
   pull_request:
+    # Naming types replaces the default set, so list all four explicitly — ready_for_review lets
+    # marking a draft PR ready trigger a review without a new commit (#138); the !draft gate below
+    # still holds on that event.
+    types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
   contents: read
+
+# Cancel a superseded collect run when a newer commit lands on the same PR head; resolves to the
+# same head branch this workflow_run's review keys on, so the whole relay is cancelled together.
+concurrency:
+  group: claude-review-collect-${{ github.head_ref }}
+  cancel-in-progress: true
 
 jobs:
   collect:
