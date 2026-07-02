@@ -29,14 +29,15 @@ def test_uv_project_emits_portable_uv_run(tmp_path: Path, monkeypatch: pytest.Mo
 	assert (entry["command"], entry["args"]) == ("uv", ["run", "camas", "mcp"])
 
 
-def test_uv_present_without_lock_falls_through(
+def test_uv_present_without_lock_resolves_uvx(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
 	monkeypatch.chdir(tmp_path)
-	monkeypatch.setattr("shutil.which", _which("uv", "camas"))
+	monkeypatch.setattr("shutil.which", _which("uv", "uvx"))
 	assert write_mcp_json([]) == 0
 	entry = json.loads((tmp_path / ".mcp.json").read_text())["mcpServers"]["camas"]
-	assert entry["command"] == "camas"
+	assert entry["command"] == "uvx"
+	assert entry["args"] == ["camas[mcp]", "mcp"]
 
 
 def test_camas_on_path_appends_rich(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -168,6 +169,16 @@ def test_launch_command_str_rich(monkeypatch: pytest.MonkeyPatch) -> None:
 	assert launch_command_str(rich=True) == "camas mcp --rich"
 
 
+def test_launch_command_str_uvx_on_path(monkeypatch: pytest.MonkeyPatch) -> None:
+	monkeypatch.setattr("shutil.which", _which("uvx"))
+	assert launch_command_str(rich=False) == "uvx 'camas[mcp]' mcp"
+
+
+def test_launch_command_str_uvx_with_rich(monkeypatch: pytest.MonkeyPatch) -> None:
+	monkeypatch.setattr("shutil.which", _which("uvx"))
+	assert launch_command_str(rich=True) == "uvx 'camas[mcp]' mcp --rich"
+
+
 def test_launch_command_str_none_when_no_launcher(monkeypatch: pytest.MonkeyPatch) -> None:
 	monkeypatch.setattr("shutil.which", _which())
 	assert launch_command_str(rich=False) is None
@@ -241,6 +252,31 @@ def test_write_hooks_merges_existing_settings(
 	assert write_hooks([]) == 0
 	settings = json.loads((tmp_path / ".claude" / "settings.json").read_text())
 	assert settings["other_key"] == "value"
+	assert "FileChanged" in settings["hooks"]
+
+
+def test_write_hooks_tolerates_matcher_null(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	monkeypatch.chdir(tmp_path)
+	monkeypatch.setattr("shutil.which", _which("camas"))
+	(tmp_path / ".claude").mkdir(parents=True)
+	(tmp_path / ".claude" / "settings.json").write_text(
+		json.dumps(
+			{
+				"hooks": {
+					"FileChanged": [
+						{
+							"hooks": [{"type": "command", "command": "echo hi"}],
+							"matcher": None,
+						}
+					]
+				}
+			}
+		)
+	)
+	assert write_hooks([]) == 0
+	settings = json.loads((tmp_path / ".claude" / "settings.json").read_text())
 	assert "FileChanged" in settings["hooks"]
 
 

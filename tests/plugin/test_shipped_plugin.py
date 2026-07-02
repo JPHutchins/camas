@@ -45,3 +45,17 @@ def test_marketplace_points_at_the_shipped_plugin() -> None:
 def test_plugin_ships_the_fixer_and_skill() -> None:
 	assert "name: camas-fixer" in (_PLUGIN / "agents" / "camas-fixer.md").read_text()
 	assert "name: gate" in (_PLUGIN / "skills" / "gate" / "SKILL.md").read_text()
+
+
+def test_plugin_version_matches_package_version() -> None:
+	import pytest
+	from setuptools_scm import get_version
+
+	scm_version = get_version()
+	if "+" in scm_version or ".dev" in scm_version:
+		pytest.skip(f"Dev version {scm_version!r} — only enforced on tagged commits")
+	manifest = json.loads((_PLUGIN / ".claude-plugin" / "plugin.json").read_text())
+	assert manifest["version"] == scm_version, (
+		f"plugin.json version {manifest['version']!r} != package version {scm_version!r}. "
+		f"Run: uv run python agent/claude/plugin/sync_version.py"
+	)

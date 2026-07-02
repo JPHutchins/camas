@@ -33,7 +33,7 @@ class HookCommand(BaseModel):
 class HookGroup(BaseModel):
 	"""A group of hooks that fire on the same event, with an optional matcher."""
 
-	model_config = ConfigDict(extra="forbid")
+	model_config = ConfigDict(extra="ignore")
 
 	hooks: list[HookCommand]
 	matcher: str | None = None
@@ -91,6 +91,8 @@ def launch_command(*, rich: bool) -> tuple[str, list[str]] | None:
 	tail = ["mcp", "--rich"] if rich else ["mcp"]
 	if shutil.which("uv") is not None and uv_project_root() is not None:
 		return "uv", ["run", "camas", *tail]
+	if shutil.which("uvx") is not None:
+		return "uvx", ["camas[mcp]", *tail]
 	if shutil.which("camas") is not None:
 		return "camas", tail
 	return None

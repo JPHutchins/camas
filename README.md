@@ -236,6 +236,16 @@ For the Claude Code plugin, you **register** the auto-fix node — whatever you 
 
 `camas mcp fix` runs the registered `Config.agent.fix` node (not a task named `fix` — that's just `camas fix`, your own task); with no fix registered it is a clean no-op, so the hook is harmless without it. The `uvx 'camas[mcp]'` launcher needs only `uv` on PATH (no global camas install); with `camas` already installed, bare `camas mcp fix …` works too.
 
+### Updating
+
+The plugin is installed at project scope. The update command must include `--scope project`:
+
+```sh
+claude plugin update camas@camas --scope project
+```
+
+If the command errors with "not found", check the installed scope with `claude plugin list`.
+
 ## Effects plugins
 
 Define an `Effect` in your `tasks.py` and it's discovered automatically — usable by name from `--effects` and listed under `camas --effects`. See [examples/effect-plugin/](https://github.com/JPHutchins/camas/tree/main/tests/fixtures/effect-plugin) for a typed `Tail` effect that streams per-task output as it arrives.
