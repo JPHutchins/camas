@@ -24,16 +24,16 @@ def test_bundled_mcp_server_launches_camas_mcp() -> None:
 	assert (server["command"], server["args"]) == ("uvx", ["camas[mcp]", "mcp"])
 
 
-def test_post_tool_batch_hook_is_absent() -> None:
+def test_filechanged_hook_is_absent() -> None:
 	hooks = json.loads((_PLUGIN / "hooks" / "hooks.json").read_text())["hooks"]
-	assert "PostToolBatch" not in hooks
+	assert "FileChanged" not in hooks
 
 
-def test_filechanged_hook_runs_the_deterministic_autofix() -> None:
+def test_post_tool_batch_hook_runs_the_deterministic_autofix() -> None:
 	hooks = json.loads((_PLUGIN / "hooks" / "hooks.json").read_text())["hooks"]
-	fc = hooks["FileChanged"][0]["hooks"][0]
-	assert fc["type"] == "command"
-	assert fc["command"] == "uvx 'camas[mcp]' mcp fix --paths ${file_path}"
+	ptb = hooks["PostToolBatch"][0]["hooks"][0]
+	assert ptb["type"] == "command"
+	assert ptb["command"] == "uvx 'camas[mcp]' mcp fix"
 
 
 def test_marketplace_points_at_the_shipped_plugin() -> None:

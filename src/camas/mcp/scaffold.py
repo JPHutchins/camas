@@ -135,7 +135,7 @@ def launch_command_str(*, rich: bool) -> str | None:
 
 
 def write_hooks(argv: list[str]) -> int:
-	"""Write the ``FileChanged`` autofix hook into ``.claude/settings.json`` using
+	"""Write the ``PostToolBatch`` autofix hook into ``.claude/settings.json`` using
 	``launch_command()`` resolution (without ``--rich``, which the hook does not need).
 	"""
 	settings_path = Path.cwd() / SETTINGS_PATH
@@ -167,22 +167,22 @@ def write_hooks(argv: list[str]) -> int:
 		hooks=[
 			HookCommand(
 				type="command",
-				command=f"{launcher} fix --paths ${{file_path}}",
+				command=f"{launcher} fix",
 			)
 		]
 	)
-	existing = settings.hooks.get("FileChanged", [])
+	existing = settings.hooks.get("PostToolBatch", [])
 	kept: list[HookGroup] = []
 	for g in existing:
-		remaining = [h for h in g.hooks if "mcp fix --paths" not in h.command]
+		remaining = [h for h in g.hooks if "mcp fix" not in h.command]
 		if remaining:
 			kept.append(g.model_copy(update={"hooks": remaining}))
-	settings.hooks["FileChanged"] = [*kept, camas_hook]
+	settings.hooks["PostToolBatch"] = [*kept, camas_hook]
 	settings_path.parent.mkdir(parents=True, exist_ok=True)
 	settings_path.write_text(settings.model_dump_json(indent=2) + "\n", encoding="utf-8")
 	print(
-		f"Wrote the camas FileChanged autofix hook to {settings_path}\n"
-		f"  FileChanged:    {launcher} fix --paths ${{file_path}}\n"
+		f"Wrote the camas PostToolBatch autofix hook to {settings_path}\n"
+		f"  PostToolBatch:  {launcher} fix\n"
 		f"\nReload Claude Code for the hook to take effect."
 	)
 	return 0

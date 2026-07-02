@@ -202,11 +202,11 @@ def test_write_hooks_writes_settings_json(
 	monkeypatch.setattr("shutil.which", _which("camas"))
 	assert write_hooks([]) == 0
 	settings = json.loads((tmp_path / ".claude" / "settings.json").read_text())
-	file_changed = settings["hooks"]["FileChanged"][0]["hooks"][0]
-	assert file_changed["type"] == "command"
-	assert file_changed["command"] == "camas mcp fix --paths ${file_path}"
-	assert "PostToolBatch" not in settings["hooks"]
-	assert "FileChanged autofix hook" in capsys.readouterr().out
+	post_tool_batch = settings["hooks"]["PostToolBatch"][0]["hooks"][0]
+	assert post_tool_batch["type"] == "command"
+	assert post_tool_batch["command"] == "camas mcp fix"
+	assert "FileChanged" not in settings["hooks"]
+	assert "PostToolBatch autofix hook" in capsys.readouterr().out
 
 
 def test_write_hooks_errors_when_no_launcher(
@@ -263,7 +263,7 @@ def test_write_hooks_merges_existing_settings(
 	assert write_hooks([]) == 0
 	settings = json.loads((tmp_path / ".claude" / "settings.json").read_text())
 	assert settings["other_key"] == "value"
-	assert "FileChanged" in settings["hooks"]
+	assert "PostToolBatch" in settings["hooks"]
 
 
 def test_write_hooks_rejects_matcher_null(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -274,7 +274,7 @@ def test_write_hooks_rejects_matcher_null(tmp_path: Path, monkeypatch: pytest.Mo
 		json.dumps(
 			{
 				"hooks": {
-					"FileChanged": [
+					"PostToolBatch": [
 						{
 							"hooks": [{"type": "command", "command": "echo hi"}],
 							"matcher": None,
@@ -297,7 +297,7 @@ def test_write_hooks_preserves_matcher_empty_string(
 		json.dumps(
 			{
 				"hooks": {
-					"FileChanged": [
+					"PostToolBatch": [
 						{
 							"hooks": [{"type": "command", "command": "echo hi"}],
 							"matcher": "",
@@ -309,11 +309,11 @@ def test_write_hooks_preserves_matcher_empty_string(
 	)
 	assert write_hooks([]) == 0
 	settings = json.loads((tmp_path / ".claude" / "settings.json").read_text())
-	fc = settings["hooks"]["FileChanged"]
-	assert len(fc) == 2
-	echo_group = next(g for g in fc if any("echo hi" in h["command"] for h in g["hooks"]))
+	ptb = settings["hooks"]["PostToolBatch"]
+	assert len(ptb) == 2
+	echo_group = next(g for g in ptb if any("echo hi" in h["command"] for h in g["hooks"]))
 	assert echo_group.get("matcher") == ""
-	assert any("fix --paths" in h["command"] for g in fc for h in g["hooks"])
+	assert any(h["command"] == "camas mcp fix" for g in ptb for h in g["hooks"])
 
 
 def test_mcp_cli_init_hooks_routes_to_write_hooks(
@@ -354,19 +354,13 @@ def test_write_hooks_removes_camas_only_groups(
 		json.dumps(
 			{
 				"hooks": {
-					"FileChanged": [
-						{
-							"hooks": [
-								{"type": "command", "command": "camas mcp fix --paths ${file_path}"}
-							]
-						}
-					]
+					"PostToolBatch": [{"hooks": [{"type": "command", "command": "camas mcp fix"}]}]
 				}
 			}
 		)
 	)
 	assert write_hooks([]) == 0
 	settings = json.loads((tmp_path / ".claude" / "settings.json").read_text())
-	fc = settings["hooks"]["FileChanged"]
-	assert len(fc) == 1
-	assert "fix --paths" in fc[0]["hooks"][0]["command"]
+	ptb = settings["hooks"]["PostToolBatch"]
+	assert len(ptb) == 1
+	assert ptb[0]["hooks"][0]["command"] == "camas mcp fix"

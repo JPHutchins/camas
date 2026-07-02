@@ -218,7 +218,7 @@ project-excludes = [
 [tool.coverage.run]
 source = ["camas", "tests"]
 branch = true
-omit = ["tests/test_demos.py", "src/camas/__main__.py"]
+omit = ["tests/test_demos.py", "tests/claude_code/*", "src/camas/__main__.py"]
 
 [tool.coverage.report]
 fail_under = 100

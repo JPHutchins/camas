@@ -10,6 +10,7 @@ import io
 import json
 from typing import TYPE_CHECKING
 
+from camas.core.hook_event import changed_from_stdin
 from camas.mcp import serve, wire
 
 if TYPE_CHECKING:
@@ -139,7 +140,7 @@ def test_changed_from_stdin_extracts_edited_files(monkeypatch: pytest.MonkeyPatc
 		}
 	)
 	monkeypatch.setattr("sys.stdin", io.StringIO(event))
-	assert serve.changed_from_stdin() == ("a.py", "b.py")
+	assert changed_from_stdin() == ("a.py", "b.py")
 
 
 def test_changed_from_stdin_tty_is_empty(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -148,27 +149,27 @@ def test_changed_from_stdin_tty_is_empty(monkeypatch: pytest.MonkeyPatch) -> Non
 			return True
 
 	monkeypatch.setattr("sys.stdin", _Tty("x"))
-	assert serve.changed_from_stdin() == ()
+	assert changed_from_stdin() == ()
 
 
 def test_changed_from_stdin_empty(monkeypatch: pytest.MonkeyPatch) -> None:
 	monkeypatch.setattr("sys.stdin", io.StringIO("  "))
-	assert serve.changed_from_stdin() == ()
+	assert changed_from_stdin() == ()
 
 
 def test_changed_from_stdin_bad_json(monkeypatch: pytest.MonkeyPatch) -> None:
 	monkeypatch.setattr("sys.stdin", io.StringIO("not json"))
-	assert serve.changed_from_stdin() == ()
+	assert changed_from_stdin() == ()
 
 
 def test_changed_from_stdin_dict_without_tool_calls(monkeypatch: pytest.MonkeyPatch) -> None:
 	monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"foo": "bar"})))
-	assert serve.changed_from_stdin() == ()
+	assert changed_from_stdin() == ()
 
 
 def test_changed_from_stdin_non_dict_event(monkeypatch: pytest.MonkeyPatch) -> None:
 	monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps([1, 2])))
-	assert serve.changed_from_stdin() == ()
+	assert changed_from_stdin() == ()
 
 
 def test_gate_cli_dry_run_shows_plan(

@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import os
 import re
 import shlex
@@ -18,7 +17,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from importlib.metadata import version
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Final, NamedTuple, cast
+from typing import TYPE_CHECKING, Any, Final, NamedTuple
 
 from mcp import types
 from mcp.server.lowlevel import Server
@@ -29,6 +28,7 @@ from ..core import timings
 from ..core.budget import plan_under
 from ..core.execution import run
 from ..core.gate import run_gate
+from ..core.hook_event import changed_from_stdin
 from ..core.matrix import expand_matrix, override_matrix
 from ..core.render import render_tree_lines, strip_ansi
 from ..core.scope import scope_to_changed, to_changed, with_default_paths
@@ -359,7 +359,7 @@ def tools(task_names: tuple[str, ...], compat: Compat) -> Tools:
 			description=textwrap.dedent("""\
 				The SA-delegation gate: scope THIS project's checks to the
 				files just changed, run them, and return a binary verdict. It does not mutate — the
-				deterministic fixers run separately on FileChanged (camas fix). residual_class is
+				deterministic fixers run separately on PostToolBatch (camas mcp fix). residual_class is
 				'green' (decision 'continue') when the checks pass, or 'needs_reasoning' (decision
 				'block') when a check still fails — then diagnostics carries the failing leaves. Pass
 				paths=[…] (the changed files) to scope; omit to gate the whole check node. under=<seconds>
@@ -1042,35 +1042,6 @@ def parse_gate_args(argv: list[str]) -> GateArgs:
 	return GateArgs(
 		task=ns.task, paths=tuple(ns.paths), under=ns.under, jobs=ns.jobs, dry_run=ns.dry_run
 	)
-
-
-def _event_get(obj: object, key: str) -> object:
-	"""``obj[key]`` for a parsed-JSON object, else ``None`` — narrows JSON's ``Any`` to ``object``."""
-	return cast("dict[str, object]", obj).get(key) if isinstance(obj, dict) else None
-
-
-def changed_from_stdin() -> tuple[str, ...]:
-	"""The edited files in a ``PostToolBatch`` event piped on stdin (e.g. a hand-wired hook),
-	de-duplicated in order; ``()`` when stdin is a tty, empty, or not such an event.
-	"""
-	if sys.stdin.isatty():
-		return ()
-	raw = sys.stdin.read().strip()
-	if not raw:
-		return ()
-	try:
-		event: object = json.loads(raw)
-	except json.JSONDecodeError:
-		return ()
-	calls = _event_get(event, "tool_calls")
-	if not isinstance(calls, list):
-		return ()
-	edited = (
-		_event_get(_event_get(call, "tool_input"), key)
-		for call in cast("list[object]", calls)
-		for key in ("file_path", "path", "notebook_path")
-	)
-	return tuple(dict.fromkeys(f for f in edited if isinstance(f, str)))
 
 
 def gate_cli(argv: list[str]) -> int:

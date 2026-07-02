@@ -21,6 +21,7 @@ else:  # pragma: no cover
 from ..core import timings
 from ..core.budget import plan_under
 from ..core.execution import run
+from ..core.hook_event import stdin_changed
 from ..core.matrix import expand_matrix, matrix_axes, override_matrix
 from ..core.render import print_tree, render_tree_lines
 from ..core.scope import scope_to_changed, to_changed, with_default_paths
@@ -138,10 +139,11 @@ def finish_run(result: RunResult) -> int:
 
 def fix_cli(argv: list[str]) -> int:
 	"""``camas mcp fix [--paths P]…``: run the project's *registered* agent fix node
-	(``Config.agent.fix`` — whatever the user named it), scoped to the changed paths. This is
-	the FileChanged autofix entry, in the ``camas mcp`` namespace so it never collides with a
-	user's own ``camas <task>``. A clean no-op (exit 0) when no fix node is registered — without
-	registration there is simply nothing for the hook to run.
+	(``Config.agent.fix`` — whatever the user named it), scoped to the changed paths — taken from
+	``--paths`` or, failing that, the ``PostToolBatch`` event piped on stdin (the Claude Code
+	autofix hook). In the ``camas mcp`` namespace so it never collides with a user's own
+	``camas <task>``. A clean no-op (exit 0) when no fix node is registered — without registration
+	there is simply nothing for the hook to run.
 	"""
 	parser = argparse.ArgumentParser(
 		prog="camas mcp fix", description="Run the registered agent fix node."
@@ -167,7 +169,10 @@ def fix_cli(argv: list[str]) -> int:
 	if node is None:
 		return 0
 	base = state.source.parent if state.source is not None else Path.cwd()
-	changed = to_changed(args.paths, base)
+	stdin = stdin_changed() if not args.paths else None
+	if not args.paths and stdin is not None and not stdin:
+		return 0
+	changed = to_changed(args.paths or (stdin or ()), base)
 	expanded = expand_matrix(node)
 	scoped = scope_to_changed(expanded, changed) if changed else with_default_paths(expanded)
 	if args.dry_run:

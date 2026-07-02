@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import io
+import json
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -308,8 +310,30 @@ def test_fix_cli_no_paths_runs_the_full_node(
 ) -> None:
 	(tmp_path / "tasks.py").write_text(_TIDY.format(scope="."))
 	monkeypatch.chdir(tmp_path)
+	monkeypatch.setattr("sys.stdin", io.StringIO(""))
 	assert fix_cli([]) == 0
 	assert (tmp_path / "fixed.txt").read_text() == "done"
+
+
+def test_fix_cli_reads_stdin_post_tool_batch_event(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	(tmp_path / "tasks.py").write_text(_TIDY.format(scope="."))
+	monkeypatch.chdir(tmp_path)
+	event = json.dumps({"tool_calls": [{"tool_input": {"file_path": str(tmp_path / "x.py")}}]})
+	monkeypatch.setattr("sys.stdin", io.StringIO(event))
+	assert fix_cli([]) == 0
+	assert (tmp_path / "fixed.txt").read_text() == "done"
+
+
+def test_fix_cli_empty_post_tool_batch_event_is_noop(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	(tmp_path / "tasks.py").write_text(_TIDY.format(scope="."))
+	monkeypatch.chdir(tmp_path)
+	monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"tool_calls": [{"tool_input": {}}]})))
+	assert fix_cli([]) == 0
+	assert not (tmp_path / "fixed.txt").exists()
 
 
 def test_fix_cli_noop_without_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

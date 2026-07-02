@@ -1,0 +1,61 @@
+name: Claude Code hook harness
+
+# Runs the opt-in Claude Code integration suite (tests/claude_code/) against a REAL headless
+# `claude -p`, to catch drift in the hook contract camas depends on — that PostToolBatch fires on
+# an edit and delivers the changed path on stdin, that ${file_path} is not interpolated, and that
+# the shipped autofix hook actually runs the registered fix node end to end.
+#
+# It uses the same DeepSeek backend the agentic review workflow does (ANTHROPIC_BASE_URL +
+# ANTHROPIC_AUTH_TOKEN=DEEPSEEK_API_KEY, a burner key with a hard spend cap), on the cheap
+# deepseek-v4-flash tier. The schedule catches a Claude Code release changing the contract even
+# when camas itself has not changed.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 6 * * 1" # weekly, Monday — catch a Claude Code release changing the hook contract
+  push:
+    paths:
+      - "src/camas/**"
+      - "agent/claude/plugin/**"
+      - "tests/claude_code/**"
+      - ".github/workflows/claude-code-harness.yaml"
+
+jobs:
+  harness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - uses: astral-sh/setup-uv@v8.2.0
+
+      - run: npm install -g @anthropic-ai/claude-code@2.1.197
+
+      # Lock egress AFTER trusted setup (whose downloads we don't want to fight) and BEFORE the
+      # headless run. Only the hosts the suite needs; a blocked host shows in this step's summary.
+      - name: Lock network egress
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            api.deepseek.com:443
+            pypi.org:443
+            files.pythonhosted.org:443
+            github.com:443
+            objects.githubusercontent.com:443
+
+      - name: Run the Claude Code integration suite
+        env:
+          CAMAS_CC_E2E: "1"
+          CAMAS_CC_MODEL: deepseek-v4-flash
+          ANTHROPIC_BASE_URL: https://api.deepseek.com/anthropic
+          ANTHROPIC_AUTH_TOKEN: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: |
+          [ -n "$ANTHROPIC_AUTH_TOKEN" ] || { echo "::error::DEEPSEEK_API_KEY secret is not set"; exit 1; }
+          uv run pytest tests/claude_code/ -v --no-cov -p no:cacheprovider

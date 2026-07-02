@@ -17,7 +17,8 @@ Usage:
                               write this project's .mcp.json entry for the camas server;
                               with --hooks also write hook entries to .claude/settings.json
   camas mcp fix [--paths P]… run the registered agent fix node (Config.agent.fix) over the
-                              changed paths — the FileChanged autofix; no-op if unregistered
+                              changed paths (--paths, else a piped PostToolBatch event) — the
+                              autofix hook; no-op if unregistered
   camas mcp gate [task]     run the gate once, headless — print the verdict as JSON, exit
     [--paths P]… [--under N]  0 (continue) / 2 (block); scope to --paths or a piped
                               PostToolBatch event (the camas-fixer subagent + benchmark)
