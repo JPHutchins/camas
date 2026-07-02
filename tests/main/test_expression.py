@@ -35,6 +35,21 @@ def test_to_expression_round_trips_every_field() -> None:
 	assert parse_expression(to_expression(task)) == task
 
 
+def test_to_expression_round_trips_group_fields_and_tuple_commands() -> None:
+	"""#131: the group fields (matrix/env/cwd/help) and tuple/exec commands survive the
+	round-trip too — #85 fixed only the Task arm, leaving groups and tuples lossy."""
+	group = Parallel(
+		Task(("uv", "run", "pytest")),
+		Task(("solo",)),
+		name="checks",
+		matrix={"PY": ("3.13", "3.14"), "OS": ("linux",)},
+		env={"CI": "1"},
+		cwd="rust",
+		help="all checks",
+	)
+	assert parse_expression(to_expression(group)) == group
+
+
 @pytest.mark.parametrize(
 	("expr", "expected"),
 	[

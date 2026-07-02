@@ -329,7 +329,9 @@ def to_expression(node: TaskNode) -> str:
 	>>> to_expression(Task("echo hi"))
 	'Task("echo hi")'
 	>>> to_expression(Task(("ruff", "check", ".")))
-	'Task("ruff check .")'
+	'Task(("ruff", "check", "."))'
+	>>> to_expression(Task(("solo",)))
+	'Task(("solo",))'
 	>>> to_expression(Task("ruff", name="lint"))
 	'Task("ruff", name="lint")'
 	>>> to_expression(Task("ruff format .", mutates=True))
@@ -340,6 +342,8 @@ def to_expression(node: TaskNode) -> str:
 	'Parallel(Task("a"), Task("b"), name="checks")'
 	>>> to_expression(Sequential(Parallel(Task("a"), name="p"), Task("b"), name="s"))
 	'Sequential(Parallel(Task("a"), name="p"), Task("b"), name="s")'
+	>>> to_expression(Parallel(Task("a"), name="checks", cwd="rust", help="all checks"))
+	'Parallel(Task("a"), name="checks", cwd="rust", help="all checks")'
 	>>> to_expression(Task("ruff check {paths}", name="lint", paths="src"))
 	'Task("ruff check {paths}", name="lint", paths="src")'
 	>>> to_expression(Task("test", cwd="rust", help="run tests"))
@@ -360,14 +364,20 @@ def to_expression(node: TaskNode) -> str:
 			agent_format=agent_format,
 		):
 			return (
-				f"Task({quote(join_command(cmd))}{name_kwarg(name)}{env_kwarg(env)}"
+				f"Task({render_command(cmd)}{name_kwarg(name)}{env_kwarg(env)}"
 				f"{cwd_kwarg(cwd)}{help_kwarg(help)}{mutates_kwarg(mutates)}"
 				f"{paths_kwarg(paths)}{agent_format_kwarg(agent_format)})"
 			)
-		case Sequential(tasks=tasks, name=name):
-			return f"Sequential({render_members(tasks)}{name_kwarg(name)})"
-		case Parallel(tasks=tasks, name=name):
-			return f"Parallel({render_members(tasks)}{name_kwarg(name)})"
+		case Sequential(tasks=tasks, name=name, matrix=matrix, env=env, cwd=cwd, help=help):
+			return (
+				f"Sequential({render_members(tasks)}{name_kwarg(name)}{matrix_kwarg(matrix)}"
+				f"{env_kwarg(env)}{cwd_kwarg(cwd)}{help_kwarg(help)})"
+			)
+		case Parallel(tasks=tasks, name=name, matrix=matrix, env=env, cwd=cwd, help=help):
+			return (
+				f"Parallel({render_members(tasks)}{name_kwarg(name)}{matrix_kwarg(matrix)}"
+				f"{env_kwarg(env)}{cwd_kwarg(cwd)}{help_kwarg(help)})"
+			)
 		case _:
 			assert_never(node)
 
@@ -378,6 +388,10 @@ def render_members(tasks: tuple[TaskNode, ...]) -> str:
 
 def name_kwarg(name: str | None) -> str:
 	return f", name={quote(name)}" if name is not None else ""
+
+
+def matrix_kwarg(matrix: dict[str, tuple[str, ...]] | None) -> str:
+	return f", matrix={matrix!r}" if matrix is not None else ""
 
 
 def env_kwarg(env: Mapping[str, str]) -> str:
@@ -417,8 +431,11 @@ def quote(value: str) -> str:
 	return json.dumps(value, ensure_ascii=False)
 
 
-def join_command(cmd: str | tuple[str, ...]) -> str:
-	return cmd if isinstance(cmd, str) else " ".join(cmd)
+def render_command(cmd: str | tuple[str, ...]) -> str:
+	if isinstance(cmd, str):
+		return quote(cmd)
+	inner = ", ".join(quote(part) for part in cmd)
+	return f"({inner},)" if len(cmd) == 1 else f"({inner})"
 
 
 def parse_task_value(raw: str) -> TaskNode | Ref:
