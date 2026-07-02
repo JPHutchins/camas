@@ -16,7 +16,7 @@ if sys.version_info >= (3, 11):
 else:  # pragma: no cover
 	from typing_extensions import assert_never
 
-from ..v0.task import AgentFormat, OutputKind, Parallel, Sequential, Task, TaskNode
+from ..v0.task import AgentFormat, Group, OutputKind, Parallel, Sequential, Task, TaskNode
 
 if TYPE_CHECKING:
 	from collections.abc import Mapping
@@ -258,6 +258,7 @@ def eval_node(
 						env=eval_env(kw.get("env")),
 						cwd=eval_opt_str(kw.get("cwd")),
 						help=eval_opt_str(kw.get("help")),
+						paths=eval_opt_str(kw.get("paths")),
 					)
 				case "Ref":
 					ref_name_node = args[0] if args else kw.get("name")
@@ -368,15 +369,11 @@ def to_expression(node: TaskNode) -> str:
 				f"{cwd_kwarg(cwd)}{help_kwarg(help)}{mutates_kwarg(mutates)}"
 				f"{paths_kwarg(paths)}{agent_format_kwarg(agent_format)})"
 			)
-		case Sequential(tasks=tasks, name=name, matrix=matrix, env=env, cwd=cwd, help=help):
+		case Group() as group:
 			return (
-				f"Sequential({render_members(tasks)}{name_kwarg(name)}{matrix_kwarg(matrix)}"
-				f"{env_kwarg(env)}{cwd_kwarg(cwd)}{help_kwarg(help)})"
-			)
-		case Parallel(tasks=tasks, name=name, matrix=matrix, env=env, cwd=cwd, help=help):
-			return (
-				f"Parallel({render_members(tasks)}{name_kwarg(name)}{matrix_kwarg(matrix)}"
-				f"{env_kwarg(env)}{cwd_kwarg(cwd)}{help_kwarg(help)})"
+				f"{type(group).__name__}({render_members(group.tasks)}{name_kwarg(group.name)}"
+				f"{matrix_kwarg(group.matrix)}{env_kwarg(group.env)}{cwd_kwarg(group.cwd)}"
+				f"{help_kwarg(group.help)}{paths_kwarg(group.paths)})"
 			)
 		case _:
 			assert_never(node)
@@ -488,23 +485,15 @@ def resolve_refs(
 			return resolve_refs(defs[name], defs, visiting | {name})
 		case Task():
 			return node
-		case Sequential(tasks=tasks, name=n, matrix=m, env=e, cwd=c, help=h):
-			return Sequential(
-				*(resolve_refs(t, defs, visiting) for t in tasks),
-				name=n,
-				matrix=m,
-				env=e,
-				cwd=c,
-				help=h,
-			)
-		case Parallel(tasks=tasks, name=n, matrix=m, env=e, cwd=c, help=h):
-			return Parallel(
-				*(resolve_refs(t, defs, visiting) for t in tasks),
-				name=n,
-				matrix=m,
-				env=e,
-				cwd=c,
-				help=h,
+		case Group() as group:
+			return type(group)(
+				*(resolve_refs(t, defs, visiting) for t in group.tasks),
+				name=group.name,
+				matrix=group.matrix,
+				env=group.env,
+				cwd=group.cwd,
+				help=group.help,
+				paths=group.paths,
 			)
 		case _:
 			assert_never(node)

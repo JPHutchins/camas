@@ -28,7 +28,7 @@ if sys.version_info >= (3, 11):
 else:  # pragma: no cover
 	from typing_extensions import assert_never
 
-from ..v0.task import Parallel, Sequential, Task
+from ..v0.task import Group, Task
 
 if TYPE_CHECKING:
 	from collections.abc import Iterable
@@ -143,37 +143,40 @@ def _rebase_to_cwd(parts: tuple[str, ...], cwd: Path | None) -> tuple[str, ...]:
 
 
 def _resolve_leaf(task: Task, changed: tuple[str, ...]) -> Task | None:
-	match task.paths:
-		case None:
-			return task
-		case scope:
-			parts = _as_scope(scope)(tuple(c.replace("\\", "/") for c in changed))
-			if changed and not parts:
-				return None
-			return Task(
-				cmd=_inject(task.cmd, _rebase_to_cwd(parts, task.cwd)),
-				name=task.name,
-				env=task.env,
-				cwd=task.cwd,
-				help=task.help,
-				mutates=task.mutates,
-				paths=task.paths,
-				agent_format=task.agent_format,
-			)
+	if PATHS_TOKEN not in task.cmd:
+		return task
+	parts = _as_scope(task.paths if task.paths is not None else ".")(
+		tuple(c.replace("\\", "/") for c in changed)
+	)
+	if changed and not parts:
+		return None
+	return Task(
+		cmd=_inject(task.cmd, _rebase_to_cwd(parts, task.cwd)),
+		name=task.name,
+		env=task.env,
+		cwd=task.cwd,
+		help=task.help,
+		mutates=task.mutates,
+		paths=task.paths,
+		agent_format=task.agent_format,
+	)
 
 
 def scope_to_changed(node: TaskNode, changed: tuple[str, ...]) -> TaskNode | None:
-	"""``node`` with each leaf's ``{paths}`` resolved for ``changed``, leaves covering none
-	of it pruned, and emptied groups dropped (``None`` when nothing remains).
+	"""``node`` with each ``{paths}`` command narrowed to the changed files under its scope,
+	leaves whose scope intersects none of them pruned, and emptied groups dropped (``None``
+	when nothing remains).
 
-	A leaf whose command omits ``{paths}`` but sets ``paths`` runs whole when its prefix
-	changed and is skipped otherwise — the selection a file-list-averse tool (``mypy``,
-	``cargo``) needs; here the Rust check drops on a Python-only change.
+	A command with no ``{paths}`` can't be narrowed, so it always runs — its ``paths`` (own or
+	inherited from a group) is a no-op there. Only a ``{paths}`` command is pruned, and only
+	when its scope covers none of the changed files.
 
+	>>> from camas.v0.task import Parallel
 	>>> py = Task("ruff check {paths}", name="lint", paths=".")
-	>>> rs = Task("cargo check", name="cargo", paths="rust")
-	>>> scope_to_changed(Parallel(py, rs), ("src/app.py",))
-	Parallel(tasks=(Task(cmd='ruff check src/app.py', name='lint', env={}, cwd=None, paths='.'),), name=None, matrix=None, env={}, cwd=None)
+	>>> scope_to_changed(py, ("src/app.py",)).cmd
+	'ruff check src/app.py'
+	>>> scope_to_changed(Task("cargo check", name="cargo"), ("src/app.py",)).cmd
+	'cargo check'
 	>>> scope_to_changed(Parallel(py), ("README.md",)) == Parallel(Task("ruff check README.md", name="lint", paths="."))
 	True
 	>>> scope_to_changed(Parallel(Task("ruff {paths}", paths="src")), ("docs/x.md",)) is None
@@ -182,21 +185,20 @@ def scope_to_changed(node: TaskNode, changed: tuple[str, ...]) -> TaskNode | Non
 	match node:
 		case Task():
 			return _resolve_leaf(node, changed)
-		case Sequential(tasks=children, name=name, matrix=matrix, env=env, cwd=cwd, help=help):
+		case Group() as group:
 			kept = tuple(
-				s for s in (scope_to_changed(c, changed) for c in children) if s is not None
+				s for s in (scope_to_changed(c, changed) for c in group.tasks) if s is not None
 			)
 			return (
-				Sequential(*kept, name=name, matrix=matrix, env=env, cwd=cwd, help=help)
-				if kept
-				else None
-			)
-		case Parallel(tasks=children, name=name, matrix=matrix, env=env, cwd=cwd, help=help):
-			kept = tuple(
-				s for s in (scope_to_changed(c, changed) for c in children) if s is not None
-			)
-			return (
-				Parallel(*kept, name=name, matrix=matrix, env=env, cwd=cwd, help=help)
+				type(group)(
+					*kept,
+					name=group.name,
+					matrix=group.matrix,
+					env=group.env,
+					cwd=group.cwd,
+					help=group.help,
+					paths=group.paths,
+				)
 				if kept
 				else None
 			)

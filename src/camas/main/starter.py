@@ -51,7 +51,7 @@ ci = Sequential(
 # Code plugin's PostToolBatch hook runs it after each edit batch via `camas mcp fix` (the changed
 # files arrive on stdin), for free. Replace the placeholder with your real fixers, e.g.:
 #   autofix = Task("ruff check --fix {paths}", mutates=True, paths=".")
-#   autofix = Parallel(Task("ruff format {paths}", mutates=True, paths="."), Task("ruff check --fix {paths}", mutates=True, paths="."))
+#   autofix = Parallel(Task("ruff format {paths}", mutates=True), Task("ruff check --fix {paths}", mutates=True), paths=".")
 autofix = Task('python -c "" {paths}', name="autofix", mutates=True, paths=".")
 
 # Config is discovered by type, under any binding name (here `_`): bare `camas` runs

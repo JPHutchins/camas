@@ -19,7 +19,7 @@ else:  # pragma: no cover
 
 from ..v0.config import Agent, Claude, Config
 from ..v0.effect import Effect
-from ..v0.task import Parallel, Sequential, Task, TaskNode
+from ..v0.task import Group, Parallel, Sequential, Task, TaskNode
 from .expression import Ref, parse_task_value, resolve_refs
 from .state import LoadOk
 
@@ -67,10 +67,16 @@ def assign_key_name(node: TaskNode | Ref, key: str) -> TaskNode | Ref:
 				paths=paths,
 				agent_format=agent_format,
 			)
-		case Sequential(tasks=tasks, name=None, matrix=matrix, env=env, cwd=cwd, help=help):
-			return Sequential(*tasks, name=key, matrix=matrix, env=env, cwd=cwd, help=help)
-		case Parallel(tasks=tasks, name=None, matrix=matrix, env=env, cwd=cwd, help=help):
-			return Parallel(*tasks, name=key, matrix=matrix, env=env, cwd=cwd, help=help)
+		case Group(name=None) as group:
+			return type(group)(
+				*group.tasks,
+				name=key,
+				matrix=group.matrix,
+				env=group.env,
+				cwd=group.cwd,
+				help=group.help,
+				paths=group.paths,
+			)
 		case _:
 			return node
 
@@ -139,13 +145,15 @@ def name_scope_bindings(scope: Mapping[str, object]) -> dict[str, TaskNode]:
 		match source:
 			case Task():
 				return source
-			case Sequential(tasks=children, name=n, matrix=m, env=e, cwd=c, help=h):
-				return Sequential(
-					*(promote(ch) for ch in children), name=n, matrix=m, env=e, cwd=c, help=h
-				)
-			case Parallel(tasks=children, name=n, matrix=m, env=e, cwd=c, help=h):
-				return Parallel(
-					*(promote(ch) for ch in children), name=n, matrix=m, env=e, cwd=c, help=h
+			case Group() as group:
+				return type(group)(
+					*(promote(ch) for ch in group.tasks),
+					name=group.name,
+					matrix=group.matrix,
+					env=group.env,
+					cwd=group.cwd,
+					help=group.help,
+					paths=group.paths,
 				)
 			case _:
 				assert_never(source)

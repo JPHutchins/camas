@@ -13,7 +13,7 @@ import shlex
 import sys
 from typing import TYPE_CHECKING, Literal, NamedTuple, TypeAlias
 
-from ..v0.task import Parallel, Sequential, Task
+from ..v0.task import Group, Task
 from .budget import plan_under
 from .execution import run
 from .matrix import expand_matrix
@@ -86,23 +86,15 @@ def with_agent_format(node: TaskNode) -> TaskNode:
 				else (*node.cmd, *shlex.split(args))
 			)
 			return dataclasses.replace(node, cmd=cmd)
-		case Sequential(tasks=children, name=name, matrix=matrix, env=env, cwd=cwd, help=help):
-			return Sequential(
-				*(with_agent_format(c) for c in children),
-				name=name,
-				matrix=matrix,
-				env=env,
-				cwd=cwd,
-				help=help,
-			)
-		case Parallel(tasks=children, name=name, matrix=matrix, env=env, cwd=cwd, help=help):
-			return Parallel(
-				*(with_agent_format(c) for c in children),
-				name=name,
-				matrix=matrix,
-				env=env,
-				cwd=cwd,
-				help=help,
+		case Group() as group:
+			return type(group)(
+				*(with_agent_format(c) for c in group.tasks),
+				name=group.name,
+				matrix=group.matrix,
+				env=group.env,
+				cwd=group.cwd,
+				help=group.help,
+				paths=group.paths,
 			)
 		case _:
 			assert_never(node)

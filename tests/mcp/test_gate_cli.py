@@ -191,7 +191,7 @@ def test_gate_cli_dry_run_no_match(
 	monkeypatch.chdir(tmp_path)
 	(tmp_path / "tasks.py").write_text(
 		"from camas import Config, Task\n"
-		'check = Task("echo scope-miss", name="check", paths="src")\n'
+		'check = Task("echo scope-miss {paths}", name="check", paths="src")\n'
 		"_ = Config(default_task=check)\n"
 	)
 	assert serve.gate_cli(["--paths", "unrelated.txt", "--dry-run"]) == 0

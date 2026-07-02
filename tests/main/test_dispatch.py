@@ -291,7 +291,7 @@ def test_run_under_all_over_budget_runs_nothing(
 
 _TIDY = (
 	"from camas import Claude, Config, Task\n"
-	'tidy = Task(("python", "-c", "import pathlib; pathlib.Path(\'fixed.txt\').write_text(\'done\')"),'
+	'tidy = Task(("python", "-c", "import pathlib; pathlib.Path(\'fixed.txt\').write_text(\'done\')", "{{paths}}"),'
 	' name="tidy", mutates=True, paths={scope!r})\n'
 	"_ = Config(agent=Claude(fix=tidy))\n"
 )
