@@ -134,6 +134,32 @@ def launch_command_str(*, rich: bool) -> str | None:
 	return shlex.join((cmd, *args))
 
 
+def _object_list(value: object) -> list[dict[str, Any]]:
+	"""The value as a list of JSON objects, or ``[]`` if it is not a list."""
+	return cast("list[dict[str, Any]]", value) if isinstance(value, list) else []
+
+
+def _kept_hooks(group: dict[str, Any]) -> list[dict[str, Any]]:
+	"""The group's hooks minus any camas autofix hook."""
+	return [
+		h for h in _object_list(group.get("hooks")) if "mcp fix" not in cast("str", h["command"])
+	]
+
+
+def _with_camas_hook(raw: dict[str, Any], camas_group: dict[str, Any]) -> dict[str, Any]:
+	"""``raw`` with its ``PostToolBatch`` rebuilt: non-camas groups kept in place, ``camas_group``
+	appended — every other key and its order left untouched, no defaults injected.
+	"""
+	hooks = raw.get("hooks")
+	hooks_dict: dict[str, Any] = cast("dict[str, Any]", hooks) if isinstance(hooks, dict) else {}
+	kept = [
+		{**g, "hooks": remaining}
+		for g in _object_list(hooks_dict.get("PostToolBatch"))
+		if (remaining := _kept_hooks(g))
+	]
+	return {**raw, "hooks": {**hooks_dict, "PostToolBatch": [*kept, camas_group]}}
+
+
 def write_hooks(argv: list[str]) -> int:
 	"""Write the ``PostToolBatch`` autofix hook into ``.claude/settings.json`` using
 	``launch_command()`` resolution (without ``--rich``, which the hook does not need).
@@ -150,7 +176,7 @@ def write_hooks(argv: list[str]) -> int:
 		print(f"error: {settings_path} is not a JSON object", file=sys.stderr)
 		return 2
 	try:
-		settings = SettingsFile.model_validate(raw)
+		SettingsFile.model_validate(raw)
 	except ValidationError as e:
 		print(f"error: {settings_path}: {e}", file=sys.stderr)
 		return 2
@@ -163,23 +189,12 @@ def write_hooks(argv: list[str]) -> int:
 			file=sys.stderr,
 		)
 		return 2
-	camas_hook = HookGroup(
-		hooks=[
-			HookCommand(
-				type="command",
-				command=f"{launcher} fix",
-			)
-		]
-	)
-	existing = settings.hooks.get("PostToolBatch", [])
-	kept: list[HookGroup] = []
-	for g in existing:
-		remaining = [h for h in g.hooks if "mcp fix" not in h.command]
-		if remaining:
-			kept.append(g.model_copy(update={"hooks": remaining}))
-	settings.hooks["PostToolBatch"] = [*kept, camas_hook]
+	camas_group: dict[str, Any] = {"hooks": [{"type": "command", "command": f"{launcher} fix"}]}
 	settings_path.parent.mkdir(parents=True, exist_ok=True)
-	settings_path.write_text(settings.model_dump_json(indent=2) + "\n", encoding="utf-8")
+	settings_path.write_text(
+		json.dumps(_with_camas_hook(cast("dict[str, Any]", raw), camas_group), indent=2) + "\n",
+		encoding="utf-8",
+	)
 	print(
 		f"Wrote the camas PostToolBatch autofix hook to {settings_path}\n"
 		f"  PostToolBatch:  {launcher} fix\n"

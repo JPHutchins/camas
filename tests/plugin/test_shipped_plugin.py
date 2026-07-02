@@ -45,3 +45,9 @@ def test_marketplace_points_at_the_shipped_plugin() -> None:
 def test_plugin_ships_the_fixer_and_skill() -> None:
 	assert "name: camas-fixer" in (_PLUGIN / "agents" / "camas-fixer.md").read_text()
 	assert "name: gate" in (_PLUGIN / "skills" / "gate" / "SKILL.md").read_text()
+
+
+def test_fixer_gates_via_mcp_tool_not_bare_cli() -> None:
+	fixer = (_PLUGIN / "agents" / "camas-fixer.md").read_text()
+	assert "camas_gate" in fixer
+	assert "camas mcp gate" not in fixer

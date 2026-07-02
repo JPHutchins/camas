@@ -361,6 +361,32 @@ def test_write_hooks_preserves_extra_hook_command_fields(
 	)
 
 
+def test_write_hooks_preserves_key_order_and_omits_matcher(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	monkeypatch.chdir(tmp_path)
+	monkeypatch.setattr("shutil.which", _which("camas"))
+	(tmp_path / ".claude").mkdir(parents=True)
+	(tmp_path / ".claude" / "settings.json").write_text(
+		json.dumps(
+			{
+				"$schema": "https://example.com/schema.json",
+				"permissions": {"allow": ["Read"]},
+				"hooks": {
+					"PreToolUse": [{"hooks": [{"type": "command", "command": "guard"}]}],
+				},
+			}
+		)
+	)
+	assert write_hooks([]) == 0
+	settings = json.loads((tmp_path / ".claude" / "settings.json").read_text())
+	assert list(settings.keys()) == ["$schema", "permissions", "hooks"]
+	assert list(settings["hooks"].keys()) == ["PreToolUse", "PostToolBatch"]
+	assert "matcher" not in settings["hooks"]["PreToolUse"][0]
+	assert "matcher" not in settings["hooks"]["PostToolBatch"][0]
+	assert settings["hooks"]["PostToolBatch"][0]["hooks"][0]["command"] == "camas mcp fix"
+
+
 def test_mcp_cli_init_hooks_routes_to_write_hooks(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
