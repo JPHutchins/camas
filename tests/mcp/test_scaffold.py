@@ -316,6 +316,51 @@ def test_write_hooks_preserves_matcher_empty_string(
 	assert any(h["command"] == "camas mcp fix" for g in ptb for h in g["hooks"])
 
 
+def test_write_hooks_preserves_extra_hook_command_fields(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	monkeypatch.chdir(tmp_path)
+	monkeypatch.setattr("shutil.which", _which("camas"))
+	(tmp_path / ".claude").mkdir(parents=True)
+	(tmp_path / ".claude" / "settings.json").write_text(
+		json.dumps(
+			{
+				"hooks": {
+					"PreToolUse": [
+						{"hooks": [{"type": "command", "command": "guard", "timeout": 30}]}
+					],
+					"PostToolBatch": [
+						{
+							"hooks": [
+								{
+									"type": "command",
+									"command": "echo hi",
+									"statusMessage": "linting",
+								}
+							]
+						}
+					],
+				}
+			}
+		)
+	)
+	assert write_hooks([]) == 0
+	settings = json.loads((tmp_path / ".claude" / "settings.json").read_text())
+	assert settings["hooks"]["PreToolUse"][0]["hooks"][0]["timeout"] == 30
+	echo = next(
+		h
+		for g in settings["hooks"]["PostToolBatch"]
+		for h in g["hooks"]
+		if h["command"] == "echo hi"
+	)
+	assert echo["statusMessage"] == "linting"
+	assert any(
+		h["command"] == "camas mcp fix"
+		for g in settings["hooks"]["PostToolBatch"]
+		for h in g["hooks"]
+	)
+
+
 def test_mcp_cli_init_hooks_routes_to_write_hooks(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

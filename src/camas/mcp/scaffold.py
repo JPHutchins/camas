@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 from typing import Any, Final, Literal, cast
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from ..core.timings import ensure_camas_dir
 from ..v0.config import DEFAULT_CAMAS_DIR
@@ -22,9 +22,9 @@ SETTINGS_PATH: Final = Path(".claude/settings.json")
 
 
 class HookCommand(BaseModel):
-	"""A single hook command entry in ``.claude/settings.json``."""
+	"""A single hook command entry in ``.claude/settings.json``, with extra fields preserved."""
 
-	model_config = ConfigDict(extra="forbid")
+	model_config = ConfigDict(extra="allow")
 
 	type: Literal["command"]
 	command: str
@@ -151,7 +151,7 @@ def write_hooks(argv: list[str]) -> int:
 		return 2
 	try:
 		settings = SettingsFile.model_validate(raw)
-	except Exception as e:
+	except ValidationError as e:
 		print(f"error: {settings_path}: {e}", file=sys.stderr)
 		return 2
 	launcher = launch_command_str(rich=False)
