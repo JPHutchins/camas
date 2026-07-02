@@ -36,7 +36,7 @@ class HookGroup(BaseModel):
 	model_config = ConfigDict(extra="allow")
 
 	hooks: list[HookCommand]
-	matcher: str | None = None
+	matcher: str = ""
 
 
 class SettingsFile(BaseModel):

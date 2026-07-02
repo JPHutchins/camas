@@ -266,9 +266,7 @@ def test_write_hooks_merges_existing_settings(
 	assert "FileChanged" in settings["hooks"]
 
 
-def test_write_hooks_tolerates_matcher_null(
-	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_write_hooks_rejects_matcher_null(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 	monkeypatch.chdir(tmp_path)
 	monkeypatch.setattr("shutil.which", _which("camas"))
 	(tmp_path / ".claude").mkdir(parents=True)
@@ -286,12 +284,35 @@ def test_write_hooks_tolerates_matcher_null(
 			}
 		)
 	)
+	assert write_hooks([]) == 2
+
+
+def test_write_hooks_preserves_matcher_empty_string(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	monkeypatch.chdir(tmp_path)
+	monkeypatch.setattr("shutil.which", _which("camas"))
+	(tmp_path / ".claude").mkdir(parents=True)
+	(tmp_path / ".claude" / "settings.json").write_text(
+		json.dumps(
+			{
+				"hooks": {
+					"FileChanged": [
+						{
+							"hooks": [{"type": "command", "command": "echo hi"}],
+							"matcher": "",
+						}
+					]
+				}
+			}
+		)
+	)
 	assert write_hooks([]) == 0
 	settings = json.loads((tmp_path / ".claude" / "settings.json").read_text())
 	fc = settings["hooks"]["FileChanged"]
 	assert len(fc) == 2
 	echo_group = next(g for g in fc if any("echo hi" in h["command"] for h in g["hooks"]))
-	assert echo_group.get("matcher") is None
+	assert echo_group.get("matcher") == ""
 	assert any("fix --paths" in h["command"] for g in fc for h in g["hooks"])
 
 
