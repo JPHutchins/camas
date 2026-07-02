@@ -11,8 +11,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 _REPO = Path(__file__).resolve().parents[2]
 _PLUGIN = _REPO / "agent" / "claude" / "plugin"
 
@@ -47,31 +45,3 @@ def test_marketplace_points_at_the_shipped_plugin() -> None:
 def test_plugin_ships_the_fixer_and_skill() -> None:
 	assert "name: camas-fixer" in (_PLUGIN / "agents" / "camas-fixer.md").read_text()
 	assert "name: gate" in (_PLUGIN / "skills" / "gate" / "SKILL.md").read_text()
-
-
-def test_plugin_version_matches_package_version() -> None:
-	from setuptools_scm import get_version
-
-	scm_version = get_version()
-	if "+" in scm_version or ".dev" in scm_version:
-		pytest.skip(f"Dev version {scm_version!r} — only enforced on tagged commits")
-	manifest = json.loads((_PLUGIN / ".claude-plugin" / "plugin.json").read_text())
-	assert manifest["version"] == scm_version, (
-		f"plugin.json version {manifest['version']!r} != package version {scm_version!r}. "
-		f"Run: uv run python agent/claude/plugin/sync_version.py"
-	)
-
-
-def test_plugin_version_enforcement_matches_when_tagged(
-	monkeypatch: pytest.MonkeyPatch,
-) -> None:
-	monkeypatch.setattr("setuptools_scm.get_version", lambda: "0.1.99")
-	manifest_path = _PLUGIN / ".claude-plugin" / "plugin.json"
-	saved = manifest_path.read_text(encoding="utf-8")
-	try:
-		manifest_path.write_text(
-			json.dumps({"name": "camas", "version": "0.1.99"}), encoding="utf-8"
-		)
-		test_plugin_version_matches_package_version()
-	finally:
-		manifest_path.write_text(saved, encoding="utf-8")

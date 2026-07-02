@@ -33,7 +33,7 @@ class HookCommand(BaseModel):
 class HookGroup(BaseModel):
 	"""A group of hooks that fire on the same event, with an optional matcher."""
 
-	model_config = ConfigDict(extra="ignore")
+	model_config = ConfigDict(extra="allow")
 
 	hooks: list[HookCommand]
 	matcher: str | None = None
@@ -68,7 +68,6 @@ def write_mcp_json(argv: list[str]) -> int:
 		return 2
 	command, args = launcher
 	servers[SERVER_NAME] = {"type": "stdio", "command": command, "args": args}
-	mcp_json_path.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
 	camas_dir: Final = Path.cwd() / DEFAULT_CAMAS_DIR
 	camas_note: Final = (
 		f"  created {camas_dir} for run logs and timing estimates; delete it to opt out.\n"
@@ -76,6 +75,7 @@ def write_mcp_json(argv: list[str]) -> int:
 		else ""
 	)
 	ensure_camas_dir(camas_dir)
+	mcp_json_path.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
 	print(
 		f"Wrote the {SERVER_NAME!r} MCP server to {mcp_json_path}\n"
 		f"  command: {command} {' '.join(args)}\n"
@@ -108,6 +108,8 @@ def portability_note(command: str) -> str:
 	"""How portable the chosen launch command is, for the committed ``.mcp.json``."""
 	if command == "uv":
 		return "This entry is portable; uv resolves camas from the lockfile."
+	if command == "uvx":
+		return "This entry is portable; uvx downloads and runs camas[mcp] from PyPI."
 	return "This entry is portable if your team installs camas on PATH; commit it to share."
 
 
@@ -158,16 +160,21 @@ def write_hooks(argv: list[str]) -> int:
 			file=sys.stderr,
 		)
 		return 2
+	camas_hook = HookGroup(
+		hooks=[
+			HookCommand(
+				type="command",
+				command=f"{launcher} fix --paths ${{file_path}}",
+			)
+		]
+	)
+	existing = settings.hooks.get("FileChanged", [])
 	settings.hooks["FileChanged"] = [
-		HookGroup(
-			hooks=[
-				HookCommand(
-					type="command",
-					command=f"{launcher} fix --paths ${{file_path}}",
-				)
-			]
-		)
+		g
+		for g in existing
+		if not any(h.command == f"{launcher} fix --paths ${{file_path}}" for h in g.hooks)
 	]
+	settings.hooks["FileChanged"].append(camas_hook)
 	settings_path.parent.mkdir(parents=True, exist_ok=True)
 	settings_path.write_text(settings.model_dump_json(indent=2) + "\n", encoding="utf-8")
 	print(

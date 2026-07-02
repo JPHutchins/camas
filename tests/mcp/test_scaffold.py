@@ -40,6 +40,17 @@ def test_uv_present_without_lock_resolves_uvx(
 	assert entry["args"] == ["camas[mcp]", "mcp"]
 
 
+def test_uv_without_lock_or_uvx_falls_through_to_camas(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	monkeypatch.chdir(tmp_path)
+	monkeypatch.setattr("shutil.which", _which("uv", "camas"))
+	assert write_mcp_json([]) == 0
+	entry = json.loads((tmp_path / ".mcp.json").read_text())["mcpServers"]["camas"]
+	assert entry["command"] == "camas"
+	assert entry["args"] == ["mcp"]
+
+
 def test_camas_on_path_appends_rich(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 	monkeypatch.chdir(tmp_path)
 	monkeypatch.setattr("shutil.which", _which("camas"))

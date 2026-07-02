@@ -54,7 +54,6 @@ camas = "camas.main:main"
 [build-system]
 requires = [
 "setuptools>=68",
-"setuptools-scm>=8",
 "mypy[mypyc]>=1.19",
 "exceptiongroup>=1.2; python_version < '3.11'",
 "taskgroup>=0.2; python_version < '3.11'",
@@ -83,7 +82,6 @@ dev = [
 "ruff>=0.12,<1",
 "zuban>=0.7,<1",
 "pyrefly>=0.61,<1",
-"setuptools-scm>=8",
 "types-setuptools",
 "exceptiongroup>=1.2",
 "taskgroup>=0.2",
@@ -190,7 +188,6 @@ extend-immutable-calls = ["camas.effect.summary.Auto"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["D"] # test functions document themselves by name
-"agent/**" = ["INP001"] # standalone scripts shipped alongside the plugin, not a package
 
 [tool.ruff.format]
 indent-style = "tab"
