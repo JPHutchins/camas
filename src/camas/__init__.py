@@ -36,8 +36,9 @@ recorded timing fits the budget — the marked, mutating ones first in
 sequence, then the read-only rest in parallel — a fast, self-pruning
 inner-loop subset of a task. ``camas_run`` exposes the same budget as its
 ``under`` argument. That subset is what a pre-commit / git-hook wants;
-untimed leaves are excluded, so an empty cache (a fresh clone) runs
-nothing under a budget until the task has run once unbudgeted.
+untimed leaves run (and are thereby measured), only leaves measured over
+budget are excluded, so a cold cache (a fresh clone) runs the whole tree
+under a budget until the leaves have been measured once.
 
 Two authoring idioms the engine can't enforce: ``tasks.py`` is
 real Python, so source matrix axis values from the project's single

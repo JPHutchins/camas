@@ -297,8 +297,9 @@ _TIDY = (
 )
 
 
-def test_fix_cli_runs_registered_agent_fix(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-	# the registered node is named "tidy", not "fix" — fix_cli resolves Config.agent.fix by reference
+def test_fix_cli_resolves_registered_fix_by_reference(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
 	(tmp_path / "tasks.py").write_text(_TIDY.format(scope="."))
 	monkeypatch.chdir(tmp_path)
 	assert fix_cli(["--paths", "x.py"]) == 0

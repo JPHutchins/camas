@@ -186,8 +186,10 @@ class RunRequest(BaseModel):
 		gt=0,
 		description="Wall-clock budget in seconds: run only the leaves whose recorded "
 		"estimate fits, mutating leaves (formatters) first then the read-only rest in "
-		"parallel. Untimed leaves are skipped. Omit 'task' to budget the default task; "
-		"the 'budget' field of the response reports what was selected and excluded.",
+		"parallel. Untimed leaves run (and are thereby measured); only leaves measured "
+		"over budget are skipped, so a cold cache runs the whole tree. Omit 'task' to "
+		"budget the default task; the 'budget' field of the response reports what was "
+		"selected and excluded.",
 	)
 	dry_run: bool = Field(
 		default=False,

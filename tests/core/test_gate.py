@@ -40,7 +40,6 @@ async def test_gate_scoped_to_nothing_is_green_noop() -> None:
 
 
 async def test_gate_runs_untimed_check_under_budget() -> None:
-	# untimed leaves RUN (and get measured), never skipped — the check executes and passes
 	out = await run_gate(Parallel(CHECK_PASS), (), under=1.0, timings={})
 	assert out.residual_class == "green"
 	assert out.result is not None
@@ -56,7 +55,6 @@ async def test_gate_budget_runs_fitting_check() -> None:
 
 
 async def test_gate_budget_skips_over_budget_check() -> None:
-	# a leaf measured to exceed the budget is skipped; nothing runs → green (deliberate time-box)
 	out = await run_gate(
 		Parallel(CHECK_PASS), (), under=0.001, timings={task_label(CHECK_PASS): TaskTiming(99.0, 1)}
 	)
