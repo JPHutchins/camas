@@ -33,7 +33,7 @@ class HookCommand(BaseModel):
 class HookGroup(BaseModel):
 	"""A group of hooks that fire on the same event, with an optional matcher."""
 
-	model_config = ConfigDict(extra="forbid")
+	model_config = ConfigDict(extra="allow")
 
 	hooks: list[HookCommand]
 	matcher: str | None = None
