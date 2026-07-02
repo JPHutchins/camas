@@ -59,12 +59,17 @@ jobs:
             github.com:443
             objects.githubusercontent.com:443
 
+      # The contract suite needs any interpreter >=3.10; --python 3.12 pins the runner's system
+      # Python so uv does not download the .python-version default (3.14) from a GitHub release
+      # asset host that is not on the allowlist. UV_PYTHON_DOWNLOADS=never makes a missing one fail
+      # fast, before the DeepSeek-billed run.
       - name: Run the Claude Code integration suite
         env:
           CAMAS_CC_E2E: "1"
           CAMAS_CC_MODEL: deepseek-v4-flash
           ANTHROPIC_BASE_URL: https://api.deepseek.com/anthropic
           ANTHROPIC_AUTH_TOKEN: ${{ secrets.DEEPSEEK_API_KEY }}
+          UV_PYTHON_DOWNLOADS: never
         run: |
           [ -n "$ANTHROPIC_AUTH_TOKEN" ] || { echo "::error::DEEPSEEK_API_KEY secret is not set"; exit 1; }
-          uv run pytest tests/claude_code/ -v --no-cov -p no:cacheprovider
+          uv run --python 3.12 pytest tests/claude_code/ -v --no-cov -p no:cacheprovider
