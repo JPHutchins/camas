@@ -79,7 +79,7 @@ def module_siblings(tree: ast.AST) -> frozenset[str]:
 
 
 def parse_module(path: Path) -> ast.Module:
-	return ast.parse(path.read_text())
+	return ast.parse(path.read_text(encoding="utf-8"))
 
 
 def combined_roots(path: Path) -> frozenset[str]:
@@ -118,10 +118,10 @@ def literal_exclusion(source: str) -> frozenset[str]:
 
 
 def test_effect_exclusion_matches_derived_set() -> None:
-	pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text())
+	pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 	optional = optional_dist_names(pyproject)
 	derived = derived_exclusion(optional)
-	literal = literal_exclusion((ROOT / "setup.py").read_text())
+	literal = literal_exclusion((ROOT / "setup.py").read_text(encoding="utf-8"))
 	assert derived == literal, (
 		"setup.py _effect_excluded has drifted from the imports; "
 		f"symmetric difference = {sorted(derived ^ literal)} "
