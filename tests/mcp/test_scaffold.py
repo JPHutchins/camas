@@ -327,3 +327,46 @@ def test_mcp_cli_init_hooks_routes_to_write_hooks(
 		main(["init", "--hooks"])
 	assert exc.value.code == 0
 	assert (tmp_path / ".claude" / "settings.json").exists()
+
+
+def test_write_mcp_json_writes_file_despite_camas_dir_error(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	monkeypatch.chdir(tmp_path)
+	monkeypatch.setattr("shutil.which", _which("camas"))
+
+	def _raise_oserror(_dir: object) -> None:
+		raise OSError("disk full")
+
+	monkeypatch.setattr("camas.mcp.scaffold.ensure_camas_dir", _raise_oserror)
+	assert write_mcp_json([]) == 0
+	assert (tmp_path / ".mcp.json").exists()
+	assert "warning" in capsys.readouterr().err
+
+
+def test_write_hooks_removes_camas_only_groups(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	monkeypatch.chdir(tmp_path)
+	monkeypatch.setattr("shutil.which", _which("camas"))
+	(tmp_path / ".claude").mkdir(parents=True)
+	(tmp_path / ".claude" / "settings.json").write_text(
+		json.dumps(
+			{
+				"hooks": {
+					"FileChanged": [
+						{
+							"hooks": [
+								{"type": "command", "command": "camas mcp fix --paths ${file_path}"}
+							]
+						}
+					]
+				}
+			}
+		)
+	)
+	assert write_hooks([]) == 0
+	settings = json.loads((tmp_path / ".claude" / "settings.json").read_text())
+	fc = settings["hooks"]["FileChanged"]
+	assert len(fc) == 1
+	assert "fix --paths" in fc[0]["hooks"][0]["command"]
