@@ -1,15 +1,15 @@
 ---
 name: gate
-description: Keep the workspace green while you edit — the free FileChanged autofix, and delegating the check-and-fix loop to the camas-fixer subagent so residuals never spend your reasoning. Read after a batch of edits and before declaring work done.
+description: Keep the workspace green while you edit — the free PostToolBatch autofix, and delegating the check-and-fix loop to the camas-fixer subagent so residuals never spend your reasoning. Read after a batch of edits and before declaring work done.
 ---
 
 The camas gate keeps the workspace green as you edit, in two layers — both driven by what the
 project declares in `Config.agent`:
 
-- **Fix (automatic, free).** A `FileChanged` hook runs `camas mcp fix --paths <file>` on every
-  file change — the node the project registered as `Config.agent.fix` (its mutating,
-  behavior-preserving auto-fixers: formatters, `--fix` linters), scoped to that file, at zero
-  model tokens. It never asks you anything; with no fix registered it is a no-op.
+- **Fix (automatic, free).** A `PostToolBatch` hook runs `camas mcp fix` after each edit batch —
+  the node the project registered as `Config.agent.fix` (its mutating, behavior-preserving
+  auto-fixers: formatters, `--fix` linters), scoped to the just-changed files (delivered on
+  stdin), at zero model tokens. It never asks you anything; with no fix registered it is a no-op.
 - **Check (you delegate — there is no check hook).** The check node (`Config.agent.check`,
   else the default task) is read-only: it runs the project's checks and classifies the result
   `green` or `needs_reasoning`. After a batch of edits, and before you declare work done,

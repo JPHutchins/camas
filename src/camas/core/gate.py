@@ -3,7 +3,7 @@
 
 """The SA-delegation gate: scope the check node to the changed paths, run the checks, and
 classify the residual ``green`` vs ``needs_reasoning``. The gate
-never mutates — the deterministic fixers run separately on ``FileChanged`` (``camas fix``).
+never mutates — the deterministic fixers run separately on ``PostToolBatch`` (``camas mcp fix``).
 """
 
 from __future__ import annotations

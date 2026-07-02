@@ -48,15 +48,15 @@ ci = Sequential(
 
 # Your deterministic, behavior-preserving auto-fixers, with {paths} so a run scopes to the
 # changed files. Register the node (named anything) to Config.agent.fix below; the camas Claude
-# Code plugin's FileChanged hook runs it on every edit via `camas mcp fix --paths <file>`, for
-# free. Replace the placeholder with your real fixers, e.g.:
+# Code plugin's PostToolBatch hook runs it after each edit batch via `camas mcp fix` (the changed
+# files arrive on stdin), for free. Replace the placeholder with your real fixers, e.g.:
 #   autofix = Task("ruff check --fix {paths}", mutates=True, paths=".")
 #   autofix = Parallel(Task("ruff format {paths}", mutates=True), Task("ruff check --fix {paths}", mutates=True), paths=".")
 autofix = Task('python -c "" {paths}', name="autofix", mutates=True, paths=".")
 
 # Config is discovered by type, under any binding name (here `_`): bare `camas` runs
 # default_task — or github_task under GitHub Actions, falling back to default_task when unset.
-# agent= wires the Claude Code plugin: agent.fix is the registered FileChanged autofix node
+# agent= wires the Claude Code plugin: agent.fix is the registered PostToolBatch autofix node
 # above; the gate checks default_task (override with Claude(fix=..., check=...)). A checking
 # leaf can add agent_format=("--output-format sarif", "sarif") for machine-readable gate output.
 _ = Config(default_task=ci, agent=Claude(fix=autofix))

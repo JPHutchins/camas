@@ -226,15 +226,15 @@ _ = Config(agent=Claude(fix=Sequential(py, web)))
 
 `--paths` works on any task — `camas check --paths src/a.py`. Without it, every `{paths}` resolves to its full-run default (`ruff format src`); with it, each leaf runs only over the changed files it covers, and a leaf that covers none is dropped (`--paths` is repeatable, or comma-separated).
 
-For the Claude Code plugin, you **register** the auto-fix node — whatever you named it — to `Config.agent.fix`; the FileChanged hook runs *that* node over the just-changed file, zero model tokens. Install the plugin (`/plugin marketplace add JPHutchins/camas`), run `camas mcp init --hooks` (which writes the hook with the launcher it resolves for your project), or wire it by hand:
+For the Claude Code plugin, you **register** the auto-fix node — whatever you named it — to `Config.agent.fix`; the PostToolBatch hook runs *that* node over the just-changed files, zero model tokens. Install the plugin (`/plugin marketplace add JPHutchins/camas`), run `camas mcp init --hooks` (which writes the hook with the launcher it resolves for your project), or wire it by hand:
 
 ```jsonc
 // .claude/settings.json
-{ "hooks": { "FileChanged": [
-  { "hooks": [{ "type": "command", "command": "uvx 'camas[mcp]' mcp fix --paths ${file_path}" }] } ] } }
+{ "hooks": { "PostToolBatch": [
+  { "hooks": [{ "type": "command", "command": "uvx 'camas[mcp]' mcp fix" }] } ] } }
 ```
 
-`camas mcp fix` runs the registered `Config.agent.fix` node (not a task named `fix` — that's just `camas fix`, your own task); with no fix registered it is a clean no-op, so the hook is harmless without it. The `uvx 'camas[mcp]'` launcher needs only `uv` on PATH (no global camas install); with `camas` already installed, bare `camas mcp fix …` works too.
+`camas mcp fix` runs the registered `Config.agent.fix` node (not a task named `fix` — that's just `camas fix`, your own task); it reads the changed files from the PostToolBatch event on stdin (`--paths` still works for a manual run). With no fix registered it is a clean no-op, so the hook is harmless without it. The `uvx 'camas[mcp]'` launcher needs only `uv` on PATH (no global camas install); with `camas` already installed, bare `camas mcp fix …` works too.
 
 ## Effects plugins
 
