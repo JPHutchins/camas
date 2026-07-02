@@ -1025,8 +1025,8 @@ def parse_gate_args(argv: list[str]) -> GateArgs:
 		"--paths",
 		action="append",
 		default=[],
-		metavar="PATH",
-		help="changed path to scope to (repeatable)",
+		metavar="PATH[,PATH...]",
+		help="changed paths to scope to (repeatable, comma-separated)",
 	)
 	parser.add_argument(
 		"--under", type=float, default=None, metavar="SECONDS", help="wall-clock budget"
