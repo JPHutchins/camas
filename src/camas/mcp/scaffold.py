@@ -33,10 +33,10 @@ class HookCommand(BaseModel):
 class HookGroup(BaseModel):
 	"""A group of hooks that fire on the same event, with an optional matcher."""
 
-	model_config = ConfigDict(extra="forbid")
+	model_config = ConfigDict(extra="allow")
 
 	hooks: list[HookCommand]
-	matcher: str | None = None
+	matcher: str = ""
 
 
 class SettingsFile(BaseModel):
@@ -68,14 +68,17 @@ def write_mcp_json(argv: list[str]) -> int:
 		return 2
 	command, args = launcher
 	servers[SERVER_NAME] = {"type": "stdio", "command": command, "args": args}
-	mcp_json_path.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
 	camas_dir: Final = Path.cwd() / DEFAULT_CAMAS_DIR
 	camas_note: Final = (
 		f"  created {camas_dir} for run logs and timing estimates; delete it to opt out.\n"
 		if not camas_dir.exists()
 		else ""
 	)
-	ensure_camas_dir(camas_dir)
+	try:
+		ensure_camas_dir(camas_dir)
+	except OSError as exc:
+		print(f"warning: cannot create {camas_dir}: {exc}", file=sys.stderr)
+	mcp_json_path.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
 	print(
 		f"Wrote the {SERVER_NAME!r} MCP server to {mcp_json_path}\n"
 		f"  command: {command} {' '.join(args)}\n"
@@ -91,6 +94,8 @@ def launch_command(*, rich: bool) -> tuple[str, list[str]] | None:
 	tail = ["mcp", "--rich"] if rich else ["mcp"]
 	if shutil.which("uv") is not None and uv_project_root() is not None:
 		return "uv", ["run", "camas", *tail]
+	if shutil.which("uvx") is not None:
+		return "uvx", ["camas[mcp]", *tail]
 	if shutil.which("camas") is not None:
 		return "camas", tail
 	return None
@@ -106,6 +111,8 @@ def portability_note(command: str) -> str:
 	"""How portable the chosen launch command is, for the committed ``.mcp.json``."""
 	if command == "uv":
 		return "This entry is portable; uv resolves camas from the lockfile."
+	if command == "uvx":
+		return "This entry is portable; uvx downloads and runs camas[mcp] from PyPI."
 	return "This entry is portable if your team installs camas on PATH; commit it to share."
 
 
@@ -128,8 +135,8 @@ def launch_command_str(*, rich: bool) -> str | None:
 
 
 def write_hooks(argv: list[str]) -> int:
-	"""Write the ``FileChanged`` autofix hook into ``.claude/settings.json`` using the same
-	``launch_command()`` resolution as the MCP server entry.
+	"""Write the ``FileChanged`` autofix hook into ``.claude/settings.json`` using
+	``launch_command()`` resolution (without ``--rich``, which the hook does not need).
 	"""
 	settings_path = Path.cwd() / SETTINGS_PATH
 	try:
@@ -147,7 +154,7 @@ def write_hooks(argv: list[str]) -> int:
 	except Exception as e:
 		print(f"error: {settings_path}: {e}", file=sys.stderr)
 		return 2
-	launcher = launch_command_str(rich="--rich" in argv)
+	launcher = launch_command_str(rich=False)
 	if launcher is None:
 		print(
 			"error: cannot write portable hooks — no uv.lock found and camas is not "
@@ -156,16 +163,21 @@ def write_hooks(argv: list[str]) -> int:
 			file=sys.stderr,
 		)
 		return 2
-	settings.hooks["FileChanged"] = [
-		HookGroup(
-			hooks=[
-				HookCommand(
-					type="command",
-					command=f"{launcher} fix --paths ${{file_path}}",
-				)
-			]
-		)
-	]
+	camas_hook = HookGroup(
+		hooks=[
+			HookCommand(
+				type="command",
+				command=f"{launcher} fix --paths ${{file_path}}",
+			)
+		]
+	)
+	existing = settings.hooks.get("FileChanged", [])
+	kept: list[HookGroup] = []
+	for g in existing:
+		remaining = [h for h in g.hooks if "mcp fix --paths" not in h.command]
+		if remaining:
+			kept.append(g.model_copy(update={"hooks": remaining}))
+	settings.hooks["FileChanged"] = [*kept, camas_hook]
 	settings_path.parent.mkdir(parents=True, exist_ok=True)
 	settings_path.write_text(settings.model_dump_json(indent=2) + "\n", encoding="utf-8")
 	print(

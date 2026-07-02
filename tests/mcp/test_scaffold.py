@@ -29,7 +29,18 @@ def test_uv_project_emits_portable_uv_run(tmp_path: Path, monkeypatch: pytest.Mo
 	assert (entry["command"], entry["args"]) == ("uv", ["run", "camas", "mcp"])
 
 
-def test_uv_present_without_lock_falls_through(
+def test_uv_present_without_lock_resolves_uvx(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	monkeypatch.chdir(tmp_path)
+	monkeypatch.setattr("shutil.which", _which("uv", "uvx"))
+	assert write_mcp_json([]) == 0
+	entry = json.loads((tmp_path / ".mcp.json").read_text())["mcpServers"]["camas"]
+	assert entry["command"] == "uvx"
+	assert entry["args"] == ["camas[mcp]", "mcp"]
+
+
+def test_uv_without_lock_or_uvx_falls_through_to_camas(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
 	monkeypatch.chdir(tmp_path)
@@ -37,6 +48,7 @@ def test_uv_present_without_lock_falls_through(
 	assert write_mcp_json([]) == 0
 	entry = json.loads((tmp_path / ".mcp.json").read_text())["mcpServers"]["camas"]
 	assert entry["command"] == "camas"
+	assert entry["args"] == ["mcp"]
 
 
 def test_camas_on_path_appends_rich(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -168,6 +180,16 @@ def test_launch_command_str_rich(monkeypatch: pytest.MonkeyPatch) -> None:
 	assert launch_command_str(rich=True) == "camas mcp --rich"
 
 
+def test_launch_command_str_uvx_on_path(monkeypatch: pytest.MonkeyPatch) -> None:
+	monkeypatch.setattr("shutil.which", _which("uvx"))
+	assert launch_command_str(rich=False) == "uvx 'camas[mcp]' mcp"
+
+
+def test_launch_command_str_uvx_with_rich(monkeypatch: pytest.MonkeyPatch) -> None:
+	monkeypatch.setattr("shutil.which", _which("uvx"))
+	assert launch_command_str(rich=True) == "uvx 'camas[mcp]' mcp --rich"
+
+
 def test_launch_command_str_none_when_no_launcher(monkeypatch: pytest.MonkeyPatch) -> None:
 	monkeypatch.setattr("shutil.which", _which())
 	assert launch_command_str(rich=False) is None
@@ -244,6 +266,56 @@ def test_write_hooks_merges_existing_settings(
 	assert "FileChanged" in settings["hooks"]
 
 
+def test_write_hooks_rejects_matcher_null(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+	monkeypatch.chdir(tmp_path)
+	monkeypatch.setattr("shutil.which", _which("camas"))
+	(tmp_path / ".claude").mkdir(parents=True)
+	(tmp_path / ".claude" / "settings.json").write_text(
+		json.dumps(
+			{
+				"hooks": {
+					"FileChanged": [
+						{
+							"hooks": [{"type": "command", "command": "echo hi"}],
+							"matcher": None,
+						}
+					]
+				}
+			}
+		)
+	)
+	assert write_hooks([]) == 2
+
+
+def test_write_hooks_preserves_matcher_empty_string(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	monkeypatch.chdir(tmp_path)
+	monkeypatch.setattr("shutil.which", _which("camas"))
+	(tmp_path / ".claude").mkdir(parents=True)
+	(tmp_path / ".claude" / "settings.json").write_text(
+		json.dumps(
+			{
+				"hooks": {
+					"FileChanged": [
+						{
+							"hooks": [{"type": "command", "command": "echo hi"}],
+							"matcher": "",
+						}
+					]
+				}
+			}
+		)
+	)
+	assert write_hooks([]) == 0
+	settings = json.loads((tmp_path / ".claude" / "settings.json").read_text())
+	fc = settings["hooks"]["FileChanged"]
+	assert len(fc) == 2
+	echo_group = next(g for g in fc if any("echo hi" in h["command"] for h in g["hooks"]))
+	assert echo_group.get("matcher") == ""
+	assert any("fix --paths" in h["command"] for g in fc for h in g["hooks"])
+
+
 def test_mcp_cli_init_hooks_routes_to_write_hooks(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -255,3 +327,46 @@ def test_mcp_cli_init_hooks_routes_to_write_hooks(
 		main(["init", "--hooks"])
 	assert exc.value.code == 0
 	assert (tmp_path / ".claude" / "settings.json").exists()
+
+
+def test_write_mcp_json_writes_file_despite_camas_dir_error(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	monkeypatch.chdir(tmp_path)
+	monkeypatch.setattr("shutil.which", _which("camas"))
+
+	def _raise_oserror(_dir: object) -> None:
+		raise OSError("disk full")
+
+	monkeypatch.setattr("camas.mcp.scaffold.ensure_camas_dir", _raise_oserror)
+	assert write_mcp_json([]) == 0
+	assert (tmp_path / ".mcp.json").exists()
+	assert "warning" in capsys.readouterr().err
+
+
+def test_write_hooks_removes_camas_only_groups(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	monkeypatch.chdir(tmp_path)
+	monkeypatch.setattr("shutil.which", _which("camas"))
+	(tmp_path / ".claude").mkdir(parents=True)
+	(tmp_path / ".claude" / "settings.json").write_text(
+		json.dumps(
+			{
+				"hooks": {
+					"FileChanged": [
+						{
+							"hooks": [
+								{"type": "command", "command": "camas mcp fix --paths ${file_path}"}
+							]
+						}
+					]
+				}
+			}
+		)
+	)
+	assert write_hooks([]) == 0
+	settings = json.loads((tmp_path / ".claude" / "settings.json").read_text())
+	fc = settings["hooks"]["FileChanged"]
+	assert len(fc) == 1
+	assert "fix --paths" in fc[0]["hooks"][0]["command"]
