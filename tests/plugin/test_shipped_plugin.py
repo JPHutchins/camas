@@ -11,6 +11,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 _REPO = Path(__file__).resolve().parents[2]
 _PLUGIN = _REPO / "agent" / "claude" / "plugin"
 
@@ -48,7 +50,6 @@ def test_plugin_ships_the_fixer_and_skill() -> None:
 
 
 def test_plugin_version_matches_package_version() -> None:
-	import pytest
 	from setuptools_scm import get_version
 
 	scm_version = get_version()
