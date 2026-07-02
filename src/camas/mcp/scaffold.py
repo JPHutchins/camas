@@ -33,7 +33,7 @@ class HookCommand(BaseModel):
 class HookGroup(BaseModel):
 	"""A group of hooks that fire on the same event, with an optional matcher."""
 
-	model_config = ConfigDict(extra="allow")
+	model_config = ConfigDict(extra="forbid")
 
 	hooks: list[HookCommand]
 	matcher: str | None = None
@@ -74,7 +74,11 @@ def write_mcp_json(argv: list[str]) -> int:
 		if not camas_dir.exists()
 		else ""
 	)
-	ensure_camas_dir(camas_dir)
+	try:
+		ensure_camas_dir(camas_dir)
+	except OSError as exc:
+		print(f"error: cannot create {camas_dir}: {exc}", file=sys.stderr)
+		return 2
 	mcp_json_path.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
 	print(
 		f"Wrote the {SERVER_NAME!r} MCP server to {mcp_json_path}\n"
@@ -151,7 +155,7 @@ def write_hooks(argv: list[str]) -> int:
 	except Exception as e:
 		print(f"error: {settings_path}: {e}", file=sys.stderr)
 		return 2
-	launcher = launch_command_str(rich="--rich" in argv)
+	launcher = launch_command_str(rich=False)
 	if launcher is None:
 		print(
 			"error: cannot write portable hooks — no uv.lock found and camas is not "
@@ -169,12 +173,12 @@ def write_hooks(argv: list[str]) -> int:
 		]
 	)
 	existing = settings.hooks.get("FileChanged", [])
-	settings.hooks["FileChanged"] = [
-		g
-		for g in existing
-		if not any(h.command == f"{launcher} fix --paths ${{file_path}}" for h in g.hooks)
-	]
-	settings.hooks["FileChanged"].append(camas_hook)
+	kept: list[HookGroup] = []
+	for g in existing:
+		remaining = [h for h in g.hooks if "fix --paths" not in h.command]
+		if remaining:
+			kept.append(g.model_copy(update={"hooks": remaining}))
+	settings.hooks["FileChanged"] = [*kept, camas_hook]
 	settings_path.parent.mkdir(parents=True, exist_ok=True)
 	settings_path.write_text(settings.model_dump_json(indent=2) + "\n", encoding="utf-8")
 	print(

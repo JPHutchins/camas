@@ -288,7 +288,11 @@ def test_write_hooks_tolerates_matcher_null(
 	)
 	assert write_hooks([]) == 0
 	settings = json.loads((tmp_path / ".claude" / "settings.json").read_text())
-	assert "FileChanged" in settings["hooks"]
+	fc = settings["hooks"]["FileChanged"]
+	assert len(fc) == 2
+	echo_group = next(g for g in fc if any("echo hi" in h["command"] for h in g["hooks"]))
+	assert echo_group.get("matcher") is None
+	assert any("fix --paths" in h["command"] for g in fc for h in g["hooks"])
 
 
 def test_mcp_cli_init_hooks_routes_to_write_hooks(
