@@ -54,6 +54,7 @@ camas = "camas.main:main"
 [build-system]
 requires = [
 "setuptools>=68",
+"setuptools-scm>=8",
 "mypy[mypyc]>=1.19",
 "exceptiongroup>=1.2; python_version < '3.11'",
 "taskgroup>=0.2; python_version < '3.11'",
