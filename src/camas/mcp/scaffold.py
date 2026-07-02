@@ -77,8 +77,7 @@ def write_mcp_json(argv: list[str]) -> int:
 	try:
 		ensure_camas_dir(camas_dir)
 	except OSError as exc:
-		print(f"error: cannot create {camas_dir}: {exc}", file=sys.stderr)
-		return 2
+		print(f"warning: cannot create {camas_dir}: {exc}", file=sys.stderr)
 	mcp_json_path.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
 	print(
 		f"Wrote the {SERVER_NAME!r} MCP server to {mcp_json_path}\n"
@@ -136,8 +135,8 @@ def launch_command_str(*, rich: bool) -> str | None:
 
 
 def write_hooks(argv: list[str]) -> int:
-	"""Write the ``FileChanged`` autofix hook into ``.claude/settings.json`` using the same
-	``launch_command()`` resolution as the MCP server entry.
+	"""Write the ``FileChanged`` autofix hook into ``.claude/settings.json`` using
+	``launch_command()`` resolution (without ``--rich``, which the hook does not need).
 	"""
 	settings_path = Path.cwd() / SETTINGS_PATH
 	try:
@@ -175,7 +174,7 @@ def write_hooks(argv: list[str]) -> int:
 	existing = settings.hooks.get("FileChanged", [])
 	kept: list[HookGroup] = []
 	for g in existing:
-		remaining = [h for h in g.hooks if "fix --paths" not in h.command]
+		remaining = [h for h in g.hooks if "mcp fix --paths" not in h.command]
 		if remaining:
 			kept.append(g.model_copy(update={"hooks": remaining}))
 	settings.hooks["FileChanged"] = [*kept, camas_hook]
