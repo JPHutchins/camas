@@ -33,12 +33,20 @@ jobs:
         with:
           node-version: "22"
 
-      - uses: astral-sh/setup-uv@v8.2.0
+      # uv comes from PyPI (already allowlisted) rather than astral-sh/setup-uv, which resolves
+      # versions via raw.githubusercontent.com and pulls the binary from releases.astral.sh — both
+      # would need allowlisting. harden-runner enforces from its pre-step, so the lock covers setup
+      # too regardless of step order; every host setup touches must be on the allowlist below.
+      - name: Install uv (pinned)
+        run: |
+          pipx install --force uv==0.9.15
+          echo "$(pipx environment --value PIPX_BIN_DIR)" >> "$GITHUB_PATH"
+      - run: uv --version
 
       - run: npm install -g @anthropic-ai/claude-code@2.1.197
 
-      # Lock egress AFTER trusted setup (whose downloads we don't want to fight) and BEFORE the
-      # headless run. Only the hosts the suite needs; a blocked host shows in this step's summary.
+      # Allowlist = the hosts setup (uv wheels from PyPI, claude-code from npm) and the headless
+      # suite (DeepSeek) reach; a blocked host shows in this step's summary.
       - name: Lock network egress
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
@@ -47,6 +55,7 @@ jobs:
             api.deepseek.com:443
             pypi.org:443
             files.pythonhosted.org:443
+            registry.npmjs.org:443
             github.com:443
             objects.githubusercontent.com:443
 
