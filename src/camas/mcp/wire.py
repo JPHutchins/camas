@@ -186,8 +186,10 @@ class RunRequest(BaseModel):
 		gt=0,
 		description="Wall-clock budget in seconds: run only the leaves whose recorded "
 		"estimate fits, mutating leaves (formatters) first then the read-only rest in "
-		"parallel. Untimed leaves are skipped. Omit 'task' to budget the default task; "
-		"the 'budget' field of the response reports what was selected and excluded.",
+		"parallel. Untimed leaves run (and are thereby measured); only leaves measured "
+		"over budget are skipped, so a cold cache runs the whole tree. Omit 'task' to "
+		"budget the default task; the 'budget' field of the response reports what was "
+		"selected and excluded.",
 	)
 	dry_run: bool = Field(
 		default=False,
@@ -240,8 +242,9 @@ class GateRequest(BaseModel):
 	paths: list[str] = Field(
 		default_factory=list,
 		description="Changed paths to scope the gate to — the camas-fixer subagent passes the "
-		"edited files. Empty gates the whole task; each leaf's {paths} is injected with the "
-		"files it covers and leaves covering nothing are dropped.",
+		"edited files. Empty gates the whole task; each {paths} command is injected with the "
+		"files it covers (one covering none is dropped), while a command without {paths} can't "
+		"be narrowed and always runs.",
 	)
 	task: str | None = Field(
 		default=None,

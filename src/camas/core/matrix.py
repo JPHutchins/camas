@@ -17,7 +17,7 @@ if sys.version_info >= (3, 11):
 else:  # pragma: no cover
 	from typing_extensions import assert_never
 
-from ..v0.task import Parallel, Sequential, Task, TaskNode
+from ..v0.task import Group, Parallel, Sequential, Task, TaskNode
 from .task import MatrixBinding, VarBinding, task_label
 
 if TYPE_CHECKING:
@@ -121,19 +121,13 @@ def specialize_node(task: TaskNode, binding: MatrixBinding, suffix: str) -> Task
 	match task:
 		case Task():
 			return specialize_task(task, binding, suffix)
-		case Sequential(tasks=tasks, name=name, cwd=cwd, help=help):
-			return Sequential(
-				*(specialize_node(t, binding, suffix) for t in tasks),
-				name=f"{name} {suffix}" if name is not None else None,
-				cwd=substitute_cwd(cwd, binding),
-				help=substitute_help(help, binding),
-			)
-		case Parallel(tasks=tasks, name=name, cwd=cwd, help=help):
-			return Parallel(
-				*(specialize_node(t, binding, suffix) for t in tasks),
-				name=f"{name} {suffix}" if name is not None else None,
-				cwd=substitute_cwd(cwd, binding),
-				help=substitute_help(help, binding),
+		case Group() as group:
+			return type(group)(
+				*(specialize_node(t, binding, suffix) for t in group.tasks),
+				name=f"{group.name} {suffix}" if group.name is not None else None,
+				cwd=substitute_cwd(group.cwd, binding),
+				help=substitute_help(group.help, binding),
+				paths=substitute_paths(group.paths, binding),
 			)
 		case _:
 			assert_never(task)
@@ -198,23 +192,15 @@ def apply_overrides(task: TaskNode, overrides: Mapping[str, tuple[str, ...]]) ->
 	match task:
 		case Task():
 			return task
-		case Sequential(tasks=tasks, name=name, matrix=matrix, env=env, cwd=cwd, help=help):
-			return Sequential(
-				*(apply_overrides(t, overrides) for t in tasks),
-				name=name,
-				matrix=applied(matrix),
-				env=env,
-				cwd=cwd,
-				help=help,
-			)
-		case Parallel(tasks=tasks, name=name, matrix=matrix, env=env, cwd=cwd, help=help):
-			return Parallel(
-				*(apply_overrides(t, overrides) for t in tasks),
-				name=name,
-				matrix=applied(matrix),
-				env=env,
-				cwd=cwd,
-				help=help,
+		case Group() as group:
+			return type(group)(
+				*(apply_overrides(t, overrides) for t in group.tasks),
+				name=group.name,
+				matrix=applied(group.matrix),
+				env=group.env,
+				cwd=group.cwd,
+				help=group.help,
+				paths=group.paths,
 			)
 		case _:
 			assert_never(task)
@@ -312,12 +298,13 @@ def expand_matrix(
 	task: TaskNode,
 	ancestor_env: Mapping[str, str] | None = None,
 	ancestor_cwd: Path | None = None,
+	ancestor_paths: str | PathScope | None = None,
 ) -> TaskNode:
-	"""Recursively expand all matrix parameters and propagate container env/cwd into leaves.
+	"""Recursively expand all matrix parameters and propagate container env/cwd/paths into leaves.
 
-	Container env and cwd are also retained on the expanded group nodes (for display
-	purposes); execution still reads the accumulated values from leaves. A child's
-	``cwd`` takes precedence over an ancestor's.
+	Container env, cwd, and paths are also retained on the expanded group nodes (for display
+	purposes); execution and scoping read the accumulated values from leaves. A child's own
+	``cwd``/``paths`` takes precedence over an ancestor's.
 
 	>>> expand_matrix(Task("echo hi"))
 	Task(cmd='echo hi', name=None, env={}, cwd=None)
@@ -328,6 +315,8 @@ def expand_matrix(
 	{'K': 'v'}
 	>>> expand_matrix(Parallel(Task("hi"), cwd=Path("w"))).tasks[0].cwd == Path("w")  # type: ignore[union-attr]
 	True
+	>>> expand_matrix(Parallel(Task("ruff {paths}"), paths=".")).tasks[0].paths  # type: ignore[union-attr]
+	'.'
 	"""
 	parent_env: Final = dict(ancestor_env) if ancestor_env else {}
 	match task:
@@ -339,22 +328,32 @@ def expand_matrix(
 				cwd=task.cwd if task.cwd is not None else ancestor_cwd,
 				help=task.help,
 				mutates=task.mutates,
-				paths=task.paths,
+				paths=task.paths if task.paths is not None else ancestor_paths,
 				agent_format=task.agent_format,
 			)
-		case Sequential(tasks=tasks, matrix=matrix, env=env, cwd=cwd):
+		case Sequential(tasks=tasks, matrix=matrix, env=env, cwd=cwd, paths=paths):
 			seq_env: Final = parent_env | env
 			seq_cwd: Final = cwd if cwd is not None else ancestor_cwd
-			seq_expanded: Final = tuple(expand_matrix(t, seq_env, seq_cwd) for t in tasks)
+			seq_paths: Final = paths if paths is not None else ancestor_paths
+			seq_expanded: Final = tuple(
+				expand_matrix(t, seq_env, seq_cwd, seq_paths) for t in tasks
+			)
 			if matrix is None:
-				return Sequential(*seq_expanded, name=task.name, env=env, cwd=cwd, help=task.help)
+				return Sequential(
+					*seq_expanded, name=task.name, env=env, cwd=cwd, help=task.help, paths=paths
+				)
 			return expand_sequential_matrix(seq_expanded, matrix, task.name, env, cwd, task.help)
-		case Parallel(tasks=tasks, matrix=matrix, env=env, cwd=cwd):
+		case Parallel(tasks=tasks, matrix=matrix, env=env, cwd=cwd, paths=paths):
 			par_env: Final = parent_env | env
 			par_cwd: Final = cwd if cwd is not None else ancestor_cwd
-			par_expanded: Final = tuple(expand_matrix(t, par_env, par_cwd) for t in tasks)
+			par_paths: Final = paths if paths is not None else ancestor_paths
+			par_expanded: Final = tuple(
+				expand_matrix(t, par_env, par_cwd, par_paths) for t in tasks
+			)
 			if matrix is None:
-				return Parallel(*par_expanded, name=task.name, env=env, cwd=cwd, help=task.help)
+				return Parallel(
+					*par_expanded, name=task.name, env=env, cwd=cwd, help=task.help, paths=paths
+				)
 			return expand_parallel_matrix(par_expanded, matrix, task.name, env, cwd, task.help)
 		case _:
 			assert_never(task)

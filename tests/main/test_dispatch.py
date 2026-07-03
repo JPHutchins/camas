@@ -291,14 +291,15 @@ def test_run_under_all_over_budget_runs_nothing(
 
 _TIDY = (
 	"from camas import Claude, Config, Task\n"
-	'tidy = Task(("python", "-c", "import pathlib; pathlib.Path(\'fixed.txt\').write_text(\'done\')"),'
+	'tidy = Task(("python", "-c", "import pathlib; pathlib.Path(\'fixed.txt\').write_text(\'done\')", "{{paths}}"),'
 	' name="tidy", mutates=True, paths={scope!r})\n'
 	"_ = Config(agent=Claude(fix=tidy))\n"
 )
 
 
-def test_fix_cli_runs_registered_agent_fix(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-	# the registered node is named "tidy", not "fix" — fix_cli resolves Config.agent.fix by reference
+def test_fix_cli_resolves_registered_fix_by_reference(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
 	(tmp_path / "tasks.py").write_text(_TIDY.format(scope="."))
 	monkeypatch.chdir(tmp_path)
 	assert fix_cli(["--paths", "x.py"]) == 0

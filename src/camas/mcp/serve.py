@@ -31,7 +31,7 @@ from ..core.gate import run_gate
 from ..core.hook_event import changed_from_stdin
 from ..core.matrix import expand_matrix, override_matrix
 from ..core.render import render_tree_lines, strip_ansi
-from ..core.scope import scope_to_changed, to_changed, with_default_paths
+from ..core.scope import scope_to_changed, to_changed
 from ..core.task import task_label
 from ..main.argv import apply_passthrough
 from ..main.format import format_load_error_hint
@@ -1074,16 +1074,24 @@ def run_gate_cli(
 		print(f"camas mcp gate: {e}", file=sys.stderr)
 		return 2
 	changed = to_changed(args.paths or changed_from_stdin(), base)
+	camas_dir = (config if config is not None else Config()).camas_path(base)
 	if args.dry_run:
 		expanded = expand_matrix(node)
-		scoped = scope_to_changed(expanded, changed) if changed else with_default_paths(expanded)
+		plan = (
+			plan_under(expanded, args.under, timings.load(camas_dir))
+			if args.under is not None
+			else None
+		)
+		budgeted = plan.node if plan is not None else expanded
+		scoped = scope_to_changed(budgeted, changed) if budgeted is not None else None
 		if scoped is None:
 			print("No leaves cover the changed paths — nothing would run.")
 		else:
-			plan = "\n".join(render_tree_lines(scoped, show_cmd=True, color=False))
-			print(f"Dry run — resolved path-scoped plan, nothing executed:\n{plan}")
+			tree = "\n".join(render_tree_lines(scoped, show_cmd=True, color=False))
+			print(f"Dry run — resolved path-scoped plan, nothing executed:\n{tree}")
+		if plan is not None:
+			print(budget_headline(to_budget_report(plan)))
 		return 0
-	camas_dir = (config if config is not None else Config()).camas_path(base)
 	outcome = asyncio.run(
 		run_gate(node, changed, under=args.under, jobs=args.jobs, timings=timings.load(camas_dir))
 	)

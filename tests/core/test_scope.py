@@ -6,6 +6,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from camas import Parallel, Sequential, Task
+from camas.core.matrix import expand_matrix
 from camas.core.scope import scope_to_changed, to_changed, with_default_paths
 
 if TYPE_CHECKING:
@@ -47,12 +48,40 @@ def test_none_paths_leaf_is_untouched_and_always_runs() -> None:
 	assert with_default_paths(mypy) == mypy
 
 
-def test_prefix_without_placeholder_is_run_whole_or_skip() -> None:
-	"""A leaf with ``paths`` but no ``{paths}`` runs its command unchanged when its prefix
-	changed (the selection a file-list-averse tool needs), and is skipped otherwise."""
+def test_placeholderless_command_always_runs_paths_is_noop() -> None:
+	"""A command with no ``{paths}`` can't narrow, so it always runs and its ``paths`` is a
+	no-op — camas errs on correctness: the tool might touch the edited files."""
 	mypy = Task("mypy .", name="mypy", paths="src")
 	assert scope_to_changed(mypy, ("src/app.py",)) == mypy
-	assert scope_to_changed(mypy, ("docs/readme.md",)) is None
+	assert scope_to_changed(mypy, ("docs/readme.md",)) == mypy
+
+
+def test_placeholder_without_paths_defaults_to_whole_project() -> None:
+	"""A ``{paths}`` leaf with no scope (own or inherited) defaults to the whole project, so it
+	narrows to the changed files on a scoped run and to ``.`` on a full run."""
+	assert _cmd(scope_to_changed(Task("ruff {paths}"), ("a.py",))) == "ruff a.py"
+	assert _cmd(with_default_paths(Task("ruff {paths}"))) == "ruff ."
+
+
+def test_group_paths_inherited_by_placeholder_child() -> None:
+	"""A group's ``paths`` is the default scope of a ``{paths}`` child lacking its own — baked into
+	leaves by ``expand_matrix`` like ``cwd`` — so the child scopes to the changed files and runs."""
+	tree = expand_matrix(Parallel(Task("ruff format {paths}", name="fmt"), paths="."))
+	scoped = scope_to_changed(tree, ("src/a.py", "src/b.py"))
+	assert isinstance(scoped, Parallel)
+	assert _cmd(scoped.tasks[0]) == "ruff format src/a.py src/b.py"
+	full = with_default_paths(tree)
+	assert isinstance(full, Parallel)
+	assert _cmd(full.tasks[0]) == "ruff format ."
+
+
+def test_group_paths_do_not_prune_placeholderless_child() -> None:
+	"""A ``{paths}``-less child under a group ``paths`` still runs — inherited ``paths`` only fills
+	a ``{paths}`` placeholder, it never prunes a command that can't narrow."""
+	tree = expand_matrix(Parallel(Task("mypy .", name="mypy"), paths="src"))
+	scoped = scope_to_changed(tree, ("docs/x.md",))
+	assert isinstance(scoped, Parallel)
+	assert _cmd(scoped.tasks[0]) == "mypy ."
 
 
 def test_callable_paths_full_control() -> None:

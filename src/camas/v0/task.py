@@ -60,9 +60,11 @@ class Task:
 	The ``--under`` budget scheduler runs such leaves sequentially, before the
 	read-only group, so they never race a checker over the same files.
 
-	``paths`` opts a leaf into ``{paths}`` substitution (:mod:`camas.core.scope`): a
-	directory-prefix string (``"."``) or a ``(changed) -> tuple[str, ...]`` callable that
-	maps the changed files into the command; ``None`` leaves the command untouched.
+	``paths`` is the scope for a ``{paths}`` command (:mod:`camas.core.scope`): a
+	directory-prefix string (``"."``) or a ``(changed) -> tuple[str, ...]`` callable that maps the
+	changed files into the command. A ``Sequential``/``Parallel`` may set ``paths`` to supply the
+	default to descendants that set none. A command without ``{paths}`` can't be narrowed, so its
+	``paths`` is a no-op and the command always runs.
 
 	``agent_format`` is the agent-only structured-output variant (:class:`AgentFormat`): the gate
 	appends its ``args`` and tags the diagnostics ``kind``; a human run leaves the command as-is.
@@ -163,10 +165,15 @@ class Group:
 	``isinstance(x, Group)`` to test for "either kind of grouping node";
 	pattern-match on the concrete subclass to discriminate.
 
+	``paths`` is the default path-scope for descendant ``{paths}`` leaves that set none
+	(see :mod:`camas.core.scope`); ``env``/``cwd`` likewise propagate into leaves.
+
 	>>> isinstance(Sequential("a"), Group) and isinstance(Parallel("a"), Group)
 	True
 	>>> hash(Sequential("a")) == hash(Sequential("a"))
 	True
+	>>> Parallel(Task("ruff {paths}"), paths=".").paths
+	'.'
 	"""
 
 	tasks: tuple[TaskNode, ...]
@@ -175,6 +182,7 @@ class Group:
 	env: dict[str, str]
 	cwd: Path | None
 	help: str | None
+	paths: str | PathScope | None
 
 	def __init__(
 		self,
@@ -184,6 +192,7 @@ class Group:
 		env: dict[str, str] | None = None,
 		cwd: str | Path | None = None,
 		help: str | None = None,
+		paths: str | PathScope | None = None,
 	) -> None:
 		put = object.__setattr__
 		put(self, "tasks", tuple(Task(cmd=t) if isinstance(t, str) else t for t in tasks))
@@ -192,6 +201,7 @@ class Group:
 		put(self, "env", env if env is not None else {})
 		put(self, "cwd", Path(cwd) if isinstance(cwd, str) else cwd)
 		put(self, "help", help)
+		put(self, "paths", paths)
 
 	def __hash__(self) -> int:
 		matrix_key = None if self.matrix is None else tuple(sorted(self.matrix.items()))
@@ -203,15 +213,21 @@ class Group:
 				tuple(sorted(self.env.items())),
 				self.cwd,
 				self.help,
+				self.paths,
 			)
 		)
 
 	def __repr__(self) -> str:
-		base = (
-			f"{type(self).__name__}(tasks={self.tasks!r}, name={self.name!r}, "
-			f"matrix={self.matrix!r}, env={self.env!r}, cwd={self.cwd!r}"
+		parts = (
+			f"tasks={self.tasks!r}",
+			f"name={self.name!r}",
+			f"matrix={self.matrix!r}",
+			f"env={self.env!r}",
+			f"cwd={self.cwd!r}",
+			*([f"help={self.help!r}"] if self.help is not None else []),
+			*([f"paths={self.paths!r}"] if self.paths is not None else []),
 		)
-		return f"{base}, help={self.help!r})" if self.help is not None else f"{base})"
+		return f"{type(self).__name__}({', '.join(parts)})"
 
 
 class Sequential(Group):  # pyrefly: ignore[bad-class-definition]

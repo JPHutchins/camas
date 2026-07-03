@@ -10,6 +10,7 @@ import io
 import json
 from typing import TYPE_CHECKING
 
+from camas.core import timings
 from camas.core.hook_event import changed_from_stdin
 from camas.mcp import serve, wire
 
@@ -190,10 +191,57 @@ def test_gate_cli_dry_run_no_match(
 	monkeypatch.chdir(tmp_path)
 	(tmp_path / "tasks.py").write_text(
 		"from camas import Config, Task\n"
-		'check = Task("echo scope-miss", name="check", paths="src")\n'
+		'check = Task("echo scope-miss {paths}", name="check", paths="src")\n'
 		"_ = Config(default_task=check)\n"
 	)
 	assert serve.gate_cli(["--paths", "unrelated.txt", "--dry-run"]) == 0
 	out = capsys.readouterr().out
 	assert "No leaves cover" in out
 	assert "nothing would run" in out
+
+
+_BUDGET_TASKS = (
+	"from camas import Config, Parallel, Task\n"
+	'fast = Task("python --version", name="fast")\n'
+	'slow = Task("python --version", name="slow")\n'
+	'check = Parallel(fast, slow, name="check")\n'
+	"_ = Config(default_task=check)\n"
+)
+
+
+def test_gate_cli_dry_run_under_excludes_over_budget_leaf(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+	monkeypatch.chdir(tmp_path)
+	(tmp_path / "tasks.py").write_text(_BUDGET_TASKS)
+	camas_dir = tmp_path / ".camas"
+	camas_dir.mkdir()
+	timings.record(camas_dir, [("fast", 0.5), ("slow", 99.0)])
+	assert serve.gate_cli(["--paths", "sample.py", "--under", "5", "--dry-run"]) == 0
+	preview, _, headline = capsys.readouterr().out.partition("Time budget")
+	assert "Dry run" in preview
+	assert "fast" in preview
+	assert "slow" not in preview
+	assert "excluded 1 over budget" in headline
+	assert "slow" in headline
+
+
+def test_gate_cli_dry_run_under_all_over_budget(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+	monkeypatch.chdir(tmp_path)
+	(tmp_path / "tasks.py").write_text(
+		"from camas import Config, Task\n"
+		'check = Task("python --version", name="only")\n'
+		"_ = Config(default_task=check)\n"
+	)
+	camas_dir = tmp_path / ".camas"
+	camas_dir.mkdir()
+	timings.record(camas_dir, [("only", 99.0)])
+	assert serve.gate_cli(["--paths", "sample.py", "--under", "5", "--dry-run"]) == 0
+	out = capsys.readouterr().out
+	assert "nothing would run" in out
+	assert "excluded 1 over budget" in out
+	assert "only" in out
