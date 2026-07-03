@@ -26,11 +26,15 @@ from camas.core.execution import (
 from camas.core.leaf_state import KILL_PRESSES
 from camas.v0.completion import INTERRUPT_RC, Finished, Skipped, Stopped
 from camas.v0.leaf_state import Interrupting, LeafState, Running
+from camas.v0.task_event import CompletedEvent
 
 if TYPE_CHECKING:
+	from collections.abc import Sequence
 	from pathlib import Path
 
 	from camas.core.completion import RunResult, TaskResult
+	from camas.v0.task import TaskNode
+	from camas.v0.task_event import TaskEvent
 
 
 def test_force_color_injected_in_subprocess(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -399,13 +403,23 @@ def test_ctrl_c_resolves_jobs_queued_leaves_as_stopped() -> None:
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal handling only")
 def test_ctrl_c_keeps_pre_interrupt_completion_finished() -> None:
+	class _SignalAfterQuick:
+		async def setup(self, task: TaskNode) -> None:
+			return None
+
+		async def on_event(self, event: TaskEvent, states: Sequence[LeafState], ctx: None) -> None:
+			if isinstance(event, CompletedEvent) and event.task.name == "quick":
+				os.kill(os.getpid(), signal.SIGINT)
+
+		async def teardown(self, ctxs: tuple[None, ...]) -> None:
+			pass
+
 	async def scenario() -> RunResult:
-		asyncio.get_running_loop().call_later(0.4, _raise_sigint)
 		task = Parallel(
 			Task(("python", "-c", "pass"), name="quick"),
 			Task(("python", "-c", "import time; time.sleep(5)"), name="slow"),
 		)
-		return await run(task)
+		return await run(task, effects=(_SignalAfterQuick(),))
 
 	result = asyncio.run(scenario())
 	by_name = {r.name: r.completion for r in result.results}
