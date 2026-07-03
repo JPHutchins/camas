@@ -60,9 +60,11 @@ class Task:
 	The ``--under`` budget scheduler runs such leaves sequentially, before the
 	read-only group, so they never race a checker over the same files.
 
-	``paths`` opts a leaf into ``{paths}`` substitution (:mod:`camas.core.scope`): a
-	directory-prefix string (``"."``) or a ``(changed) -> tuple[str, ...]`` callable that
-	maps the changed files into the command; ``None`` leaves the command untouched.
+	``paths`` is the scope for a ``{paths}`` command (:mod:`camas.core.scope`): a
+	directory-prefix string (``"."``) or a ``(changed) -> tuple[str, ...]`` callable that maps the
+	changed files into the command. A ``Sequential``/``Parallel`` may set ``paths`` to supply the
+	default to descendants that set none. A command without ``{paths}`` can't be narrowed, so its
+	``paths`` is a no-op and the command always runs.
 
 	``agent_format`` is the agent-only structured-output variant (:class:`AgentFormat`): the gate
 	appends its ``args`` and tags the diagnostics ``kind``; a human run leaves the command as-is.
@@ -162,6 +164,9 @@ class Group:
 	``str`` → ``Task`` coercion), identical kwargs, hashable. Use
 	``isinstance(x, Group)`` to test for "either kind of grouping node";
 	pattern-match on the concrete subclass to discriminate.
+
+	``paths`` is the default path-scope for descendant ``{paths}`` leaves that set none
+	(see :mod:`camas.core.scope`); ``env``/``cwd`` likewise propagate into leaves.
 
 	>>> isinstance(Sequential("a"), Group) and isinstance(Parallel("a"), Group)
 	True

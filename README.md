@@ -216,15 +216,17 @@ Durations are `1s`, `500ms`, `2m`, `1h`, or a bare number of seconds. Only leave
 
 ## Path scoping (`--paths`)
 
-`camas <task> --paths <path>…` scopes a run to changed paths instead of the whole tree. A leaf opts in by writing the `{paths}` placeholder in its command and declaring its scope with `paths=` — a directory prefix, or a `(changed) -> paths` callable:
+`camas <task> --paths <path>…` scopes a run to changed paths instead of the whole tree. A command opts in by writing the `{paths}` placeholder and declaring its scope with `paths=` — a directory prefix, or a `(changed) -> paths` callable. A `Sequential`/`Parallel` may carry `paths=` too: it's the default scope for descendant `{paths}` commands that set none (the same way `env`/`cwd` propagate into a group's leaves):
 
 ```python
 py = Task("ruff format {paths}", mutates=True, paths="src")
 web = Task("prettier --write {paths}", mutates=True, paths="web")
-_ = Config(agent=Claude(fix=Sequential(py, web)))
+# the group's paths="." is the default for both children (neither sets its own):
+autofix = Parallel(Task("ruff format {paths}"), Task("ruff check --fix {paths}"), paths=".")
+_ = Config(agent=Claude(fix=Sequential(py, web, autofix)))
 ```
 
-`--paths` works on any task — `camas check --paths src/a.py`. Without it, every `{paths}` resolves to its full-run default (`ruff format src`); with it, each leaf runs only over the changed files it covers, and a leaf that covers none is dropped (`--paths` is repeatable, or comma-separated).
+`--paths` works on any task — `camas check --paths src/a.py`. Without it, every `{paths}` resolves to its full-run default (`ruff format src`); with it, each `{paths}` command runs only over the changed files it covers, and one covering none is dropped. A command **without** `{paths}` can't be narrowed, so its `paths=` is a no-op and it always runs — camas errs on correctness (a tool it can't narrow might be affected by the edit). `--paths` is repeatable, or comma-separated.
 
 For the Claude Code plugin, you **register** the auto-fix node — whatever you named it — to `Config.agent.fix`; the PostToolBatch hook runs *that* node over the just-changed files, zero model tokens. Install the plugin (`/plugin marketplace add JPHutchins/camas`), run `camas mcp init --hooks` (which writes the hook with the launcher it resolves for your project), or wire it by hand:
 

@@ -242,8 +242,9 @@ class GateRequest(BaseModel):
 	paths: list[str] = Field(
 		default_factory=list,
 		description="Changed paths to scope the gate to — the camas-fixer subagent passes the "
-		"edited files. Empty gates the whole task; each leaf's {paths} is injected with the "
-		"files it covers and leaves covering nothing are dropped.",
+		"edited files. Empty gates the whole task; each {paths} command is injected with the "
+		"files it covers (one covering none is dropped), while a command without {paths} can't "
+		"be narrowed and always runs.",
 	)
 	task: str | None = Field(
 		default=None,

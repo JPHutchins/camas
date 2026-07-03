@@ -1,13 +1,20 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""Path-scoping: resolve a leaf's ``{paths}`` placeholder against the changed files.
+"""Path-scoping: narrow a leaf's ``{paths}`` command to the changed files under its scope.
 
-A leaf opts into scoping by putting ``{paths}`` in its command and setting ``Task.paths``
-to either a directory-prefix string (``"."``, ``"frontend"``) or a ``(changed) -> args``
-callable. On a full run (no changed set) ``{paths}`` becomes the prefix — or the callable's
-default — so the task still runs over everything; on a scoped run it becomes the changed
-files the leaf covers, and a leaf that covers none of them is dropped.
+``{paths}`` in a command marks it narrowable; the changed files replace the placeholder. The
+scope is ``Task.paths`` — a directory-prefix string (``"."``, ``"frontend"``) or a
+``(changed) -> args`` callable — or, when a leaf sets none, the ``paths`` inherited from its
+enclosing ``Sequential``/``Parallel``: a group's ``paths`` is the default target for its
+descendants, baked into leaves by :func:`camas.core.matrix.expand_matrix` (own wins, else
+inherit) the same way ``env``/``cwd`` propagate. On a full run ``{paths}`` becomes the scope's
+prefix (or the callable's default); on a scoped run it becomes the changed files the scope
+covers, and a ``{paths}`` leaf covering none of them is dropped.
+
+A command with **no** ``{paths}`` can't be narrowed, so it always runs and its ``paths`` (own or
+inherited) is a no-op — camas errs on correctness: a tool that can't narrow might be affected by
+the edit. Only a ``{paths}`` command is ever pruned.
 
 :func:`with_default_paths` resolves the full-run default and is applied before every run.
 :func:`scope_to_changed` resolves and prunes against a changed set — the entry point for

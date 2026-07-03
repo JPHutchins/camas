@@ -64,7 +64,7 @@ README's Versioning section.
 ``Config(agent=Claude(fix=..., check=...))`` wires the Claude Code
 plugin's gate. ``fix`` is the deterministic, behavior-preserving autofix
 node the ``PostToolBatch`` hook runs over the changed files (scope it with
-``{paths}``; zero model tokens) — declared, not inferred from
+``{paths}``, on a leaf or a whole group; zero model tokens) — declared, not inferred from
 ``mutates=``, since a mutating leaf may be a compiler or codegen rather
 than a fixer. ``check`` is the node the gate validates (``None`` defers
 to ``default_task``/``github_task``), scoped by ``--paths`` and
