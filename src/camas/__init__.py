@@ -78,8 +78,9 @@ human runs.
 
 **LLM agents:** prefer the MCP::
 
-    $ camas mcp [--help | --rich]
-    $ camas mcp init [--rich]    # write .mcp.json, if desired
+    $ camas mcp [--help | --plain]
+    $ camas mcp init --claude    # .mcp.json + hook + subagent + gate skill
+    $ camas mcp init             # .mcp.json only, for any MCP client
 
 When you must use the CLI, camas auto-detects coding agents (the
 ``CLAUDECODE`` env var, or set ``CAMAS_AGENT=1``) and defaults

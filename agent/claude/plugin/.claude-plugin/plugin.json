@@ -1,4 +1,0 @@
-{
-  "name": "camas",
-  "description": "The camas gate: applies deterministic fixes for free on every change, and the check-and-fix loop is delegated to a cheap fixer subagent, so only the residual that needs reasoning reaches the main agent."
-}

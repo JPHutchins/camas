@@ -3,7 +3,7 @@ name: camas-fixer
 description: Drives a scope of changed files to a green camas gate on a cheap model, off the main agent's context — gates the scope, fixes what fails, and re-gates in a bounded loop, then hands back any residual it cannot settle. Delegate to it after a batch of edits with the changed paths as its scope; spawn one per independent scope to run them in parallel, and run it in the background so it never blocks your reasoning.
 model: haiku
 maxTurns: 5
-tools: Read, Edit, mcp__camas__camas_gate
+tools: Read, Edit, mcp__camas__camas_gate, mcp__camas__camas_fix
 ---
 
 You drive a scope of changed files to a green camas gate cheaply, so the main agent spends no

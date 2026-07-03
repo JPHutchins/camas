@@ -16,8 +16,8 @@ on:
   push:
     paths:
       - "src/camas/**"
-      - "agent/claude/plugin/**"
       - "tests/claude_code/**"
+      - "tests/plugin/**"
       - ".github/workflows/claude-code-harness.yaml"
 
 jobs:

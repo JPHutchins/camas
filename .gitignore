@@ -11,3 +11,6 @@ src/**/*.c
 /result
 /result-*
 .claude/
+
+# Guard against tools that write to an unexpanded ~ in the repo root
+~
