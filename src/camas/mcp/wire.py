@@ -215,6 +215,17 @@ class RunRequest(BaseModel):
 	)
 
 
+def _splice_task_enum(schema: dict[str, Any], task_names: tuple[str, ...]) -> dict[str, Any]:
+	"""``schema`` with the live task-name ``enum`` spliced onto the string branch of the
+	``task`` property's ``anyOf`` — the optional-``str`` field shared by ``camas_run``,
+	``camas_gate``, and ``camas_fix``.
+	"""
+	for branch in schema["properties"]["task"]["anyOf"]:
+		if branch.get("type") == "string":
+			branch["enum"] = list(task_names)
+	return schema
+
+
 def run_input_schema(task_names: tuple[str, ...]) -> dict[str, Any]:
 	"""``RunRequest``'s JSON Schema with the live task-name ``enum`` spliced into ``task``.
 
@@ -227,11 +238,7 @@ def run_input_schema(task_names: tuple[str, ...]) -> dict[str, Any]:
 	>>> schema["additionalProperties"]
 	False
 	"""
-	schema: dict[str, Any] = RunRequest.model_json_schema()
-	for branch in schema["properties"]["task"]["anyOf"]:
-		if branch.get("type") == "string":
-			branch["enum"] = list(task_names)
-	return schema
+	return _splice_task_enum(RunRequest.model_json_schema(), task_names)
 
 
 class GateRequest(BaseModel):
@@ -260,6 +267,40 @@ class GateRequest(BaseModel):
 	jobs: int | None = Field(
 		default=None, ge=1, description="Max concurrent leaf subprocesses; null = unbounded."
 	)
+
+
+class FixRequest(BaseModel):
+	"""Arguments to ``camas_fix``."""
+
+	model_config = ConfigDict(extra="forbid")
+
+	paths: list[str] = Field(
+		default_factory=list,
+		description="Changed paths to scope the fix to — the camas-fixer subagent passes the "
+		"edited files. Empty runs the whole fix node; each {paths} command is injected with the "
+		"files it covers (one covering none is dropped), while a command without {paths} can't "
+		"be narrowed and always runs.",
+	)
+	task: str | None = Field(
+		default=None,
+		description="Task to fix — one of the names from camas_list. Omit to run the project's "
+		"registered agent fix node (Config.agent.fix).",
+	)
+	jobs: int | None = Field(
+		default=None, ge=1, description="Max concurrent leaf subprocesses; null = unbounded."
+	)
+
+
+def fix_input_schema(task_names: tuple[str, ...]) -> dict[str, Any]:
+	"""``FixRequest``'s JSON Schema with the live task-name ``enum`` spliced into ``task``.
+
+	>>> schema = fix_input_schema(("lint", "test"))
+	>>> next(b["enum"] for b in schema["properties"]["task"]["anyOf"] if b.get("type") == "string")
+	['lint', 'test']
+	>>> schema["additionalProperties"]
+	False
+	"""
+	return _splice_task_enum(FixRequest.model_json_schema(), task_names)
 
 
 class AgentEnvelope(BaseModel):
@@ -310,8 +351,4 @@ def gate_input_schema(task_names: tuple[str, ...]) -> dict[str, Any]:
 	>>> schema["additionalProperties"]
 	False
 	"""
-	schema: dict[str, Any] = GateRequest.model_json_schema()
-	for branch in schema["properties"]["task"]["anyOf"]:
-		if branch.get("type") == "string":
-			branch["enum"] = list(task_names)
-	return schema
+	return _splice_task_enum(GateRequest.model_json_schema(), task_names)

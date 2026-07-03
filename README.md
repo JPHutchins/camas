@@ -228,15 +228,15 @@ _ = Config(agent=Claude(fix=Sequential(py, web, autofix)))
 
 `--paths` works on any task — `camas check --paths src/a.py`. Without it, every `{paths}` resolves to its full-run default (`ruff format src`); with it, each `{paths}` command runs only over the changed files it covers, and one covering none is dropped. A command **without** `{paths}` can't be narrowed, so its `paths=` is a no-op and it always runs — camas errs on correctness (a tool it can't narrow might be affected by the edit). `--paths` is repeatable, or comma-separated.
 
-For the Claude Code plugin, you **register** the auto-fix node — whatever you named it — to `Config.agent.fix`; the PostToolBatch hook runs *that* node over the just-changed files, zero model tokens. Install the plugin (`/plugin marketplace add JPHutchins/camas`), run `camas mcp init --hooks` (which writes the hook with the launcher it resolves for your project), or wire it by hand:
+For the Claude Code plugin, you **register** the auto-fix node — whatever you named it — to `Config.agent.fix`; the PostToolBatch hook runs *that* node over the just-changed files, zero model tokens. Run `camas mcp init --claude` to write the full Claude Code setup in one command (`.mcp.json` + PostToolBatch autofix hook + `camas-fixer` subagent + `gate` skill), resolving the launcher for your project and pinning to the camas version declared in `tasks.py`'s PEP 723 block. For a bare `.mcp.json` for any MCP client, `camas mcp init` alone. Or wire it by hand:
 
 ```jsonc
 // .claude/settings.json
 { "hooks": { "PostToolBatch": [
-  { "hooks": [{ "type": "command", "command": "uvx 'camas[mcp]' mcp fix" }] } ] } }
+  { "hooks": [{ "type": "command", "command": "camas mcp fix" }] } ] } }
 ```
 
-`camas mcp fix` runs the registered `Config.agent.fix` node (not a task named `fix` — that's just `camas fix`, your own task); it reads the changed files from the PostToolBatch event on stdin (`--paths` still works for a manual run). With no fix registered it is a clean no-op, so the hook is harmless without it. The `uvx 'camas[mcp]'` launcher needs only `uv` on PATH (no global camas install); with `camas` already installed, bare `camas mcp fix …` works too.
+`camas mcp fix` runs the registered `Config.agent.fix` node (not a task named `fix` — that's just `camas fix`, your own task); it reads the changed files from the PostToolBatch event on stdin (`--paths` still works for a manual run). With no fix registered it is a clean no-op, so the hook is harmless without it. The launcher runs in your project's environment — `camas mcp init --claude` resolves and pins it; to have the camas version track `tasks.py`'s PEP 723 block (`dependencies = ["camas>=X.Y"]`), re-run `camas mcp init --claude` after bumping.
 
 ## Effects plugins
 

@@ -20,6 +20,7 @@ from camas.main.state import LoadErr, LoadOk
 from camas.mcp import serve, wire
 from camas.mcp.serve import Compat, Session
 from camas.v0.completion import Finished, Skipped, Stopped
+from camas.v0.config import Claude
 
 if TYPE_CHECKING:
 	from collections.abc import Callable
@@ -125,7 +126,7 @@ def test_task_names_empty_on_load_error(tmp_path: Path) -> None:
 
 
 def test_tools_default_omits_rich_fields() -> None:
-	tool_list, tool_run, tool_check, tool_docs, tool_gate, tool_init = serve.tools(
+	(tool_list, tool_run, tool_check, tool_docs, tool_gate, tool_fix, tool_init) = serve.tools(
 		("a", "b"), Compat(emit_structured=False)
 	)
 	assert (tool_list.title, tool_list.outputSchema, tool_list.annotations) == (None, None, None)
@@ -139,12 +140,14 @@ def test_tools_default_omits_rich_fields() -> None:
 	assert tool_list.inputSchema["additionalProperties"] is False
 	assert (tool_gate.title, tool_gate.outputSchema, tool_gate.annotations) == (None, None, None)
 	assert _task_enum(tool_gate.inputSchema) == ["a", "b"]
+	assert (tool_fix.title, tool_fix.outputSchema, tool_fix.annotations) == (None, None, None)
+	assert _task_enum(tool_fix.inputSchema) == ["a", "b"]
 	assert (tool_init.title, tool_init.outputSchema, tool_init.annotations) == (None, None, None)
 	assert tool_init.inputSchema == serve.NO_ARGS_SCHEMA
 
 
 def test_tools_rich_includes_title_annotations_and_schema() -> None:
-	tool_list, tool_run, tool_check, tool_docs, tool_gate, tool_init = serve.tools(
+	(tool_list, tool_run, tool_check, tool_docs, tool_gate, tool_fix, tool_init) = serve.tools(
 		(), Compat(emit_structured=True)
 	)
 	assert tool_list.title == "List camas tasks"
@@ -167,6 +170,10 @@ def test_tools_rich_includes_title_annotations_and_schema() -> None:
 	assert tool_gate.outputSchema is not None
 	assert tool_gate.annotations is not None
 	assert tool_gate.annotations.readOnlyHint is True
+	assert tool_fix.title == "Run deterministic autofix"
+	assert tool_fix.outputSchema is not None
+	assert tool_fix.annotations is not None
+	assert tool_fix.annotations.destructiveHint is True
 	assert tool_init.title == "Scaffold a starter tasks.py"
 	assert tool_init.outputSchema is not None
 	assert tool_init.annotations is not None
@@ -859,6 +866,7 @@ async def test_in_memory_round_trip(tmp_path: Path) -> None:
 			"camas_check",
 			"camas_docs",
 			"camas_gate",
+			"camas_fix",
 			"camas_init",
 		}
 		catalog = await client.call_tool("camas_list", {})
@@ -1002,3 +1010,175 @@ async def test_gate_call_with_budget_reports_partition(tmp_path: Path) -> None:
 	result = await serve.call(session, "camas_gate", {"under": 1.0})
 	assert not result.isError
 	assert "Time budget" in _text(result)
+
+
+def test_compat_rich_by_default() -> None:
+	"""``Compat()`` now defaults to ``emit_structured=True`` (rich by default)."""
+	assert Compat().emit_structured is True
+
+
+def test_compat_plain_in_argv() -> None:
+	"""``--plain`` in argv opts out of rich (``emit_structured=False``)."""
+	assert (
+		Compat(emit_structured="--plain" not in ["camas", "mcp", "--plain"]).emit_structured
+		is False
+	)
+
+
+def test_compat_bare_no_plain_is_rich() -> None:
+	"""Bare ``camas mcp`` (no ``--plain``) keeps rich (``emit_structured=True``)."""
+	assert Compat(emit_structured="--plain" not in ["camas", "mcp"]).emit_structured is True
+
+
+FIX_TASK = Task(("python", "-c", "print('fixed')"), name="fmt", mutates=True)
+
+
+async def test_fix_call_no_fix_registered_is_noop(tmp_path: Path) -> None:
+	"""No fix node registered → empty RunResponse, no leaves, no error — and the text says
+	*no fix node* so the agent knows to register one, not just pass different paths."""
+	node = Parallel(FIX_TASK, PASS)
+	session = _session({"all": node}, Config(default_task=node), tmp_path)
+	result = await serve.call(session, "camas_fix", {})
+	assert not result.isError
+	text = _text(result)
+	assert "nothing to fix" in text
+	assert "no fix node registered" in text
+
+
+async def test_fix_call_with_registered_fix(tmp_path: Path) -> None:
+	"""A registered ``Config.agent.fix`` runs successfully."""
+	cfg = Config(agent=Claude(fix=FIX_TASK))
+	session = _session({"fmt": FIX_TASK}, cfg, tmp_path)
+	result = await serve.call(session, "camas_fix", {})
+	assert not result.isError
+	assert "FIXED" in _text(result)
+
+
+async def test_fix_call_with_registered_fix_and_paths(tmp_path: Path) -> None:
+	"""Fix scoped to paths runs the fix node covering those paths."""
+	cfg = Config(agent=Claude(fix=FIX_TASK))
+	session = _session({"fmt": FIX_TASK}, cfg, tmp_path)
+	result = await serve.call(session, "camas_fix", {"paths": ["src/a.py"]})
+	assert not result.isError
+
+
+async def test_fix_call_load_error(tmp_path: Path) -> None:
+	session = Session(
+		LoadErr(source=tmp_path / "tasks.py", exception=RuntimeError("boom")), tmp_path, Compat()
+	)
+	result = await serve.call(session, "camas_fix", {})
+	assert result.isError
+
+
+async def test_fix_call_invalid_args(tmp_path: Path) -> None:
+	cfg = Config(agent=Claude(fix=FIX_TASK))
+	session = _session({"fmt": FIX_TASK}, cfg, tmp_path)
+	result = await serve.call(session, "camas_fix", {"bogus": 1})
+	assert result.isError
+	assert "invalid camas_fix arguments" in _text(result)
+
+
+async def test_fix_call_unknown_task_errors(tmp_path: Path) -> None:
+	session = _session({"fmt": FIX_TASK}, None, tmp_path)
+	result = await serve.call(session, "camas_fix", {"task": "nope"})
+	assert result.isError
+	assert "no task named 'nope'" in _text(result)
+
+
+async def test_fix_call_with_task_override(tmp_path: Path) -> None:
+	"""A named task override runs that task as the fix, ignoring Config.agent.fix."""
+	cfg = Config(agent=Claude(fix=FIX_TASK))
+	session = _session({"fmt": FIX_TASK, "lint": PASS}, cfg, tmp_path)
+	result = await serve.call(session, "camas_fix", {"task": "lint"})
+	assert not result.isError
+	assert "FIXED" in _text(result)
+
+
+async def test_fix_call_tool_is_in_round_trip(tmp_path: Path) -> None:
+	"""``camas_fix`` appears in the tool list via the in-memory server."""
+	session = _session({"fmt": FIX_TASK}, None, tmp_path)
+	async with create_connected_server_and_client_session(serve.build_server(session)) as client:
+		listed = await client.list_tools()
+		names = {t.name for t in listed.tools}
+		assert "camas_fix" in names
+
+
+async def test_in_memory_round_trip_includes_fix_tool(tmp_path: Path) -> None:
+	"""The full round trip tool list now has 7 tools including camas_fix."""
+	session = _session({"lint": PASS}, Config(default_task=PASS), tmp_path)
+	async with create_connected_server_and_client_session(serve.build_server(session)) as client:
+		listed = await client.list_tools()
+		assert {t.name for t in listed.tools} == {
+			"camas_list",
+			"camas_run",
+			"camas_check",
+			"camas_docs",
+			"camas_gate",
+			"camas_fix",
+			"camas_init",
+		}
+
+
+def test_list_call_prepends_version_warning(tmp_path: Path) -> None:
+	session = _session({"lint": PASS}, None, tmp_path)
+	session.version_warning = "WARNING: version mismatch"
+	result = serve.list_call(session, {})
+	assert result.isError is False
+	text = _text(result)
+	assert text.startswith("WARNING: version mismatch")
+
+
+def test_docs_call_prepends_version_warning(tmp_path: Path) -> None:
+	session = _session({}, None, tmp_path)
+	session.version_warning = "WARNING: version mismatch"
+	result = serve.docs_call(session)
+	assert result.isError is False
+	text = _text(result)
+	assert text.startswith("WARNING: version mismatch")
+
+
+def test_check_call_prepends_version_warning(tmp_path: Path) -> None:
+	session = _session({"lint": PASS}, None, tmp_path)
+	session.version_warning = "WARNING: version mismatch"
+	result = serve.check_call(session)
+	assert result.isError is False
+	assert _text(result).startswith("WARNING: version mismatch")
+
+
+async def test_run_call_prepends_version_warning(tmp_path: Path) -> None:
+	session = _session({"lint": PASS}, None, tmp_path)
+	session.version_warning = "WARNING: version mismatch"
+	result = await serve.call(session, "camas_run", {"task": "lint"})
+	assert not result.isError
+	assert _text(result).startswith("WARNING: version mismatch")
+
+
+async def test_gate_call_prepends_version_warning(tmp_path: Path) -> None:
+	session = _session({"lint": PASS}, Config(default_task=PASS), tmp_path)
+	session.version_warning = "WARNING: version mismatch"
+	result = await serve.call(session, "camas_gate", {})
+	assert not result.isError
+	assert _text(result).startswith("WARNING: version mismatch")
+
+
+async def test_fix_call_prepends_version_warning(tmp_path: Path) -> None:
+	cfg = Config(agent=Claude(fix=FIX_TASK))
+	session = _session({"fmt": FIX_TASK}, cfg, tmp_path)
+	session.version_warning = "WARNING: version mismatch"
+	result = await serve.call(session, "camas_fix", {})
+	assert not result.isError
+	assert _text(result).startswith("WARNING: version mismatch")
+
+
+async def test_fix_call_scoped_none_returns_empty_run(tmp_path: Path) -> None:
+	"""camas_fix with paths that no fix leaf covers → empty RunResponse (no-op, not an error),
+	and the text says *no fix leaf covers the paths* (distinct from no fix node registered)."""
+	fix_node = Task("echo {paths}", name="fmt", mutates=True, paths="src")
+	cfg = Config(agent=Claude(fix=fix_node))
+	session = _session({"fmt": fix_node}, cfg, tmp_path)
+	result = await serve.call(session, "camas_fix", {"paths": ["docs/readme.md"]})
+	assert not result.isError
+	text = _text(result)
+	assert "nothing to fix" in text
+	assert "no fix leaf covers the paths" in text
+	assert "no fix node registered" not in text

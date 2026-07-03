@@ -12,10 +12,10 @@ HELP: Final = """\
 camas mcp — serve this project's tasks to AI agents over the Model Context Protocol.
 
 Usage:
-  camas mcp [--rich]        run the MCP stdio server (an MCP client launches this)
-  camas mcp init [--rich] [--hooks]
-                              write this project's .mcp.json entry for the camas server;
-                              with --hooks also write hook entries to .claude/settings.json
+  camas mcp [--plain]        run the MCP stdio server (rich output by default)
+  camas mcp init [--claude]  write this project's .mcp.json entry for the camas server;
+                              with --claude also configure Claude Code: .mcp.json +
+                              PostToolBatch autofix hook + camas-fixer subagent + gate skill
   camas mcp fix [--paths P]… run the registered agent fix node (Config.agent.fix) over the
                               changed paths (--paths, else a piped PostToolBatch event) — the
                               autofix hook; no-op if unregistered
@@ -24,15 +24,14 @@ Usage:
                               PostToolBatch event (the camas-fixer subagent + benchmark)
 
 Options:
-  --rich        emit the 2025-11-25 tool fields (title, annotations, outputSchema) and
-                structuredContent; off by default because some clients drop tools that
-                include them (Claude Code #25081)
+  --rich        accepted for back-compat; rich output is the default
+  --plain       disable rich output (opt out of the 2025-11-25 tool fields)
   -h, --help    show this help
 """
 
 
 def main(argv: list[str]) -> None:
-	"""Route ``camas mcp [-h|init|--rich]``; ``init`` and an unexpected argument exit with a code.
+	"""Route ``camas mcp [-h|init|--rich|--plain]``; ``init`` and an unexpected argument exit with a code.
 
 	Raises:
 		ModuleNotFoundError: if a dependency other than the optional ``mcp`` extra is missing.
@@ -41,10 +40,16 @@ def main(argv: list[str]) -> None:
 		print(HELP)
 		return
 	if argv and argv[0] == "init":
-		from .scaffold import write_hooks, write_mcp_json
+		from .scaffold import write_claude, write_mcp_json
 
+		if "--claude" in argv:
+			sys.exit(write_claude(argv[1:]))
 		if "--hooks" in argv:
-			sys.exit(write_hooks(argv[1:]))
+			print(
+				"warning: --hooks was removed; use `camas mcp init --claude` to write the hook, "
+				"agent, and skill. Only .mcp.json will be written for this invocation.",
+				file=sys.stderr,
+			)
 		sys.exit(write_mcp_json(argv[1:]))
 	if argv and argv[0] == "fix":
 		from ..main.dispatch import fix_cli
@@ -59,12 +64,13 @@ def main(argv: list[str]) -> None:
 			print("camas mcp gate: requires feature camas[mcp]", file=sys.stderr)
 			sys.exit(2)
 		sys.exit(gate_cli(argv[1:]))
-	unexpected = [arg for arg in argv if arg != "--rich"]
+	unexpected = [arg for arg in argv if arg not in ("--rich", "--plain")]
 	if unexpected:
 		hint = " (did you mean 'camas mcp init'?)" if "--init" in unexpected else ""
 		print(
 			f"camas mcp: unexpected argument(s): {' '.join(unexpected)}{hint}\n"
-			"Usage: camas mcp [--rich]  or  camas mcp init [--rich]  (camas mcp --help for more)",
+			"Usage: camas mcp [--rich|--plain]  or  camas mcp init [--claude]  "
+			"(camas mcp --help for more)",
 			file=sys.stderr,
 		)
 		sys.exit(2)
