@@ -266,6 +266,49 @@ def test_write_hooks_merges_existing_settings(
 	assert "PostToolBatch" in settings["hooks"]
 
 
+def test_write_hooks_sweeps_stale_hooks_from_all_events(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	"""https://github.com/JPHutchins/camas/issues/157 — a camas autofix hook left under a non-current
+	event by an older camas (the pre-PostToolBatch ``FileChanged`` hook) is swept out on the next
+	init --hooks: an event holding only the stale camas hook is dropped, a non-camas hook in another
+	event is preserved, and the current hook lands under PostToolBatch."""
+	monkeypatch.chdir(tmp_path)
+	monkeypatch.setattr("shutil.which", _which("camas"))
+	(tmp_path / ".claude").mkdir(parents=True)
+	(tmp_path / ".claude" / "settings.json").write_text(
+		json.dumps(
+			{
+				"hooks": {
+					"FileChanged": [
+						{
+							"hooks": [
+								{"type": "command", "command": "camas mcp fix --paths ${file_path}"}
+							]
+						}
+					],
+					"PreToolUse": [
+						{
+							"hooks": [
+								{
+									"type": "command",
+									"command": "camas mcp fix --paths ${file_path}",
+								},
+								{"type": "command", "command": "echo keep-me"},
+							]
+						}
+					],
+				}
+			}
+		)
+	)
+	assert write_hooks([]) == 0
+	hooks = json.loads((tmp_path / ".claude" / "settings.json").read_text())["hooks"]
+	assert "FileChanged" not in hooks
+	assert [h["command"] for g in hooks["PreToolUse"] for h in g["hooks"]] == ["echo keep-me"]
+	assert "mcp fix" in hooks["PostToolBatch"][-1]["hooks"][0]["command"]
+
+
 def test_write_hooks_rejects_matcher_null(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 	monkeypatch.chdir(tmp_path)
 	monkeypatch.setattr("shutil.which", _which("camas"))

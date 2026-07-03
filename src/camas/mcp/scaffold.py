@@ -146,18 +146,32 @@ def _kept_hooks(group: dict[str, Any]) -> list[dict[str, Any]]:
 	]
 
 
+def _swept_event(groups: object) -> list[dict[str, Any]]:
+	"""One event's hook groups with camas's autofix hooks removed and any group they emptied
+	dropped.
+	"""
+	return [
+		{**g, "hooks": remaining} for g in _object_list(groups) if (remaining := _kept_hooks(g))
+	]
+
+
 def _with_camas_hook(raw: dict[str, Any], camas_group: dict[str, Any]) -> dict[str, Any]:
-	"""``raw`` with its ``PostToolBatch`` rebuilt: non-camas groups kept in place, ``camas_group``
-	appended — every other key and its order left untouched, no defaults injected.
+	"""``raw`` with camas's own autofix hook removed from every event — dropping any group or event
+	it empties, so a stale hook from an older camas (e.g. under ``FileChanged``) is swept out — and
+	the current hook appended under ``PostToolBatch``. Every other key keeps its position, no
+	defaults injected.
 	"""
 	hooks = raw.get("hooks")
 	hooks_dict: dict[str, Any] = cast("dict[str, Any]", hooks) if isinstance(hooks, dict) else {}
-	kept = [
-		{**g, "hooks": remaining}
-		for g in _object_list(hooks_dict.get("PostToolBatch"))
-		if (remaining := _kept_hooks(g))
-	]
-	return {**raw, "hooks": {**hooks_dict, "PostToolBatch": [*kept, camas_group]}}
+	swept: dict[str, Any] = {
+		event: groups
+		for event in hooks_dict
+		if (groups := _swept_event(hooks_dict[event])) or event == "PostToolBatch"
+	}
+	return {
+		**raw,
+		"hooks": {**swept, "PostToolBatch": [*swept.get("PostToolBatch", []), camas_group]},
+	}
 
 
 def write_hooks(argv: list[str]) -> int:
