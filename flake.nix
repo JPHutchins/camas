@@ -89,9 +89,60 @@
                 nativeBuildInputs = [ pkgs.nixfmt ];
               }
               ''
-                nixfmt --check ${./flake.nix} ${./nix/package.nix}
+                nixfmt --check ${./flake.nix} ${./nix/package.nix} ${./nix/resolve-extras.nix}
                 touch $out
               '';
+
+          extras-resolver =
+            let
+              resolver = import ./nix/resolve-extras.nix {
+                inherit lib;
+                pname = "camas";
+              };
+              realExtras = (lib.importTOML ./pyproject.toml).project.optional-dependencies;
+              resolveNames =
+                pyprojectExtras: python3Packages: extra:
+                map (drv: drv.name) (resolver.mkResolveExtra { inherit python3Packages pyprojectExtras; } extra);
+              forced = value: builtins.tryEval (builtins.deepSeq value value);
+              fakePackages = {
+                httpx = {
+                  name = "httpx";
+                };
+                msgspec = {
+                  name = "msgspec";
+                };
+              };
+              realResolved = builtins.mapAttrs (
+                extra: _: resolveNames realExtras pkgs.python3Packages extra
+              ) realExtras;
+              realResolves = (forced realResolved).success;
+              cyclicFails =
+                !(forced (
+                  resolveNames {
+                    a = [ "camas[b]" ];
+                    b = [ "camas[a]" ];
+                  } fakePackages "a"
+                )).success;
+              missingFails =
+                !(forced (
+                  resolveNames {
+                    x = [ "definitely-absent-pkg" ];
+                  } fakePackages "x"
+                )).success;
+              unparseableFails =
+                !(forced (
+                  resolveNames {
+                    y = [ "@vcs+https://example/x" ];
+                  } fakePackages "y"
+                )).success;
+            in
+            assert realResolves;
+            assert cyclicFails;
+            assert missingFails;
+            assert unparseableFails;
+            pkgs.runCommand "extras-resolver-check" { } ''
+              touch $out
+            '';
         }
         // lib.mapAttrs' (
           name: pkg: lib.nameValuePair ("package" + lib.optionalString (name != "default") "-${name}") pkg

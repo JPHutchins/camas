@@ -23,28 +23,11 @@ let
 
   pyprojectExtras = (lib.importTOML (src + "/pyproject.toml")).project.optional-dependencies;
 
-  parseSpec =
-    spec:
-    if lib.hasPrefix "${pname}[" spec then
-      {
-        self = lib.splitString "," (lib.removeSuffix "]" (lib.removePrefix "${pname}[" spec));
-      }
-    else
-      { pkg = builtins.head (builtins.match "([A-Za-z0-9._-]+).*" spec); };
+  resolver = import ./resolve-extras.nix { inherit lib pname; };
 
-  resolveExtra =
-    extra:
-    lib.unique (
-      lib.concatMap (
-        spec:
-        let
-          parsed = parseSpec spec;
-        in
-        if parsed ? self then lib.concatMap resolveExtra parsed.self else [ python3Packages.${parsed.pkg} ]
-      ) pyprojectExtras.${extra}
-    );
-
-  optional-dependencies = lib.mapAttrs (extra: _: resolveExtra extra) pyprojectExtras;
+  optional-dependencies = lib.mapAttrs (
+    extra: _: resolver.mkResolveExtra { inherit python3Packages pyprojectExtras; } extra
+  ) pyprojectExtras;
 in
 python3Packages.buildPythonApplication {
   inherit pname version src;
