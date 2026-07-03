@@ -28,6 +28,8 @@ from camas.v0.completion import INTERRUPT_RC, Finished, Skipped, Stopped
 from camas.v0.leaf_state import Interrupting, LeafState, Running
 
 if TYPE_CHECKING:
+	from pathlib import Path
+
 	from camas.core.completion import RunResult, TaskResult
 
 
@@ -49,6 +51,25 @@ def test_no_color_suppresses_force_color(monkeypatch: pytest.MonkeyPatch) -> Non
 
 def test_single_cmd_success() -> None:
 	assert asyncio.run(run(Task(("python", "-c", "pass")))).returncode == 0
+
+
+def test_zero_leaf_run_effects_do_not_crash(tmp_path: Path) -> None:
+	pytest.importorskip("msgspec")
+	from camas.effect.ctrf import Ctrf
+	from camas.effect.summary import Summary
+	from camas.effect.termtree import Termtree
+	from camas.effect.timings import Timings
+
+	task = Parallel(Task("echo hi", name="x"), name="g", matrix={"X": ()})
+	effects = (
+		Ctrf(path=str(tmp_path / "ctrf.json")),
+		Summary(),
+		Termtree(frame_interval_ms=50),
+		Timings(camas_dir=tmp_path),
+	)
+	result = asyncio.run(run(task, effects=effects, interactive=False))
+	assert result.returncode == 0
+	assert result.results == ()
 
 
 def test_single_cmd_failure() -> None:

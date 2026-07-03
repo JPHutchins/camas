@@ -68,7 +68,7 @@ async def drive(
 			states[event.leaf_index] = next_state(states[event.leaf_index], event)
 			ctxs[event.leaf_index] = await effect.on_event(event, states, ctxs[event.leaf_index])
 	finally:
-		await effect.teardown(tuple(ctxs))
+		await effect.teardown(tuple(ctxs) or (initial,))
 
 
 def test_render_frame_all_waiting_shows_group_header_and_wait_cells(
@@ -539,3 +539,16 @@ def test_render_lines_stream_uses_only_leftover_space() -> None:
 	plain = ANSI_ESCAPE_PATTERN.sub("", leaf_line).lstrip("\r")
 	assert "shouldnt appear" not in plain
 	assert "shouldnt" not in plain
+
+
+def test_termtree_zero_leaf_run_cancels_tick_and_renders(
+	capsys: pytest.CaptureFixture[str],
+) -> None:
+	async def run_effect() -> int:
+		baseline = asyncio.all_tasks()
+		await drive(Termtree(frame_interval_ms=50), Parallel(), [])
+		return len(asyncio.all_tasks() - baseline)
+
+	leaked = asyncio.run(run_effect())
+	assert leaked == 0
+	assert "PASS" in capsys.readouterr().out

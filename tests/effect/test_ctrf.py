@@ -47,7 +47,7 @@ async def drive(effect: Effect[T], task: Task | Parallel, events: list[TaskEvent
 			states[event.leaf_index] = next_state(states[event.leaf_index], event)
 			ctxs[event.leaf_index] = await effect.on_event(event, states, ctxs[event.leaf_index])
 	finally:
-		await effect.teardown(tuple(ctxs))
+		await effect.teardown(tuple(ctxs) or (initial,))
 
 
 def test_ctrf_report_shape_and_schema_ref(capsys: pytest.CaptureFixture[str]) -> None:
@@ -66,7 +66,7 @@ def test_ctrf_report_shape_and_schema_ref(capsys: pytest.CaptureFixture[str]) ->
 	assert report["reportFormat"] == "CTRF"
 	assert report["specVersion"] == "1.0.0"
 	assert report["generatedBy"].startswith("camas ")
-	assert report["extra"]["$schema"] == "https://ctrf.io/schema/ctrf.schema.json"
+	assert report["$schema"] == "https://ctrf.io/schema/ctrf.schema.json"
 
 	results = report["results"]
 	assert results["tool"]["name"] == "camas"
@@ -156,6 +156,15 @@ def test_ctrf_pending_leaf_never_completed(capsys: pytest.CaptureFixture[str]) -
 	by_name = {t["name"]: t for t in report["results"]["tests"]}
 	assert by_name["never"]["status"] == "pending"
 	assert by_name["never"]["duration"] == 0
+
+
+def test_ctrf_zero_leaf_run_emits_empty_report(capsys: pytest.CaptureFixture[str]) -> None:
+	asyncio.run(drive(Ctrf(), Parallel(), []))
+	report = json.loads(capsys.readouterr().out)
+	assert report["$schema"] == "https://ctrf.io/schema/ctrf.schema.json"
+	assert report["reportFormat"] == "CTRF"
+	assert report["results"]["summary"]["tests"] == 0
+	assert report["results"]["tests"] == []
 
 
 def test_ctrf_requires_msgspec_extra(monkeypatch: pytest.MonkeyPatch) -> None:
