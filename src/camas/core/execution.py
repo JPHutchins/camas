@@ -268,9 +268,8 @@ async def run(
 		e for e, r in zip(effects, setup_results, strict=True) if not isinstance(r, BaseException)
 	)
 	setup_errors: Final = tuple(r for r in setup_results if isinstance(r, BaseException))
-	ctx_grid: Final[list[list[Any]]] = [
-		[r for r in setup_results if not isinstance(r, BaseException)] for _ in leaf_infos
-	]
+	active_ctxs: Final[list[Any]] = [r for r in setup_results if not isinstance(r, BaseException)]
+	ctx_grid: Final[list[list[Any]]] = [list(active_ctxs) for _ in leaf_infos]
 	states: Final[list[LeafState]] = [Waiting(info.task) for info in leaf_infos]
 
 	async def dispatch(leaf_idx: int, event: TaskEvent) -> None:
@@ -316,7 +315,7 @@ async def run(
 			r
 			for r in await asyncio.gather(
 				*(
-					effect.teardown(tuple(row[effect_idx] for row in ctx_grid))
+					effect.teardown(tuple(row[effect_idx] for row in (ctx_grid or [active_ctxs])))
 					for effect_idx, effect in enumerate(active_effects)
 				),
 				return_exceptions=True,

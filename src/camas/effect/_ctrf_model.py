@@ -77,12 +77,6 @@ class Test(msgspec.Struct, omit_defaults=True, rename="camel"):
 	extra: LeafExtra | None = None
 
 
-class ReportExtra(msgspec.Struct, rename={"schema_url": "$schema"}):
-	"""The top-level ``extra``, carrying the schema reference."""
-
-	schema_url: str
-
-
 class Results(msgspec.Struct):
 	"""The CTRF ``results`` object."""
 
@@ -94,11 +88,11 @@ class Results(msgspec.Struct):
 class Report(msgspec.Struct, omit_defaults=True, rename="camel"):
 	"""The top-level CTRF report document."""
 
+	schema_url: str = msgspec.field(name="$schema")
 	report_format: Literal["CTRF"]
 	spec_version: str
 	results: Results
 	generated_by: str | None = None
-	extra: ReportExtra | None = None
 
 
 def cmd_str(task: Task) -> str:
@@ -238,10 +232,10 @@ def build(
 ) -> Report:
 	"""The CTRF report for a run."""
 	return Report(
+		schema_url=SCHEMA_URL,
 		report_format="CTRF",
 		spec_version=SPEC_VERSION,
 		generated_by=f"camas {camas_version}",
-		extra=ReportExtra(schema_url=SCHEMA_URL),
 		results=Results(
 			tool=Tool(name="camas", version=camas_version),
 			summary=summarize(states, start_ms, stop_ms),

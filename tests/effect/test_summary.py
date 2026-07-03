@@ -47,7 +47,7 @@ async def drive(
 			states[event.leaf_index] = next_state(states[event.leaf_index], event)
 			ctxs[event.leaf_index] = await effect.on_event(event, states, ctxs[event.leaf_index])
 	finally:
-		await effect.teardown(tuple(ctxs))
+		await effect.teardown(tuple(ctxs) or (initial,))
 
 
 def test_summary_renders_only_at_teardown(capsys: pytest.CaptureFixture[str]) -> None:
@@ -162,6 +162,11 @@ def test_summary_show_passing_defaults_to_false(capsys: pytest.CaptureFixture[st
 	asyncio.run(drive(Summary(), task, events))
 	out = capsys.readouterr().out
 	assert "PASSED:" not in out
+
+
+def test_summary_zero_leaf_run_renders_empty(capsys: pytest.CaptureFixture[str]) -> None:
+	asyncio.run(drive(Summary(), Parallel(), []))
+	assert "PASS" in capsys.readouterr().out
 
 
 def test_summary_creates_no_background_tasks() -> None:

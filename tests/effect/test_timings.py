@@ -42,7 +42,7 @@ async def drive(
 			states[event.leaf_index] = next_state(states[event.leaf_index], event)
 			ctxs[event.leaf_index] = await effect.on_event(event, states, ctxs[event.leaf_index])
 	finally:
-		await effect.teardown(tuple(ctxs))
+		await effect.teardown(tuple(ctxs) or (initial,))
 
 
 def test_records_each_leaf(tmp_path: Path) -> None:
@@ -94,6 +94,11 @@ def test_unfinished_leaf_excluded(tmp_path: Path) -> None:
 	cache = timings.load(tmp_path)
 	assert "done" in cache
 	assert "never" not in cache
+
+
+def test_zero_leaf_run_records_nothing(tmp_path: Path) -> None:
+	asyncio.run(drive(Timings(camas_dir=tmp_path), Parallel(), []))
+	assert timings.load(tmp_path) == {}
 
 
 def test_skipped_leaf_excluded(tmp_path: Path) -> None:
