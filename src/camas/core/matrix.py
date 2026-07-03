@@ -125,6 +125,7 @@ def specialize_node(task: TaskNode, binding: MatrixBinding, suffix: str) -> Task
 			return type(group)(
 				*(specialize_node(t, binding, suffix) for t in group.tasks),
 				name=f"{group.name} {suffix}" if group.name is not None else None,
+				env={k: substitute_in_str(v, binding) for k, v in group.env.items()},
 				cwd=substitute_cwd(group.cwd, binding),
 				help=substitute_help(group.help, binding),
 				paths=substitute_paths(group.paths, binding),
