@@ -7,6 +7,7 @@ import pytest
 
 from camas import Parallel, Sequential, Task
 from camas.core.matrix import expand_matrix
+from camas.core.traversal import flatten_leaves
 
 
 def test_no_matrix_passthrough() -> None:
@@ -124,6 +125,38 @@ def test_nested_group_children() -> None:
 						raise AssertionError(f"expected Parallel, got {child}")
 		case _:
 			raise AssertionError(f"unexpected: {result}")
+
+
+def test_nested_group_env_threads_and_survives_specialization() -> None:
+	"""https://github.com/JPHutchins/camas/issues/86 — nested-group env under an ancestor matrix.
+
+	The group's own env threads into its leaves (execution) and is preserved on the specialized
+	group node (specialize_node keeps env, substituted per binding — not just name/cwd/help/paths).
+	"""
+	task = Parallel(
+		Sequential(Task("run {PY}"), env={"NESTED": "v-{PY}"}, name="inner"),
+		matrix={"PY": ("3.12", "3.13")},
+	)
+	result = expand_matrix(task)
+	assert isinstance(result, Parallel)
+	assert [group.env for group in result.tasks] == [{"NESTED": "v-3.12"}, {"NESTED": "v-3.13"}]
+	assert [leaf.task.env for leaf in flatten_leaves(result)] == [
+		{"NESTED": "v-3.12", "PY": "3.12"},
+		{"NESTED": "v-3.13", "PY": "3.13"},
+	]
+
+
+def test_nested_group_matrix_expands_under_ancestor_matrix() -> None:
+	"""https://github.com/JPHutchins/camas/issues/86 — a nested group's own matrix is fully expanded
+	before specialize_node runs, so it never sees a group carrying a matrix; the axes compose into
+	the leaves."""
+	task = Parallel(
+		Sequential(Task("t {OS} {PY}"), matrix={"OS": ("lin", "mac")}, name="inner"),
+		matrix={"PY": ("3.12",)},
+	)
+	result = expand_matrix(task)
+	cmds = sorted(leaf.task.cmd for leaf in flatten_leaves(result))
+	assert cmds == ["t lin 3.12", "t mac 3.12"]
 
 
 def test_container_env_propagates_to_leaves() -> None:
