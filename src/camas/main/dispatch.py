@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import importlib
 import os
 import re
 import sys
@@ -206,9 +207,10 @@ def reconfigure_stdio_utf8() -> None:
 
 
 def run_cli(scope: Mapping[str, object]) -> None:
-	"""Collect Task/Sequential/Parallel and Effect bindings from ``scope`` (skipping
-	``_``-prefixed names) and dispatch CLI args, citing ``scope['__file__']`` as the
-	:class:`LoadOk` ``source`` for per-task help and ``--check``.
+	"""Intercept the ``mcp`` subcommand (routing to :mod:`camas.mcp.cli`), then
+	collect Task/Sequential/Parallel and Effect bindings from ``scope`` (skipping
+	``_``-prefixed names) and dispatch CLI args, citing ``scope['__file__']`` as
+	the :class:`LoadOk` ``source`` for per-task help and ``--check``.
 
 	The standalone entry point for a PEP 723 ``tasks.py`` run via ``python tasks.py``
 	or ``uv run --script tasks.py`` — hand it the module globals::
@@ -219,6 +221,10 @@ def run_cli(scope: Mapping[str, object]) -> None:
 	        run_cli(globals())
 	"""
 	reconfigure_stdio_utf8()
+	argv = sys.argv[1:]
+	if argv and argv[0] == "mcp":
+		importlib.import_module("camas.mcp.cli").main(argv[1:])
+		return
 	source_obj = scope.get("__file__")
 	source = Path(source_obj) if isinstance(source_obj, (str, Path)) else None
 	dispatch(
