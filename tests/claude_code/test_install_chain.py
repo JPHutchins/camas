@@ -8,9 +8,9 @@ files; the ``.mcp.json`` camas entry uses a ``uv`` or ``uvx`` launcher (criterio
 ``camas``); and a headless ``claude -p --strict-mcp-config`` loads the produced config and calls
 the ``camas_list`` MCP tool without error.
 
-Broken variant: corrupt the produced ``.mcp.json`` (point the camas command at a non-existent
-binary) and prove ``--strict-mcp-config`` rejects it (non-zero returncode or stderr indicating
-server registration failure).
+The shipped PostToolBatch hook command uses the same portable launcher as ``.mcp.json`` and ends
+with the ``fix`` subcommand — a deterministic file-level assertion (Claude Code's headless ``-p``
+is lenient about bad config, so a corrupted-config broken variant does not work).
 """
 
 from __future__ import annotations

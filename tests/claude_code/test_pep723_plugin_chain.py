@@ -9,12 +9,12 @@ Happy path: ``uv run --script tasks.py mcp init --claude`` writes the four files
 ``.mcp.json`` camas entry uses the ``uvx`` launcher (no ``uv.lock`` → ``launch_command`` falls
 through to the ``uvx`` branch — criterion #4, no bare ``camas``).
 
-Broken variant: ``uv run --script tasks.py mcp --help`` routes to the MCP CLI (output mentions
-``camas mcp init``) and does NOT raise ``no task named 'mcp'`` — the pre-``dea221e`` failure mode.
-The headless server-load step (proving the ``uvx camas[mcp] mcp`` launcher Claude Code starts
-actually answers ``camas_list``) is opt-in via ``CAMAS_CC_PEP723_HEADLESS`` because it downloads
-camas from PyPI on each launch — slow and network-bound, unlike the deterministic file/launcher
-assertions that always run.
+Regression guard: ``uv run --script tasks.py mcp --help`` routes to the MCP CLI (output mentions
+``camas mcp init``) and does NOT raise ``no task named 'mcp'`` — the pre-``dea221e`` failure mode
+where ``run_cli`` bound ``mcp`` as a task. The headless server-load step (proving the
+``uvx camas[mcp] mcp`` launcher Claude Code starts actually answers ``camas_list``) is opt-in via
+``CAMAS_CC_PEP723_HEADLESS`` because it downloads camas from PyPI on each launch — slow and
+network-bound, unlike the deterministic file/launcher assertions that always run.
 """
 
 from __future__ import annotations
