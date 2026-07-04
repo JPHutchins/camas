@@ -53,6 +53,20 @@ def tasks_py_path() -> Path | None:
 	return next((d / "tasks.py" for d in (cwd, *cwd.parents) if (d / "tasks.py").is_file()), None)
 
 
+def pep723_tasks_py_in_cwd() -> Path | None:
+	"""``Path.cwd() / "tasks.py"`` if it exists and has a PEP 723 header with a ``camas``
+	dependency, otherwise ``None``.
+	"""
+	tasks_py = Path.cwd() / "tasks.py"
+	if not tasks_py.is_file():
+		return None
+	from ..main.pep723 import camas_requirement_from
+
+	if camas_requirement_from(tasks_py) is not None:
+		return tasks_py
+	return None
+
+
 def resolve_pin() -> str | None:
 	"""The camas MCP requirement with extras for pinning, resolved from the project's ``tasks.py``."""
 	tasks_py = tasks_py_path()
@@ -112,8 +126,12 @@ def write_mcp_json(argv: list[str]) -> int:
 def launch_command(*, pin: str | None = None) -> tuple[str, list[str]] | None:
 	"""The most portable launch command for camas, or None if none is portable enough to commit."""
 	tail = ["mcp"]
-	if shutil.which("uv") is not None and uv_project_root() is not None:
-		return "uv", ["run", "camas", *tail]
+	if shutil.which("uv") is not None:
+		if uv_project_root() is not None:
+			return "uv", ["run", "camas", *tail]
+		tasks_py = pep723_tasks_py_in_cwd()
+		if tasks_py is not None:
+			return "uv", ["run", tasks_py.name, *tail]
 	if shutil.which("uvx") is not None:
 		spec = pin if pin is not None else "camas[mcp]"
 		return "uvx", [spec, *tail]
@@ -131,7 +149,7 @@ def uv_project_root() -> Path | None:
 def portability_note(command: str) -> str:
 	"""How portable the chosen launch command is, for the committed ``.mcp.json``."""
 	if command == "uv":
-		return "This entry is portable; uv resolves camas from the lockfile."
+		return "This entry is portable; uv resolves camas from the lockfile or the PEP 723 header in tasks.py."
 	if command == "uvx":
 		return "This entry is portable; uvx downloads and runs camas[mcp] from PyPI."
 	return "This entry is portable if your team installs camas on PATH; commit it to share."
