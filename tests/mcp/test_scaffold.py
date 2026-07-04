@@ -97,6 +97,78 @@ def test_launch_command_str_none(monkeypatch: pytest.MonkeyPatch) -> None:
 	assert launch_command_str() is None
 
 
+def test_launch_command_uv_with_pep723_tasks_py(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	monkeypatch.chdir(tmp_path)
+	(tmp_path / "tasks.py").write_text(
+		'# /// script\n# dependencies = ["camas>=0.1.8"]\n# ///\nfrom camas import Task\n'
+	)
+	monkeypatch.setattr("shutil.which", _which("uv"))
+	assert launch_command() == ("uv", ["run", "tasks.py", "mcp"])
+	assert launch_command(pin="camas[mcp]>=0.1.8") == ("uv", ["run", "tasks.py", "mcp"])
+
+
+def test_launch_command_uv_lock_wins_over_pep723_tasks_py(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	monkeypatch.chdir(tmp_path)
+	(tmp_path / "uv.lock").write_text("")
+	(tmp_path / "tasks.py").write_text(
+		'# /// script\n# dependencies = ["camas>=0.1.8"]\n# ///\nfrom camas import Task\n'
+	)
+	monkeypatch.setattr("shutil.which", _which("uv", "camas"))
+	assert launch_command() == ("uv", ["run", "camas", "mcp"])
+
+
+def test_launch_command_pep723_tasks_py_must_be_in_cwd(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	sub = tmp_path / "sub"
+	sub.mkdir()
+	(sub / "tasks.py").write_text(
+		'# /// script\n# dependencies = ["camas>=0.1.8"]\n# ///\nfrom camas import Task\n'
+	)
+	monkeypatch.chdir(tmp_path)
+	monkeypatch.setattr("shutil.which", _which("uv"))
+	assert launch_command() is None
+
+
+def test_launch_command_tasks_py_without_pep723_header_falls_through(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	monkeypatch.chdir(tmp_path)
+	(tmp_path / "tasks.py").write_text("from camas import Task\nlint = Task('echo')\n")
+	monkeypatch.setattr("shutil.which", _which("uv"))
+	assert launch_command() is None
+
+
+def test_write_mcp_json_uses_uv_run_tasks_py_when_pep723(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	monkeypatch.chdir(tmp_path)
+	(tmp_path / "tasks.py").write_text(
+		'# /// script\n# dependencies = ["camas>=0.1.8"]\n# ///\nfrom camas import Task\n'
+	)
+	monkeypatch.setattr("shutil.which", _which("uv"))
+	assert write_mcp_json([]) == 0
+	entry = json.loads((tmp_path / ".mcp.json").read_text())["mcpServers"]["camas"]
+	assert (entry["command"], entry["args"]) == ("uv", ["run", "tasks.py", "mcp"])
+
+
+def test_write_hooks_uses_uv_run_tasks_py_when_pep723(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	monkeypatch.chdir(tmp_path)
+	(tmp_path / "tasks.py").write_text(
+		'# /// script\n# dependencies = ["camas>=0.1.8"]\n# ///\nfrom camas import Task\n'
+	)
+	monkeypatch.setattr("shutil.which", _which("uv"))
+	assert write_hooks([]) == 0
+	out = capsys.readouterr().out
+	assert "uv run tasks.py mcp fix" in out
+
+
 def test_tasks_py_path_finds_tasks_py(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 	(tmp_path / "tasks.py").write_text("")
 	monkeypatch.chdir(tmp_path)
