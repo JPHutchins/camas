@@ -27,6 +27,13 @@ if TYPE_CHECKING:
 
 _ENABLED = bool(os.environ.get("CAMAS_CC_E2E")) and shutil.which("claude") is not None
 
+# The headless `claude -p` and its MCP server / PostToolBatch hook inherit this process's env. The
+# repo's .python-version (3.14) is absent on the CI runner; pin UV_PYTHON to a present interpreter
+# (3.12, matching the harness workflow's own `uv run --python 3.12`) and forbid downloads, so the
+# shipped `uv run camas …` launcher resolves instead of failing "No interpreter found for 3.14".
+os.environ.setdefault("UV_PYTHON", "3.12")
+os.environ.setdefault("UV_PYTHON_DOWNLOADS", "never")
+
 
 @pytest.fixture
 def run_headless() -> Callable[..., CompletedProcess[str]]:

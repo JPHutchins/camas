@@ -22,8 +22,10 @@ without its gate tool cannot drive the scope.
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -33,6 +35,9 @@ if TYPE_CHECKING:
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _UV = shutil.which("uv") or "uv"
+_ENV = {**os.environ, "UV_PYTHON": "3.12", "UV_PYTHON_DOWNLOADS": "never"}
+
+_PY = shlex.quote(sys.executable)
 
 _PYPROJECT = (
 	"[project]\n"
@@ -40,7 +45,7 @@ _PYPROJECT = (
 	'version = "0.0.0"\n'
 	'requires-python = ">=3.10"\n'
 	'dependencies = ["camas"]\n'
-	f"\n[tool.uv.sources]\n"
+	"\n[tool.uv.sources]\n"
 	f'camas = {{ path = "{_REPO_ROOT}" }}\n'
 )
 
@@ -59,8 +64,8 @@ _FIX_SCRIPT = (
 
 _TASKS = (
 	"from camas import Claude, Config, Task\n"
-	'check = Task("python3 check_fail.py {paths}", name="check", paths=".")\n'
-	'fix = Task("python3 fixer.py {paths}", name="fix", mutates=True, paths=".")\n'
+	f'check = Task("{_PY} check_fail.py {{paths}}", name="check", paths=".")\n'
+	f'fix = Task("{_PY} fixer.py {{paths}}", name="fix", mutates=True, paths=".")\n'
 	"_ = Config(agent=Claude(fix=fix, check=check))\n"
 )
 
@@ -78,25 +83,35 @@ _DELEGATE_PROMPT = (
 
 def _setup_project(tmp_path: Path) -> None:
 	(tmp_path / "pyproject.toml").write_text(_PYPROJECT)
-	subprocess.run(
+	(tmp_path / "tasks.py").write_text(_TASKS)
+	(tmp_path / "check_fail.py").write_text(_CHECK_SCRIPT)
+	(tmp_path / "fixer.py").write_text(_FIX_SCRIPT)
+	sync = subprocess.run(
 		[_UV, "sync"],
 		cwd=tmp_path,
 		capture_output=True,
 		text=True,
-		timeout=120,
+		timeout=180,
 		check=False,
-		env={**os.environ, "UV_PYTHON_DOWNLOADS": "never"},
+		env=_ENV,
+	)
+	assert sync.returncode == 0, (
+		f"uv sync failed: rc={sync.returncode}\nstdout={sync.stdout}\nstderr={sync.stderr}"
 	)
 
 
 def _init_claude(tmp_path: Path) -> None:
-	subprocess.run(
+	proc = subprocess.run(
 		[_UV, "run", "--project", str(_REPO_ROOT), "camas", "mcp", "init", "--claude"],
 		cwd=tmp_path,
 		capture_output=True,
 		text=True,
-		timeout=120,
+		timeout=180,
 		check=False,
+		env=_ENV,
+	)
+	assert proc.returncode == 0, (
+		f"camas mcp init --claude failed: rc={proc.returncode}\nstdout={proc.stdout}\nstderr={proc.stderr}"
 	)
 
 
@@ -112,9 +127,6 @@ def test_fixer_subagent_drives_scope_to_green_via_mcp_gate(
 	run_headless: Callable[..., CompletedProcess[str]],
 ) -> None:
 	_setup_project(tmp_path)
-	(tmp_path / "tasks.py").write_text(_TASKS)
-	(tmp_path / "check_fail.py").write_text(_CHECK_SCRIPT)
-	(tmp_path / "fixer.py").write_text(_FIX_SCRIPT)
 	_init_claude(tmp_path)
 
 	headless = run_headless(
@@ -136,9 +148,6 @@ def test_fixer_without_mcp_tools_cannot_reach_green(
 	run_headless: Callable[..., CompletedProcess[str]],
 ) -> None:
 	_setup_project(tmp_path)
-	(tmp_path / "tasks.py").write_text(_TASKS)
-	(tmp_path / "check_fail.py").write_text(_CHECK_SCRIPT)
-	(tmp_path / "fixer.py").write_text(_FIX_SCRIPT)
 	_init_claude(tmp_path)
 
 	fixer_md = tmp_path / ".claude" / "agents" / "camas-fixer.md"

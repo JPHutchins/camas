@@ -18,8 +18,10 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -29,6 +31,9 @@ if TYPE_CHECKING:
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _UV = shutil.which("uv") or "uv"
+_ENV = {**os.environ, "UV_PYTHON": "3.12", "UV_PYTHON_DOWNLOADS": "never"}
+
+_PY = shlex.quote(sys.executable)
 
 _PYPROJECT = (
 	"[project]\n"
@@ -36,7 +41,7 @@ _PYPROJECT = (
 	'version = "0.0.0"\n'
 	'requires-python = ">=3.10"\n'
 	'dependencies = ["camas"]\n'
-	f"\n[tool.uv.sources]\n"
+	"\n[tool.uv.sources]\n"
 	f'camas = {{ path = "{_REPO_ROOT}" }}\n'
 )
 
@@ -49,7 +54,7 @@ _FIXER = (
 
 _TASKS = (
 	"from camas import Claude, Config, Task\n"
-	'tidy = Task("python3 fixer.py {paths}", name="tidy", mutates=True, paths=".")\n'
+	f'tidy = Task("{_PY} fixer.py {{paths}}", name="tidy", mutates=True, paths=".")\n'
 	"_ = Config(agent=Claude(fix=tidy))\n"
 )
 
@@ -61,14 +66,34 @@ _EDIT_PROMPT = (
 
 def _setup_project(tmp_path: Path) -> None:
 	(tmp_path / "pyproject.toml").write_text(_PYPROJECT)
-	subprocess.run(
+	(tmp_path / "tasks.py").write_text(_TASKS)
+	(tmp_path / "fixer.py").write_text(_FIXER)
+	sync = subprocess.run(
 		[_UV, "sync"],
 		cwd=tmp_path,
 		capture_output=True,
 		text=True,
-		timeout=120,
+		timeout=180,
 		check=False,
-		env={**os.environ, "UV_PYTHON_DOWNLOADS": "never"},
+		env=_ENV,
+	)
+	assert sync.returncode == 0, (
+		f"uv sync failed: rc={sync.returncode}\nstdout={sync.stdout}\nstderr={sync.stderr}"
+	)
+
+
+def _init_claude(tmp_path: Path) -> None:
+	proc = subprocess.run(
+		[_UV, "run", "--project", str(_REPO_ROOT), "camas", "mcp", "init", "--claude"],
+		cwd=tmp_path,
+		capture_output=True,
+		text=True,
+		timeout=180,
+		check=False,
+		env=_ENV,
+	)
+	assert proc.returncode == 0, (
+		f"camas mcp init --claude failed: rc={proc.returncode}\nstdout={proc.stdout}\nstderr={proc.stderr}"
 	)
 
 
@@ -77,17 +102,7 @@ def test_shipped_post_tool_batch_hook_runs_the_autofix(
 	run_headless: Callable[..., CompletedProcess[str]],
 ) -> None:
 	_setup_project(tmp_path)
-	(tmp_path / "tasks.py").write_text(_TASKS)
-	(tmp_path / "fixer.py").write_text(_FIXER)
-
-	subprocess.run(
-		[_UV, "run", "--project", str(_REPO_ROOT), "camas", "mcp", "init", "--claude"],
-		cwd=tmp_path,
-		capture_output=True,
-		text=True,
-		timeout=120,
-		check=False,
-	)
+	_init_claude(tmp_path)
 
 	proc = run_headless(tmp_path, _EDIT_PROMPT)
 	assert proc.returncode == 0, proc.stderr
@@ -106,19 +121,12 @@ def test_moved_to_filechanged_event_does_not_fire(
 	run_headless: Callable[..., CompletedProcess[str]],
 ) -> None:
 	_setup_project(tmp_path)
-	(tmp_path / "tasks.py").write_text(_TASKS)
-	(tmp_path / "fixer.py").write_text(_FIXER)
+	_init_claude(tmp_path)
 
-	subprocess.run(
-		[_UV, "run", "--project", str(_REPO_ROOT), "camas", "mcp", "init", "--claude"],
-		cwd=tmp_path,
-		capture_output=True,
-		text=True,
-		timeout=120,
-		check=False,
+	settings = cast(
+		"dict[str, object]",
+		json.loads((tmp_path / ".claude" / "settings.json").read_text(encoding="utf-8")),
 	)
-
-	settings = json.loads((tmp_path / ".claude" / "settings.json").read_text(encoding="utf-8"))
 	hooks = cast("dict[str, list[dict[str, object]]]", settings["hooks"])
 	ptb = hooks.pop("PostToolBatch", [])
 	hooks["FileChanged"] = ptb

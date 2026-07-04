@@ -28,6 +28,11 @@ if TYPE_CHECKING:
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _UV = shutil.which("uv") or "uv"
+# The runner's system Python is 3.12; the repo's .python-version (3.14) is not installed there,
+# and UV_PYTHON_DOWNLOADS=never forbids fetching it. Pin UV_PYTHON so every `uv` invocation in the
+# test (sync, the init subprocess, and the headless-launched hook/server) resolves a present
+# interpreter instead of failing "No interpreter found for Python 3.14".
+_ENV = {**os.environ, "UV_PYTHON": "3.12", "UV_PYTHON_DOWNLOADS": "never"}
 
 _PYPROJECT = (
 	"[project]\n"
@@ -66,16 +71,35 @@ def _mcp_json_uses_portable_launcher(mcp_json: Path) -> bool:
 
 def _setup_project(tmp_path: Path) -> None:
 	(tmp_path / "pyproject.toml").write_text(_PYPROJECT)
-	subprocess.run(
+	(tmp_path / "tasks.py").write_text(_TASKS)
+	sync = subprocess.run(
 		[_UV, "sync"],
 		cwd=tmp_path,
 		capture_output=True,
 		text=True,
-		timeout=120,
+		timeout=180,
 		check=False,
-		env={**os.environ, "UV_PYTHON_DOWNLOADS": "never"},
+		env=_ENV,
 	)
-	(tmp_path / "tasks.py").write_text(_TASKS)
+	assert sync.returncode == 0, (
+		f"uv sync failed: rc={sync.returncode}\nstdout={sync.stdout}\nstderr={sync.stderr}"
+	)
+
+
+def _init_claude(tmp_path: Path) -> subprocess.CompletedProcess[str]:
+	proc = subprocess.run(
+		[_UV, "run", "--project", str(_REPO_ROOT), "camas", "mcp", "init", "--claude"],
+		cwd=tmp_path,
+		capture_output=True,
+		text=True,
+		timeout=180,
+		check=False,
+		env=_ENV,
+	)
+	assert proc.returncode == 0, (
+		f"camas mcp init --claude failed: rc={proc.returncode}\nstdout={proc.stdout}\nstderr={proc.stderr}"
+	)
+	return proc
 
 
 def test_init_claude_writes_four_files_and_mcp_uses_portable_launcher(
@@ -83,16 +107,7 @@ def test_init_claude_writes_four_files_and_mcp_uses_portable_launcher(
 	run_headless: Callable[..., CompletedProcess[str]],
 ) -> None:
 	_setup_project(tmp_path)
-
-	proc = subprocess.run(
-		[_UV, "run", "--project", str(_REPO_ROOT), "camas", "mcp", "init", "--claude"],
-		cwd=tmp_path,
-		capture_output=True,
-		text=True,
-		timeout=120,
-		check=False,
-	)
-	assert proc.returncode == 0, proc.stderr
+	_init_claude(tmp_path)
 
 	for rel in _INIT_FILES:
 		assert (tmp_path / rel).exists(), f"init --claude did not write {rel}"
@@ -117,15 +132,7 @@ def test_corrupt_mcp_json_fails_strict_mcp_config(
 	run_headless: Callable[..., CompletedProcess[str]],
 ) -> None:
 	_setup_project(tmp_path)
-
-	subprocess.run(
-		[_UV, "run", "--project", str(_REPO_ROOT), "camas", "mcp", "init", "--claude"],
-		cwd=tmp_path,
-		capture_output=True,
-		text=True,
-		timeout=120,
-		check=False,
-	)
+	_init_claude(tmp_path)
 
 	mcp = cast(
 		"dict[str, object]", json.loads((tmp_path / ".mcp.json").read_text(encoding="utf-8"))
