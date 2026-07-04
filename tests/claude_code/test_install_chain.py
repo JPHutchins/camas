@@ -22,6 +22,8 @@ import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+import pytest
+
 if TYPE_CHECKING:
 	from collections.abc import Callable
 	from subprocess import CompletedProcess
@@ -33,6 +35,7 @@ _UV = shutil.which("uv") or "uv"
 # test (sync, the init subprocess, and the headless-launched hook/server) resolves a present
 # interpreter instead of failing "No interpreter found for Python 3.14".
 _ENV = {**os.environ, "UV_PYTHON": "3.12", "UV_PYTHON_DOWNLOADS": "never"}
+_ENABLED = bool(os.environ.get("CAMAS_CC_E2E")) and shutil.which("claude") is not None
 
 _PYPROJECT = (
 	"[project]\n"
@@ -127,27 +130,33 @@ def test_init_claude_writes_four_files_and_mcp_uses_portable_launcher(
 	)
 
 
-def test_corrupt_mcp_json_fails_strict_mcp_config(
+@pytest.mark.skipif(not _ENABLED, reason="set CAMAS_CC_E2E=1 with claude on PATH")
+def test_shipped_hook_command_uses_the_portable_launcher_and_fix_subcommand(
 	tmp_path: Path,
-	run_headless: Callable[..., CompletedProcess[str]],
 ) -> None:
+	"""The shipped PostToolBatch hook camas writes must run the portable launcher with the ``fix``
+	subcommand — the structural invariant the historical "bare ``camas``" and "wrong command"
+	regions broke. Claude Code's headless ``-p`` is lenient about bad config (it warns and exits 0),
+	so a deliberately-corrupted ``.mcp.json`` does NOT fail ``--strict-mcp-config``; assert the
+	launcher shape on the file camas wrote instead, which is deterministic.
+	"""
 	_setup_project(tmp_path)
 	_init_claude(tmp_path)
 
-	mcp = cast(
-		"dict[str, object]", json.loads((tmp_path / ".mcp.json").read_text(encoding="utf-8"))
+	settings = cast(
+		"dict[str, object]",
+		json.loads((tmp_path / ".claude" / "settings.json").read_text(encoding="utf-8")),
 	)
-	servers = cast("dict[str, object]", mcp.setdefault("mcpServers", {}))
-	servers["camas"] = {"type": "stdio", "command": "no-such-binary-camas"}
-	(tmp_path / ".mcp.json").write_text(json.dumps(mcp, indent=2) + "\n", encoding="utf-8")
-
-	headless = run_headless(
-		tmp_path,
-		"Call the camas_list MCP tool. Report how many tasks it lists.",
-		strict_mcp=True,
+	hooks = cast("dict[str, object]", settings["hooks"])
+	batch = cast("list[dict[str, object]]", hooks["PostToolBatch"])
+	group = batch[-1]
+	raw_commands = (h.get("command") for h in cast("list[dict[str, object]]", group["hooks"]))
+	commands = [c for c in raw_commands if isinstance(c, str)]
+	hook_command = next(c for c in commands if "mcp fix" in c)
+	launcher = _mcp_command(tmp_path / ".mcp.json")
+	assert hook_command.startswith(launcher), (
+		f"shipped hook must use the same portable launcher ({launcher!r}) as .mcp.json: {hook_command!r}"
 	)
-	failed = headless.returncode != 0 or "failed" in (headless.stderr or "").lower()
-	assert failed, (
-		f"corrupt .mcp.json should fail strict-mcp-config: rc={headless.returncode}"
-		f" stderr={headless.stderr}"
+	assert hook_command.endswith("fix"), (
+		f"shipped hook must invoke the fix subcommand: {hook_command!r}"
 	)
