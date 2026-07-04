@@ -23,26 +23,57 @@ import pytest
 if TYPE_CHECKING:
 	from collections.abc import Callable
 	from pathlib import Path
+	from subprocess import CompletedProcess
 
 _ENABLED = bool(os.environ.get("CAMAS_CC_E2E")) and shutil.which("claude") is not None
 
+# The headless `claude -p` and its MCP server / PostToolBatch hook inherit this process's env. The
+# repo's .python-version (3.14) is absent on the CI runner; pin UV_PYTHON to a present interpreter
+# (3.12, matching the harness workflow's own `uv run --python 3.12`) and forbid downloads, so the
+# shipped `uv run camas …` launcher resolves instead of failing "No interpreter found for 3.14".
+os.environ.setdefault("UV_PYTHON", "3.12")
+os.environ.setdefault("UV_PYTHON_DOWNLOADS", "never")
+
 
 @pytest.fixture
-def run_headless() -> Callable[[Path, str], subprocess.CompletedProcess[str]]:
+def run_headless() -> Callable[..., CompletedProcess[str]]:
 	"""A callable that runs ``claude -p`` headless in a cwd, edits auto-approved, model from env.
 
 	Every test in this suite requests it, so requesting it is what opts a test into the real run —
 	unless ``CAMAS_CC_E2E`` is set with ``claude`` on PATH, requesting it skips the test.
+
+	The returned callable accepts optional keyword-only overrides:
+
+	- ``permission_mode`` (default ``acceptEdits``): ``--permission-mode`` value.
+	- ``strict_mcp`` (default ``False``): pass ``--strict-mcp-config``.
+	- ``append_system_prompt`` (default ``None``): appended via ``--append-system-prompt``.
+	- ``output_format`` (default ``None``): ``--output-format`` value.
 	"""
 	if not _ENABLED:
 		pytest.skip(
 			"set CAMAS_CC_E2E=1 with `claude` on PATH to run the Claude Code integration suite"
 		)
 
-	def _run(cwd: Path, prompt: str) -> subprocess.CompletedProcess[str]:
-		model = os.environ.get("CAMAS_CC_MODEL", "sonnet")
+	model = os.environ.get("CAMAS_CC_MODEL", "sonnet")
+
+	def _run(
+		cwd: Path,
+		prompt: str,
+		*,
+		permission_mode: str = "acceptEdits",
+		strict_mcp: bool = False,
+		append_system_prompt: str | None = None,
+		output_format: str | None = None,
+	) -> CompletedProcess[str]:
+		argv = ["claude", "-p", prompt, "--model", model, "--permission-mode", permission_mode]
+		if strict_mcp:
+			argv.append("--strict-mcp-config")
+		if append_system_prompt is not None:
+			argv.extend(("--append-system-prompt", append_system_prompt))
+		if output_format is not None:
+			argv.extend(("--output-format", output_format))
 		return subprocess.run(
-			["claude", "-p", prompt, "--model", model, "--permission-mode", "acceptEdits"],
+			argv,
 			cwd=cwd,
 			capture_output=True,
 			text=True,

@@ -3,7 +3,10 @@ name: Claude Code hook harness
 # Runs the opt-in Claude Code integration suite (tests/claude_code/) against a REAL headless
 # `claude -p`, to catch drift in the hook contract camas depends on — that PostToolBatch fires on
 # an edit and delivers the changed path on stdin, that ${file_path} is not interpolated, and that
-# the shipped autofix hook actually runs the registered fix node end to end.
+# the shipped autofix hook actually runs the registered fix node end to end — and that the full
+# plugin chain (install → edit → gate → fix) the camas-fixer subagent drives through the MCP tools
+# works against a real Claude Code: camas mcp init --claude produces a loadable surface, the shipped
+# PostToolBatch hook fires, and the fixer reaches green via the MCP camas_gate tool.
 #
 # It uses the same DeepSeek backend the agentic review workflow does (ANTHROPIC_BASE_URL +
 # ANTHROPIC_AUTH_TOKEN=DEEPSEEK_API_KEY, a burner key with a hard spend cap), on the cheap
@@ -16,14 +19,17 @@ on:
   push:
     paths:
       - "src/camas/**"
+      - "src/camas/main/claude_*.md"
       - "tests/claude_code/**"
       - "tests/plugin/**"
+      - ".mcp.json"
+      - ".claude/**"
       - ".github/workflows/claude-code-harness.yaml"
 
 jobs:
   harness:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:
@@ -69,6 +75,10 @@ jobs:
           CAMAS_CC_MODEL: deepseek-v4-flash
           ANTHROPIC_BASE_URL: https://api.deepseek.com/anthropic
           ANTHROPIC_AUTH_TOKEN: ${{ secrets.DEEPSEEK_API_KEY }}
+          # The camas-fixer subagent is model: haiku; point the haiku tier at DeepSeek so the
+          # fixer-loop test (criterion #3) drives a real subagent round-trip, as claude-code-review does.
+          ANTHROPIC_DEFAULT_HAIKU_MODEL: deepseek-v4-flash
+          CLAUDE_CODE_SUBAGENT_MODEL: deepseek-v4-flash
           UV_PYTHON_DOWNLOADS: never
         run: |
           [ -n "$ANTHROPIC_AUTH_TOKEN" ] || { echo "::error::DEEPSEEK_API_KEY secret is not set"; exit 1; }
