@@ -12,15 +12,21 @@ inherit) the same way ``env``/``cwd`` propagate. On a full run ``{paths}`` becom
 prefix (or the callable's default); on a scoped run it becomes the changed files the scope
 covers, and a ``{paths}`` leaf covering none of them is dropped.
 
-A command with **no** ``{paths}`` can't be narrowed, so it always runs and its ``paths`` (own or
-inherited) is a no-op — camas errs on correctness: a tool that can't narrow might be affected by
-the edit. Only a ``{paths}`` command is ever pruned.
+A command with **no** ``{paths}`` can't be narrowed, so it always runs — unless a ``when=``
+predicate (own or inherited) excludes the changed set — and its ``paths`` (own or inherited) is
+a no-op regardless; camas errs on correctness otherwise: a tool that can't narrow might be
+affected by the edit. ``paths`` only ever prunes a ``{paths}`` command; ``when`` can prune either
+kind of leaf, on a scoped run, gating before any ``paths`` narrowing — never on a full run.
 
 :func:`with_default_paths` resolves the full-run default and is applied before every run.
 :func:`scope_to_changed` resolves and prunes against a changed set — the entry point for
 the gate (#67/#69). Detecting the changed set is the caller's job; :func:`to_changed`
 normalizes an externally-supplied set (absolute hook paths, CLI ``--paths``) to the
 repo-relative POSIX form the matcher expects.
+
+:func:`scope_warnings` walks a task tree for authoring mistakes — ``paths=`` set on a leaf
+whose command can't use it, or a ``paths`` callable that goes empty on a full run — surfaced
+by ``camas --check``.
 """
 
 from __future__ import annotations
@@ -28,7 +34,7 @@ from __future__ import annotations
 import shlex
 import sys
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, Literal, NamedTuple
 
 if sys.version_info >= (3, 11):
 	from typing import assert_never
@@ -36,11 +42,12 @@ else:  # pragma: no cover
 	from typing_extensions import assert_never
 
 from ..v0.task import Group, Task
+from .task import task_label
 
 if TYPE_CHECKING:
 	from collections.abc import Iterable
 
-	from ..v0.task import PathScope, TaskNode
+	from ..v0.task import PathScope, TaskNode, WhenPredicate
 
 
 PATHS_TOKEN: Final = "{paths}"
@@ -84,6 +91,30 @@ def _within(path: str, prefix: str) -> bool:
 	"""
 	base = PurePosixPath(prefix).parts
 	return PurePosixPath(path).parts[: len(base)] == base
+
+
+def _when_matches(when: str | tuple[str, ...] | WhenPredicate, changed: tuple[str, ...]) -> bool:
+	"""True when ``when`` matches the ``changed`` set: a prefix string or tuple of prefixes
+	(OR'd) matches segment-wise via :func:`_within`; a callable is asked directly.
+
+	>>> _when_matches("src", ("src/a.py",)), _when_matches("src", ("docs/x.md",))
+	(True, False)
+	>>> _when_matches(("src", "include"), ("include/h.h",))
+	True
+	>>> _when_matches(lambda c: "x" in c, ("x",))
+	True
+	"""
+	match when:
+		case str():
+			return any(_within(c, when) for c in changed)
+		case tuple():
+			return any(  # pyright: ignore[reportUnknownArgumentType, reportUnknownVariableType]
+				_within(c, prefix)  # ty: ignore[invalid-argument-type]
+				for c in changed
+				for prefix in when
+			)
+		case _:
+			return when(changed)
 
 
 def _as_scope(paths: str | PathScope) -> PathScope:
@@ -150,6 +181,8 @@ def _rebase_to_cwd(parts: tuple[str, ...], cwd: Path | None) -> tuple[str, ...]:
 
 
 def _resolve_leaf(task: Task, changed: tuple[str, ...]) -> Task | None:
+	if changed and task.when is not None and not _when_matches(task.when, changed):
+		return None
 	if PATHS_TOKEN not in task.cmd:
 		return task
 	parts = _as_scope(task.paths if task.paths is not None else ".")(
@@ -165,18 +198,20 @@ def _resolve_leaf(task: Task, changed: tuple[str, ...]) -> Task | None:
 		help=task.help,
 		mutates=task.mutates,
 		paths=task.paths,
+		when=task.when,
 		agent_format=task.agent_format,
 	)
 
 
 def scope_to_changed(node: TaskNode, changed: tuple[str, ...]) -> TaskNode | None:
 	"""``node`` with each ``{paths}`` command narrowed to the changed files under its scope,
-	leaves whose scope intersects none of them pruned, and emptied groups dropped (``None``
-	when nothing remains).
+	leaves whose scope intersects none of them (or whose ``when`` excludes it) pruned, and
+	emptied groups dropped (``None`` when nothing remains).
 
 	A command with no ``{paths}`` can't be narrowed, so it always runs — its ``paths`` (own or
-	inherited from a group) is a no-op there. Only a ``{paths}`` command is pruned, and only
-	when its scope covers none of the changed files.
+	inherited from a group) is a no-op there, unless a ``when`` predicate (own or inherited)
+	excludes the changed set. A ``{paths}`` command is additionally pruned when its scope covers
+	none of the changed files.
 
 	>>> from camas.v0.task import Parallel
 	>>> py = Task("ruff check {paths}", name="lint", paths=".")
@@ -188,6 +223,10 @@ def scope_to_changed(node: TaskNode, changed: tuple[str, ...]) -> TaskNode | Non
 	True
 	>>> scope_to_changed(Parallel(Task("ruff {paths}", paths="src")), ("docs/x.md",)) is None
 	True
+	>>> scope_to_changed(Task("cargo check", name="cargo", when="src"), ("docs/x.md",)) is None
+	True
+	>>> scope_to_changed(Task("cargo check", name="cargo", when="src"), ("src/a.rs",))
+	Task(cmd='cargo check', name='cargo', env={}, cwd=None, when='src')
 	"""
 	match node:
 		case Task():
@@ -205,6 +244,7 @@ def scope_to_changed(node: TaskNode, changed: tuple[str, ...]) -> TaskNode | Non
 					cwd=group.cwd,
 					help=group.help,
 					paths=group.paths,
+					when=group.when,
 				)
 				if kept
 				else None
@@ -236,3 +276,70 @@ def resolve_default_leaf(task: Task) -> Task:
 	'mypy .'
 	"""
 	return _resolve_leaf(task, ()) or task
+
+
+class ScopeWarning(NamedTuple):
+	"""A scope-authoring mistake found by :func:`scope_warnings`: a leaf whose ``paths``
+	can't do what its shape suggests.
+	"""
+
+	kind: Literal["inert_paths", "empty_full_run_callable"]
+	task: str
+	message: str
+
+
+def scope_warnings(node: TaskNode) -> tuple[ScopeWarning, ...]:
+	"""Walk the raw task tree — **before** :func:`camas.core.matrix.expand_matrix` bakes an
+	inherited ``paths`` onto leaves, since afterward a leaf's own ``paths`` is
+	indistinguishable from one it inherited — for two authoring mistakes: a leaf's own
+	``paths`` its command can never use, and a ``{paths}`` leaf whose callable scope goes
+	empty on a full run.
+
+	>>> from camas.v0.task import Parallel, by_suffix
+	>>> scope_warnings(Task("cargo build", name="cargo", paths="."))[0].kind
+	'inert_paths'
+	>>> scope_warnings(Parallel(Task("cargo build", name="cargo"), paths="."))
+	()
+	>>> scope_warnings(Task("ruff check {paths}", name="lint", paths=lambda c: c))[0].kind
+	'empty_full_run_callable'
+	>>> scope_warnings(Task("ruff check {paths}", name="lint", paths=by_suffix((".py",))))
+	()
+	"""
+	match node:
+		case Task() as task:
+			label = task_label(task)
+			inert = (
+				(
+					ScopeWarning(
+						"inert_paths",
+						label,
+						f"task {label!r} sets paths= but its command has no {PATHS_TOKEN} "
+						f"token, so it is never narrowed or pruned; add {PATHS_TOKEN} to the "
+						"command, or use when= to gate it on the changed set",
+					),
+				)
+				if task.paths is not None and PATHS_TOKEN not in task.cmd
+				else ()
+			)
+			empty_callable = (
+				(
+					ScopeWarning(
+						"empty_full_run_callable",
+						label,
+						f"task {label!r}'s paths callable returns () on a full run, so its "
+						f"{PATHS_TOKEN} would be stripped entirely — a tool reading stdin on no "
+						"args may hang or misbehave; return a default for the empty change set, "
+						"e.g. by_suffix(suffixes, default=...)",
+					),
+				)
+				if PATHS_TOKEN in task.cmd
+				and task.paths is not None
+				and not isinstance(task.paths, str)
+				and task.paths(()) == ()
+				else ()
+			)
+			return inert + empty_callable
+		case Group() as group:
+			return tuple(w for t in group.tasks for w in scope_warnings(t))
+		case _:
+			assert_never(node)

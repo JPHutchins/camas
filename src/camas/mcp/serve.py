@@ -10,6 +10,7 @@ import asyncio
 import os
 import re
 import shlex
+import shutil
 import sys
 import textwrap
 from contextlib import redirect_stdout
@@ -94,6 +95,7 @@ FIX_ANNOTATIONS: Final = types.ToolAnnotations(
 INIT_ANNOTATIONS: Final = types.ToolAnnotations(
 	readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False
 )
+RUN_LOG_KEEP: Final = 10
 
 
 class Compat(NamedTuple):
@@ -479,7 +481,8 @@ def tools(task_names: tuple[str, ...], compat: Compat) -> Tools:
 				scoped to the changed paths — mutating, behavior-preserving formatters and
 				``--fix`` linters. It does not reason; it only fixes. Pass paths=[…] (the changed
 				files) to scope; omit to run the whole fix node un-scoped. Each ``{paths}`` command
-				is injected with the files it covers; a command without ``{paths}`` always runs.
+				is injected with the files it covers; a command without ``{paths}`` always runs
+				unless its ``when=`` excludes the changed set.
 				A no-op (exit 0, no leaves) when no fix node is registered (``Config.agent.fix`` is
 				``None``). ``jobs`` controls max concurrent leaf subprocesses.
 			""").strip(),
@@ -769,11 +772,42 @@ def excluded_note(leaf: wire.ExcludedLeaf) -> str:
 
 
 def create_run_log_dir(camas_dir: Path, task: str, seq: int) -> Path:
-	"""Create and return ``camas_dir/runs/<task>/<seq>/`` (creating ``camas_dir`` if needed)."""
+	"""Create and return ``camas_dir/runs/<task>/<seq>/`` (creating ``camas_dir`` if needed),
+	pruning older sibling run dirs beyond ``RUN_LOG_KEEP``.
+	"""
 	timings.ensure_camas_dir(camas_dir)
-	run_dir = camas_dir / "runs" / slug(task) / str(seq)
+	task_dir = camas_dir / "runs" / slug(task)
+	run_dir = task_dir / str(seq)
 	run_dir.mkdir(parents=True, exist_ok=True)
+	prune_run_dirs(task_dir, run_dir)
 	return run_dir
+
+
+def _run_dir_recency(d: Path) -> tuple[int, int]:
+	"""Recency sort key for a numbered run dir: mtime, then sequence number to break
+	mtime ties deterministically on coarse-resolution filesystems.
+	"""
+	try:
+		mtime_ns = d.stat().st_mtime_ns
+	except OSError:
+		mtime_ns = 0
+	return (mtime_ns, int(d.name))
+
+
+def prune_run_dirs(task_dir: Path, keep: Path, *, keep_n: int = RUN_LOG_KEEP) -> tuple[Path, ...]:
+	"""Delete the oldest numbered run dirs under ``task_dir`` so at most ``keep_n`` remain,
+	always keeping ``keep`` (the run dir just created) and never touching a non-numeric entry.
+	Returns the deleted paths; deletion is best-effort.
+	"""
+	others = sorted(
+		(d for d in task_dir.iterdir() if d.is_dir() and d.name.isdigit() and d != keep),
+		key=_run_dir_recency,
+		reverse=True,
+	)
+	stale = tuple(others[keep_n - 1 :])
+	for d in stale:
+		shutil.rmtree(d, ignore_errors=True)
+	return stale
 
 
 def write_logs(run_dir: Path, result: RunResult) -> tuple[Path | None, ...]:
@@ -884,7 +918,9 @@ def dry_run_text(node: TaskNode) -> str:
 
 
 def check_text(resp: wire.CheckResponse) -> str:
-	"""The load-bearing agent-facing summary for ``camas_check`` — verdict, then diagnostics."""
+	"""The load-bearing agent-facing summary for ``camas_check`` — verdict, then diagnostics,
+	then any advisory scope warnings (independent of ``status``).
+	"""
 	match resp.status:
 		case "ok":
 			how = (
@@ -892,28 +928,32 @@ def check_text(resp: wire.CheckResponse) -> str:
 				if resp.checker is not None
 				else "no type checker ran"
 			)
-			return f"camas_check: OK — {resp.source} loads ({resp.task_count} task(s); {how})."
+			verdict = f"camas_check: OK — {resp.source} loads ({resp.task_count} task(s); {how})."
 		case "type_error":
-			return (
+			verdict = (
 				f"camas_check: TYPE ERRORS — {resp.source} loads ({resp.task_count} task(s)) but "
 				f"{resp.checker} reported:\n\n{resp.diagnostics}"
 			)
 		case "load_error":
-			return (
+			verdict = (
 				f"camas_check: LOAD ERROR — {resp.source} failed to evaluate:\n\n{resp.diagnostics}"
 			)
 		case "no_checker":
-			return (
+			verdict = (
 				f"camas_check: {resp.source} loads ({resp.task_count} task(s)), but no type "
 				f"checker is available.\n{resp.diagnostics}"
 			)
 		case "no_tasks":
-			return (
+			verdict = (
 				"camas_check: no tasks.py or [tool.camas.tasks] found in this project. "
 				"Call camas_init to scaffold a commented starter, or camas_docs to author one."
 			)
 		case _:
 			assert_never(resp.status)
+	if not resp.warnings:
+		return verdict
+	warnings = "\n".join(f"  - {w}" for w in resp.warnings)
+	return f"{verdict}\n\nWarnings (advisory — not failures):\n{warnings}"
 
 
 def docs_text(resp: wire.DocsResponse) -> str:

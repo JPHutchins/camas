@@ -55,6 +55,7 @@ def assign_key_name(node: TaskNode | Ref, key: str) -> TaskNode | Ref:
 			help=help,
 			mutates=mutates,
 			paths=paths,
+			when=when,
 			agent_format=agent_format,
 		):
 			return Task(
@@ -65,6 +66,7 @@ def assign_key_name(node: TaskNode | Ref, key: str) -> TaskNode | Ref:
 				help=help,
 				mutates=mutates,
 				paths=paths,
+				when=when,
 				agent_format=agent_format,
 			)
 		case Group(name=None) as group:
@@ -76,6 +78,7 @@ def assign_key_name(node: TaskNode | Ref, key: str) -> TaskNode | Ref:
 				cwd=group.cwd,
 				help=group.help,
 				paths=group.paths,
+				when=group.when,
 			)
 		case _:
 			return node
@@ -154,6 +157,7 @@ def name_scope_bindings(scope: Mapping[str, object]) -> dict[str, TaskNode]:
 					cwd=group.cwd,
 					help=group.help,
 					paths=group.paths,
+					when=group.when,
 				)
 			case _:
 				assert_never(source)

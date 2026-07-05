@@ -73,6 +73,7 @@ def apply_passthrough(task: TaskNode, args: tuple[str, ...]) -> Task:
 			help=help,
 			mutates=mutates,
 			paths=paths,
+			when=when,
 			agent_format=agent_format,
 		):
 			return Task(
@@ -83,6 +84,7 @@ def apply_passthrough(task: TaskNode, args: tuple[str, ...]) -> Task:
 				help=help,
 				mutates=mutates,
 				paths=paths,
+				when=when,
 				agent_format=agent_format,
 			)
 		case Sequential() | Parallel():

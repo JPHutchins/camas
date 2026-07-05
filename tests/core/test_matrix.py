@@ -255,3 +255,59 @@ def test_help_interpolated_on_cloned_sequentials() -> None:
 			pass
 		case _:
 			raise AssertionError(f"unexpected: {result}")
+
+
+def test_container_when_propagates_to_leaves() -> None:
+	task = Parallel(Task("cargo build", name="cargo"), when="src")
+	result = expand_matrix(task)
+	match result:
+		case Parallel(tasks=(Task(when=when),)):
+			assert when == "src"
+		case _:
+			raise AssertionError(f"unexpected: {result}")
+
+
+def test_task_own_when_overrides_container_when() -> None:
+	task = Parallel(Task("cargo build", name="cargo", when="src"), when="docs")
+	result = expand_matrix(task)
+	match result:
+		case Parallel(tasks=(Task(when=when),)):
+			assert when == "src"
+		case _:
+			raise AssertionError(f"unexpected: {result}")
+
+
+def test_when_str_substituted_per_binding() -> None:
+	task = Parallel(Task("build {PY}", when="pkg-{PY}"), matrix={"PY": ("3.12", "3.13")})
+	result = expand_matrix(task)
+	match result:
+		case Parallel(tasks=children):
+			whens = sorted(
+				c.when for c in children if isinstance(c, Task) and isinstance(c.when, str)
+			)
+			assert whens == ["pkg-3.12", "pkg-3.13"]
+		case _:
+			raise AssertionError(f"unexpected: {result}")
+
+
+def test_when_tuple_substituted_per_binding() -> None:
+	task = Parallel(Task("build {PY}", when=("pkg-{PY}", "shared")), matrix={"PY": ("3.12",)})
+	result = expand_matrix(task)
+	match result:
+		case Parallel(tasks=(Task(when=when),)):
+			assert when == ("pkg-3.12", "shared")
+		case _:
+			raise AssertionError(f"unexpected: {result}")
+
+
+def test_callable_when_survives_specialization() -> None:
+	def predicate(changed: tuple[str, ...]) -> bool:
+		return True
+
+	task = Parallel(Task("build {PY}", when=predicate), matrix={"PY": ("3.12",)})
+	result = expand_matrix(task)
+	match result:
+		case Parallel(tasks=(Task(when=when),)):
+			assert when is predicate
+		case _:
+			raise AssertionError(f"unexpected: {result}")

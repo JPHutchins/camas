@@ -23,7 +23,7 @@ from .task import MatrixBinding, VarBinding, task_label
 if TYPE_CHECKING:
 	from collections.abc import Mapping
 
-	from ..v0.task import PathScope
+	from ..v0.task import PathScope, WhenPredicate
 
 
 def resolve_cmd(cmd: str | tuple[str, ...]) -> tuple[str, ...]:
@@ -83,6 +83,31 @@ def substitute_paths(
 	return substitute_in_str(paths, binding) if isinstance(paths, str) else paths
 
 
+def substitute_when(
+	when: str | tuple[str, ...] | WhenPredicate | None, binding: MatrixBinding
+) -> str | tuple[str, ...] | WhenPredicate | None:
+	"""Substitute matrix bindings into a ``when`` predicate: a prefix string or tuple of
+	prefixes is templated like any other field; a callable passes through unchanged.
+
+	>>> substitute_when("pkg-{PY}", (VarBinding("PY", "3.14"),))
+	'pkg-3.14'
+	>>> substitute_when(("pkg-{PY}", "other"), (VarBinding("PY", "3.14"),))
+	('pkg-3.14', 'other')
+	"""
+	match when:
+		case None:
+			return None
+		case str():
+			return substitute_in_str(when, binding)
+		case tuple():
+			return tuple(  # pyright: ignore[reportUnknownArgumentType, reportUnknownVariableType]
+				substitute_in_str(w, binding)  # ty: ignore[invalid-argument-type]
+				for w in when
+			)
+		case _:
+			return when
+
+
 def specialize_task(task: Task, binding: MatrixBinding, suffix: str) -> Task:
 	"""Specialize a leaf Task with concrete variable values from a matrix binding.
 
@@ -108,6 +133,7 @@ def specialize_task(task: Task, binding: MatrixBinding, suffix: str) -> Task:
 		help=substitute_help(task.help, binding),
 		mutates=task.mutates,
 		paths=substitute_paths(task.paths, binding),
+		when=substitute_when(task.when, binding),
 		agent_format=task.agent_format,
 	)
 
@@ -129,6 +155,7 @@ def specialize_node(task: TaskNode, binding: MatrixBinding, suffix: str) -> Task
 				cwd=substitute_cwd(group.cwd, binding),
 				help=substitute_help(group.help, binding),
 				paths=substitute_paths(group.paths, binding),
+				when=substitute_when(group.when, binding),
 			)
 		case _:
 			assert_never(task)
@@ -202,6 +229,7 @@ def apply_overrides(task: TaskNode, overrides: Mapping[str, tuple[str, ...]]) ->
 				cwd=group.cwd,
 				help=group.help,
 				paths=group.paths,
+				when=group.when,
 			)
 		case _:
 			assert_never(task)
@@ -300,12 +328,14 @@ def expand_matrix(
 	ancestor_env: Mapping[str, str] | None = None,
 	ancestor_cwd: Path | None = None,
 	ancestor_paths: str | PathScope | None = None,
+	ancestor_when: str | tuple[str, ...] | WhenPredicate | None = None,
 ) -> TaskNode:
-	"""Recursively expand all matrix parameters and propagate container env/cwd/paths into leaves.
+	"""Recursively expand all matrix parameters and propagate container env/cwd/paths/when into
+	leaves.
 
-	Container env, cwd, and paths are also retained on the expanded group nodes (for display
-	purposes); execution and scoping read the accumulated values from leaves. A child's own
-	``cwd``/``paths`` takes precedence over an ancestor's.
+	Container env, cwd, paths, and when are also retained on the expanded group nodes (for
+	display purposes); execution and scoping read the accumulated values from leaves. A child's
+	own ``cwd``/``paths``/``when`` takes precedence over an ancestor's.
 
 	>>> expand_matrix(Task("echo hi"))
 	Task(cmd='echo hi', name=None, env={}, cwd=None)
@@ -318,6 +348,8 @@ def expand_matrix(
 	True
 	>>> expand_matrix(Parallel(Task("ruff {paths}"), paths=".")).tasks[0].paths  # type: ignore[union-attr]
 	'.'
+	>>> expand_matrix(Parallel(Task("cargo build"), when="src")).tasks[0].when  # type: ignore[union-attr]
+	'src'
 	"""
 	parent_env: Final = dict(ancestor_env) if ancestor_env else {}
 	match task:
@@ -330,30 +362,45 @@ def expand_matrix(
 				help=task.help,
 				mutates=task.mutates,
 				paths=task.paths if task.paths is not None else ancestor_paths,
+				when=task.when if task.when is not None else ancestor_when,
 				agent_format=task.agent_format,
 			)
-		case Sequential(tasks=tasks, matrix=matrix, env=env, cwd=cwd, paths=paths):
+		case Sequential(tasks=tasks, matrix=matrix, env=env, cwd=cwd, paths=paths, when=when):
 			seq_env: Final = parent_env | env
 			seq_cwd: Final = cwd if cwd is not None else ancestor_cwd
 			seq_paths: Final = paths if paths is not None else ancestor_paths
+			seq_when: Final = when if when is not None else ancestor_when
 			seq_expanded: Final = tuple(
-				expand_matrix(t, seq_env, seq_cwd, seq_paths) for t in tasks
+				expand_matrix(t, seq_env, seq_cwd, seq_paths, seq_when) for t in tasks
 			)
 			if matrix is None:
 				return Sequential(
-					*seq_expanded, name=task.name, env=env, cwd=cwd, help=task.help, paths=paths
+					*seq_expanded,
+					name=task.name,
+					env=env,
+					cwd=cwd,
+					help=task.help,
+					paths=paths,
+					when=when,
 				)
 			return expand_sequential_matrix(seq_expanded, matrix, task.name, env, cwd, task.help)
-		case Parallel(tasks=tasks, matrix=matrix, env=env, cwd=cwd, paths=paths):
+		case Parallel(tasks=tasks, matrix=matrix, env=env, cwd=cwd, paths=paths, when=when):
 			par_env: Final = parent_env | env
 			par_cwd: Final = cwd if cwd is not None else ancestor_cwd
 			par_paths: Final = paths if paths is not None else ancestor_paths
+			par_when: Final = when if when is not None else ancestor_when
 			par_expanded: Final = tuple(
-				expand_matrix(t, par_env, par_cwd, par_paths) for t in tasks
+				expand_matrix(t, par_env, par_cwd, par_paths, par_when) for t in tasks
 			)
 			if matrix is None:
 				return Parallel(
-					*par_expanded, name=task.name, env=env, cwd=cwd, help=task.help, paths=paths
+					*par_expanded,
+					name=task.name,
+					env=env,
+					cwd=cwd,
+					help=task.help,
+					paths=paths,
+					when=when,
 				)
 			return expand_parallel_matrix(par_expanded, matrix, task.name, env, cwd, task.help)
 		case _:

@@ -33,6 +33,7 @@ from .effects import default_effect_names, resolve_effects, running_under_agent
 from .expression import parse_expression
 from .format import (
 	format_load_error_hint,
+	format_scope_warnings,
 	print_available_effects,
 	print_task_help,
 	print_task_summary_listing,
@@ -338,6 +339,9 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 			if args.check:
 				from .check import run_typecheck_only
 
+				warnings = format_scope_warnings(tasks)
+				if warnings:
+					print(warnings, file=sys.stderr)
 				sys.exit(run_typecheck_only(source))
 
 			if args.effects == "":

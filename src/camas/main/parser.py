@@ -322,7 +322,8 @@ def build_parser(state: TasksState = EMPTY_STATE) -> argparse.ArgumentParser:
 		default=None,
 		metavar="PATH[,PATH...]",
 		help="scope the run to these changed paths (repeatable): inject them into each "
-		"leaf's {paths} and drop leaves that match none, e.g. camas check --paths src/a.py. "
+		"leaf's {paths} and drop leaves that match none (a leaf's when= predicate also "
+		"prunes on no match), e.g. camas check --paths src/a.py. "
 		"A PostToolBatch hook drives the agent fix node this way, feeding camas mcp fix the "
 		"changed files on stdin",
 	)

@@ -19,6 +19,29 @@ PathScope: TypeAlias = "Callable[[tuple[str, ...]], tuple[str, ...]]"
 full run (return the default target), with the changed set otherwise (``()`` → skip)."""
 
 
+WhenPredicate: TypeAlias = "Callable[[tuple[str, ...]], bool]"
+"""A run-if-changed predicate for :attr:`Task.when` / :attr:`Group.when`: receives the
+changed set and is never called for a full run (``changed == ()``)."""
+
+
+def by_suffix(suffixes: tuple[str, ...], default: tuple[str, ...] = (".",)) -> PathScope:
+	"""A ``PathScope`` that filters the changed files by suffix on a scoped run and returns
+	``default`` on a full run, so a ``{paths}`` command never loses its arguments to an empty
+	change set.
+
+	>>> f = by_suffix((".c", ".h"), default=("src", "include"))
+	>>> f(())
+	('src', 'include')
+	>>> f(("a.c", "b.py", "c.h"))
+	('a.c', 'c.h')
+	>>> f(("b.py",))
+	()
+	"""
+	return lambda changed: (
+		default if not changed else tuple(c for c in changed if c.endswith(suffixes))
+	)
+
+
 OutputKind: TypeAlias = Literal["sarif", "rdjson", "lsp", "junit", "tap", "raw"]
 """The standard a leaf's command emits its diagnostics in — the agent-facing format camas
 tags and passes through verbatim, never parsing. ``raw`` (the default) is plain text."""
@@ -64,7 +87,13 @@ class Task:
 	directory-prefix string (``"."``) or a ``(changed) -> tuple[str, ...]`` callable that maps the
 	changed files into the command. A ``Sequential``/``Parallel`` may set ``paths`` to supply the
 	default to descendants that set none. A command without ``{paths}`` can't be narrowed, so its
-	``paths`` is a no-op and the command always runs.
+	``paths`` is a no-op and the command always runs unless a ``when`` predicate (below) prunes it.
+
+	``when`` is a run-if-changed predicate (:mod:`camas.core.scope`) for a leaf whose command
+	can't take ``{paths}`` (``cargo build``, ``nix flake check``): a directory-prefix string, a
+	tuple of prefixes (OR'd), or a ``(changed) -> bool`` callable. On a scoped run a leaf whose
+	``when`` doesn't match the changed set is pruned; a full run never consults ``when``. A leaf
+	that also sets ``paths``/``{paths}`` is gated by ``when`` first, then narrowed as usual.
 
 	``agent_format`` is the agent-only structured-output variant (:class:`AgentFormat`): the gate
 	appends its ``args`` and tags the diagnostics ``kind``; a human run leaves the command as-is.
@@ -84,6 +113,8 @@ class Task:
 	Task(cmd='ruff format .', name=None, env={}, cwd=None, mutates=True)
 	>>> Task("ruff format {paths}", mutates=True, paths=".")
 	Task(cmd='ruff format {paths}', name=None, env={}, cwd=None, mutates=True, paths='.')
+	>>> Task("cargo build", when=("src", "include"))
+	Task(cmd='cargo build', name=None, env={}, cwd=None, when=('src', 'include'))
 	>>> Task("ruff check .", agent_format=AgentFormat("--output-format sarif", "sarif"))
 	Task(cmd='ruff check .', name=None, env={}, cwd=None, agent_format=AgentFormat(args='--output-format sarif', kind='sarif'))
 	>>> Task("ruff check .", agent_format=("--output-format sarif", "sarif")).agent_format
@@ -101,6 +132,7 @@ class Task:
 	help: str | None
 	mutates: bool
 	paths: str | PathScope | None
+	when: str | tuple[str, ...] | WhenPredicate | None
 	agent_format: AgentFormat | None
 
 	def __init__(
@@ -112,6 +144,7 @@ class Task:
 		help: str | None = None,
 		mutates: bool = False,
 		paths: str | PathScope | None = None,
+		when: str | tuple[str, ...] | WhenPredicate | None = None,
 		agent_format: AgentFormat | tuple[str, OutputKind] | None = None,
 	) -> None:
 		put = object.__setattr__
@@ -122,6 +155,7 @@ class Task:
 		put(self, "help", help)
 		put(self, "mutates", mutates)
 		put(self, "paths", paths)
+		put(self, "when", when)
 		put(
 			self,
 			"agent_format",
@@ -140,6 +174,7 @@ class Task:
 				self.help,
 				self.mutates,
 				self.paths,
+				self.when,
 				self.agent_format,
 			)
 		)
@@ -153,6 +188,7 @@ class Task:
 			*([f"help={self.help!r}"] if self.help is not None else []),
 			*(["mutates=True"] if self.mutates else []),
 			*([f"paths={self.paths!r}"] if self.paths is not None else []),
+			*([f"when={self.when!r}"] if self.when is not None else []),
 			*([f"agent_format={self.agent_format!r}"] if self.agent_format is not None else []),
 		)
 		return f"Task({', '.join(parts)})"
@@ -167,6 +203,10 @@ class Group:
 
 	``paths`` is the default path-scope for descendant ``{paths}`` leaves that set none
 	(see :mod:`camas.core.scope`); ``env``/``cwd`` likewise propagate into leaves.
+
+	``when`` is the default run-if-changed predicate (see :class:`Task`) for descendant
+	leaves that set none — baked into leaves by :func:`camas.core.matrix.expand_matrix`,
+	the same way ``paths``/``env``/``cwd`` propagate.
 
 	>>> isinstance(Sequential("a"), Group) and isinstance(Parallel("a"), Group)
 	True
@@ -183,6 +223,7 @@ class Group:
 	cwd: Path | None
 	help: str | None
 	paths: str | PathScope | None
+	when: str | tuple[str, ...] | WhenPredicate | None
 
 	def __init__(
 		self,
@@ -193,6 +234,7 @@ class Group:
 		cwd: str | Path | None = None,
 		help: str | None = None,
 		paths: str | PathScope | None = None,
+		when: str | tuple[str, ...] | WhenPredicate | None = None,
 	) -> None:
 		put = object.__setattr__
 		put(self, "tasks", tuple(Task(cmd=t) if isinstance(t, str) else t for t in tasks))
@@ -202,6 +244,7 @@ class Group:
 		put(self, "cwd", Path(cwd) if isinstance(cwd, str) else cwd)
 		put(self, "help", help)
 		put(self, "paths", paths)
+		put(self, "when", when)
 
 	def __hash__(self) -> int:
 		matrix_key = None if self.matrix is None else tuple(sorted(self.matrix.items()))
@@ -214,6 +257,7 @@ class Group:
 				self.cwd,
 				self.help,
 				self.paths,
+				self.when,
 			)
 		)
 
@@ -226,6 +270,7 @@ class Group:
 			f"cwd={self.cwd!r}",
 			*([f"help={self.help!r}"] if self.help is not None else []),
 			*([f"paths={self.paths!r}"] if self.paths is not None else []),
+			*([f"when={self.when!r}"] if self.when is not None else []),
 		)
 		return f"{type(self).__name__}({', '.join(parts)})"
 

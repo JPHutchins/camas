@@ -20,7 +20,12 @@
       perExtra = builtins.filter (extra: extra != "all") extraNames;
       withExtraName = extra: "with-${lib.replaceStrings [ "_" ] [ "-" ] extra}";
 
-      version = "0.0.0+${self.shortRev or self.dirtyShortRev or "unknown"}";
+      # VERSION holds the released version; CI's version-gate asserts it matches
+      # the git tag before publish. A clean checkout (a tagged fetch included)
+      # reports it bare; a dirty tree appends the rev.
+      baseVersion = lib.fileContents ./VERSION;
+      version =
+        if self ? shortRev then baseVersion else "${baseVersion}+${self.dirtyShortRev or "unknown"}";
 
       mkCamas =
         pkgs: args:

@@ -122,7 +122,8 @@ class CheckResponse(BaseModel):
 
 	``status`` is the verdict; the remaining fields carry the detail an agent needs to fix
 	a problem. ``diagnostics`` holds the eval traceback, the type-checker output, or the
-	install hint, depending on ``status``.
+	install hint, depending on ``status``. ``warnings`` is advisory and independent of
+	``status`` — a scope-authoring mistake does not change the verdict.
 	"""
 
 	status: Literal["ok", "load_error", "type_error", "no_checker", "no_tasks"]
@@ -130,6 +131,7 @@ class CheckResponse(BaseModel):
 	task_count: int | None = None
 	checker: Literal["ty", "mypy"] | None = None
 	diagnostics: str | None = None
+	warnings: tuple[str, ...] = ()
 
 
 class DocsResponse(BaseModel):
@@ -251,7 +253,7 @@ class GateRequest(BaseModel):
 		description="Changed paths to scope the gate to — the camas-fixer subagent passes the "
 		"edited files. Empty gates the whole task; each {paths} command is injected with the "
 		"files it covers (one covering none is dropped), while a command without {paths} can't "
-		"be narrowed and always runs.",
+		"be narrowed and always runs unless its when= excludes the changed set.",
 	)
 	task: str | None = Field(
 		default=None,
@@ -279,7 +281,7 @@ class FixRequest(BaseModel):
 		description="Changed paths to scope the fix to — the camas-fixer subagent passes the "
 		"edited files. Empty runs the whole fix node; each {paths} command is injected with the "
 		"files it covers (one covering none is dropped), while a command without {paths} can't "
-		"be narrowed and always runs.",
+		"be narrowed and always runs unless its when= excludes the changed set.",
 	)
 	task: str | None = Field(
 		default=None,

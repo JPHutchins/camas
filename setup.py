@@ -22,7 +22,11 @@ if use_mypyc:
 	# the built-in ``Exception`` as a field type (KeyError: 'Exception' at import).
 	# starter.py stays interpreted: it is the --init template, shipped as plain
 	# source and read back as text by init.py.
-	_main_excluded = {"check.py", "state.py", "starter.py"}
+	# __init__.py stays interpreted: a compiled package __init__ runs its body in
+	# create_module, before the import machinery sets __path__, so its eager
+	# ``from .entrypoint import …`` chain reaches the interpreted ``.check``
+	# sibling while camas.main is not yet a package (mypy >= 1.20).
+	_main_excluded = {"__init__.py", "check.py", "state.py", "starter.py"}
 	_effect_excluded = {"github_checks.py", "ctrf.py"}
 	ext_modules = mypycify(
 		[

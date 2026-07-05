@@ -12,6 +12,7 @@ from .task import AgentFormat as AgentFormat
 from .task import Parallel as Parallel
 from .task import Sequential as Sequential
 from .task import Task as Task
+from .task import by_suffix as by_suffix
 
 if typing.TYPE_CHECKING:
 	from ..main.dispatch import run_cli as run_cli

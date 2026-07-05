@@ -270,9 +270,19 @@ jobs:
           name: sdist
           path: dist/*.tar.gz
 
+  version-gate:
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - run: |
+          test "$(cat VERSION)" = "${GITHUB_REF_NAME}" \
+            || { echo "::error::VERSION ($(cat VERSION)) != tag ${GITHUB_REF_NAME}"; exit 1; }
+
   publish:
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [check, coverage, wheels, sdist, tauri-fixture, example, nix]
+    needs: [check, coverage, wheels, sdist, tauri-fixture, example, nix, version-gate]
     runs-on: ubuntu-latest
     environment:
       name: pypi

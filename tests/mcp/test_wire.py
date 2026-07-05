@@ -100,9 +100,16 @@ def test_list_response_markers() -> None:
 
 def test_check_response_defaults_and_rejects_bad_status() -> None:
 	resp = CheckResponse(status="ok", source="/x/tasks.py", task_count=3, checker="ty")
-	assert (resp.diagnostics, resp.task_count) == (None, 3)
+	assert (resp.diagnostics, resp.task_count, resp.warnings) == (None, 3, ())
 	with pytest.raises(ValidationError):
 		CheckResponse.model_validate({"status": "exploded"})
+
+
+def test_check_response_warnings_round_trip() -> None:
+	resp = CheckResponse(
+		status="ok", source="/x/tasks.py", task_count=1, warnings=("inert paths on 'cargo'",)
+	)
+	assert CheckResponse.model_validate(resp.model_dump()) == resp
 
 
 def test_docs_response_round_trips() -> None:
