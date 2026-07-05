@@ -995,7 +995,12 @@ def test_error_result_is_tool_error() -> None:
 
 
 async def test_in_memory_round_trip(tmp_path: Path) -> None:
-	session = _session({"lint": PASS}, Config(default_task=PASS), tmp_path)
+	(tmp_path / "tasks.py").write_text(
+		"from camas import Config, Task\n"
+		"lint = Task(('python', '-c', 'pass'))\n"
+		"_ = Config(default_task=lint)\n"
+	)
+	session = Session(serve.resolve_project(tmp_path), tmp_path, Compat())
 	async with create_connected_server_and_client_session(serve.build_server(session)) as client:
 		listed = await client.list_tools()
 		assert {t.name for t in listed.tools} == {
@@ -1017,7 +1022,10 @@ async def test_in_memory_round_trip(tmp_path: Path) -> None:
 
 
 async def test_list_via_client_expands_matrix_on_request(tmp_path: Path) -> None:
-	session = _session({"m": _MATRIX}, None, tmp_path)
+	(tmp_path / "tasks.py").write_text(
+		"from camas import Parallel, Task\nm = Parallel(Task('test {PY}'), matrix={'PY': ('3.13', '3.14')})\n"
+	)
+	session = Session(serve.resolve_project(tmp_path), tmp_path, Compat())
 	async with create_connected_server_and_client_session(serve.build_server(session)) as client:
 		collapsed = _text(await client.call_tool("camas_list", {}))
 		assert "[PY=3.13]" not in collapsed
@@ -1033,27 +1041,23 @@ async def test_call_unknown_tool_is_error(tmp_path: Path) -> None:
 	assert "unknown tool 'camas_nope'" in _text(result)
 
 
-def _bump_mtime(path: Path, session: Session) -> None:
-	os.utime(path, ns=(0, (session.source_mtime_ns or 0) + 1_000_000_000))
-
-
 def test_session_refresh_picks_up_edits(tmp_path: Path) -> None:
 	tasks_py = tmp_path / "tasks.py"
 	tasks_py.write_text("from camas import Task\na = Task('x')\n")
 	session = Session(serve.resolve_project(tmp_path), tmp_path, Compat())
 	assert serve.task_names(session.project) == ("a",)
 	tasks_py.write_text("from camas import Task\na = Task('x')\nb = Task('y')\n")
-	_bump_mtime(tasks_py, session)
 	session.refresh()
 	assert set(serve.task_names(session.project)) == {"a", "b"}
 
 
-def test_session_refresh_noop_when_unchanged(tmp_path: Path) -> None:
+def test_session_refresh_reresolves_when_file_unchanged(tmp_path: Path) -> None:
 	(tmp_path / "tasks.py").write_text("from camas import Task\na = Task('x')\n")
 	session = Session(serve.resolve_project(tmp_path), tmp_path, Compat())
 	pinned = session.project
 	session.refresh()
-	assert session.project is pinned
+	assert session.project is not pinned
+	assert serve.task_names(session.project) == ("a",)
 
 
 def test_session_refresh_noop_without_source(tmp_path: Path) -> None:
@@ -1089,10 +1093,70 @@ async def test_run_via_client_picks_up_new_task_without_check(tmp_path: Path) ->
 			"a = Task(('python', '-c', 'pass'))\n"
 			"b = Task(('python', '-c', 'pass'))\n"
 		)
-		_bump_mtime(tasks_py, session)
 		ran = await client.call_tool("camas_run", {"task": "b"})
 		assert ran.isError is False
 		assert "PASSED" in _text(ran)
+
+
+def _glob_check_tasks_py() -> str:
+	return (
+		"from pathlib import Path\n"
+		"from camas import Task\n"
+		"_t = [str(p) for p in sorted((Path(__file__).parent / 'targets').glob('*.txt'))]\n"
+		"check = Task(('python', '-c', "
+		"'import os,sys; sys.exit(0 if all(map(os.path.exists, sys.argv[1:])) else 1)', "
+		"*_t), name='check')\n"
+	)
+
+
+def test_session_refresh_reflects_filesystem_derived_command(tmp_path: Path) -> None:
+	targets = tmp_path / "targets"
+	targets.mkdir()
+	(targets / "a.txt").write_text("")
+	(tmp_path / "tasks.py").write_text(_glob_check_tasks_py())
+	session = Session(serve.resolve_project(tmp_path), tmp_path, Compat())
+	assert isinstance(session.project, LoadOk)
+	before_task = session.project.tasks["check"]
+	assert isinstance(before_task, Task)
+	assert isinstance(before_task.cmd, tuple)
+	assert before_task.cmd[-1].endswith("a.txt")
+	(targets / "a.txt").rename(targets / "b.txt")
+	session.refresh()
+	assert isinstance(session.project, LoadOk)
+	after_task = session.project.tasks["check"]
+	assert isinstance(after_task, Task)
+	assert isinstance(after_task.cmd, tuple)
+	assert after_task.cmd[-1].endswith("b.txt")
+
+
+async def test_run_via_client_reflects_filesystem_change_between_calls(tmp_path: Path) -> None:
+	targets = tmp_path / "targets"
+	targets.mkdir()
+	(targets / "a.txt").write_text("")
+	(tmp_path / "tasks.py").write_text(_glob_check_tasks_py())
+	session = Session(serve.resolve_project(tmp_path), tmp_path, Compat())
+	async with create_connected_server_and_client_session(serve.build_server(session)) as client:
+		first = await client.call_tool("camas_run", {"task": "check"})
+		assert first.isError is False
+		assert "PASSED" in _text(first)
+		(targets / "a.txt").rename(targets / "b.txt")
+		second = await client.call_tool("camas_run", {"task": "check"})
+		assert second.isError is False
+		assert "PASSED" in _text(second)
+
+
+async def test_run_via_client_surfaces_broken_edit_between_calls(tmp_path: Path) -> None:
+	tasks_py = tmp_path / "tasks.py"
+	tasks_py.write_text("from camas import Task\ncheck = Task(('python', '-c', 'pass'))\n")
+	session = Session(serve.resolve_project(tmp_path), tmp_path, Compat())
+	async with create_connected_server_and_client_session(serve.build_server(session)) as client:
+		first = await client.call_tool("camas_run", {"task": "check"})
+		assert first.isError is False
+		assert "PASSED" in _text(first)
+		tasks_py.write_text("raise RuntimeError('boom')\n")
+		second = await client.call_tool("camas_run", {"task": "check"})
+		assert second.isError is True
+		assert "Tasks unavailable" in _text(second)
 
 
 def _text(result: types.CallToolResult) -> str:
