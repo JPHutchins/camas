@@ -191,6 +191,7 @@ def test_eval_node_threads_every_public_constructor_kwarg() -> None:
 		"mutates": ("mutates=True", "mutates", True),
 		"matrix": ("matrix={'X': ('1',)}", "matrix", {"X": ("1",)}),
 		"paths": ("paths='.'", "paths", "."),
+		"when": ("when='src'", "when", "src"),
 		"agent_format": (
 			"agent_format=AgentFormat('--x', 'sarif')",
 			"agent_format",
@@ -229,6 +230,33 @@ def test_eval_node_accepts_agent_format_tuple_shorthand() -> None:
 	node = parse_expression("Task('c', agent_format=('--x', 'sarif'))")
 	assert isinstance(node, Task)
 	assert node.agent_format == AgentFormat("--x", "sarif")
+
+
+def test_eval_when_accepts_str_and_tuple() -> None:
+	assert parse_expression('Task("cargo build", when="src")') == Task("cargo build", when="src")
+	assert parse_expression('Task("cargo build", when=("a", "b"))') == Task(
+		"cargo build", when=("a", "b")
+	)
+
+
+def test_eval_when_rejects_invalid_forms() -> None:
+	with pytest.raises(SystemExit, match="2"):
+		parse_expression("Task('cargo build', when=1)")
+
+
+def test_parse_explicit_none_when() -> None:
+	assert parse_expression('Task("hi", when=None)') == Task("hi", when=None)
+
+
+def test_to_expression_round_trips_when_str_and_tuple() -> None:
+	assert to_expression(Task("cargo build", when="src")) == 'Task("cargo build", when="src")'
+	task = Task("cargo build", when=("a", "b"))
+	assert parse_expression(to_expression(task)) == task
+
+
+def test_to_expression_marks_callable_when() -> None:
+	rendered = to_expression(Task("cargo build", when=lambda c: True))
+	assert rendered == 'Task("cargo build", when=<callable>)'
 
 
 def test_parse_top_level_tuple_with_bare_strings() -> None:

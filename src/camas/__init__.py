@@ -66,7 +66,13 @@ plugin's gate. ``fix`` is the deterministic, behavior-preserving autofix
 node the ``PostToolBatch`` hook runs over the changed files (scope it with
 ``{paths}``, on a leaf or a whole group; zero model tokens) — declared, not inferred from
 ``mutates=``, since a mutating leaf may be a compiler or codegen rather
-than a fixer. ``check`` is the node the gate validates (``None`` defers
+than a fixer. A leaf whose command can't take ``{paths}`` (``cargo build``,
+``nix flake check``) instead sets ``when=`` — a directory-prefix string, a
+tuple of prefixes, or a ``(changed) -> bool`` callable — so the gate skips
+it on a scoped run the change doesn't touch, and never consults it on a
+full run; ``by_suffix`` builds a suffix-filtering ``paths`` scope for a
+``{paths}`` leaf that should still run against the whole project on a
+full run. ``check`` is the node the gate validates (``None`` defers
 to ``default_task``/``github_task``), scoped by ``--paths`` and
 time-boxed by ``--under``; the plugin delegates it to a background
 ``camas-fixer`` subagent that drives the changed scope to green off the
@@ -361,6 +367,7 @@ from .v0 import Effect as Effect
 from .v0 import Parallel as Parallel
 from .v0 import Sequential as Sequential
 from .v0 import Task as Task
+from .v0 import by_suffix as by_suffix
 
 if typing.TYPE_CHECKING:
 	from .main.dispatch import run_cli as run_cli

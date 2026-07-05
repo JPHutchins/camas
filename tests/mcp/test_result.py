@@ -3,13 +3,20 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from camas import AgentFormat, Parallel, Sequential, Task
 from camas.core.completion import RunResult, TaskResult
 from camas.core.execution import run
+from camas.main.state import LoadOk
 from camas.mcp import wire
-from camas.mcp.result import agent_envelopes, to_agent_envelope, to_run_response
+from camas.mcp.result import (
+	agent_envelopes,
+	to_agent_envelope,
+	to_check_response,
+	to_run_response,
+)
 from camas.v0.completion import Finished, Skipped, Stopped
 
 if TYPE_CHECKING:
@@ -118,3 +125,32 @@ async def test_agent_envelopes_are_failures_only() -> None:
 	)
 	envelopes = agent_envelopes(node, await run(node, interactive=False))
 	assert tuple(e.name for e in envelopes) == ("bad",)
+
+
+_PYPROJECT = Path("/proj/pyproject.toml")
+
+
+def test_to_check_response_inert_paths_task_carries_warning() -> None:
+	state = LoadOk(
+		tasks={"cargo": Task("cargo build", name="cargo", paths=".")},
+		source=_PYPROJECT,
+		scope_effects={},
+	)
+	resp = to_check_response(state)
+	assert resp.status == "ok"
+	assert len(resp.warnings) == 1
+	assert "cargo" in resp.warnings[0]
+	assert "paths=" in resp.warnings[0]
+
+
+def test_to_check_response_clean_tree_has_no_warnings() -> None:
+	state = LoadOk(
+		tasks={"cargo": Task("cargo build", name="cargo")}, source=_PYPROJECT, scope_effects={}
+	)
+	assert to_check_response(state).warnings == ()
+
+
+def test_to_check_response_dedupes_shared_node() -> None:
+	shared = Task("cargo build", name="cargo", paths=".")
+	state = LoadOk(tasks={"a": shared, "b": shared}, source=_PYPROJECT, scope_effects={})
+	assert len(to_check_response(state).warnings) == 1

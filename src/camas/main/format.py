@@ -19,6 +19,7 @@ from ..core import timings
 from ..core.color import BOLD_CYAN, CAMAS_LIGHT_PINK, CAMAS_VIOLET, GREY, RESET
 from ..core.matrix import matrix_axes
 from ..core.render import color_on, print_tree
+from ..core.scope import scope_warning_messages
 from ..v0.task import Parallel, Sequential, Task, TaskNode
 from .color import maybe_color, wrap_ansi
 from .effects import available_effects, flatten_annotation, signature_fields
@@ -107,6 +108,19 @@ def format_load_error_hint(source: Path, exception: Exception) -> str:
 		f"({type(exception).__name__}: {exception}). "
 		"Run `camas --check` for the full diagnostic."
 	)
+
+
+def format_scope_warnings(tasks: Mapping[str, TaskNode]) -> str:
+	"""Render every :func:`camas.core.scope.scope_warnings` message across the raw trees in
+	``tasks``, deduplicated (a node shared by two names warns once) and one per line —
+	empty when there is nothing to report.
+
+	>>> format_scope_warnings({"cargo": Task("cargo build", name="cargo", paths=".")})
+	"task 'cargo' sets paths= but its command has no {paths} token, so it is never narrowed or pruned; add {paths} to the command, or use when= to gate it on the changed set"
+	>>> format_scope_warnings({"cargo": Task("cargo build", name="cargo")})
+	''
+	"""
+	return "\n".join(scope_warning_messages(tasks.values()))
 
 
 def format_task_summary_listing(

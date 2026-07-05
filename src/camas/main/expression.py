@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 	from collections.abc import Mapping
 	from pathlib import Path
 
-	from ..v0.task import PathScope
+	from ..v0.task import PathScope, WhenPredicate
 
 
 class Ref(NamedTuple):
@@ -163,6 +163,20 @@ def eval_str_tuple(node: ast.expr) -> tuple[str, ...]:
 			raise ValueError(f"expected tuple of str, got {ast.dump(node)}")
 
 
+def eval_when(node: ast.expr | None) -> str | tuple[str, ...] | None:
+	match node:
+		case None:
+			return None
+		case ast.Constant(value=None):
+			return None
+		case ast.Constant(value=str() as s):
+			return s
+		case ast.Tuple(elts=elts):
+			return tuple(eval_str_lit(e) for e in elts)
+		case _:
+			raise ValueError(f"when must be a str or tuple of str, got {ast.dump(node)}")
+
+
 def eval_matrix(node: ast.expr | None) -> dict[str, tuple[str, ...]] | None:
 	match node:
 		case None:
@@ -247,6 +261,7 @@ def eval_node(
 						help=eval_opt_str(kw.get("help")),
 						mutates=eval_opt_bool(kw.get("mutates")),
 						paths=eval_opt_str(kw.get("paths")),
+						when=eval_when(kw.get("when")),
 						agent_format=eval_agent_format(kw.get("agent_format")),
 					)
 				case "Sequential" | "Parallel":
@@ -259,6 +274,7 @@ def eval_node(
 						cwd=eval_opt_str(kw.get("cwd")),
 						help=eval_opt_str(kw.get("help")),
 						paths=eval_opt_str(kw.get("paths")),
+						when=eval_when(kw.get("when")),
 					)
 				case "Ref":
 					ref_name_node = args[0] if args else kw.get("name")
@@ -319,7 +335,7 @@ def parse_expression(expr: str, tasks: Mapping[str, TaskNode] | None = None) -> 
 
 
 def to_expression(node: TaskNode) -> str:
-	"""Render a task tree to a fully-typed camas expression — the verbose inverse of
+	r"""Render a task tree to a fully-typed camas expression — the verbose inverse of
 	:func:`parse_expression`, in the same notation as ``tasks.py``.
 
 	Every node is its constructor call with the command/children expanded and the
@@ -349,6 +365,10 @@ def to_expression(node: TaskNode) -> str:
 	'Task("ruff check {paths}", name="lint", paths="src")'
 	>>> to_expression(Task("test", cwd="rust", help="run tests"))
 	'Task("test", cwd="rust", help="run tests")'
+	>>> to_expression(Task("cargo build", when="src"))
+	'Task("cargo build", when="src")'
+	>>> to_expression(Task("cargo build", when=("src", "include")))
+	'Task("cargo build", when=(\'src\', \'include\'))'
 	>>> from camas.v0.task import AgentFormat
 	>>> to_expression(Task("ruff check .", agent_format=AgentFormat("--output-format sarif", "sarif")))
 	'Task("ruff check .", agent_format=AgentFormat("--output-format sarif", "sarif"))'
@@ -362,18 +382,19 @@ def to_expression(node: TaskNode) -> str:
 			help=help,
 			mutates=mutates,
 			paths=paths,
+			when=when,
 			agent_format=agent_format,
 		):
 			return (
 				f"Task({render_command(cmd)}{name_kwarg(name)}{env_kwarg(env)}"
 				f"{cwd_kwarg(cwd)}{help_kwarg(help)}{mutates_kwarg(mutates)}"
-				f"{paths_kwarg(paths)}{agent_format_kwarg(agent_format)})"
+				f"{paths_kwarg(paths)}{when_kwarg(when)}{agent_format_kwarg(agent_format)})"
 			)
 		case Group() as group:
 			return (
 				f"{type(group).__name__}({render_members(group.tasks)}{name_kwarg(group.name)}"
 				f"{matrix_kwarg(group.matrix)}{env_kwarg(group.env)}{cwd_kwarg(group.cwd)}"
-				f"{help_kwarg(group.help)}{paths_kwarg(group.paths)})"
+				f"{help_kwarg(group.help)}{paths_kwarg(group.paths)}{when_kwarg(group.when)})"
 			)
 		case _:
 			assert_never(node)
@@ -416,6 +437,19 @@ def paths_kwarg(paths: str | PathScope | None) -> str:
 	if isinstance(paths, str):
 		return f", paths={quote(paths)}"
 	return ", paths=<callable>"
+
+
+def when_kwarg(when: str | tuple[str, ...] | WhenPredicate | None) -> str:
+	"""A str or tuple predicate round-trips; a callable has no source, so it renders as a
+	non-parseable marker (this preview is informational, never re-evaluated by camas).
+	"""
+	if when is None:
+		return ""
+	if isinstance(when, str):
+		return f", when={quote(when)}"
+	if isinstance(when, tuple):
+		return f", when={when!r}"
+	return ", when=<callable>"
 
 
 def agent_format_kwarg(agent_format: AgentFormat | None) -> str:
@@ -494,6 +528,7 @@ def resolve_refs(
 				cwd=group.cwd,
 				help=group.help,
 				paths=group.paths,
+				when=group.when,
 			)
 		case _:
 			assert_never(node)

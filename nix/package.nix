@@ -33,6 +33,17 @@ python3Packages.buildPythonApplication {
   inherit pname version src;
   pyproject = true;
 
+  # An ambient PYTHONPATH (e.g. a consumer mkShell's python hook) can shadow the
+  # wrapped app's own site-packages with wrong-ABI modules.
+  makeWrapperArgs = [ "--unset PYTHONPATH" ];
+
+  # An application is a leaf: its deps are baked into the wrapper, so propagating
+  # them (python3 included) would stuff a consumer mkShell's PYTHONPATH with this
+  # app's entire python closure.
+  postFixup = ''
+    : > "$out/nix-support/propagated-build-inputs"
+  '';
+
   env = {
     SETUPTOOLS_SCM_PRETEND_VERSION_FOR_CAMAS = version;
   }

@@ -6,13 +6,13 @@ through the script entry ``uv run --script tasks.py mcp …`` — the non-Python
 recent ``run_cli`` ``mcp`` routing (``dea221e`` / #160) added.
 
 Happy path: ``uv run --script tasks.py mcp init --claude`` writes the four files; the
-``.mcp.json`` camas entry uses the ``uvx`` launcher (no ``uv.lock`` → ``launch_command`` falls
-through to the ``uvx`` branch — criterion #4, no bare ``camas``).
+``.mcp.json`` camas entry uses the ``uv`` launcher (a PEP 723 ``tasks.py`` with a camas
+dependency → ``launch_command`` emits ``uv run tasks.py mcp`` — criterion #4, no bare ``camas``).
 
 Regression guard: ``uv run --script tasks.py mcp --help`` routes to the MCP CLI (output mentions
 ``camas mcp init``) and does NOT raise ``no task named 'mcp'`` — the pre-``dea221e`` failure mode
 where ``run_cli`` bound ``mcp`` as a task. The headless server-load step (proving the
-``uvx camas[mcp] mcp`` launcher Claude Code starts actually answers ``camas_list``) is opt-in via
+``uv run tasks.py mcp`` launcher Claude Code starts actually answers ``camas_list``) is opt-in via
 ``CAMAS_CC_PEP723_HEADLESS`` because it downloads camas from PyPI on each launch — slow and
 network-bound, unlike the deterministic file/launcher assertions that always run.
 """
@@ -97,9 +97,9 @@ def test_pep723_init_claude_via_script_entry_writes_uv_launcher(
 	for rel in _INIT_FILES:
 		assert (tmp_path / rel).exists(), f"init --claude did not write {rel}"
 
-	assert _mcp_command(tmp_path / ".mcp.json") == "uvx", (
-		".mcp.json camas entry must use the uvx launcher for a PEP 723 repo "
-		"(no uv.lock, no installed camas) — criterion #4"
+	assert _mcp_command(tmp_path / ".mcp.json") == "uv", (
+		".mcp.json camas entry must use the uv launcher for a PEP 723 repo "
+		"(a PEP 723 tasks.py with a camas dependency → uv run tasks.py mcp) — criterion #4"
 	)
 
 

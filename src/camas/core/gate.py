@@ -95,6 +95,7 @@ def with_agent_format(node: TaskNode) -> TaskNode:
 				cwd=group.cwd,
 				help=group.help,
 				paths=group.paths,
+				when=group.when,
 			)
 		case _:
 			assert_never(node)

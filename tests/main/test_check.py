@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 import pytest
 
+from camas import Task
 from camas.main import check as check_mod
 from camas.main.check import (
 	CHECKER_PRIORITY,
@@ -405,6 +406,13 @@ def test_camas_check_eval_fail_fixture() -> None:
 
 
 @requires_checker
+def test_camas_check_inert_paths_fixture_warns_but_still_checks() -> None:
+	r = _camas("--check", cwd=FIXTURES / "inert-paths")
+	assert r.returncode == 0, r.stderr
+	assert "when=" in r.stderr
+
+
+@requires_checker
 def test_camas_check_type_fail_fixture() -> None:
 	r = _camas("--check", cwd=FIXTURES / "type-fail")
 	assert r.returncode == 1
@@ -472,6 +480,24 @@ def test_camas_check_via_dispatch_run_cli_path(
 	monkeypatch.setattr(check_mod, "run_typecheck", _stub_ok)
 	with pytest.raises(SystemExit, match="0"), patch("sys.argv", ["tasks.py", "--check"]):
 		run_cli(scope)
+
+
+def test_dispatch_check_prints_scope_warnings(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	from camas.main.dispatch import run_cli
+
+	(tmp_path / "tasks.py").write_text(
+		"from camas import Task\nlint = Task('ruff check .', paths='.')\n"
+	)
+	scope: dict[str, object] = {
+		"__file__": str(tmp_path / "tasks.py"),
+		"lint": Task("ruff check .", paths="."),
+	}
+	monkeypatch.setattr(check_mod, "run_typecheck", _stub_ok)
+	with pytest.raises(SystemExit, match="0"), patch("sys.argv", ["tasks.py", "--check"]):
+		run_cli(scope)
+	assert "when=" in capsys.readouterr().err
 
 
 def test_dispatch_check_with_load_error_runs_report_eval_error(

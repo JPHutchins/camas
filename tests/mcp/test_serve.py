@@ -489,6 +489,42 @@ def test_check_call_structured_when_rich(tmp_path: Path, monkeypatch: pytest.Mon
 	assert result.structuredContent["checker"] == "ty"
 
 
+def test_check_call_reports_scope_warnings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+	(tmp_path / "tasks.py").write_text(
+		"from camas import Task\ncargo = Task('cargo build', name='cargo', paths='.')\n"
+	)
+	monkeypatch.setattr("camas.mcp.result.run_typecheck", _fixed_checker(CheckerOk("ty")))
+	result = serve.check_call(_session({}, None, tmp_path, rich=True))
+	assert result.isError is False
+	text = _text(result)
+	assert "camas_check: OK" in text
+	assert "Warnings (advisory — not failures):" in text
+	assert "cargo" in text
+	assert result.structuredContent is not None
+	assert result.structuredContent["status"] == "ok"
+	assert len(result.structuredContent["warnings"]) == 1
+
+
+def test_check_text_renders_warnings_block_and_keeps_ok_status() -> None:
+	resp = wire.CheckResponse(
+		status="ok",
+		source="/x/tasks.py",
+		task_count=1,
+		checker="ty",
+		warnings=("task 'cargo' sets paths= but its command has no {paths} token",),
+	)
+	text = serve.check_text(resp)
+	assert resp.status == "ok"
+	assert "camas_check: OK" in text
+	assert "Warnings (advisory — not failures):" in text
+	assert "  - task 'cargo' sets paths=" in text
+
+
+def test_check_text_omits_warnings_block_when_clean() -> None:
+	resp = wire.CheckResponse(status="ok", source="/x/tasks.py", task_count=1, checker="ty")
+	assert "Warnings" not in serve.check_text(resp)
+
+
 def test_docs_call_serves_tutorial_and_source(tmp_path: Path) -> None:
 	result = serve.docs_call(_session({}, None, tmp_path))
 	assert result.isError is False
@@ -685,6 +721,108 @@ def test_create_run_log_dir_namespaces_by_task_and_is_idempotent(tmp_path: Path)
 	assert first == camas_dir / "runs" / "ci" / "1"
 	second = serve.create_run_log_dir(camas_dir, "ci", 2)
 	assert second.is_dir()
+
+
+def _mk_run_dir(task_dir: Path, name: str, *, mtime: float) -> Path:
+	d = task_dir / name
+	d.mkdir(parents=True)
+	os.utime(d, ns=(int(mtime * 1_000_000_000), int(mtime * 1_000_000_000)))
+	return d
+
+
+def test_prune_run_dirs_noop_under_keep_n(tmp_path: Path) -> None:
+	"""Fewer run dirs than ``keep_n`` — nothing is pruned."""
+	task_dir = tmp_path / "runs" / "ci"
+	dirs = [_mk_run_dir(task_dir, str(i), mtime=i) for i in range(1, 4)]
+	assert serve.prune_run_dirs(task_dir, dirs[-1], keep_n=10) == ()
+	assert all(d.is_dir() for d in dirs)
+
+
+def test_prune_run_dirs_caps_at_keep_n(tmp_path: Path) -> None:
+	task_dir = tmp_path / "runs" / "ci"
+	dirs = [_mk_run_dir(task_dir, str(i), mtime=i) for i in range(1, 13)]
+	removed = serve.prune_run_dirs(task_dir, dirs[-1], keep_n=10)
+	assert {d.name for d in removed} == {"1", "2"}
+	assert sorted((d.name for d in task_dir.iterdir()), key=int) == [str(i) for i in range(3, 13)]
+
+
+def test_prune_run_dirs_keeps_newest_removes_oldest(tmp_path: Path) -> None:
+	task_dir = tmp_path / "runs" / "ci"
+	oldest = _mk_run_dir(task_dir, "1", mtime=1)
+	newest = _mk_run_dir(task_dir, "2", mtime=100)
+	removed = serve.prune_run_dirs(task_dir, newest, keep_n=1)
+	assert removed == (oldest,)
+	assert not oldest.exists()
+	assert newest.exists()
+
+
+def test_prune_run_dirs_always_keeps_the_just_created_dir(tmp_path: Path) -> None:
+	"""``keep`` survives even though it is the newest and would already rank first by mtime —
+	the guarantee doesn't rely on mtime ordering."""
+	task_dir = tmp_path / "runs" / "ci"
+	older = [_mk_run_dir(task_dir, str(i), mtime=i) for i in range(1, 11)]
+	keep = _mk_run_dir(task_dir, "11", mtime=11)
+	removed = serve.prune_run_dirs(task_dir, keep, keep_n=1)
+	assert keep.exists()
+	assert set(removed) == set(older)
+
+
+def test_prune_run_dirs_ignores_non_numeric_entries(tmp_path: Path) -> None:
+	task_dir = tmp_path / "runs" / "ci"
+	oldest = _mk_run_dir(task_dir, "1", mtime=1)
+	keep = _mk_run_dir(task_dir, "2", mtime=2)
+	stray_file = task_dir / "notes.txt"
+	stray_file.write_text("keep me")
+	stray_dir = task_dir / "latest"
+	stray_dir.mkdir()
+	removed = serve.prune_run_dirs(task_dir, keep, keep_n=1)
+	assert removed == (oldest,)
+	assert stray_file.exists()
+	assert stray_dir.exists()
+
+
+def test_prune_run_dirs_ignores_non_decimal_digit_entries(tmp_path: Path) -> None:
+	"""``'²'.isdigit()`` is true but ``int('²')`` raises — such an entry is foreign, not a run."""
+	task_dir = tmp_path / "runs" / "ci"
+	oldest = _mk_run_dir(task_dir, "1", mtime=1)
+	keep = _mk_run_dir(task_dir, "2", mtime=2)
+	superscript = _mk_run_dir(task_dir, "²", mtime=3)
+	removed = serve.prune_run_dirs(task_dir, keep, keep_n=1)
+	assert removed == (oldest,)
+	assert superscript.exists()
+
+
+def test_prune_run_dirs_deletion_is_best_effort(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	"""Deletion never raises — ``shutil.rmtree`` is called with ``ignore_errors=True``."""
+	task_dir = tmp_path / "runs" / "ci"
+	oldest = _mk_run_dir(task_dir, "1", mtime=1)
+	keep = _mk_run_dir(task_dir, "2", mtime=2)
+	calls: list[tuple[Path, bool]] = []
+
+	def _fake_rmtree(d: Path, ignore_errors: bool = False) -> None:
+		calls.append((d, ignore_errors))
+
+	monkeypatch.setattr("camas.mcp.serve.shutil.rmtree", _fake_rmtree)
+	removed = serve.prune_run_dirs(task_dir, keep, keep_n=1)
+	assert removed == (oldest,)
+	assert calls == [(oldest, True)]
+	assert oldest.exists()
+
+
+def test_create_run_log_dir_prunes_to_run_log_keep(tmp_path: Path) -> None:
+	"""A long session accumulating runs beyond ``RUN_LOG_KEEP`` stays capped, newest kept."""
+	camas_dir = tmp_path / ".camas"
+	total = serve.RUN_LOG_KEEP + 3
+	created: list[Path] = []
+	for i in range(1, total + 1):
+		d = serve.create_run_log_dir(camas_dir, "ci", i)
+		os.utime(d, ns=(i * 1_000_000_000, i * 1_000_000_000))
+		created.append(d)
+	remaining = sorted(int(p.name) for p in (camas_dir / "runs" / "ci").iterdir())
+	assert remaining == list(range(total - serve.RUN_LOG_KEEP + 1, total + 1))
+	assert created[-1].exists()
 
 
 def test_write_logs_writes_output_skips_empty_and_skipped(tmp_path: Path) -> None:

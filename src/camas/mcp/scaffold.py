@@ -6,9 +6,11 @@
 from __future__ import annotations
 
 import json
+import re
 import shlex
 import shutil
 import sys
+from importlib.metadata import version
 from pathlib import Path
 from typing import Any, Final, Literal, cast
 
@@ -19,6 +21,11 @@ from ..v0.config import DEFAULT_CAMAS_DIR
 
 SERVER_NAME: Final = "camas"
 SETTINGS_PATH: Final = Path(".claude/settings.json")
+
+Launcher = Literal["uv", "uvx", "camas"]
+LAUNCHERS: Final[tuple[Launcher, ...]] = ("uv", "uvx", "camas")
+
+_RELEASE_VERSION_RE: Final = re.compile(r"\d+(?:\.\d+)*")
 
 
 class HookCommand(BaseModel):
@@ -80,7 +87,7 @@ def resolve_pin() -> str | None:
 	return with_mcp_extra(req)
 
 
-def write_mcp_json(argv: list[str]) -> int:
+def write_mcp_json(argv: list[str], *, launcher: Launcher | None = None) -> int:
 	"""Merge a camas ``stdio`` server into ``./.mcp.json``; return 0, or 2 if it is malformed."""
 	mcp_json_path: Final = Path.cwd() / ".mcp.json"
 	existing = parse_json_object(mcp_json_path) if mcp_json_path.exists() else {}
@@ -92,15 +99,11 @@ def write_mcp_json(argv: list[str]) -> int:
 		print(f"error: {mcp_json_path} has a non-object 'mcpServers'", file=sys.stderr)
 		return 2
 	pin = resolve_pin()
-	launcher = launch_command(pin=pin)
-	if launcher is None:
-		print(
-			f"error: cannot write a portable {mcp_json_path} — no uv.lock found and camas is not "
-			"on PATH.\n  Add camas to a uv project (uv add camas) or install it on PATH, then retry.",
-			file=sys.stderr,
-		)
+	resolved = launch_command(pin=pin, launcher=launcher)
+	if resolved is None:
+		print(no_launcher_error(f"a portable {mcp_json_path}", launcher), file=sys.stderr)
 		return 2
-	command, args = launcher
+	command, args = resolved
 	servers[SERVER_NAME] = {"type": "stdio", "command": command, "args": args}
 	camas_dir: Final = Path.cwd() / DEFAULT_CAMAS_DIR
 	camas_note: Final = (
@@ -123,21 +126,86 @@ def write_mcp_json(argv: list[str]) -> int:
 	return 0
 
 
-def launch_command(*, pin: str | None = None) -> tuple[str, list[str]] | None:
-	"""The most portable launch command for camas, or None if none is portable enough to commit."""
+def installed_version_spec(installed: str) -> str:
+	"""The ``uvx`` fallback spec pinned to the running camas ``installed`` version when it is a
+	clean release, else the unpinned extra (a dev/local build isn't published on PyPI to pin).
+
+	>>> installed_version_spec("0.1.18")
+	'camas[mcp]==0.1.18'
+
+	>>> installed_version_spec("0.1.22.dev3+g09f0fca")
+	'camas[mcp]'
+	"""
+	return f"camas[mcp]=={installed}" if _RELEASE_VERSION_RE.fullmatch(installed) else "camas[mcp]"
+
+
+def uvx_spec(pin: str | None) -> str:
+	"""The ``uvx`` launch spec: ``pin`` (a PEP 723-derived requirement) verbatim when given, else
+	the running camas version pinned when it's a clean release, else the unpinned extra.
+	"""
+	return pin if pin is not None else installed_version_spec(version("camas"))
+
+
+def uv_command(tail: list[str]) -> tuple[str, list[str]] | None:
+	"""The ``uv`` launch command: the lockfile project path, else PEP 723 ``tasks.py``, else
+	``None`` when neither applies.
+	"""
+	if uv_project_root() is not None:
+		return "uv", ["run", "camas", *tail]
+	tasks_py = pep723_tasks_py_in_cwd()
+	if tasks_py is not None:
+		return "uv", ["run", tasks_py.name, *tail]
+	return None
+
+
+def launch_command(
+	*, pin: str | None = None, launcher: Launcher | None = None
+) -> tuple[str, list[str]] | None:
+	"""The most portable launch command for camas, or None if none is portable enough to commit.
+
+	``launcher`` forces a specific strategy instead of the auto-probe (``uv`` errors unless a
+	uv.lock project or PEP 723 ``tasks.py`` applies; ``camas`` errors unless it's on PATH).
+	"""
 	tail = ["mcp"]
+	if launcher == "uv":
+		return uv_command(tail) if shutil.which("uv") is not None else None
+	if launcher == "uvx":
+		return ("uvx", [uvx_spec(pin), *tail]) if shutil.which("uvx") is not None else None
+	if launcher == "camas":
+		return ("camas", tail) if shutil.which("camas") is not None else None
 	if shutil.which("uv") is not None:
-		if uv_project_root() is not None:
-			return "uv", ["run", "camas", *tail]
-		tasks_py = pep723_tasks_py_in_cwd()
-		if tasks_py is not None:
-			return "uv", ["run", tasks_py.name, *tail]
+		found = uv_command(tail)
+		if found is not None:
+			return found
 	if shutil.which("uvx") is not None:
-		spec = pin if pin is not None else "camas[mcp]"
-		return "uvx", [spec, *tail]
+		return "uvx", [uvx_spec(pin), *tail]
 	if shutil.which("camas") is not None:
 		return "camas", tail
 	return None
+
+
+def no_launcher_error(target: str, launcher: Launcher | None) -> str:
+	"""The actionable stderr line for when no launcher can be resolved to write ``target``."""
+	if launcher == "uv":
+		return (
+			f"error: cannot write {target} — --launcher uv requires uv on PATH and either a "
+			"uv.lock project or a PEP 723 tasks.py in this directory.\n  Add one, or drop "
+			"--launcher to auto-detect."
+		)
+	if launcher == "uvx":
+		return (
+			f"error: cannot write {target} — --launcher uvx requires uvx on PATH.\n"
+			"  Install uv, or drop --launcher to auto-detect."
+		)
+	if launcher == "camas":
+		return (
+			f"error: cannot write {target} — --launcher camas requires camas on PATH.\n"
+			"  Install it on PATH, or drop --launcher to auto-detect."
+		)
+	return (
+		f"error: cannot write {target} — no uv.lock found and camas is not on PATH.\n"
+		"  Add camas to a uv project (uv add camas) or install it on PATH, then retry."
+	)
 
 
 def uv_project_root() -> Path | None:
@@ -164,9 +232,9 @@ def parse_json_object(path: Path) -> dict[str, Any] | None:
 	return cast("dict[str, Any]", loaded) if isinstance(loaded, dict) else None
 
 
-def launch_command_str(*, pin: str | None = None) -> str | None:
+def launch_command_str(*, pin: str | None = None, launcher: Launcher | None = None) -> str | None:
 	"""The most portable launch command as a single shell string, or ``None``."""
-	pair = launch_command(pin=pin)
+	pair = launch_command(pin=pin, launcher=launcher)
 	if pair is None:
 		return None
 	cmd, args = pair
@@ -220,7 +288,7 @@ def _with_camas_hook(raw: dict[str, Any], camas_group: dict[str, Any]) -> dict[s
 	}
 
 
-def write_hooks(argv: list[str], *, quiet: bool = False) -> int:
+def write_hooks(argv: list[str], *, quiet: bool = False, launcher: Launcher | None = None) -> int:
 	"""Write the ``PostToolBatch`` autofix hook into ``.claude/settings.json``.
 
 	``quiet`` suppresses the success message — set when called from ``write_claude``, which
@@ -243,16 +311,11 @@ def write_hooks(argv: list[str], *, quiet: bool = False) -> int:
 		print(f"error: {settings_path}: {e}", file=sys.stderr)
 		return 2
 	pin = resolve_pin()
-	launcher = launch_command_str(pin=pin)
-	if launcher is None:
-		print(
-			"error: cannot write portable hooks — no uv.lock found and camas is not "
-			"on PATH.\n  Add camas to a uv project (uv add camas) or install it on PATH, "
-			"then retry.",
-			file=sys.stderr,
-		)
+	launch_str = launch_command_str(pin=pin, launcher=launcher)
+	if launch_str is None:
+		print(no_launcher_error("portable hooks", launcher), file=sys.stderr)
 		return 2
-	camas_group: dict[str, Any] = {"hooks": [{"type": "command", "command": f"{launcher} fix"}]}
+	camas_group: dict[str, Any] = {"hooks": [{"type": "command", "command": f"{launch_str} fix"}]}
 	settings_path.parent.mkdir(parents=True, exist_ok=True)
 	settings_path.write_text(
 		json.dumps(_with_camas_hook(cast("dict[str, Any]", raw), camas_group), indent=2) + "\n",
@@ -261,7 +324,7 @@ def write_hooks(argv: list[str], *, quiet: bool = False) -> int:
 	if not quiet:
 		print(
 			f"Wrote the camas PostToolBatch autofix hook to {settings_path}\n"
-			f"  PostToolBatch:  {launcher} fix\n"
+			f"  PostToolBatch:  {launch_str} fix\n"
 			f"\nReload Claude Code for the hook to take effect."
 		)
 	return 0
@@ -283,15 +346,15 @@ def write_agent_skill_templates() -> None:
 	)
 
 
-def write_claude(argv: list[str]) -> int:
+def write_claude(argv: list[str], *, launcher: Launcher | None = None) -> int:
 	"""Write ``.mcp.json``, the PostToolBatch autofix hook, and the camas-fixer/gate templates.
 
 	Returns 0 on success, 2 on launcher-resolution or validation failure.
 	"""
-	rc = write_mcp_json(argv)
+	rc = write_mcp_json(argv, launcher=launcher)
 	if rc != 0:
 		return rc
-	rc = write_hooks(argv, quiet=True)
+	rc = write_hooks(argv, quiet=True, launcher=launcher)
 	if rc != 0:
 		return rc
 	write_agent_skill_templates()

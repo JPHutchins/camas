@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Literal, NamedTuple
 from ..core.gate import decision_of
 from ..core.matrix import expand_matrix
 from ..core.render import strip_ansi
+from ..core.scope import scope_warning_messages
 from ..core.traversal import flatten_leaves
 from ..main.check import (
 	INSTALL_HINT,
@@ -108,22 +109,31 @@ def to_check_response(state: TasksState) -> wire.CheckResponse:
 				status="load_error", source=str(source), diagnostics=trace + checker
 			)
 		case LoadOk(tasks=tasks, source=source):
+			warnings = scope_warning_messages(tasks.values())
 			if source is None:
-				return wire.CheckResponse(status="no_tasks")
+				return wire.CheckResponse(status="no_tasks", warnings=warnings)
 			if source.suffix != ".py":
-				return wire.CheckResponse(status="ok", source=str(source), task_count=len(tasks))
-			return typecheck_response(source, len(tasks))
+				return wire.CheckResponse(
+					status="ok", source=str(source), task_count=len(tasks), warnings=warnings
+				)
+			return typecheck_response(source, len(tasks), warnings)
 		case _:
 			assert_never(state)
 
 
-def typecheck_response(source: Path, task_count: int) -> wire.CheckResponse:
+def typecheck_response(
+	source: Path, task_count: int, warnings: tuple[str, ...] = ()
+) -> wire.CheckResponse:
 	"""Run the type checker against a loaded ``.py`` tasks source and map its outcome."""
 	result = run_typecheck(source)
 	match result:
 		case CheckerOk(name=name):
 			return wire.CheckResponse(
-				status="ok", source=str(source), task_count=task_count, checker=name
+				status="ok",
+				source=str(source),
+				task_count=task_count,
+				checker=name,
+				warnings=warnings,
 			)
 		case CheckerErr(name=name, output=output):
 			return wire.CheckResponse(
@@ -132,6 +142,7 @@ def typecheck_response(source: Path, task_count: int) -> wire.CheckResponse:
 				task_count=task_count,
 				checker=name,
 				diagnostics=output,
+				warnings=warnings,
 			)
 		case CheckerNotFound():
 			return wire.CheckResponse(
@@ -139,6 +150,7 @@ def typecheck_response(source: Path, task_count: int) -> wire.CheckResponse:
 				source=str(source),
 				task_count=task_count,
 				diagnostics=INSTALL_HINT,
+				warnings=warnings,
 			)
 		case _:
 			assert_never(result)

@@ -5,9 +5,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from camas import Parallel, Sequential, Task
+from camas import Parallel, Sequential, Task, by_suffix
 from camas.core.matrix import expand_matrix
-from camas.core.scope import scope_to_changed, to_changed, with_default_paths
+from camas.core.scope import scope_to_changed, scope_warnings, to_changed, with_default_paths
 
 if TYPE_CHECKING:
 	from pathlib import Path
@@ -143,3 +143,98 @@ def test_to_changed_splits_comma_separated_entries(tmp_path: Path) -> None:
 	``--paths a,b`` matches across every entrypoint that routes through ``to_changed``."""
 	assert to_changed(["a.py,b.py"], tmp_path) == ("a.py", "b.py")
 	assert to_changed(["a.py,b.py"], tmp_path) == to_changed(["a.py", "b.py"], tmp_path)
+
+
+def test_when_prefix_gates_tokenless_command() -> None:
+	cargo = Task("cargo build", name="cargo", when="src")
+	assert scope_to_changed(cargo, ("src/main.rs",)) == cargo
+	assert scope_to_changed(cargo, ("docs/readme.md",)) is None
+
+
+def test_when_tuple_is_an_or() -> None:
+	cargo = Task("cargo build", name="cargo", when=("src", "include"))
+	assert scope_to_changed(cargo, ("include/h.h",)) == cargo
+	assert scope_to_changed(cargo, ("docs/readme.md",)) is None
+
+
+def test_when_callable() -> None:
+	def rust_only(changed: tuple[str, ...]) -> bool:
+		return any(c.endswith(".rs") for c in changed)
+
+	cargo = Task("cargo build", name="cargo", when=rust_only)
+	assert scope_to_changed(cargo, ("src/main.rs",)) == cargo
+	assert scope_to_changed(cargo, ("src/main.py",)) is None
+
+
+def test_when_full_run_never_prunes_or_invokes_callable() -> None:
+	def explodes(changed: tuple[str, ...]) -> bool:
+		raise AssertionError("a when callable must not be called on a full run")
+
+	cargo = Task("cargo build", name="cargo", when=explodes)
+	assert with_default_paths(cargo) == cargo
+
+
+def test_when_matches_backslash_changed_paths() -> None:
+	"""``when`` sees the same POSIX-normalized changed set the ``paths`` scope does."""
+	cargo = Task("cargo build", name="cargo", when="src")
+	assert scope_to_changed(cargo, ("src\\a.rs",)) == cargo
+	assert scope_to_changed(cargo, ("docs\\x.md",)) is None
+
+
+def test_when_gates_before_paths_narrowing() -> None:
+	"""``when`` prunes first; a leaf that survives ``when`` still narrows (or prunes) by
+	``paths`` as usual."""
+	lint = Task("ruff check {paths}", name="lint", paths="src", when=("src", "docs"))
+	assert scope_to_changed(lint, ("other/x.py",)) is None
+	assert scope_to_changed(lint, ("docs/readme.md",)) is None
+	assert scope_to_changed(lint, ("src/a.py",)) == Task(
+		"ruff check src/a.py", name="lint", paths="src", when=("src", "docs")
+	)
+
+
+def test_group_when_inherited_via_expand_matrix() -> None:
+	tree = expand_matrix(Parallel(Task("cargo build", name="cargo"), when="src"))
+	assert scope_to_changed(tree, ("docs/x.md",)) is None
+	kept = scope_to_changed(tree, ("src/a.rs",))
+	assert isinstance(kept, Parallel)
+	assert kept.tasks == (Task("cargo build", name="cargo", when="src"),)
+
+
+def test_by_suffix_full_run_default() -> None:
+	scope = by_suffix((".c", ".h"), default=("src", "include"))
+	assert scope(()) == ("src", "include")
+
+
+def test_by_suffix_scoped_filters_by_suffix() -> None:
+	scope = by_suffix((".c", ".h"))
+	assert scope(("a.c", "b.py", "c.h")) == ("a.c", "c.h")
+
+
+def test_by_suffix_scoped_no_match_prunes_the_leaf() -> None:
+	fmt = Task("clang-format {paths}", name="fmt", paths=by_suffix((".c", ".h")))
+	assert scope_to_changed(fmt, ("b.py",)) is None
+
+
+def test_scope_warnings_inert_own_paths() -> None:
+	cargo = Task("cargo build", name="cargo", paths=".")
+	warnings = scope_warnings(cargo)
+	assert len(warnings) == 1
+	assert warnings[0].kind == "inert_paths"
+	assert "when=" in warnings[0].message
+
+
+def test_scope_warnings_group_paths_tokenless_leaf_does_not_warn() -> None:
+	tree = Parallel(Task("cargo build", name="cargo"), paths=".")
+	assert scope_warnings(tree) == ()
+
+
+def test_scope_warnings_empty_full_run_callable() -> None:
+	lint = Task("ruff check {paths}", name="lint", paths=lambda c: c)
+	warnings = scope_warnings(lint)
+	assert len(warnings) == 1
+	assert warnings[0].kind == "empty_full_run_callable"
+
+
+def test_scope_warnings_by_suffix_with_default_does_not_warn() -> None:
+	fmt = Task("clang-format {paths}", name="fmt", paths=by_suffix((".c",), default=("src",)))
+	assert scope_warnings(fmt) == ()

@@ -20,7 +20,17 @@ from camas.v0.task import Group, Parallel, Sequential, Task, TaskNode
 from camas.v0.task_event import CompletedEvent, OutputEvent, StartedEvent, TaskEvent
 
 HEADLINE: Final = frozenset(
-	{"Agent", "AgentFormat", "Claude", "Config", "Effect", "Parallel", "Sequential", "Task"}
+	{
+		"Agent",
+		"AgentFormat",
+		"Claude",
+		"Config",
+		"Effect",
+		"Parallel",
+		"Sequential",
+		"Task",
+		"by_suffix",
+	}
 )
 """The unversioned definers re-exported by both ``camas`` and ``camas.v0``."""
 

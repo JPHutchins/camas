@@ -226,9 +226,24 @@ autofix = Parallel(Task("ruff format {paths}"), Task("ruff check --fix {paths}")
 _ = Config(agent=Claude(fix=Sequential(py, web, autofix)))
 ```
 
-`--paths` works on any task — `camas check --paths src/a.py`. Without it, every `{paths}` resolves to its full-run default (`ruff format src`); with it, each `{paths}` command runs only over the changed files it covers, and one covering none is dropped. A command **without** `{paths}` can't be narrowed, so its `paths=` is a no-op and it always runs — camas errs on correctness (a tool it can't narrow might be affected by the edit). `--paths` is repeatable, or comma-separated.
+`--paths` works on any task — `camas check --paths src/a.py`. Without it, every `{paths}` resolves to its full-run default (`ruff format src`); with it, each `{paths}` command runs only over the changed files it covers, and one covering none is dropped. A command **without** `{paths}` can't be narrowed, so its `paths=` is a no-op and it always runs — unless it declares `when=` (below), camas errs on correctness (a tool it can't narrow might be affected by the edit). `--paths` is repeatable, or comma-separated.
 
-For the Claude Code plugin, you **register** the auto-fix node — whatever you named it — to `Config.agent.fix`; the PostToolBatch hook runs *that* node over the just-changed files, zero model tokens. Run `camas mcp init --claude` to write the full Claude Code setup in one command (`.mcp.json` + PostToolBatch autofix hook + `camas-fixer` subagent + `gate` skill), resolving the launcher for your project and pinning to the camas version declared in `tasks.py`'s PEP 723 block. For a bare `.mcp.json` for any MCP client, `camas mcp init` alone. Or wire it by hand:
+A command that can't take `{paths}` (`cargo build`, `nix flake check`, `ctest`) is scoped with `when=` instead — a directory-prefix string, a tuple of prefixes, or a `(changed) -> bool` callable. On a scoped run a leaf whose `when=` doesn't match the changed set is dropped; a full run never consults it. Like `paths=`, a group's `when=` is the default for descendant leaves that set none:
+
+```python
+build = Task("cargo build", when="src")                # runs only when src/ changed
+flake = Task("nix flake check", when=("flake.nix", "nix"))
+```
+
+A `paths=` callable is called with `()` on a full run — one that filters the changed set would return `()` and strip the command's arguments entirely (a formatter reading stdin on no args hangs). `by_suffix(suffixes, default=...)` is the safe factory: it filters the changed files by suffix on a scoped run and returns `default` on a full run:
+
+```python
+tidy = Task("clang-tidy {paths}", paths=by_suffix((".c", ".h"), default=("src",)))
+```
+
+`camas --check` (and the MCP `camas_check`) flags both authoring mistakes as advisory warnings: a leaf whose own `paths=` can never apply (no `{paths}` token — use `when=` instead) and a `{paths}` callable that goes empty on a full run.
+
+For the Claude Code plugin, you **register** the auto-fix node — whatever you named it — to `Config.agent.fix`; the PostToolBatch hook runs *that* node over the just-changed files, zero model tokens. Run `camas mcp init --claude` to write the full Claude Code setup in one command (`.mcp.json` + PostToolBatch autofix hook + `camas-fixer` subagent + `gate` skill), resolving the launcher for your project (`uv run camas`/`uv run tasks.py`, `uvx`, or a PATH `camas`) and pinning it — to `tasks.py`'s PEP 723 block when present, else to the running camas release version (a dev/local build is left unpinned, since it isn't published to pin against). Pass `--launcher uv|uvx|camas` to force a strategy instead of auto-detecting — e.g. `--launcher camas` for a nix/flake-provided `camas` on PATH. For a bare `.mcp.json` for any MCP client, `camas mcp init` alone (same launcher/pin resolution, no Claude Code files). Or wire it by hand:
 
 ```jsonc
 // .claude/settings.json
@@ -236,7 +251,7 @@ For the Claude Code plugin, you **register** the auto-fix node — whatever you 
   { "hooks": [{ "type": "command", "command": "camas mcp fix" }] } ] } }
 ```
 
-`camas mcp fix` runs the registered `Config.agent.fix` node (not a task named `fix` — that's just `camas fix`, your own task); it reads the changed files from the PostToolBatch event on stdin (`--paths` still works for a manual run). With no fix registered it is a clean no-op, so the hook is harmless without it. The launcher runs in your project's environment — `camas mcp init --claude` resolves and pins it; to have the camas version track `tasks.py`'s PEP 723 block (`dependencies = ["camas>=X.Y"]`), re-run `camas mcp init --claude` after bumping.
+`camas mcp fix` runs the registered `Config.agent.fix` node (not a task named `fix` — that's just `camas fix`, your own task); it reads the changed files from the PostToolBatch event on stdin (`--paths` still works for a manual run). With no fix registered it is a clean no-op, so the hook is harmless without it. The launcher runs in your project's environment — `camas mcp init --claude` resolves and pins it: to `tasks.py`'s PEP 723 declaration (`dependencies = ["camas>=X.Y"]`) when present, else to the running camas release version; re-run `camas mcp init --claude` after bumping either to keep it current.
 
 ## Effects plugins
 
