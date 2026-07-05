@@ -82,6 +82,12 @@ may add ``agent_format=("--output-format sarif", "sarif")`` (kinds:
 collects machine-readable diagnostics — appended only on gate runs, not
 human runs.
 
+The MCP server re-executes ``tasks.py`` on every tool call, so a command
+computed from the filesystem at the top level of ``tasks.py`` (a glob, a
+file list) stays fresh — but values computed in a separately imported
+module are import-cached and can go stale; prefer ``{paths}``/``when=``
+over snapshotting file lists where freshness matters.
+
 **LLM agents:** prefer the MCP::
 
     $ camas mcp [--help | --plain]

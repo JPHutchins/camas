@@ -112,8 +112,8 @@ class Compat(NamedTuple):
 
 @dataclass(slots=True)
 class Session:
-	"""Server state: the resolved project, its root, the compat switches, a per-run counter
-	naming each run's log directory, and the source mtime that gates lazy re-resolution.
+	"""Server state: the resolved project, its root, the compat switches, and a per-run
+	counter naming each run's log directory.
 	"""
 
 	project: TasksState
@@ -121,10 +121,8 @@ class Session:
 	compat: Compat
 	runs: int = 0
 	version_warning: str | None = field(default=None, init=False)
-	source_mtime_ns: int | None = field(default=None, init=False)
 
 	def __post_init__(self) -> None:
-		self.source_mtime_ns = source_mtime_ns(self.project)
 		self.version_warning = check_version_pin(self.project)
 
 	@property
@@ -134,11 +132,9 @@ class Session:
 		return (config if config is not None else Config()).camas_path(self.base)
 
 	def refresh(self) -> None:
-		"""Re-resolve the project if its source file changed on disk since it was pinned."""
-		if source_mtime_ns(self.project) != self.source_mtime_ns:
-			self.project = resolve_project_quiet(self.base)
-			self.source_mtime_ns = source_mtime_ns(self.project)
-			self.version_warning = check_version_pin(self.project)
+		"""Re-resolve the project from disk, matching the CLI's per-invocation re-execution."""
+		self.project = resolve_project_quiet(self.base)
+		self.version_warning = check_version_pin(self.project)
 
 	def reserve_run(self) -> int:
 		"""Claim the next run's sequence number (atomic between ``await`` points)."""
@@ -153,17 +149,6 @@ def project_source(state: TasksState) -> Path | None:
 			return source
 		case _:
 			assert_never(state)
-
-
-def source_mtime_ns(state: TasksState) -> int | None:
-	"""The mtime of a state's source file, or ``None`` if it has none or is gone."""
-	source = project_source(state)
-	if source is None:
-		return None
-	try:
-		return source.stat().st_mtime_ns
-	except OSError:
-		return None
 
 
 def check_version_pin(state: TasksState) -> str | None:
