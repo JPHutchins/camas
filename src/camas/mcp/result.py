@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Literal, NamedTuple
 from ..core.gate import decision_of
 from ..core.matrix import expand_matrix
 from ..core.render import strip_ansi
-from ..core.scope import scope_warnings
+from ..core.scope import scope_warning_messages
 from ..core.traversal import flatten_leaves
 from ..main.check import (
 	INSTALL_HINT,
@@ -33,7 +33,7 @@ else:  # pragma: no cover
 	from typing_extensions import assert_never
 
 if TYPE_CHECKING:
-	from collections.abc import Mapping, Sequence
+	from collections.abc import Sequence
 	from pathlib import Path
 
 	from ..core.completion import RunResult, TaskResult
@@ -95,16 +95,6 @@ def to_plan_response(node: TaskNode) -> wire.RunResponse:
 	)
 
 
-def check_warnings(tasks: Mapping[str, TaskNode]) -> tuple[str, ...]:
-	"""Advisory :func:`camas.core.scope.scope_warnings` messages across every raw tree in
-	``tasks``, deduplicated (a node shared by two names warns once) the same way
-	:func:`camas.main.format.format_scope_warnings` does — order-preserving, one per message.
-	"""
-	return tuple(
-		w.message for w in dict.fromkeys(w for node in tasks.values() for w in scope_warnings(node))
-	)
-
-
 def to_check_response(state: TasksState) -> wire.CheckResponse:
 	"""Validate a freshly-resolved tasks source: did it evaluate, and does it type-check."""
 	match state:
@@ -119,7 +109,7 @@ def to_check_response(state: TasksState) -> wire.CheckResponse:
 				status="load_error", source=str(source), diagnostics=trace + checker
 			)
 		case LoadOk(tasks=tasks, source=source):
-			warnings = check_warnings(tasks)
+			warnings = scope_warning_messages(tasks.values())
 			if source is None:
 				return wire.CheckResponse(status="no_tasks", warnings=warnings)
 			if source.suffix != ".py":

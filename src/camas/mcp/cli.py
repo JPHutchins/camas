@@ -41,18 +41,18 @@ def parse_launcher(argv: list[str]) -> Launcher | None:
 	Raises:
 		ValueError: the flag has no value, or names an unknown launcher.
 	"""
+	import argparse
+
 	from .scaffold import LAUNCHERS
 
-	if "--launcher" not in argv:
-		return None
-	i = argv.index("--launcher")
-	value = argv[i + 1] if i + 1 < len(argv) else ""
-	for launcher in LAUNCHERS:
-		if value == launcher:
-			return launcher
-	raise ValueError(
-		f"camas mcp init: --launcher must be one of {', '.join(LAUNCHERS)}, got {value!r}"
-	)
+	parser = argparse.ArgumentParser(prog="camas mcp init", add_help=False, exit_on_error=False)
+	parser.add_argument("--launcher", choices=LAUNCHERS, default=None)
+	try:
+		namespace, _ = parser.parse_known_args(argv)
+	except argparse.ArgumentError as e:
+		raise ValueError(f"camas mcp init: {e}") from None
+	launcher: Launcher | None = namespace.launcher
+	return launcher
 
 
 def import_failure_diagnostic(

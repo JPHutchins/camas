@@ -174,6 +174,13 @@ def test_when_full_run_never_prunes_or_invokes_callable() -> None:
 	assert with_default_paths(cargo) == cargo
 
 
+def test_when_matches_backslash_changed_paths() -> None:
+	"""``when`` sees the same POSIX-normalized changed set the ``paths`` scope does."""
+	cargo = Task("cargo build", name="cargo", when="src")
+	assert scope_to_changed(cargo, ("src\\a.rs",)) == cargo
+	assert scope_to_changed(cargo, ("docs\\x.md",)) is None
+
+
 def test_when_gates_before_paths_narrowing() -> None:
 	"""``when`` prunes first; a leaf that survives ``when`` still narrows (or prunes) by
 	``paths`` as usual."""

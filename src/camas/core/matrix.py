@@ -333,8 +333,9 @@ def expand_matrix(
 	"""Recursively expand all matrix parameters and propagate container env/cwd/paths/when into
 	leaves.
 
-	Container env, cwd, paths, and when are also retained on the expanded group nodes (for
-	display purposes); execution and scoping read the accumulated values from leaves. A child's
+	Execution and scoping read the accumulated values from leaves. A group rebuilt without a
+	matrix retains its own env/cwd/paths/when for display; a matrix expansion's synthesized
+	wrapper nodes carry env/cwd only — paths and when live on the specialized leaves. A child's
 	own ``cwd``/``paths``/``when`` takes precedence over an ancestor's.
 
 	>>> expand_matrix(Task("echo hi"))

@@ -181,13 +181,12 @@ def _rebase_to_cwd(parts: tuple[str, ...], cwd: Path | None) -> tuple[str, ...]:
 
 
 def _resolve_leaf(task: Task, changed: tuple[str, ...]) -> Task | None:
-	if changed and task.when is not None and not _when_matches(task.when, changed):
+	posix = tuple(c.replace("\\", "/") for c in changed)
+	if posix and task.when is not None and not _when_matches(task.when, posix):
 		return None
 	if PATHS_TOKEN not in task.cmd:
 		return task
-	parts = _as_scope(task.paths if task.paths is not None else ".")(
-		tuple(c.replace("\\", "/") for c in changed)
-	)
+	parts = _as_scope(task.paths if task.paths is not None else ".")(posix)
 	if changed and not parts:
 		return None
 	return Task(
@@ -343,3 +342,18 @@ def scope_warnings(node: TaskNode) -> tuple[ScopeWarning, ...]:
 			return tuple(w for t in group.tasks for w in scope_warnings(t))
 		case _:
 			assert_never(node)
+
+
+def scope_warning_messages(nodes: Iterable[TaskNode]) -> tuple[str, ...]:
+	"""The :func:`scope_warnings` messages across raw trees, deduplicated preserving order —
+	a node shared by two names warns once.
+
+	>>> t = Task("cargo build", name="cargo", paths=".")
+	>>> len(scope_warning_messages((t, t)))
+	1
+	>>> scope_warning_messages((Task("cargo build", name="cargo"),))
+	()
+	"""
+	return tuple(
+		w.message for w in dict.fromkeys(w for node in nodes for w in scope_warnings(node))
+	)

@@ -781,6 +781,17 @@ def test_prune_run_dirs_ignores_non_numeric_entries(tmp_path: Path) -> None:
 	assert stray_dir.exists()
 
 
+def test_prune_run_dirs_ignores_non_decimal_digit_entries(tmp_path: Path) -> None:
+	"""``'²'.isdigit()`` is true but ``int('²')`` raises — such an entry is foreign, not a run."""
+	task_dir = tmp_path / "runs" / "ci"
+	oldest = _mk_run_dir(task_dir, "1", mtime=1)
+	keep = _mk_run_dir(task_dir, "2", mtime=2)
+	superscript = _mk_run_dir(task_dir, "²", mtime=3)
+	removed = serve.prune_run_dirs(task_dir, keep, keep_n=1)
+	assert removed == (oldest,)
+	assert superscript.exists()
+
+
 def test_prune_run_dirs_deletion_is_best_effort(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

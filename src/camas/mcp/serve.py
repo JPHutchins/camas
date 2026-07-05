@@ -800,7 +800,7 @@ def prune_run_dirs(task_dir: Path, keep: Path, *, keep_n: int = RUN_LOG_KEEP) ->
 	Returns the deleted paths; deletion is best-effort.
 	"""
 	others = sorted(
-		(d for d in task_dir.iterdir() if d.is_dir() and d.name.isdigit() and d != keep),
+		(d for d in task_dir.iterdir() if d.is_dir() and d.name.isdecimal() and d != keep),
 		key=_run_dir_recency,
 		reverse=True,
 	)

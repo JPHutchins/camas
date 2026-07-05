@@ -19,7 +19,7 @@ from ..core import timings
 from ..core.color import BOLD_CYAN, CAMAS_LIGHT_PINK, CAMAS_VIOLET, GREY, RESET
 from ..core.matrix import matrix_axes
 from ..core.render import color_on, print_tree
-from ..core.scope import scope_warnings
+from ..core.scope import scope_warning_messages
 from ..v0.task import Parallel, Sequential, Task, TaskNode
 from .color import maybe_color, wrap_ansi
 from .effects import available_effects, flatten_annotation, signature_fields
@@ -120,8 +120,7 @@ def format_scope_warnings(tasks: Mapping[str, TaskNode]) -> str:
 	>>> format_scope_warnings({"cargo": Task("cargo build", name="cargo")})
 	''
 	"""
-	warnings = dict.fromkeys(w for node in tasks.values() for w in scope_warnings(node))
-	return "\n".join(w.message for w in warnings)
+	return "\n".join(scope_warning_messages(tasks.values()))
 
 
 def format_task_summary_listing(

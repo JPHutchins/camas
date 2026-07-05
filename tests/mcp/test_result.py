@@ -13,7 +13,6 @@ from camas.main.state import LoadOk
 from camas.mcp import wire
 from camas.mcp.result import (
 	agent_envelopes,
-	check_warnings,
 	to_agent_envelope,
 	to_check_response,
 	to_run_response,
@@ -151,6 +150,7 @@ def test_to_check_response_clean_tree_has_no_warnings() -> None:
 	assert to_check_response(state).warnings == ()
 
 
-def test_check_warnings_dedupes_shared_node() -> None:
+def test_to_check_response_dedupes_shared_node() -> None:
 	shared = Task("cargo build", name="cargo", paths=".")
-	assert len(check_warnings({"a": shared, "b": shared})) == 1
+	state = LoadOk(tasks={"a": shared, "b": shared}, source=_PYPROJECT, scope_effects={})
+	assert len(to_check_response(state).warnings) == 1
