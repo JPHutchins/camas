@@ -306,6 +306,7 @@ def test_callable_when_survives_specialization() -> None:
 
 	task = Parallel(Task("build {PY}", when=predicate), matrix={"PY": ("3.12",)})
 	result = expand_matrix(task)
+	assert predicate(()) is True
 	match result:
 		case Parallel(tasks=(Task(when=when),)):
 			assert when is predicate

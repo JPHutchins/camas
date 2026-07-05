@@ -723,11 +723,10 @@ def test_create_run_log_dir_namespaces_by_task_and_is_idempotent(tmp_path: Path)
 	assert second.is_dir()
 
 
-def _mk_run_dir(task_dir: Path, name: str, *, mtime: float | None = None) -> Path:
+def _mk_run_dir(task_dir: Path, name: str, *, mtime: float) -> Path:
 	d = task_dir / name
 	d.mkdir(parents=True)
-	if mtime is not None:
-		os.utime(d, ns=(int(mtime * 1_000_000_000), int(mtime * 1_000_000_000)))
+	os.utime(d, ns=(int(mtime * 1_000_000_000), int(mtime * 1_000_000_000)))
 	return d
 
 

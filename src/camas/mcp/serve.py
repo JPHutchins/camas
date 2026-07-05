@@ -789,7 +789,7 @@ def _run_dir_recency(d: Path) -> tuple[int, int]:
 	"""
 	try:
 		mtime_ns = d.stat().st_mtime_ns
-	except OSError:
+	except OSError:  # pragma: no cover
 		mtime_ns = 0
 	return (mtime_ns, int(d.name))
 

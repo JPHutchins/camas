@@ -1041,6 +1041,18 @@ def test_write_mcp_json_launcher_camas_errors_without_path(
 	assert "PATH" in err
 
 
+def test_write_mcp_json_launcher_uvx_errors_without_uvx(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	monkeypatch.chdir(tmp_path)
+	monkeypatch.setattr("shutil.which", _which("uv", "camas"))
+	assert write_mcp_json([], launcher="uvx") == 2
+	err = capsys.readouterr().err
+	assert "--launcher uvx" in err
+	assert "uvx on PATH" in err
+	assert not (tmp_path / ".mcp.json").exists()
+
+
 def test_write_hooks_launcher_matches_chosen_command(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
