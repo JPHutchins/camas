@@ -86,9 +86,10 @@ and never consults it on a full run; ``by_suffix`` builds a suffix-filtering
 ``paths`` scope for a ``{paths}`` leaf that should still run against the
 whole project on a full run. ``check`` is the node the gate validates
 (``None`` defers to ``default_task``/``github_task``), scoped by ``--paths``
-and time-boxed by ``--under``; the plugin delegates it to a background
-``camas-fixer`` subagent that drives the changed scope to green off the main
-agent's context, rather than blocking on a hook. A checking leaf may add
+and time-boxed by ``--under``; the plugin delegates it to a tiered ladder of
+background camas-fixer subagents (lint/format tiers, then a test/coverage
+tier) that drive the changed scope to green off the main agent's context,
+rather than blocking on a hook. A checking leaf may add
 ``agent_format=("--output-format sarif", "sarif")`` (kinds: ``sarif``,
 ``rdjson``, ``lsp``, ``junit``, ``tap``, ``raw``) so the gate collects
 machine-readable diagnostics — appended only on gate runs, not human runs.
@@ -104,7 +105,7 @@ over snapshotting file lists where freshness matters.
 **LLM agents:** prefer the MCP::
 
     $ camas mcp [--help | --plain]
-    $ camas mcp init --claude    # .mcp.json + hook + subagent + gate skill
+    $ camas mcp init --claude    # .mcp.json + hooks + fixer ladder + gate skill
     $ camas mcp init             # .mcp.json only, for any MCP client
 
 When you must use the CLI, camas auto-detects coding agents (the
