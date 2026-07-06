@@ -103,6 +103,11 @@ def test_list_response_github_default_schema_description() -> None:
 	assert "Config(github_task" in description
 
 
+def test_list_response_run_default_schema_description() -> None:
+	description = ListResponse.model_json_schema()["properties"]["run_default"]["description"]
+	assert "no-task camas_run" in description
+
+
 def test_check_response_defaults_and_rejects_bad_status() -> None:
 	resp = CheckResponse(status="ok", source="/x/tasks.py", task_count=3, checker="ty")
 	assert (resp.diagnostics, resp.task_count, resp.warnings) == (None, 3, ())

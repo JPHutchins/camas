@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from camas import Config, Parallel, Sequential, Task
+from camas import Claude, Config, Parallel, Sequential, Task
 from camas.core.timings import TaskTiming
 from camas.mcp.catalog import to_list_response
 
@@ -44,7 +44,22 @@ def test_no_config_marks_nothing() -> None:
 
 def test_config_without_defaults_yields_no_markers() -> None:
 	resp = to_list_response({"t": Task("echo hi", name="t")}, Config())
-	assert (resp.default, resp.github_default) == (None, None)
+	assert (resp.default, resp.github_default, resp.run_default) == (None, None, None)
+
+
+def test_run_default_reported_for_agent_only_config() -> None:
+	rundef = Task("pytest", name="rundef")
+	resp = to_list_response(
+		{"rundef": rundef}, Config(agent=Claude(fix=Task("ruff --fix"), default=rundef))
+	)
+	assert (resp.default, resp.run_default) == (None, "rundef")
+
+
+def test_run_default_prefers_github_task_over_default_task() -> None:
+	ci = Task("pytest", name="ci")
+	lint = Task("ruff check .", name="lint")
+	resp = to_list_response({"ci": ci, "lint": lint}, Config(default_task=ci, github_task=lint))
+	assert (resp.default, resp.run_default) == ("ci", "lint")
 
 
 def test_matrix_axes_reported_with_unexpanded_preview_by_default() -> None:

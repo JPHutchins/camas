@@ -399,7 +399,9 @@ def tools(task_names: tuple[str, ...], compat: Compat) -> Tools:
 				declared via Config(github_task=...) (camas is the single definition shared by
 				local and CI), so running it locally before you commit or push reproduces CI
 				exactly; github_default is null when the project declares no github_task (camas
-				never infers it from CI workflow files). Tasks whose leaves have been timed also
+				never infers it from CI workflow files). run_default names the task a no-task
+				camas_run resolves (agent default, else check, else the github or default
+				task). Tasks whose leaves have been timed also
 				carry an estimated duration and their slowest leaf, so you can pick a quick task
 				for the inner loop and the thorough one before committing. Use this first to
 				discover valid task names for camas_run; it is the source of truth. Read-only;
@@ -553,7 +555,7 @@ def list_call(session: Session, arguments: dict[str, Any]) -> types.CallToolResu
 
 def check_call(session: Session) -> types.CallToolResult:
 	"""Handle ``camas_check``: re-resolve and re-pin the project from disk, then validate it."""
-	session.project = resolve_project_quiet(session.base)
+	session.refresh()
 	resp = to_check_response(session.project).model_copy(
 		update={"server_version": running_version()}
 	)
@@ -577,7 +579,7 @@ def init_call(session: Session) -> types.CallToolResult:
 		return success(init_text(resp), resp, session.compat)
 	except OSError as e:
 		return error_result(f"camas_init: could not scaffold tasks.py: {e}")
-	session.project = resolve_project_quiet(session.base)
+	session.refresh()
 	resp = wire.InitResponse(status="created", path=str(created), content=starter_text())
 	return success(init_text(resp), resp, session.compat)
 
@@ -879,6 +881,8 @@ def list_text(resp: wire.ListResponse, *, expand_matrix: bool) -> str:
 			f"{resp.github_default}. A bare `camas` runs it under GitHub Actions, so a CI "
 			f"step is just `camas` — naming the task there is redundant."
 		)
+	if resp.run_default is not None and resp.run_default != resp.default:
+		lines.append(f"no-task camas_run runs: {resp.run_default}")
 	lines.append("")
 	width = max((len(t.name) for t in resp.tasks), default=0)
 	for t in resp.tasks:

@@ -110,15 +110,31 @@ class TaskInfo(BaseModel):
 
 
 class ListResponse(BaseModel):
-	"""The project's task catalog: every task plus the default and CI-default names."""
+	"""The project's task catalog: every task plus the default, CI-default, and no-task-run
+	names.
+	"""
 
 	tasks: tuple[TaskInfo, ...]
-	default: str | None = None
+	default: str | None = Field(
+		default=None,
+		description=(
+			"The task declared as Config(default_task=...) — what the bare CLI runs while the "
+			"developer works; null when no default_task is set."
+		),
+	)
 	github_default: str | None = Field(
 		default=None,
 		description=(
 			"The task declared as Config(github_task=...) — what this project's CI runs; null "
 			"when no github_task is set. Declarative: camas never infers it from CI workflow files."
+		),
+	)
+	run_default: str | None = Field(
+		default=None,
+		description=(
+			"The task a no-task camas_run runs — resolved as Claude default, else Claude check, "
+			"else github_task, else default_task; null when nothing in the chain is configured "
+			"or the resolved task is unnamed."
 		),
 	)
 

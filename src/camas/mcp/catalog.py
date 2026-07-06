@@ -34,6 +34,7 @@ def to_list_response(
 	"""
 	default = task_name(config.default_task) if config is not None else None
 	github_default = task_name(config.github_task) if config is not None else None
+	run_default = task_name(config.run_default()) if config is not None else None
 	return wire.ListResponse(
 		tasks=tuple(
 			task_info(
@@ -48,6 +49,7 @@ def to_list_response(
 		),
 		default=default,
 		github_default=github_default,
+		run_default=run_default,
 	)
 
 

@@ -197,9 +197,20 @@ def test_list_call_text_lists_tasks_and_markers(tmp_path: Path) -> None:
 	text = _text(result)
 	assert "default (developer's task): ci" in text
 	assert "github default" in text
+	assert "no-task camas_run runs: lint" in text
 	assert "lint" in text
 	assert "expand_matrix=true" not in text
 	assert result.structuredContent is None
+
+
+def test_list_call_text_omits_run_default_when_it_matches_default(tmp_path: Path) -> None:
+	ci = Sequential(PASS, name="ci")
+	session = _session({"ci": ci}, Config(default_task=ci), tmp_path)
+	result = serve.list_call(session, {})
+	assert result.isError is False
+	text = _text(result)
+	assert "default (developer's task): ci" in text
+	assert "no-task camas_run runs" not in text
 
 
 def test_list_call_load_error(tmp_path: Path) -> None:
@@ -1472,12 +1483,31 @@ def test_docs_call_prepends_version_warning(tmp_path: Path) -> None:
 	assert text.startswith("WARNING: version mismatch")
 
 
-def test_check_call_prepends_version_warning(tmp_path: Path) -> None:
-	session = _session({"lint": PASS}, None, tmp_path)
-	session.version_warning = "WARNING: version mismatch"
+def test_check_call_prepends_version_warning(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	(tmp_path / "tasks.py").write_text(
+		'# /// script\n# dependencies = ["camas==999.0.0"]\n# ///\n' + _VALID_TASKS
+	)
+	monkeypatch.setattr("camas.mcp.result.run_typecheck", _fixed_checker(CheckerOk("ty")))
+	session = Session(serve.resolve_project(tmp_path), tmp_path, Compat())
 	result = serve.check_call(session)
 	assert result.isError is False
-	assert _text(result).startswith("WARNING: version mismatch")
+	assert _text(result).startswith("camas ")
+	assert "does not satisfy tasks.py pin ==999.0.0" in _text(result)
+
+
+def test_check_call_clears_stale_version_warning(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	(tmp_path / "tasks.py").write_text(_VALID_TASKS)
+	monkeypatch.setattr("camas.mcp.result.run_typecheck", _fixed_checker(CheckerOk("ty")))
+	session = Session(serve.resolve_project(tmp_path), tmp_path, Compat())
+	session.version_warning = "WARNING: stale"
+	result = serve.check_call(session)
+	assert result.isError is False
+	assert "WARNING: stale" not in _text(result)
+	assert session.version_warning is None
 
 
 async def test_run_call_prepends_version_warning(tmp_path: Path) -> None:
