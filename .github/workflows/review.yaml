@@ -60,11 +60,22 @@ jobs:
       - run: npm install -g @anthropic-ai/claude-code@2.1.197 @jphutchins/code-review@0.1.0-alpha.2
 
       # Install project deps so the agent can validate findings — swap this for your ecosystem's
-      # install command (this repo is npm-based; a Python project would `uv sync`, etc.).
-      - uses: astral-sh/setup-uv@v8.2.0
-      - run: uv sync
+      # install command. uv comes from PyPI (already allowlisted) rather than astral-sh/setup-uv,
+      # which resolves versions via raw.githubusercontent.com and pulls the binary from
+      # releases.astral.sh — both would need allowlisting. --python 3.12 + UV_PYTHON_DOWNLOADS=never
+      # pin the runner's system Python so uv does not fetch the .python-version default from a
+      # GitHub release asset host that is not on the allowlist.
+      - name: Install uv (pinned)
+        run: |
+          pipx install --force uv==0.9.15
+          pipx environment --value PIPX_BIN_DIR >> "$GITHUB_PATH"
+      - run: uv sync --python 3.12
+        env:
+          UV_PYTHON_DOWNLOADS: never
 
-      # Lock egress AFTER trusted setup, BEFORE untrusted data (audit first to discover endpoints)
+      # harden-runner enforces from its pre-step, at job start — step position is cosmetic, so the
+      # allowlist must cover setup (npm, PyPI) as well as everything the review itself reaches
+      # (audit first to discover endpoints).
       - name: Lock network egress
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
@@ -77,12 +88,13 @@ jobs:
             objects.githubusercontent.com:443
             *.blob.core.windows.net:443
             results-receiver.actions.githubusercontent.com:443
-      # The two endpoints above carry artifact download/upload (§8.4). Needed only if the agent
-      # installs packages to validate findings (§8.4) — add the registries for your ecosystem to
-      # the allowed-endpoints list above:
-      #   registry.npmjs.org:443
-      #   pypi.org:443
-      #   files.pythonhosted.org:443
+            registry.npmjs.org:443
+            pypi.org:443
+            files.pythonhosted.org:443
+      # The blob endpoints above carry artifact download/upload (§8.4). The package registries are
+      # required by setup itself (enforcement is job-wide) and also let the agent install packages
+      # to validate findings (§8.4); the publish-as-exfil channel they open is accepted here —
+      # capped burner key, read-only token, triage gate first.
 
       # Gather untrusted data as files (fixed paths, never shell-interpolated). `code-review gather`
       # resolves the PR from the trusted head SHA (disambiguated by branch), fetches the diff (with a
@@ -321,7 +333,8 @@ jobs:
 
       - run: npm install -g @jphutchins/code-review@0.1.0-alpha.2
 
-      # Lock egress — comment job needs the GitHub API + the blob host for artifact download (§8.4)
+      # Lock egress — the GitHub API + the blob host for artifact download (§8.4), plus npm for the
+      # commenter install (harden-runner enforces from its pre-step, so setup is covered too)
       - name: Lock network egress
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
@@ -331,6 +344,7 @@ jobs:
             github.com:443
             objects.githubusercontent.com:443
             *.blob.core.windows.net:443
+            registry.npmjs.org:443
 
       # code-review post: resolve PR, fetch diff, inline+render, post review (COMMENT),
       # upsert sticky comment. Exit 0 when no PR; non-zero on posting failure.
