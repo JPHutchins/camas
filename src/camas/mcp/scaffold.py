@@ -12,12 +12,15 @@ import shutil
 import sys
 from importlib.metadata import version
 from pathlib import Path
-from typing import Any, Final, Literal, cast
+from typing import TYPE_CHECKING, Any, Final, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from ..core.timings import ensure_camas_dir
 from ..v0.config import DEFAULT_CAMAS_DIR
+
+if TYPE_CHECKING:
+	from collections.abc import Mapping
 
 SERVER_NAME: Final = "camas"
 SETTINGS_PATH: Final = Path(".claude/settings.json")
@@ -247,21 +250,22 @@ def _object_list(value: object) -> list[dict[str, Any]]:
 
 
 def _is_camas_hook(command: str) -> bool:
-	"""True when ``command`` is a camas autofix-hook invocation — the launcher (containing
-	``camas``) plus the ``mcp fix`` subcommand, possibly with trailing ``--paths`` args.
+	"""True when ``command`` is a camas hook invocation — the launcher (containing ``camas``)
+	plus the ``mcp fix`` autofix or ``mcp gate`` check/nudge subcommand, possibly with trailing
+	args.
 	"""
-	return "camas" in command and "mcp fix" in command
+	return "camas" in command and ("mcp fix" in command or "mcp gate" in command)
 
 
 def _kept_hooks(group: dict[str, Any]) -> list[dict[str, Any]]:
-	"""The group's hooks minus any camas autofix hook."""
+	"""The group's hooks minus any camas hook."""
 	return [
 		h for h in _object_list(group.get("hooks")) if not _is_camas_hook(cast("str", h["command"]))
 	]
 
 
 def _swept_event(groups: object) -> list[dict[str, Any]]:
-	"""One event's hook groups with camas's autofix hooks removed and any group they emptied
+	"""One event's hook groups with camas's own hooks removed and any group they emptied
 	dropped.
 	"""
 	return [
@@ -269,27 +273,43 @@ def _swept_event(groups: object) -> list[dict[str, Any]]:
 	]
 
 
-def _with_camas_hook(raw: dict[str, Any], camas_group: dict[str, Any]) -> dict[str, Any]:
-	"""``raw`` with camas's own autofix hook removed from every event — dropping any group or event
-	it empties, so a stale hook from an older camas (e.g. under ``FileChanged``) is swept out — and
-	the current hook appended under ``PostToolBatch``. Every other key keeps its position, no
-	defaults injected.
+def _with_camas_hooks(
+	raw: dict[str, Any], groups_by_event: Mapping[str, list[dict[str, Any]]]
+) -> dict[str, Any]:
+	"""``raw`` with every camas hook removed from every event — dropping any group or event it
+	empties, so a stale hook from an older camas (e.g. under ``FileChanged``) or a different event
+	is swept out — and ``groups_by_event`` appended under their target events. Every other key
+	keeps its position, no defaults injected.
 	"""
 	hooks = raw.get("hooks")
 	hooks_dict: dict[str, Any] = cast("dict[str, Any]", hooks) if isinstance(hooks, dict) else {}
 	swept: dict[str, Any] = {
 		event: groups
 		for event in hooks_dict
-		if (groups := _swept_event(hooks_dict[event])) or event == "PostToolBatch"
+		if (groups := _swept_event(hooks_dict[event])) or event in groups_by_event
 	}
 	return {
 		**raw,
-		"hooks": {**swept, "PostToolBatch": [*swept.get("PostToolBatch", []), camas_group]},
+		"hooks": {
+			**swept,
+			**{
+				event: [*swept.get(event, ()), *new_groups]
+				for event, new_groups in groups_by_event.items()
+			},
+		},
 	}
 
 
+STOP_NUDGE_UNDER: Final = "5s"
+"""The wall-clock budget the async Stop-hook nudge time-boxes its check to — a headless,
+turn-settle check must stay fast; a slower project simply reports more untimed/over-budget
+leaves rather than delaying the nudge."""
+
+
 def write_hooks(argv: list[str], *, quiet: bool = False, launcher: Launcher | None = None) -> int:
-	"""Write the ``PostToolBatch`` autofix hook into ``.claude/settings.json``.
+	"""Write the ``PostToolBatch`` autofix hook and the two ``Stop`` hooks (a settle-time fix,
+	and an async check that nudges the main agent to launch the fixer ladder) into
+	``.claude/settings.json``.
 
 	``quiet`` suppresses the success message — set when called from ``write_claude``, which
 	emits its own consolidated summary so the user sees one reload line, not two.
@@ -315,19 +335,46 @@ def write_hooks(argv: list[str], *, quiet: bool = False, launcher: Launcher | No
 	if launch_str is None:
 		print(no_launcher_error("portable hooks", launcher), file=sys.stderr)
 		return 2
-	camas_group: dict[str, Any] = {"hooks": [{"type": "command", "command": f"{launch_str} fix"}]}
+	fix_hook: dict[str, Any] = {"type": "command", "command": f"{launch_str} fix"}
+	nudge_command = f"{launch_str} gate --under {STOP_NUDGE_UNDER} --nudge"
+	nudge_hook: dict[str, Any] = {
+		"type": "command",
+		"command": nudge_command,
+		"async": True,
+		"asyncRewake": True,
+	}
 	settings_path.parent.mkdir(parents=True, exist_ok=True)
 	settings_path.write_text(
-		json.dumps(_with_camas_hook(cast("dict[str, Any]", raw), camas_group), indent=2) + "\n",
+		json.dumps(
+			_with_camas_hooks(
+				cast("dict[str, Any]", raw),
+				{
+					"PostToolBatch": [{"hooks": [fix_hook]}],
+					"Stop": [{"hooks": [fix_hook, nudge_hook]}],
+				},
+			),
+			indent=2,
+		)
+		+ "\n",
 		encoding="utf-8",
 	)
 	if not quiet:
 		print(
-			f"Wrote the camas PostToolBatch autofix hook to {settings_path}\n"
-			f"  PostToolBatch:  {launch_str} fix\n"
-			f"\nReload Claude Code for the hook to take effect."
+			f"Wrote the camas autofix and Stop hooks to {settings_path}\n"
+			f"  PostToolBatch:      {launch_str} fix\n"
+			f"  Stop (fix):         {launch_str} fix\n"
+			f"  Stop (async nudge): {nudge_command}\n"
+			f"\nReload Claude Code for the hooks to take effect."
 		)
 	return 0
+
+
+AGENT_TEMPLATES: Final = (
+	("claude_agent_lint_haiku.md", "camas-lint-fixer-haiku.md"),
+	("claude_agent_lint_sonnet.md", "camas-lint-fixer-sonnet.md"),
+	("claude_agent_test_fixer.md", "camas-test-fixer.md"),
+)
+"""The tiered camas-fixer agent templates, ``(source in src/camas/main/, dest in .claude/agents/)``."""
 
 
 def write_agent_skill_templates() -> None:
@@ -338,16 +385,17 @@ def write_agent_skill_templates() -> None:
 	agent_dir.mkdir(parents=True, exist_ok=True)
 	skill_dir.mkdir(parents=True, exist_ok=True)
 	templates_dir = Path(__file__).parent.parent / "main"
-	(agent_dir / "camas-fixer.md").write_text(
-		(templates_dir / "claude_agent.md").read_text(encoding="utf-8"), encoding="utf-8"
-	)
+	for source, dest in AGENT_TEMPLATES:
+		(agent_dir / dest).write_text(
+			(templates_dir / source).read_text(encoding="utf-8"), encoding="utf-8"
+		)
 	(skill_dir / "SKILL.md").write_text(
 		(templates_dir / "claude_gate_skill.md").read_text(encoding="utf-8"), encoding="utf-8"
 	)
 
 
 def write_claude(argv: list[str], *, launcher: Launcher | None = None) -> int:
-	"""Write ``.mcp.json``, the PostToolBatch autofix hook, and the camas-fixer/gate templates.
+	"""Write ``.mcp.json``, the autofix/Stop hooks, and the tiered camas-fixer/gate templates.
 
 	Returns 0 on success, 2 on launcher-resolution or validation failure.
 	"""
@@ -359,8 +407,10 @@ def write_claude(argv: list[str], *, launcher: Launcher | None = None) -> int:
 		return rc
 	write_agent_skill_templates()
 	cwd = Path.cwd()
+	agent_dir = cwd / ".claude" / "agents"
+	agent_lines = "\n".join(f"Wrote {dest} to {agent_dir / dest}" for _, dest in AGENT_TEMPLATES)
 	print(
-		f"Wrote camas-fixer agent to {cwd / '.claude' / 'agents' / 'camas-fixer.md'}\n"
+		f"{agent_lines}\n"
 		f"Wrote gate skill to {cwd / '.claude' / 'skills' / 'gate' / 'SKILL.md'}\n"
 		f"\nClaude Code is configured. Reload for changes to take effect."
 	)
