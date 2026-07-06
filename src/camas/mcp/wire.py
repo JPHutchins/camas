@@ -275,7 +275,7 @@ class GateRequest(BaseModel):
 
 	paths: list[str] = Field(
 		default_factory=list,
-		description="Changed paths to scope the gate to — the camas-fixer subagent passes the "
+		description="Changed paths to scope the gate to — a camas fixer subagent passes the "
 		"edited files. Empty gates the whole task; each {paths} command is injected with the "
 		"files it covers (one covering none is dropped), while a command without {paths} can't "
 		"be narrowed and always runs unless its when= excludes the changed set.",
@@ -303,7 +303,7 @@ class FixRequest(BaseModel):
 
 	paths: list[str] = Field(
 		default_factory=list,
-		description="Changed paths to scope the fix to — the camas-fixer subagent passes the "
+		description="Changed paths to scope the fix to — a camas fixer subagent passes the "
 		"edited files. Empty runs the whole fix node; each {paths} command is injected with the "
 		"files it covers (one covering none is dropped), while a command without {paths} can't "
 		"be narrowed and always runs unless its when= excludes the changed set.",

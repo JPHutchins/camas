@@ -38,6 +38,7 @@ from ..main.argv import apply_passthrough
 from ..main.compose import load_py_tasks_state
 from ..main.format import format_load_error_hint, format_version_skew_hint
 from ..main.init import create_starter_tasks_py, starter_text
+from ..main.parser import parse_duration
 from ..main.pep723 import camas_requirement_from, version_specifier
 from ..main.state import EMPTY_STATE, LoadErr, LoadOk, TasksState
 from ..main.tasks import load_tasks
@@ -1293,6 +1294,31 @@ def gate_text(resp: wire.GateResponse) -> str:
 	return "\n".join(lines)
 
 
+def nudge_text(resp: wire.GateResponse) -> str:
+	"""The Stop-hook async-nudge message for a ``camas mcp gate --nudge`` block verdict — the
+	residual diagnostics, then an instruction to launch the fixer ladder rather than reasoning
+	about it directly. ``asyncRewake`` shows this on Claude's stderr as a system reminder.
+	"""
+	lines: list[str] = ["camas: a residual needs reasoning — the workspace is not green."]
+	if resp.diagnostics is not None:
+		lines.extend(["", "Residual (failing checks):"])
+		for env in resp.diagnostics:
+			lines.append(f"  {env.name} (exit {env.exit_code}, {env.output_kind})")
+			lines.extend(f"    {line}" for line in env.payload.splitlines())
+			if env.truncated:
+				lines.append("    … earlier output truncated")
+	lines.extend(
+		[
+			"",
+			"Launch the camas fixer ladder in the background rather than reasoning about this "
+			"yourself — see the gate skill: camas-lint-fixer-haiku for a lint/format residual "
+			"(escalate to camas-lint-fixer-sonnet on a hand-back), camas-test-fixer for a "
+			"test/coverage residual.",
+		]
+	)
+	return "\n".join(lines)
+
+
 def rerun_command(rerun: wire.GateRerun) -> str:
 	"""The ``camas mcp gate`` invocation that reproduces a verdict — the handle a higher tier
 	or the main agent re-issues against the same scope.
@@ -1311,10 +1337,14 @@ class GateArgs(NamedTuple):
 	under: float | None
 	jobs: int | None
 	dry_run: bool = False
+	nudge: bool = False
+	"""Emit the Stop-hook async-nudge output instead of the JSON verdict: silent exit 0 on green,
+	else the fixer-ladder nudge message on stderr and exit 2, for ``asyncRewake`` to wake the
+	main agent."""
 
 
 def parse_gate_args(argv: list[str]) -> GateArgs:
-	"""Parse ``camas mcp gate [task] [--paths P]… [--under N] [--jobs N]``."""
+	"""Parse ``camas mcp gate [task] [--paths P]… [--under D] [--jobs N] [--nudge]``."""
 	parser = argparse.ArgumentParser(
 		prog="camas mcp gate", description="Run the gate once, headless."
 	)
@@ -1329,7 +1359,7 @@ def parse_gate_args(argv: list[str]) -> GateArgs:
 		help="changed paths to scope to (repeatable, comma-separated)",
 	)
 	parser.add_argument(
-		"--under", type=float, default=None, metavar="SECONDS", help="wall-clock budget"
+		"--under", type=parse_duration, default=None, metavar="DURATION", help="wall-clock budget"
 	)
 	parser.add_argument("--jobs", type=int, default=None, metavar="N", help="max concurrent leaves")
 	parser.add_argument(
@@ -1338,9 +1368,21 @@ def parse_gate_args(argv: list[str]) -> GateArgs:
 		default=False,
 		help="print the resolved path-scoped leaf plan without executing",
 	)
+	parser.add_argument(
+		"--nudge",
+		action="store_true",
+		default=False,
+		help="emit the Stop-hook async-nudge text on stderr and exit 2 when not green, else "
+		"silent exit 0 — for the async Stop hook, not interactive use",
+	)
 	ns = parser.parse_args(argv)
 	return GateArgs(
-		task=ns.task, paths=tuple(ns.paths), under=ns.under, jobs=ns.jobs, dry_run=ns.dry_run
+		task=ns.task,
+		paths=tuple(ns.paths),
+		under=ns.under,
+		jobs=ns.jobs,
+		dry_run=ns.dry_run,
+		nudge=ns.nudge,
 	)
 
 
@@ -1361,10 +1403,11 @@ def gate_cli_load_error(state: TasksState, source: Path, exception: Exception) -
 
 def gate_cli(argv: list[str]) -> int:
 	"""Run the gate once, headless: scope this project's checks to the changed paths (``--paths``,
-	else the files in a ``PostToolBatch`` event on stdin), print the ``GateResponse`` as JSON to
-	stdout, and exit ``0`` (continue) / ``2`` (block) — on a block the agent-facing summary goes
-	to stderr. The process-isolated, machine-readable gate entry that the camas-fixer subagent
-	(via Bash) and the benchmark drive.
+	else the files in a ``PostToolBatch``/``Stop`` event on stdin), print the ``GateResponse`` as
+	JSON to stdout, and exit ``0`` (continue) / ``2`` (block) — on a block the agent-facing
+	summary goes to stderr. With ``--nudge``, prints the Stop-hook nudge text instead of the JSON
+	verdict. The process-isolated, machine-readable gate entry that CI, the async Stop hook, and
+	the benchmark drive — the camas-fixer subagents call the ``camas_gate`` MCP tool instead.
 	"""
 	args = parse_gate_args(argv)
 	base = project_base()
@@ -1420,6 +1463,11 @@ def run_gate_cli(
 	budget = to_budget_report(outcome.budget) if outcome.budget is not None else None
 	rerun = wire.GateRerun(task=args.task, paths=changed, under=args.under)
 	resp = to_gate_response(outcome, budget, rerun)
+	if args.nudge:
+		if resp.decision == "block":
+			print(nudge_text(resp), file=sys.stderr)
+			return 2
+		return 0
 	print(resp.model_dump_json(indent=2))
 	if resp.decision == "block":
 		print(gate_text(resp), file=sys.stderr)
