@@ -53,34 +53,37 @@ real ordering (a mutating step, or one that consumes a prior's output).
 (``github_task`` takes over under GitHub Actions) — so a CI step is just
 ``camas`` (or ``uv run camas``), which won't go stale if you change
 ``github_task``. That same ``github_task`` reproduces CI locally — run it
-before you push to catch a CI failure first: ``camas_list`` surfaces it as
-``github_default`` for an agent to ``camas_run``, and a named CI task
-doubles as a one-line git ``pre-push`` hook.
+before you push to catch a CI failure first: ``camas_list`` surfaces the
+declared ``github_task`` as ``github_default`` for an agent to ``camas_run``
+(``null`` when no ``github_task`` is set — camas never infers it from CI
+workflow files), and a named CI task doubles as a one-line git ``pre-push``
+hook.
 
 These five are the unversioned alias for the latest API generation; to
 pin a generation, import from its namespace (``camas.v0``). See the
 README's Versioning section.
 
-``Config(agent=Claude(fix=..., check=...))`` wires the Claude Code
-plugin's gate. ``fix`` is the deterministic, behavior-preserving autofix
-node the ``PostToolBatch`` hook runs over the changed files (scope it with
-``{paths}``, on a leaf or a whole group; zero model tokens) — declared, not inferred from
-``mutates=``, since a mutating leaf may be a compiler or codegen rather
-than a fixer. A leaf whose command can't take ``{paths}`` (``cargo build``,
-``nix flake check``) instead sets ``when=`` — a directory-prefix string, a
-tuple of prefixes, or a ``(changed) -> bool`` callable — so the gate skips
-it on a scoped run the change doesn't touch, and never consults it on a
-full run; ``by_suffix`` builds a suffix-filtering ``paths`` scope for a
-``{paths}`` leaf that should still run against the whole project on a
-full run. ``check`` is the node the gate validates (``None`` defers
-to ``default_task``/``github_task``), scoped by ``--paths`` and
-time-boxed by ``--under``; the plugin delegates it to a background
-``camas-fixer`` subagent that drives the changed scope to green off the
-main agent's context, rather than blocking on a hook. A checking leaf
-may add ``agent_format=("--output-format sarif", "sarif")`` (kinds:
-``sarif``, ``rdjson``, ``lsp``, ``junit``, ``tap``, ``raw``) so the gate
-collects machine-readable diagnostics — appended only on gate runs, not
-human runs.
+``Config(agent=Claude(fix=..., check=..., default=...))`` wires the Claude
+Code plugin's gate. ``fix`` is the deterministic, behavior-preserving
+autofix node the ``PostToolBatch`` hook runs over the changed files (scope
+it with ``{paths}``, on a leaf or a whole group; zero model tokens) —
+declared, not inferred from ``mutates=``, since a mutating leaf may be a
+compiler or codegen rather than a fixer. A leaf whose command can't take
+``{paths}`` (``cargo build``, ``nix flake check``) instead sets ``when=`` —
+a directory-prefix string, a tuple of prefixes, or a ``(changed) -> bool``
+callable — so the gate skips it on a scoped run the change doesn't touch,
+and never consults it on a full run; ``by_suffix`` builds a suffix-filtering
+``paths`` scope for a ``{paths}`` leaf that should still run against the
+whole project on a full run. ``check`` is the node the gate validates
+(``None`` defers to ``default_task``/``github_task``), scoped by ``--paths``
+and time-boxed by ``--under``; the plugin delegates it to a background
+``camas-fixer`` subagent that drives the changed scope to green off the main
+agent's context, rather than blocking on a hook. A checking leaf may add
+``agent_format=("--output-format sarif", "sarif")`` (kinds: ``sarif``,
+``rdjson``, ``lsp``, ``junit``, ``tap``, ``raw``) so the gate collects
+machine-readable diagnostics — appended only on gate runs, not human runs.
+``default`` is the task a no-task ``camas_run`` runs — ``None`` defers to
+``check``, then ``github_task``/``default_task``.
 
 The MCP server re-executes ``tasks.py`` on every tool call, so a command
 computed from the filesystem at the top level of ``tasks.py`` (a glob, a

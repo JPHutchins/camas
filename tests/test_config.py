@@ -11,6 +11,7 @@ DEFAULT = Task("default", name="default")
 GH = Task("gh", name="gh")
 FIX = Task("fix", name="fix", mutates=True)
 CHECK = Task("check", name="check")
+RUNDEF = Task("rundef", name="rundef")
 
 
 @pytest.mark.parametrize(
@@ -61,3 +62,30 @@ def test_gate_check_prefers_agent_check_else_bare_task() -> None:
 def test_gate_fix_is_the_agent_fix_node_or_none() -> None:
 	assert Config(agent=Claude(fix=FIX)).gate_fix() is FIX
 	assert Config(default_task=DEFAULT).gate_fix() is None
+
+
+@pytest.mark.parametrize(
+	("config", "expected"),
+	[
+		(Config(), None),
+		(Config(default_task=DEFAULT), DEFAULT),
+		(Config(github_task=GH), GH),
+		(Config(default_task=DEFAULT, github_task=GH), GH),
+		(Config(default_task=DEFAULT, agent=Claude(fix=FIX)), DEFAULT),
+		(Config(default_task=DEFAULT, agent=Claude(fix=FIX, check=CHECK)), CHECK),
+		(Config(default_task=DEFAULT, agent=Claude(fix=FIX, default=RUNDEF)), RUNDEF),
+		(
+			Config(
+				default_task=DEFAULT,
+				github_task=GH,
+				agent=Claude(fix=FIX, check=CHECK, default=RUNDEF),
+			),
+			RUNDEF,
+		),
+	],
+)
+def test_run_default_resolves_the_chain(config: Config, expected: Task | None) -> None:
+	"""``run_default`` prefers the agent's ``default``, then ``check``, then the
+	github or default task.
+	"""
+	assert config.run_default() is expected

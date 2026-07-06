@@ -75,3 +75,11 @@ async def test_call_routes_init(tmp_path: Path) -> None:
 	result = await serve.call(_session(tmp_path), "camas_init", {})
 	assert result.isError is False
 	assert (tmp_path / "tasks.py").exists()
+
+
+def test_init_call_repins_version_warning(tmp_path: Path) -> None:
+	session = _session(tmp_path)
+	session.version_warning = "WARNING: stale"
+	result = serve.init_call(session)
+	assert result.isError is False
+	assert session.version_warning is None

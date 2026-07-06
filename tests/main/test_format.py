@@ -15,6 +15,7 @@ from camas.main.format import (
 	format_signature,
 	format_task_summary_listing,
 	format_try_hint,
+	format_version_skew_hint,
 	print_available_effects,
 	print_task_summary_listing,
 	print_task_trees,
@@ -269,6 +270,14 @@ def test_format_try_hint_plain() -> None:
 
 def test_format_try_hint_colored() -> None:
 	assert "\033[" in format_try_hint(color=True)
+
+
+def test_format_version_skew_hint() -> None:
+	out = format_version_skew_hint("0.1.21", "==0.1.22")
+	assert "MCP server is running camas 0.1.21" in out
+	assert "pins camas==0.1.22" in out
+	assert "reconnect the MCP server" in out
+	assert "`uv run tasks.py <task>`" in out
 
 
 def test_format_available_effects_default_color() -> None:

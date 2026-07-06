@@ -20,7 +20,7 @@ DEFAULT_CAMAS_DIR: Final = ".camas"
 
 
 class Claude(NamedTuple):
-	"""The Claude Code agent integration: the explicitly declared fix and check nodes."""
+	"""The Claude Code agent integration: the explicitly declared fix, check, and default nodes."""
 
 	fix: TaskNode
 	"""The deterministic, behavior-preserving autofix node the PostToolBatch hook runs (scoped,
@@ -30,6 +30,10 @@ class Claude(NamedTuple):
 	check: TaskNode | None = None
 	"""The node the gate checks; ``None`` defers to the default (or github) task, scoped by
 	``--paths`` and time-boxed by ``--under``.
+	"""
+	default: TaskNode | None = None
+	"""The task a no-task ``camas_run`` runs; ``None`` defers to the check node, then the
+	github or default task.
 	"""
 
 
@@ -80,3 +84,11 @@ class Config(NamedTuple):
 	def gate_fix(self) -> TaskNode | None:
 		"""The declared deterministic autofix node, or ``None`` when no agent is configured."""
 		return self.agent.fix if self.agent is not None else None
+
+	def run_default(self) -> TaskNode | None:
+		"""The task a no-task ``camas_run`` runs: the agent's ``default``, else the check node,
+		then the github or default task.
+		"""
+		if self.agent is not None and self.agent.default is not None:
+			return self.agent.default
+		return self.gate_check(github=True)

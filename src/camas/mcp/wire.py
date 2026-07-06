@@ -110,11 +110,33 @@ class TaskInfo(BaseModel):
 
 
 class ListResponse(BaseModel):
-	"""The project's task catalog: every task plus the default and CI-default names."""
+	"""The project's task catalog: every task plus the default, CI-default, and no-task-run
+	names.
+	"""
 
 	tasks: tuple[TaskInfo, ...]
-	default: str | None = None
-	github_default: str | None = None
+	default: str | None = Field(
+		default=None,
+		description=(
+			"The task declared as Config(default_task=...) — what the bare CLI runs while the "
+			"developer works; null when no default_task is set."
+		),
+	)
+	github_default: str | None = Field(
+		default=None,
+		description=(
+			"The task declared as Config(github_task=...) — what this project's CI runs; null "
+			"when no github_task is set. Declarative: camas never infers it from CI workflow files."
+		),
+	)
+	run_default: str | None = Field(
+		default=None,
+		description=(
+			"The task a no-task camas_run runs — resolved as Claude default, else Claude check, "
+			"else github_task, else default_task; null when nothing in the chain is configured "
+			"or the resolved task is unnamed."
+		),
+	)
 
 
 class CheckResponse(BaseModel):
@@ -132,6 +154,10 @@ class CheckResponse(BaseModel):
 	checker: Literal["ty", "mypy"] | None = None
 	diagnostics: str | None = None
 	warnings: tuple[str, ...] = ()
+	server_version: str | None = None
+	"""The camas version the MCP server is running; ``null`` when distribution metadata is
+	unavailable.
+	"""
 
 
 class DocsResponse(BaseModel):
@@ -179,9 +205,8 @@ class RunRequest(BaseModel):
 
 	task: str | None = Field(
 		default=None,
-		description="Task name to run — one of the names returned by camas_list. May be "
-		"omitted with 'under' (budgets the default task) or with 'dry_run' (previews "
-		"the default task).",
+		description="Task name to run — one of the names returned by camas_list. Omit to "
+		"run the project's configured default task (also honored by 'under' and 'dry_run').",
 	)
 	under: float | None = Field(
 		default=None,

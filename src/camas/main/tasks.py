@@ -214,7 +214,11 @@ def name_scope_config(scope: Mapping[str, object]) -> Config | None:
 	def promote_agent(agent: Agent | None) -> Agent | None:
 		if agent is None:
 			return None
-		return Claude(fix=promote_required(agent.fix), check=promote_field(agent.check))
+		return Claude(
+			fix=promote_required(agent.fix),
+			check=promote_field(agent.check),
+			default=promote_field(agent.default),
+		)
 
 	return Config(
 		default_task=promote_field(config.default_task),
