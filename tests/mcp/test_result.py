@@ -13,6 +13,7 @@ from camas.main.state import LoadOk
 from camas.mcp import wire
 from camas.mcp.result import (
 	agent_envelopes,
+	has_failing_leaf_without_agent_format,
 	to_agent_envelope,
 	to_check_response,
 	to_run_response,
@@ -203,6 +204,43 @@ def test_agent_envelope_path_mode_over_limit_points_at_report_file(tmp_path: Pat
 	assert str(report_path) in env.payload
 	assert env.log == str(report_path)
 	assert env.truncated is True
+
+
+def test_has_failing_leaf_without_agent_format_true_when_missing() -> None:
+	node = Task(("python", "-c", "raise SystemExit(1)"), name="bad")
+	result = RunResult(
+		returncode=1,
+		results=(TaskResult("bad", Finished(1, 0.1, ())),),
+		elapsed=0.1,
+		interrupt_count=0,
+	)
+	assert has_failing_leaf_without_agent_format(node, result) is True
+
+
+def test_has_failing_leaf_without_agent_format_false_when_present() -> None:
+	node = Task(
+		("python", "-c", "raise SystemExit(1)"),
+		name="bad",
+		agent_format=AgentFormat("--out sarif", "sarif"),
+	)
+	result = RunResult(
+		returncode=1,
+		results=(TaskResult("bad", Finished(1, 0.1, ())),),
+		elapsed=0.1,
+		interrupt_count=0,
+	)
+	assert has_failing_leaf_without_agent_format(node, result) is False
+
+
+def test_has_failing_leaf_without_agent_format_false_when_all_pass() -> None:
+	node = Task(("python", "-c", "pass"), name="ok")
+	result = RunResult(
+		returncode=0,
+		results=(TaskResult("ok", Finished(0, 0.1, ())),),
+		elapsed=0.1,
+		interrupt_count=0,
+	)
+	assert has_failing_leaf_without_agent_format(node, result) is False
 
 
 _PYPROJECT = Path("/proj/pyproject.toml")

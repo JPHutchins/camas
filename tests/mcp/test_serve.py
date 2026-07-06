@@ -288,6 +288,20 @@ async def test_run_call_failure_is_not_a_tool_error(tmp_path: Path) -> None:
 	assert "boom" in log.read_text()
 
 
+async def test_run_call_nudges_when_failing_leaf_has_no_agent_format(tmp_path: Path) -> None:
+	session = _session({"bad": FAIL}, None, tmp_path)
+	result = await serve.run_call(session, {"task": "bad"})
+	text = _text(result)
+	assert "Tip:" in text
+	assert "agent_format" in text
+
+
+async def test_run_call_omits_nudge_when_passing(tmp_path: Path) -> None:
+	session = _session({"lint": PASS}, None, tmp_path)
+	result = await serve.run_call(session, {"task": "lint"})
+	assert "Tip:" not in _text(result)
+
+
 async def test_run_call_skipped_reports_blocker(tmp_path: Path) -> None:
 	session = _session({"ci": Sequential(FAIL, PASS, name="ci")}, None, tmp_path)
 	result = await serve.run_call(session, {"task": "ci"})
@@ -1370,6 +1384,29 @@ async def test_gate_call_block_when_check_fails(tmp_path: Path) -> None:
 	assert not result.isError
 	assert "BLOCK" in text
 	assert "bad" in text
+
+
+async def test_gate_call_nudges_when_failing_leaf_has_no_agent_format(tmp_path: Path) -> None:
+	node = Parallel(GATE_FIX, FAIL)
+	session = _session({"all": node}, Config(default_task=node), tmp_path)
+	result = await serve.call(session, "camas_gate", {"task": "all"})
+	text = _text(result)
+	assert "Tip:" in text
+	assert "agent_format" in text
+
+
+async def test_gate_call_omits_nudge_when_failing_leaf_has_agent_format(tmp_path: Path) -> None:
+	tagged_fail = Task(
+		("python", "-c", "import sys; sys.exit(3)"),
+		name="bad",
+		agent_format=AgentFormat("--quiet", "sarif"),
+	)
+	node = Parallel(GATE_FIX, tagged_fail)
+	session = _session({"all": node}, Config(default_task=node), tmp_path)
+	result = await serve.call(session, "camas_gate", {"task": "all"})
+	text = _text(result)
+	assert "BLOCK" in text
+	assert "Tip:" not in text
 
 
 async def test_gate_call_path_mode_reads_report_file(tmp_path: Path) -> None:

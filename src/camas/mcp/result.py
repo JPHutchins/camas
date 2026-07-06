@@ -291,6 +291,18 @@ def agent_envelopes(
 	)
 
 
+def has_failing_leaf_without_agent_format(node: TaskNode, result: RunResult) -> bool:
+	"""True when a non-skipped failing leaf's task has no ``agent_format`` — its output is
+	unstructured raw text rather than a tagged, machine-readable diagnostic.
+	"""
+	leaves = tuple(info.task for info in flatten_leaves(expand_matrix(node)))
+	return any(
+		task.agent_format is None
+		for task, tr in zip(leaves, result.results, strict=True)
+		if not isinstance(tr.completion, Skipped) and tr.completion.returncode != 0
+	)
+
+
 def to_gate_response(
 	outcome: GateOutcome, budget: wire.BudgetReport | None, rerun: wire.GateRerun
 ) -> wire.GateResponse:
