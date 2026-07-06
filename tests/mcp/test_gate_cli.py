@@ -43,6 +43,19 @@ def test_parse_gate_args_defaults() -> None:
 	assert serve.parse_gate_args([]) == serve.GateArgs(task=None, paths=(), under=None, jobs=None)
 
 
+def test_parse_gate_args_under_accepts_duration_suffix() -> None:
+	"""``--under`` takes a suffixed duration, not just a bare number of seconds — the top-level
+	``camas --under`` gotcha (argparse ``type=float`` rejecting ``5s``) fixed for ``camas mcp
+	gate`` too."""
+	assert serve.parse_gate_args(["--under", "5s"]).under == 5.0
+	assert serve.parse_gate_args(["--under", "500ms"]).under == 0.5
+
+
+def test_parse_gate_args_nudge_flag() -> None:
+	assert serve.parse_gate_args(["--nudge"]).nudge is True
+	assert serve.parse_gate_args([]).nudge is False
+
+
 def test_rerun_command() -> None:
 	rerun = wire.GateRerun(task="check", paths=("a.py", "b.py"), under=5.0)
 	assert (
@@ -96,6 +109,47 @@ def test_gate_cli_block_prints_residual_to_stderr(
 	captured = capsys.readouterr()
 	assert json.loads(captured.out)["decision"] == "block"
 	assert "Re-gate this scope: camas mcp gate" in captured.err
+
+
+def test_gate_cli_nudge_green_is_silent(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	_chdir_project(tmp_path, monkeypatch, "FIXME")
+	(tmp_path / "sample.py").write_text("ok = 1\n")
+	assert serve.gate_cli(["--paths", "sample.py", "--nudge"]) == 0
+	captured = capsys.readouterr()
+	assert captured.out == ""
+	assert captured.err == ""
+
+
+def test_gate_cli_nudge_block_prints_fixer_ladder_nudge_to_stderr(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	_chdir_project(tmp_path, monkeypatch, "FIXME")
+	(tmp_path / "sample.py").write_text("FIXME\n")
+	assert serve.gate_cli(["--paths", "sample.py", "--nudge"]) == 2
+	captured = capsys.readouterr()
+	assert captured.out == ""
+	assert "camas-lint-fixer-haiku" in captured.err
+	assert "camas-test-fixer" in captured.err
+	assert "not green" in captured.err
+
+
+def test_nudge_text_quotes_diagnostics() -> None:
+	resp = wire.GateResponse(
+		decision="block",
+		residual_class="needs_reasoning",
+		diagnostics=(
+			wire.AgentEnvelope(
+				name="lint", exit_code=1, output_kind="raw", payload="x", truncated=True
+			),
+		),
+		rerun=wire.GateRerun(),
+	)
+	text = serve.nudge_text(resp)
+	assert "lint (exit 1, raw)" in text
+	assert "… earlier output truncated" in text
+	assert "camas-lint-fixer-sonnet" in text
 
 
 def test_gate_cli_reads_stdin_event(

@@ -5,7 +5,7 @@
 through the script entry ``uv run --script tasks.py mcp …`` — the non-Python-repo compat the
 recent ``run_cli`` ``mcp`` routing (``dea221e`` / #160) added.
 
-Happy path: ``uv run --script tasks.py mcp init --claude`` writes the four files; the
+Happy path: ``uv run --script tasks.py mcp init --claude`` writes the generated files; the
 ``.mcp.json`` camas entry uses the ``uv`` launcher (a PEP 723 ``tasks.py`` with a camas
 dependency → ``launch_command`` emits ``uv run tasks.py mcp`` — criterion #4, no bare ``camas``).
 
@@ -54,7 +54,9 @@ _TASKS = (
 _INIT_FILES = (
 	".mcp.json",
 	".claude/settings.json",
-	".claude/agents/camas-fixer.md",
+	".claude/agents/camas-lint-fixer-haiku.md",
+	".claude/agents/camas-lint-fixer-sonnet.md",
+	".claude/agents/camas-test-fixer.md",
 	".claude/skills/gate/SKILL.md",
 )
 

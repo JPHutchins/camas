@@ -3,7 +3,7 @@
 
 """``camas mcp init --claude`` produces a loadable plugin surface (criterion #1 + #4).
 
-Happy path: in a tmp_path with a tasks.py and a uv.lock, ``init --claude`` writes the four
+Happy path: in a tmp_path with a tasks.py and a uv.lock, ``init --claude`` writes the generated
 files; the ``.mcp.json`` camas entry uses a ``uv`` or ``uvx`` launcher (criterion #4 — no bare
 ``camas``); and a headless ``claude -p --strict-mcp-config`` loads the produced config and calls
 the ``camas_list`` MCP tool without error.
@@ -52,7 +52,9 @@ _TASKS = "from camas import Config\n_ = Config()\n"
 _INIT_FILES = (
 	".mcp.json",
 	".claude/settings.json",
-	".claude/agents/camas-fixer.md",
+	".claude/agents/camas-lint-fixer-haiku.md",
+	".claude/agents/camas-lint-fixer-sonnet.md",
+	".claude/agents/camas-test-fixer.md",
 	".claude/skills/gate/SKILL.md",
 )
 
@@ -105,7 +107,7 @@ def _init_claude(tmp_path: Path) -> subprocess.CompletedProcess[str]:
 	return proc
 
 
-def test_init_claude_writes_four_files_and_mcp_uses_portable_launcher(
+def test_init_claude_writes_generated_files_and_mcp_uses_portable_launcher(
 	tmp_path: Path,
 	run_headless: Callable[..., CompletedProcess[str]],
 ) -> None:

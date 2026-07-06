@@ -439,7 +439,76 @@ def test_write_hooks_writes_settings_json(
 	assert post_tool_batch["type"] == "command"
 	assert post_tool_batch["command"] == "camas mcp fix"
 	assert "FileChanged" not in settings["hooks"]
-	assert "PostToolBatch autofix hook" in capsys.readouterr().out
+	assert "Wrote the camas autofix and Stop hooks" in capsys.readouterr().out
+
+
+def test_write_hooks_writes_stop_fix_and_async_nudge_hooks(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	"""The two Stop hooks from #168's design: a plain (synchronous) settle-time fix, and an
+	``async``/``asyncRewake`` check that nudges the main agent to launch the fixer ladder when
+	the workspace is not green — coexisting with the unrelated PostToolBatch autofix hook."""
+	monkeypatch.chdir(tmp_path)
+	monkeypatch.setattr("shutil.which", _which("camas"))
+	assert write_hooks([]) == 0
+	settings = json.loads((tmp_path / ".claude" / "settings.json").read_text())
+	stop_hooks = settings["hooks"]["Stop"][0]["hooks"]
+	fix_hook, nudge_hook = stop_hooks
+	assert fix_hook == {"type": "command", "command": "camas mcp fix"}
+	assert nudge_hook["type"] == "command"
+	assert nudge_hook["command"] == "camas mcp gate --under 5s --nudge"
+	assert nudge_hook["async"] is True
+	assert nudge_hook["asyncRewake"] is True
+	assert settings["hooks"]["PostToolBatch"][0]["hooks"][0]["command"] == "camas mcp fix"
+	out = capsys.readouterr().out
+	assert "Stop (fix):         camas mcp fix" in out
+	assert "Stop (async nudge): camas mcp gate --under 5s --nudge" in out
+
+
+def test_write_hooks_stop_hooks_are_idempotent(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	monkeypatch.chdir(tmp_path)
+	monkeypatch.setattr("shutil.which", _which("camas"))
+	assert write_hooks([]) == 0
+	assert write_hooks([]) == 0
+	settings = json.loads((tmp_path / ".claude" / "settings.json").read_text())
+	assert len(settings["hooks"]["Stop"]) == 1
+	assert len(settings["hooks"]["Stop"][0]["hooks"]) == 2
+	assert len(settings["hooks"]["PostToolBatch"]) == 1
+
+
+def test_write_hooks_sweeps_stale_stop_hook_preserving_user_stop_hooks(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	"""A stale camas ``Stop`` hook (e.g. an older ``--nudge`` flag shape) is replaced on re-init,
+	while a user's own unrelated ``Stop`` hook in the same group is preserved."""
+	monkeypatch.chdir(tmp_path)
+	monkeypatch.setattr("shutil.which", _which("camas"))
+	(tmp_path / ".claude").mkdir(parents=True)
+	(tmp_path / ".claude" / "settings.json").write_text(
+		json.dumps(
+			{
+				"hooks": {
+					"Stop": [
+						{
+							"hooks": [
+								{"type": "command", "command": "camas mcp gate --nudge"},
+								{"type": "command", "command": "echo done"},
+							]
+						}
+					]
+				}
+			}
+		)
+	)
+	assert write_hooks([]) == 0
+	hooks = json.loads((tmp_path / ".claude" / "settings.json").read_text())["hooks"]
+	stop_commands = [h["command"] for g in hooks["Stop"] for h in g["hooks"]]
+	assert "echo done" in stop_commands
+	assert "camas mcp gate --nudge" not in stop_commands
+	assert "camas mcp fix" in stop_commands
+	assert "camas mcp gate --under 5s --nudge" in stop_commands
 
 
 def test_write_hooks_errors_when_no_launcher(
@@ -682,9 +751,10 @@ def test_write_hooks_preserves_key_order_and_omits_matcher(
 	assert write_hooks([]) == 0
 	settings = json.loads((tmp_path / ".claude" / "settings.json").read_text())
 	assert list(settings.keys()) == ["$schema", "permissions", "hooks"]
-	assert list(settings["hooks"].keys()) == ["PreToolUse", "PostToolBatch"]
+	assert list(settings["hooks"].keys()) == ["PreToolUse", "PostToolBatch", "Stop"]
 	assert "matcher" not in settings["hooks"]["PreToolUse"][0]
 	assert "matcher" not in settings["hooks"]["PostToolBatch"][0]
+	assert "matcher" not in settings["hooks"]["Stop"][0]
 	assert settings["hooks"]["PostToolBatch"][0]["hooks"][0]["command"] == "camas mcp fix"
 
 
@@ -710,7 +780,14 @@ def test_write_hooks_removes_camas_only_groups(
 	assert ptb[0]["hooks"][0]["command"] == "camas mcp fix"
 
 
-def test_write_claude_writes_all_four_files(
+_TIERED_AGENT_FILES = (
+	"camas-lint-fixer-haiku.md",
+	"camas-lint-fixer-sonnet.md",
+	"camas-test-fixer.md",
+)
+
+
+def test_write_claude_writes_all_generated_files(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
 	monkeypatch.chdir(tmp_path)
@@ -724,11 +801,12 @@ def test_write_claude_writes_all_four_files(
 	assert (tmp_path / ".claude" / "settings.json").exists()
 	settings = json.loads((tmp_path / ".claude" / "settings.json").read_text())
 	assert "PostToolBatch" in settings["hooks"]
-	# agent
-	agent = (tmp_path / ".claude" / "agents" / "camas-fixer.md").read_text()
-	assert "name: camas-fixer" in agent
-	assert "mcp__camas__camas_gate" in agent
-	assert "mcp__camas__camas_fix" in agent
+	assert "Stop" in settings["hooks"]
+	# tiered agents
+	for filename in _TIERED_AGENT_FILES:
+		agent = (tmp_path / ".claude" / "agents" / filename).read_text()
+		assert "mcp__camas__camas_gate" in agent
+		assert "mcp__camas__camas_fix" in agent
 	# skill
 	skill = (tmp_path / ".claude" / "skills" / "gate" / "SKILL.md").read_text()
 	assert "name: gate" in skill
@@ -744,7 +822,8 @@ def test_write_claude_stops_on_mcp_json_failure(
 	monkeypatch.setattr("shutil.which", _which())
 	assert write_claude([]) == 2
 	assert not (tmp_path / ".claude" / "settings.json").exists()
-	assert not (tmp_path / ".claude" / "agents" / "camas-fixer.md").exists()
+	for filename in _TIERED_AGENT_FILES:
+		assert not (tmp_path / ".claude" / "agents" / filename).exists()
 
 
 def test_write_claude_idempotent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -752,10 +831,10 @@ def test_write_claude_idempotent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 	monkeypatch.setattr("shutil.which", _which("camas"))
 	# First run
 	assert write_claude([]) == 0
-	mtime1 = (tmp_path / ".claude" / "agents" / "camas-fixer.md").stat().st_mtime
+	mtime1 = (tmp_path / ".claude" / "agents" / "camas-lint-fixer-haiku.md").stat().st_mtime
 	# Second run should overwrite
 	assert write_claude([]) == 0
-	mtime2 = (tmp_path / ".claude" / "agents" / "camas-fixer.md").stat().st_mtime
+	mtime2 = (tmp_path / ".claude" / "agents" / "camas-lint-fixer-haiku.md").stat().st_mtime
 	assert mtime2 > mtime1
 
 
@@ -816,7 +895,8 @@ def test_mcp_cli_init_claude_routes_to_write_claude(
 	assert exc.value.code == 0
 	assert (tmp_path / ".mcp.json").exists()
 	assert (tmp_path / ".claude" / "settings.json").exists()
-	assert (tmp_path / ".claude" / "agents" / "camas-fixer.md").exists()
+	for filename in _TIERED_AGENT_FILES:
+		assert (tmp_path / ".claude" / "agents" / filename).exists()
 	assert (tmp_path / ".claude" / "skills" / "gate" / "SKILL.md").exists()
 
 
@@ -939,9 +1019,9 @@ def test_write_agent_skill_templates_creates_dirs_and_files(
 ) -> None:
 	monkeypatch.chdir(tmp_path)
 	write_agent_skill_templates()
-	agent = (tmp_path / ".claude" / "agents" / "camas-fixer.md").read_text()
-	assert "name: camas-fixer" in agent
-	assert "mcp__camas__camas_gate" in agent
+	for filename in _TIERED_AGENT_FILES:
+		agent = (tmp_path / ".claude" / "agents" / filename).read_text()
+		assert "mcp__camas__camas_gate" in agent
 	skill = (tmp_path / ".claude" / "skills" / "gate" / "SKILL.md").read_text()
 	assert "name: gate" in skill
 
@@ -1111,5 +1191,6 @@ def test_write_claude_stops_on_hooks_failure(
 	(tmp_path / ".claude" / "settings.json").write_text("{not valid json")
 	assert write_claude([]) == 2
 	assert (tmp_path / ".mcp.json").exists()
-	assert not (tmp_path / ".claude" / "agents" / "camas-fixer.md").exists()
+	for filename in _TIERED_AGENT_FILES:
+		assert not (tmp_path / ".claude" / "agents" / filename).exists()
 	assert not (tmp_path / ".claude" / "skills" / "gate" / "SKILL.md").exists()
