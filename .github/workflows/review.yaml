@@ -57,7 +57,7 @@ jobs:
           node-version: "22"
 
       # Install the CLI and the deterministic commenter.
-      - run: npm install -g @anthropic-ai/claude-code@2.1.197 @jphutchins/code-review@0.1.0-alpha.2
+      - run: npm install -g @anthropic-ai/claude-code@2.1.197 @jphutchins/code-review@0.1.0-alpha.3
 
       # Install project deps so the agent can validate findings — swap this for your ecosystem's
       # install command. uv comes from PyPI (already allowlisted) rather than astral-sh/setup-uv,
@@ -143,7 +143,7 @@ jobs:
           ANTHROPIC_BASE_URL: ${{ vars.API_BASE_URL }}
           ANTHROPIC_AUTH_TOKEN: ${{ secrets.MODEL_API_KEY }}
           ANTHROPIC_MODEL: deepseek-v4-pro
-          CLAUDE_CODE_EFFORT_LEVEL: max
+          CLAUDE_CODE_EFFORT_LEVEL: xhigh
         run: |
           set -euo pipefail
 
@@ -175,11 +175,8 @@ jobs:
             --disallowedTools "Read(/proc/**)" "Read(/sys/**)" "Grep(/proc/**)" \
             --strict-mcp-config \
             --output-format json \
-            --json-schema "$(code-review print-schema triage | jq -c 'del(."$schema")')" \
+            --json-schema "$(code-review print-schema triage)" \
             >triage.json
-          # del(."$schema"): the CLI's structured-output enforcement silently ignores a schema
-          # that carries the draft declaration — structured_output comes back null and the model
-          # never sees the field names. $id is tolerated; only "$schema" breaks it.
           code-review extract triage.json --adapter claude-code --kind triage >triage.parsed.json
           jq -c . triage.parsed.json
 
@@ -223,7 +220,7 @@ jobs:
           # Route + effort are decided once here and stamped into the envelope by `adapt` below,
           # so the comment footer reflects the run instead of re-deriving and risking drift.
           if [ "$CONCLUSION" = "success" ]; then
-            ROUTE="full review"; EFFORT="max"
+            ROUTE="full review"; EFFORT="xhigh"
             PROMPT="/code-review"
           else
             ROUTE="mechanic"; EFFORT="low"
@@ -250,7 +247,7 @@ jobs:
             --permission-mode bypassPermissions \
             --strict-mcp-config \
             --output-format json \
-            --json-schema "$(code-review print-schema findings | jq -c 'del(."$schema")')" \
+            --json-schema "$(code-review print-schema findings)" \
             --append-system-prompt "You are reviewing a PR inside a throwaway CI runner with no write access to the repo — the change is already applied to the working tree. Validate findings freely: run this project's checks (see its README/contributing docs) and edit or run code as needed to confirm a bug or a candidate fix. Your only deliverable is the review, as structured JSON. Before you finish, write your findings JSON — the object conforming to the findings schema — to the file $DRAFT (this absolute path is outside the repository working tree; write there, not to a same-named file inside the repo). Then run \`code-review validate $DRAFT\` and, if it exits non-zero, fix the file and re-run until it exits 0. $DRAFT is your authoritative deliverable; do not end your turn until it validates." \
             >envelope.json
 
@@ -334,7 +331,7 @@ jobs:
         with:
           node-version: "22"
 
-      - run: npm install -g @jphutchins/code-review@0.1.0-alpha.2
+      - run: npm install -g @jphutchins/code-review@0.1.0-alpha.3
 
       # Lock egress — the GitHub API + the blob host for artifact download (§8.4), plus npm for the
       # commenter install (harden-runner enforces from its pre-step, so setup is covered too)
