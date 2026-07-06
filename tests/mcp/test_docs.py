@@ -22,3 +22,9 @@ def test_to_docs_response_serves_init_docstring() -> None:
 		assert token in resp.tutorial
 	init = (Path(resp.source) / "__init__.py").read_text(encoding="utf-8")
 	assert resp.tutorial == ast.get_docstring(ast.parse(init))
+
+
+def test_docs_states_github_default_is_declared() -> None:
+	resp = to_docs_response()
+	assert "github_task" in resp.tutorial
+	assert "never infers" in resp.tutorial

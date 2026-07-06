@@ -9,7 +9,7 @@ name: Claude Code hook harness
 # PostToolBatch hook fires, and the fixer reaches green via the MCP camas_gate tool.
 #
 # It uses the same DeepSeek backend the agentic review workflow does (ANTHROPIC_BASE_URL +
-# ANTHROPIC_AUTH_TOKEN=DEEPSEEK_API_KEY, a burner key with a hard spend cap), on the cheap
+# ANTHROPIC_AUTH_TOKEN=MODEL_API_KEY, a burner key with a hard spend cap), on the cheap
 # deepseek-v4-flash tier. The schedule catches a Claude Code release changing the contract even
 # when camas itself has not changed.
 on:
@@ -74,12 +74,12 @@ jobs:
           CAMAS_CC_E2E: "1"
           CAMAS_CC_MODEL: deepseek-v4-flash
           ANTHROPIC_BASE_URL: https://api.deepseek.com/anthropic
-          ANTHROPIC_AUTH_TOKEN: ${{ secrets.DEEPSEEK_API_KEY }}
+          ANTHROPIC_AUTH_TOKEN: ${{ secrets.MODEL_API_KEY }}
           # The camas-fixer subagent is model: haiku; point the haiku tier at DeepSeek so the
           # fixer-loop test (criterion #3) drives a real subagent round-trip, as claude-code-review does.
           ANTHROPIC_DEFAULT_HAIKU_MODEL: deepseek-v4-flash
           CLAUDE_CODE_SUBAGENT_MODEL: deepseek-v4-flash
           UV_PYTHON_DOWNLOADS: never
         run: |
-          [ -n "$ANTHROPIC_AUTH_TOKEN" ] || { echo "::error::DEEPSEEK_API_KEY secret is not set"; exit 1; }
+          [ -n "$ANTHROPIC_AUTH_TOKEN" ] || { echo "::error::MODEL_API_KEY secret is not set"; exit 1; }
           uv run --python 3.12 pytest tests/claude_code/ -v --no-cov -p no:cacheprovider

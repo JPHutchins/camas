@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 import pytest
 
-from camas import Config, Parallel, Sequential, Task
+from camas import Claude, Config, Parallel, Sequential, Task
 from camas.main import main
 from camas.main.dispatch import dispatch_arg, run_cli
 from camas.main.expression import (
@@ -786,6 +786,20 @@ def test_name_scope_config_promotes_aliased_task_fields() -> None:
 	assert resolved.default_task == Parallel(
 		Task("mypy .", name="mypy"), Task("pyright .", name="pyright"), name="ci"
 	)
+
+
+def test_name_scope_config_promotes_agent_default() -> None:
+	"""A ``Claude.default`` field aliasing a top-level binding runs with that binding's
+	propagated name, matching :func:`name_scope_bindings`."""
+	rundef = Task("pytest")
+	scope: dict[str, object] = {
+		"rundef": rundef,
+		"_": Config(agent=Claude(fix=Task("ruff --fix"), default=rundef)),
+	}
+	resolved = name_scope_config(scope)
+	assert resolved is not None
+	assert resolved.agent is not None
+	assert resolved.agent.default == Task("pytest", name="rundef")
 
 
 def test_name_scope_config_keeps_inline_task_field() -> None:

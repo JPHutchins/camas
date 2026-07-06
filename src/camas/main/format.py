@@ -110,6 +110,24 @@ def format_load_error_hint(source: Path, exception: Exception) -> str:
 	)
 
 
+def format_version_skew_hint(running: str, spec: str) -> str:
+	"""Hint shown when the running MCP server's camas version does not satisfy
+	``tasks.py``'s pin — points the caller at reconnecting, and at the
+	``uv run tasks.py`` fallback that resolves the pin fresh per invocation.
+
+	>>> "reconnect the MCP server" in format_version_skew_hint("0.1.21", "==0.1.22")
+	True
+	>>> "uv run tasks.py" in format_version_skew_hint("0.1.21", "==0.1.22")
+	True
+	"""
+	return (
+		f"MCP server is running camas {running} but tasks.py pins camas{spec} — "
+		"reconnect the MCP server to pick up the new version.\n\n"
+		"Run the task directly with `uv run tasks.py <task>` in the meantime: it resolves the "
+		"pinned camas version fresh per invocation, so it works while the server is stale."
+	)
+
+
 def format_scope_warnings(tasks: Mapping[str, TaskNode]) -> str:
 	"""Render every :func:`camas.core.scope.scope_warnings` message across the raw trees in
 	``tasks``, deduplicated (a node shared by two names warns once) and one per line —

@@ -166,3 +166,30 @@ def test_check_version_pin_missing_distribution_returns_none(
 
 	monkeypatch.setattr(serve_mod, "version", _raise)
 	assert check_version_pin(state) is None
+
+
+def test_version_skew_returns_running_and_spec(tmp_path: Path) -> None:
+	"""``version_skew`` exposes the structured (running, pin) pair ``check_version_pin`` renders."""
+	from importlib.metadata import version as _camas_version
+
+	from camas.mcp import serve
+
+	(tmp_path / "tasks.py").write_text(
+		'# /// script\n# dependencies = ["camas==999.0.0"]\n# ///\n'
+		"from camas import Task\nlint = Task('echo hi')\n"
+	)
+	state = serve.resolve_project(tmp_path)
+	assert isinstance(state, LoadOk)
+	assert serve.version_skew(state) == serve.VersionSkew(
+		running=_camas_version("camas"), spec="==999.0.0"
+	)
+
+
+def test_version_skew_none_without_pin(tmp_path: Path) -> None:
+	"""No PEP 723 ``camas`` block means no skew."""
+	from camas.mcp import serve
+
+	(tmp_path / "tasks.py").write_text("from camas import Task\nlint = Task('echo hi')\n")
+	state = serve.resolve_project(tmp_path)
+	assert isinstance(state, LoadOk)
+	assert serve.version_skew(state) is None

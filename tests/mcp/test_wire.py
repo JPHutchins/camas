@@ -98,6 +98,11 @@ def test_list_response_markers() -> None:
 	assert listing.github_default is None
 
 
+def test_list_response_github_default_schema_description() -> None:
+	description = ListResponse.model_json_schema()["properties"]["github_default"]["description"]
+	assert "Config(github_task" in description
+
+
 def test_check_response_defaults_and_rejects_bad_status() -> None:
 	resp = CheckResponse(status="ok", source="/x/tasks.py", task_count=3, checker="ty")
 	assert (resp.diagnostics, resp.task_count, resp.warnings) == (None, 3, ())
@@ -109,6 +114,12 @@ def test_check_response_warnings_round_trip() -> None:
 	resp = CheckResponse(
 		status="ok", source="/x/tasks.py", task_count=1, warnings=("inert paths on 'cargo'",)
 	)
+	assert CheckResponse.model_validate(resp.model_dump()) == resp
+
+
+def test_check_response_server_version_round_trip() -> None:
+	assert CheckResponse(status="ok").server_version is None
+	resp = CheckResponse(status="ok", server_version="1.2.3")
 	assert CheckResponse.model_validate(resp.model_dump()) == resp
 
 

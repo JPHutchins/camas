@@ -35,7 +35,7 @@ from ..core.render import render_tree_lines, strip_ansi
 from ..core.scope import scope_to_changed, to_changed, with_default_paths
 from ..core.task import task_label
 from ..main.argv import apply_passthrough
-from ..main.format import format_load_error_hint
+from ..main.format import format_load_error_hint, format_version_skew_hint
 from ..main.init import create_starter_tasks_py, starter_text
 from ..main.pep723 import camas_requirement_from, version_specifier
 from ..main.state import EMPTY_STATE, LoadErr, LoadOk, TasksState
@@ -96,6 +96,11 @@ INIT_ANNOTATIONS: Final = types.ToolAnnotations(
 	readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False
 )
 RUN_LOG_KEEP: Final = 10
+NO_RUN_DEFAULT_MSG: Final = (
+	"camas_run has no task to run: name a task, or set a project default in tasks.py — "
+	"Config(default_task=…), Config(github_task=…), or "
+	"Config(agent=Claude(fix=…, default=…))."
+)
 
 
 class Compat(NamedTuple):
@@ -151,12 +156,32 @@ def project_source(state: TasksState) -> Path | None:
 			assert_never(state)
 
 
+class VersionSkew(NamedTuple):
+	"""The running camas version and the PEP 723 pin it fails to satisfy."""
+
+	running: str
+	spec: str
+
+
 def check_version_pin(state: TasksState) -> str | None:
 	"""Compare the running camas version against the PEP 723 pin in the project's ``tasks.py``.
 
 	Uses a lightweight parse (``==``, ``>=``, ``>``, ``<=``, ``<``) that avoids a ``packaging``
 	dependency. ``!=``, ``~=``, and comma-separated compound specifiers are skipped rather than
 	risking a false positive — we err toward silence. Only a single specifier is checked.
+	"""
+	skew = version_skew(state)
+	if skew is None:
+		return None
+	return (
+		f"camas {skew.running} does not satisfy tasks.py pin {skew.spec}; "
+		f"re-run `camas mcp init --claude` after bumping"
+	)
+
+
+def version_skew(state: TasksState) -> VersionSkew | None:
+	"""The (running, pin) pieces when the running camas version does not satisfy the project's
+	PEP 723 pin, else ``None`` — the structural form of :func:`check_version_pin`.
 	"""
 	source = project_source(state)
 	if source is None:
@@ -167,16 +192,20 @@ def check_version_pin(state: TasksState) -> str | None:
 	spec = version_specifier(req)
 	if spec is None:
 		return None
-	try:
-		running = version("camas")
-	except PackageNotFoundError:
+	running = running_version()
+	if running is None:
 		return None
 	if version_satisfies(running, spec):
 		return None
-	return (
-		f"camas {running} does not satisfy tasks.py pin {spec}; "
-		f"re-run `camas mcp init --claude` after bumping"
-	)
+	return VersionSkew(running=running, spec=spec)
+
+
+def running_version() -> str | None:
+	"""The installed camas distribution version, or ``None`` when metadata is unavailable."""
+	try:
+		return version("camas")
+	except PackageNotFoundError:
+		return None
 
 
 def version_satisfies(running: str, specifier: str) -> bool:
@@ -366,9 +395,11 @@ def tools(task_names: tuple[str, ...], compat: Compat) -> Tools:
 				unexpanded template by default (their axis values are listed separately, which
 				keeps discovery compact); pass expand_matrix=true to inline every resolved leaf
 				recursively. Two tasks are flagged: the default (what the developer runs while
-				working) and the github default — the exact task this project's CI runs (camas
-				is the single definition shared by local and CI), so running it locally before
-				you commit or push reproduces CI exactly. Tasks whose leaves have been timed also
+				working) and the github default — the exact task this project's CI runs,
+				declared via Config(github_task=...) (camas is the single definition shared by
+				local and CI), so running it locally before you commit or push reproduces CI
+				exactly; github_default is null when the project declares no github_task (camas
+				never infers it from CI workflow files). Tasks whose leaves have been timed also
 				carry an estimated duration and their slowest leaf, so you can pick a quick task
 				for the inner loop and the thorough one before committing. Use this first to
 				discover valid task names for camas_run; it is the source of truth. Read-only;
@@ -397,8 +428,8 @@ def tools(task_names: tuple[str, ...], compat: Compat) -> Tools:
 				whose recorded estimate fits — mutating leaves (formatters) first, then the
 				read-only rest in parallel; omit task to budget the project default. Compact
 				failures-first summary by default; dry_run=true previews the fully-resolved plan
-				without executing. A non-zero result means a task failed — a normal result, not a
-				tool error.
+				without executing. Omit task entirely to run the project's configured default. A
+				non-zero result means a task failed — a normal result, not a tool error.
 			""").strip(),
 			input_schema=wire.run_input_schema(task_names),
 			output_model=wire.RunResponse,
@@ -506,7 +537,7 @@ def list_call(session: Session, arguments: dict[str, Any]) -> types.CallToolResu
 		return error_result(f"invalid camas_list arguments:\n{e}")
 	match session.project:
 		case LoadErr(source=source, exception=exception):
-			return error_result(format_load_error_hint(source, exception))
+			return error_result(load_error_hint(session, source, exception))
 		case LoadOk(tasks=tasks, config=config):
 			resp = to_list_response(
 				tasks, config, timings.load(session.camas_dir), expand=req.expand_matrix
@@ -523,7 +554,9 @@ def list_call(session: Session, arguments: dict[str, Any]) -> types.CallToolResu
 def check_call(session: Session) -> types.CallToolResult:
 	"""Handle ``camas_check``: re-resolve and re-pin the project from disk, then validate it."""
 	session.project = resolve_project_quiet(session.base)
-	resp = to_check_response(session.project)
+	resp = to_check_response(session.project).model_copy(
+		update={"server_version": running_version()}
+	)
 	return success(with_warning(session, check_text(resp)), resp, session.compat)
 
 
@@ -553,7 +586,7 @@ async def run_call(session: Session, arguments: dict[str, Any]) -> types.CallToo
 	"""Handle ``camas_run``: validate, resolve the node, then dry-run or execute in-process."""
 	match session.project:
 		case LoadErr(source=source, exception=exception):
-			return error_result(format_load_error_hint(source, exception))
+			return error_result(load_error_hint(session, source, exception))
 		case LoadOk(tasks=tasks, config=config):
 			return await run_for(session, tasks, config, arguments)
 		case _:
@@ -599,29 +632,29 @@ def resolve_run_node(
 	"""The ``(name, node)`` to run: looked up by name, then matrix-overridden and
 	passthrough-appended.
 
-	When ``dry_run=true`` and ``task`` is omitted, resolves the project's default task
-	so a bare dry-run previews it without erroring.
+	When ``task`` is omitted, resolves the project's configured default task —
+	honored identically for a normal run and a ``dry_run`` preview.
 
 	Raises:
-		ValueError: when ``req.task`` is omitted outside a dry-run, names no task, an
-			override targets an unknown matrix axis, or passthrough args are applied to
-			a non-leaf task.
+		ValueError: when ``req.task`` is omitted and no default is configured, names
+			no task, an override targets an unknown matrix axis, or passthrough args
+			are applied to a non-leaf task.
 	"""
 	if req.task is None:
-		if req.dry_run and config is not None:
-			default = config.gate_check(github=False)
-			if default is not None:
-				return "default task", default
-		raise ValueError("camas_run requires 'task' (or pass 'under' to budget the default task)")
-	if req.task not in tasks:
+		default = config.run_default() if config is not None else None
+		if default is None:
+			raise ValueError(NO_RUN_DEFAULT_MSG)
+		name, node = default.name or "default task", default
+	elif req.task not in tasks:
 		known = ", ".join(sorted(tasks)) or "none"
 		raise ValueError(f"no task named {req.task!r} (known: {known})")
-	node = tasks[req.task]
+	else:
+		name, node = req.task, tasks[req.task]
 	if req.matrix_overrides:
 		node = override_matrix(node, {k: tuple(v) for k, v in req.matrix_overrides.items()})
 	if req.args:
 		node = apply_passthrough(node, tuple(req.args))
-	return req.task, node
+	return name, node
 
 
 async def run_budget(
@@ -636,13 +669,13 @@ async def run_budget(
 		return error_result("camas_run: 'args' (passthrough) cannot be combined with 'under'")
 	try:
 		source = budget_source(tasks, config, req.task)
+		label = req.task or source.name or "default task"
 		if req.matrix_overrides:
 			source = override_matrix(source, {k: tuple(v) for k, v in req.matrix_overrides.items()})
 	except ValueError as e:
 		return error_result(str(e))
 	plan = plan_under(source, budget_s, timings.load(session.camas_dir))
 	report = to_budget_report(plan)
-	label = req.task or "default task"
 	if plan.node is None:
 		empty = wire.RunResponse(
 			returncode=0, elapsed=0.0, passed=0, failed=0, skipped=0, interrupt_count=0, leaves=()
@@ -673,20 +706,20 @@ async def run_budget(
 def budget_source(
 	tasks: Mapping[str, TaskNode], config: Config | None, task: str | None
 ) -> TaskNode:
-	"""The task a budget run filters: the named task, else the project's default task.
+	"""The task a budget run filters: the named task, else the project's configured default.
 
 	Raises:
 		ValueError: when ``task`` names no task, or no task is named and no
-			:class:`Config` default exists to budget.
+			default is configured to budget.
 	"""
 	if task is not None:
 		if task not in tasks:
 			known = ", ".join(sorted(tasks)) or "none"
 			raise ValueError(f"no task named {task!r} (known: {known})")
 		return tasks[task]
-	default = config.default_task if config is not None else None
+	default = config.run_default() if config is not None else None
 	if default is None:
-		raise ValueError("no task given and no Config default_task to budget; name a task to run")
+		raise ValueError(NO_RUN_DEFAULT_MSG)
 	return default
 
 
@@ -935,10 +968,15 @@ def check_text(resp: wire.CheckResponse) -> str:
 			)
 		case _:
 			assert_never(resp.status)
+	version_note = (
+		f"\n\ncamas server version: {resp.server_version}"
+		if resp.server_version is not None
+		else ""
+	)
 	if not resp.warnings:
-		return verdict
+		return verdict + version_note
 	warnings = "\n".join(f"  - {w}" for w in resp.warnings)
-	return f"{verdict}\n\nWarnings (advisory — not failures):\n{warnings}"
+	return f"{verdict}{version_note}\n\nWarnings (advisory — not failures):\n{warnings}"
 
 
 def docs_text(resp: wire.DocsResponse) -> str:
@@ -1018,6 +1056,17 @@ def attach_logs(resp: wire.RunResponse, logs: tuple[Path | None, ...]) -> wire.R
 def error_result(text: str) -> types.CallToolResult:
 	"""A tool-execution error (``isError=true``) with self-correcting text for the agent."""
 	return types.CallToolResult(content=[types.TextContent(type="text", text=text)], isError=True)
+
+
+def load_error_hint(session: Session, source: Path, exception: Exception) -> str:
+	"""The load-error tool text, prefixed with the version-skew + CLI-fallback hint when the
+	running server does not satisfy the pin (a stale server, not a broken file).
+	"""
+	base = format_load_error_hint(source, exception)
+	skew = version_skew(session.project)
+	if skew is None:
+		return base
+	return f"{format_version_skew_hint(skew.running, skew.spec)}\n\n{base}"
 
 
 def resolve_project(base: Path) -> TasksState:
@@ -1101,7 +1150,7 @@ async def gate_call(session: Session, arguments: dict[str, Any]) -> types.CallTo
 	"""Handle ``camas_gate``: scope to the changed paths, autofix, run the checks, classify."""
 	match session.project:
 		case LoadErr(source=source, exception=exception):
-			return error_result(format_load_error_hint(source, exception))
+			return error_result(load_error_hint(session, source, exception))
 		case LoadOk(tasks=tasks, config=config):
 			return await gate_for(session, tasks, config, arguments)
 		case _:
@@ -1141,7 +1190,7 @@ async def fix_call(session: Session, arguments: dict[str, Any]) -> types.CallToo
 	"""Handle ``camas_fix``: scope to the changed paths, run the registered fix node."""
 	match session.project:
 		case LoadErr(source=source, exception=exception):
-			return error_result(format_load_error_hint(source, exception))
+			return error_result(load_error_hint(session, source, exception))
 		case LoadOk(tasks=tasks, config=config):
 			return await fix_for(session, tasks, config, arguments)
 		case _:
@@ -1278,6 +1327,21 @@ def parse_gate_args(argv: list[str]) -> GateArgs:
 	)
 
 
+def gate_cli_load_error(state: TasksState, source: Path, exception: Exception) -> str:
+	"""The headless-gate load-error message, extended with a version-mismatch + CLI-fallback note
+	when the installed camas does not satisfy the pin.
+	"""
+	base = f"camas mcp gate: cannot load {source}: {exception}"
+	skew = version_skew(state)
+	if skew is None:
+		return base
+	return (
+		f"{base}\n"
+		f"camas {skew.running} does not satisfy tasks.py pin camas{skew.spec}; run "
+		"`uv run tasks.py <task>` to load the pinned version."
+	)
+
+
 def gate_cli(argv: list[str]) -> int:
 	"""Run the gate once, headless: scope this project's checks to the changed paths (``--paths``,
 	else the files in a ``PostToolBatch`` event on stdin), print the ``GateResponse`` as JSON to
@@ -1290,7 +1354,7 @@ def gate_cli(argv: list[str]) -> int:
 	state = resolve_project_quiet(base)
 	match state:
 		case LoadErr(source=source, exception=exception):
-			print(f"camas mcp gate: cannot load {source}: {exception}", file=sys.stderr)
+			print(gate_cli_load_error(state, source, exception), file=sys.stderr)
 			return 2
 		case LoadOk(tasks=tasks, config=config):
 			return run_gate_cli(args, base, tasks, config)

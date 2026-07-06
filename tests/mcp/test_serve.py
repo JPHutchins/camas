@@ -180,6 +180,13 @@ def test_tools_rich_includes_title_annotations_and_schema() -> None:
 	assert tool_init.annotations.readOnlyHint is False
 
 
+def test_list_tool_description_declares_github_default() -> None:
+	(tool_list, *_rest) = serve.tools((), Compat(emit_structured=False))
+	assert tool_list.description is not None
+	assert "Config(github_task" in tool_list.description
+	assert "null" in tool_list.description
+
+
 def test_list_call_text_lists_tasks_and_markers(tmp_path: Path) -> None:
 	ci = Sequential(PASS, name="ci")
 	session = _session(
@@ -200,6 +207,20 @@ def test_list_call_load_error(tmp_path: Path) -> None:
 	result = serve.list_call(session, {})
 	assert result.isError is True
 	assert "camas --check" in _text(result)
+
+
+def test_list_call_load_error_skew_prepends_reconnect_and_cli_hint(tmp_path: Path) -> None:
+	(tmp_path / "tasks.py").write_text(
+		"# /// script\n# dependencies = [\"camas==999.0.0\"]\n# ///\nraise RuntimeError('boom')\n"
+	)
+	session = Session(serve.resolve_project(tmp_path), tmp_path, Compat())
+	result = serve.list_call(session, {})
+	assert result.isError is True
+	text = _text(result)
+	assert "MCP server is running camas" in text
+	assert "reconnect the MCP server" in text
+	assert "uv run tasks.py" in text
+	assert "Tasks unavailable" in text
 
 
 def test_list_call_structured_when_rich(tmp_path: Path) -> None:
@@ -307,7 +328,7 @@ async def test_run_call_dry_run_no_task_no_default_errors(tmp_path: Path) -> Non
 	session = _session({"ci": PASS}, config, tmp_path)
 	result = await serve.run_call(session, {"dry_run": True})
 	assert result.isError is True
-	assert "requires 'task'" in _text(result)
+	assert "has no task to run" in _text(result)
 
 
 async def test_run_call_log_path_in_structured_content_when_rich(tmp_path: Path) -> None:
@@ -355,6 +376,16 @@ async def test_run_call_load_error(tmp_path: Path) -> None:
 	session = Session(LoadErr(tmp_path / "tasks.py", RuntimeError("boom")), tmp_path, Compat())
 	result = await serve.run_call(session, {"task": "lint"})
 	assert result.isError is True
+
+
+async def test_run_call_load_error_no_pin_omits_reconnect_hint(tmp_path: Path) -> None:
+	(tmp_path / "tasks.py").write_text("raise RuntimeError('boom')\n")
+	session = Session(serve.resolve_project(tmp_path), tmp_path, Compat())
+	result = await serve.run_call(session, {"task": "lint"})
+	assert result.isError is True
+	text = _text(result)
+	assert "reconnect the MCP server" not in text
+	assert "Tasks unavailable" in text
 
 
 async def test_run_call_structured_when_rich(tmp_path: Path) -> None:
@@ -489,6 +520,34 @@ def test_check_call_structured_when_rich(tmp_path: Path, monkeypatch: pytest.Mon
 	assert result.structuredContent["checker"] == "ty"
 
 
+def test_check_call_reports_server_version(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+	from importlib.metadata import version
+
+	(tmp_path / "tasks.py").write_text(_VALID_TASKS)
+	monkeypatch.setattr("camas.mcp.result.run_typecheck", _fixed_checker(CheckerOk("ty")))
+	result = serve.check_call(_session({}, None, tmp_path, rich=True))
+	assert result.structuredContent is not None
+	assert result.structuredContent["server_version"] == version("camas")
+	assert f"camas server version: {version('camas')}" in _text(result)
+
+
+def test_check_call_server_version_degrades_when_missing(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	from importlib.metadata import PackageNotFoundError
+
+	def _raise(name: str) -> str:
+		raise PackageNotFoundError(name)
+
+	(tmp_path / "tasks.py").write_text(_VALID_TASKS)
+	monkeypatch.setattr("camas.mcp.result.run_typecheck", _fixed_checker(CheckerOk("ty")))
+	monkeypatch.setattr("camas.mcp.serve.version", _raise)
+	result = serve.check_call(_session({}, None, tmp_path, rich=True))
+	assert result.structuredContent is not None
+	assert result.structuredContent["server_version"] is None
+	assert "camas server version" not in _text(result)
+
+
 def test_check_call_reports_scope_warnings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 	(tmp_path / "tasks.py").write_text(
 		"from camas import Task\ncargo = Task('cargo build', name='cargo', paths='.')\n"
@@ -523,6 +582,13 @@ def test_check_text_renders_warnings_block_and_keeps_ok_status() -> None:
 def test_check_text_omits_warnings_block_when_clean() -> None:
 	resp = wire.CheckResponse(status="ok", source="/x/tasks.py", task_count=1, checker="ty")
 	assert "Warnings" not in serve.check_text(resp)
+
+
+def test_check_text_omits_server_version_when_none() -> None:
+	resp = wire.CheckResponse(
+		status="ok", source="/x/tasks.py", task_count=1, checker="ty", server_version=None
+	)
+	assert "camas server version" not in serve.check_text(resp)
 
 
 def test_docs_call_serves_tutorial_and_source(tmp_path: Path) -> None:
@@ -604,8 +670,17 @@ def test_resolve_run_node_applies_overrides_and_args() -> None:
 
 
 def test_resolve_run_node_requires_task() -> None:
-	with pytest.raises(ValueError, match="requires 'task'"):
+	with pytest.raises(ValueError, match="has no task to run"):
 		serve.resolve_run_node({"lint": PASS}, wire.RunRequest())
+
+
+def test_resolve_run_node_no_task_applies_args() -> None:
+	name, leaf = serve.resolve_run_node(
+		{}, wire.RunRequest(args=["-v"]), Config(default_task=Task("pytest", name="t"))
+	)
+	assert name == "t"
+	assert isinstance(leaf, Task)
+	assert leaf.cmd == "pytest -v"
 
 
 def _record(base: Path, leaves: list[tuple[str, float]]) -> None:
@@ -670,7 +745,23 @@ async def test_run_call_under_no_task_no_default_errors(tmp_path: Path) -> None:
 	session = _session({"lint": PASS}, None, tmp_path)
 	result = await serve.run_call(session, {"under": 1.0})
 	assert result.isError is True
-	assert "no task given and no Config default_task" in _text(result)
+	assert "has no task to run" in _text(result)
+
+
+async def test_run_call_under_no_task_config_present_no_default_errors(tmp_path: Path) -> None:
+	session = _session({"lint": PASS}, Config(), tmp_path)
+	result = await serve.run_call(session, {"under": 1.0})
+	assert result.isError is True
+	assert "has no task to run" in _text(result)
+
+
+async def test_run_call_under_no_task_labels_by_default_name(tmp_path: Path) -> None:
+	default = Sequential(_FMT, Parallel(_LINT, _SLOW), name="ci")
+	_record(tmp_path, [("fmt", 0.1), ("lint", 0.2), ("slow", 9.0)])
+	session = _session({"ci": default}, Config(default_task=default), tmp_path)
+	result = await serve.run_call(session, {"under": 5.0})
+	assert result.isError is False
+	assert "camas_run 'ci'" in _text(result)
 
 
 async def test_run_call_under_rejects_args(tmp_path: Path) -> None:
@@ -684,7 +775,49 @@ async def test_run_call_missing_task_errors(tmp_path: Path) -> None:
 	session = _session({"lint": PASS}, None, tmp_path)
 	result = await serve.run_call(session, {})
 	assert result.isError is True
-	assert "requires 'task'" in _text(result)
+	assert "has no task to run" in _text(result)
+
+
+async def test_run_call_no_task_runs_default(tmp_path: Path) -> None:
+	default = Sequential(PASS, name="ci")
+	session = _session({"ci": default}, Config(default_task=default), tmp_path)
+	result = await serve.run_call(session, {})
+	assert result.isError is False
+	assert "camas_run 'ci'" in _text(result)
+	assert (tmp_path / ".camas" / "runs" / "ci").is_dir()
+
+
+async def test_run_call_no_task_anonymous_default_labels_default_task(tmp_path: Path) -> None:
+	anon = Task(("python", "-c", "print('ok')"))
+	session = _session({}, Config(default_task=anon), tmp_path)
+	result = await serve.run_call(session, {})
+	assert result.isError is False
+	assert "camas_run 'default task'" in _text(result)
+
+
+async def test_run_call_no_task_config_present_no_default_errors(tmp_path: Path) -> None:
+	session = _session({"lint": PASS}, Config(), tmp_path)
+	result = await serve.run_call(session, {})
+	assert result.isError is True
+	assert "has no task to run" in _text(result)
+
+
+async def test_run_call_no_task_applies_matrix_overrides(tmp_path: Path) -> None:
+	default = Parallel(Task("echo {PY}", name="t"), matrix={"PY": ("3.12", "3.13")}, name="m")
+	session = _session({"m": default}, Config(default_task=default), tmp_path, rich=True)
+	result = await serve.run_call(session, {"dry_run": True, "matrix_overrides": {"PY": ["3.13"]}})
+	assert result.isError is False
+	assert result.structuredContent is not None
+	assert len(result.structuredContent["leaves"]) == 1
+	assert "echo 3.13" in _text(result)
+
+
+async def test_run_call_no_task_unknown_axis_errors(tmp_path: Path) -> None:
+	default = Parallel(Task("echo {PY}", name="t"), matrix={"PY": ("3.13",)}, name="m")
+	session = _session({"m": default}, Config(default_task=default), tmp_path)
+	result = await serve.run_call(session, {"matrix_overrides": {"NOPE": ["x"]}})
+	assert result.isError is True
+	assert "unknown matrix axis" in _text(result)
 
 
 async def test_run_call_under_unknown_task_errors(tmp_path: Path) -> None:

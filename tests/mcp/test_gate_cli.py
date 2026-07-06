@@ -104,6 +104,21 @@ def test_gate_cli_load_error(
 	assert "cannot load" in capsys.readouterr().err
 
 
+def test_gate_cli_load_error_skew_hints_cli_fallback(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+	monkeypatch.chdir(tmp_path)
+	(tmp_path / "tasks.py").write_text(
+		"# /// script\n# dependencies = [\"camas==999.0.0\"]\n# ///\nraise ValueError('boom')\n"
+	)
+	assert serve.gate_cli([]) == 2
+	err = capsys.readouterr().err
+	assert "cannot load" in err
+	assert "does not satisfy tasks.py pin camas==999.0.0" in err
+	assert "uv run tasks.py" in err
+
+
 def test_gate_cli_unknown_task_errors(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

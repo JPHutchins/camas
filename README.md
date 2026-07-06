@@ -184,7 +184,7 @@ Because `github_task` reproduces CI, running it before a push catches a CI failu
 echo 'exec camas check' > .git/hooks/pre-push && chmod +x .git/hooks/pre-push
 ```
 
-`git push --no-verify` still bypasses it deliberately. An LLM agent needs no hook — `camas_list` reports the CI task as `github_default`, so it runs `camas_run` with that name before pushing.
+`git push --no-verify` still bypasses it deliberately. An LLM agent needs no hook — when a `github_task` is declared, `camas_list` reports it as `github_default`, so the agent runs `camas_run` with that name before pushing. The field is `null` when no `github_task` is set; camas never infers it from your CI workflow files.
 
 ## Time budget (`--under`)
 
