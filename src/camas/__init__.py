@@ -92,6 +92,14 @@ agent's context, rather than blocking on a hook. A checking leaf may add
 ``agent_format=("--output-format sarif", "sarif")`` (kinds: ``sarif``,
 ``rdjson``, ``lsp``, ``junit``, ``tap``, ``raw``) so the gate collects
 machine-readable diagnostics — appended only on gate runs, not human runs.
+``AgentFormat`` also takes ``limit=`` (default 8000 characters): a structured
+payload over it is never dumped or tailed — a truncated SARIF/JUnit document
+is invalid — so the gate substitutes a pointer to the full file/log instead.
+A tool that writes its diagnostics to a *file* rather than stdout (``pytest
+--junitxml``, ``pytest-json-report``) uses path mode: put the literal
+``{report}`` in ``args`` (``agent_format=("--junitxml {report}", "junit")``)
+and the gate substitutes an allocated path, then reads that file for the
+payload instead of stdout.
 ``default`` is the task a no-task ``camas_run`` runs — ``None`` defers to
 ``check``, then ``github_task``/``default_task``.
 

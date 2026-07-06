@@ -152,6 +152,59 @@ async def test_agent_envelopes_are_failures_only() -> None:
 	assert tuple(e.name for e in envelopes) == ("bad",)
 
 
+def test_agent_envelope_under_limit_passes_through() -> None:
+	task = Task("lint", name="lint", agent_format=AgentFormat("--out sarif", "sarif", limit=100))
+	env = to_agent_envelope(task, TaskResult("lint", Finished(1, 0.1, (b"short\n",))))
+	assert env.payload == "short"
+	assert env.truncated is False
+	assert env.log is None
+
+
+def test_agent_envelope_over_limit_is_replaced_with_pointer_not_tailed() -> None:
+	task = Task("lint", name="lint", agent_format=AgentFormat("--out sarif", "sarif", limit=10))
+	env = to_agent_envelope(task, TaskResult("lint", Finished(1, 0.1, (b"way too long\n",))))
+	assert "way too long" not in env.payload
+	assert "limit" in env.payload
+	assert env.truncated is True
+
+
+def test_agent_envelope_raw_kind_ignores_limit_and_tails_instead() -> None:
+	task = Task("lint", name="lint")
+	lines = tuple(f"{i}\n".encode() for i in range(60))
+	env = to_agent_envelope(task, TaskResult("lint", Finished(1, 0.1, lines)), tail=5)
+	assert env.output_kind == "raw"
+	assert env.payload == "\n".join(str(i) for i in range(55, 60))
+	assert env.truncated is True
+
+
+def test_agent_envelope_path_mode_reads_report_file_not_stdout(tmp_path: Path) -> None:
+	report_path = tmp_path / "report.xml"
+	report_path.write_text("<xml/>")
+	task = Task("pytest", name="t", agent_format=AgentFormat("--junitxml {report}", "junit"))
+	env = to_agent_envelope(
+		task,
+		TaskResult("t", Finished(1, 0.1, (b"ignored stdout\n",))),
+		report_path=report_path,
+	)
+	assert env.payload == "<xml/>"
+	assert env.log == str(report_path)
+	assert env.truncated is False
+
+
+def test_agent_envelope_path_mode_over_limit_points_at_report_file(tmp_path: Path) -> None:
+	report_path = tmp_path / "report.xml"
+	report_path.write_text("way too long for the limit")
+	task = Task(
+		"pytest",
+		name="t",
+		agent_format=AgentFormat("--junitxml {report}", "junit", limit=10),
+	)
+	env = to_agent_envelope(task, TaskResult("t", Finished(1, 0.1, ())), report_path=report_path)
+	assert str(report_path) in env.payload
+	assert env.log == str(report_path)
+	assert env.truncated is True
+
+
 _PYPROJECT = Path("/proj/pyproject.toml")
 
 

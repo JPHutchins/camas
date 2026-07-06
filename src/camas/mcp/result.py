@@ -40,7 +40,7 @@ if TYPE_CHECKING:
 	from ..core.gate import GateOutcome
 	from ..main.state import TasksState
 	from ..v0.completion import Completion
-	from ..v0.task import Task, TaskNode
+	from ..v0.task import OutputKind, Task, TaskNode
 
 Verbosity = Literal["summary", "failures", "full"]
 
@@ -207,36 +207,86 @@ def report(task: Task, result: TaskResult, *, verbosity: Verbosity, tail: int) -
 	)
 
 
-def to_agent_envelope(task: Task, result: TaskResult, *, tail: int = 50) -> wire.AgentEnvelope:
+def over_limit_pointer(kind: OutputKind, limit: int, report_path: Path | None) -> str:
+	"""The payload substituted when a structured payload exceeds ``limit`` — a truncated
+	structured document is invalid, so the agent is pointed at the full file instead of
+	receiving a corrupt excerpt.
+	"""
+	if report_path is not None:
+		return (
+			f"{kind} payload exceeds the {limit}-character limit — a truncated structured "
+			f"document would be invalid; read the full file directly: {report_path}"
+		)
+	return (
+		f"{kind} payload exceeds the {limit}-character limit — a truncated structured document "
+		"would be invalid, so it was omitted. Raise this task's agent_format limit=, or switch "
+		'it to path mode (agent_format=("... {report}", kind)) so the full output lives in a '
+		"file instead of this response; see camas_docs."
+	)
+
+
+def to_agent_envelope(
+	task: Task, result: TaskResult, *, tail: int = 50, report_path: Path | None = None
+) -> wire.AgentEnvelope:
+	"""``result``'s AgentEnvelope: stdout tail-capped for ``raw``, verbatim for a structured
+	``kind`` — read from ``report_path`` (path mode) when given, else from stdout. A structured
+	payload over its ``agent_format.limit`` is replaced with :func:`over_limit_pointer` rather
+	than dumped or tailed, since a truncated structured document is invalid.
+	"""
 	comp = result.completion
-	kind = task.agent_format.kind if task.agent_format is not None else "raw"
-	cap = tail if kind == "raw" else None
-	match comp:
-		case Finished(output=output) | Stopped(output=output):
-			decoded = decode(output, cap)
-		case Skipped():
-			decoded = Decoded([], truncated=False)
-		case Errored(message=message):
-			decoded = Decoded([message], truncated=False)
-		case _:
-			assert_never(comp)
+	fmt = task.agent_format
+	kind = fmt.kind if fmt is not None else "raw"
+	if report_path is not None:
+		payload = (
+			report_path.read_text(encoding="utf-8", errors="replace")
+			if report_path.is_file()
+			else ""
+		)
+		truncated = False
+	else:
+		match comp:
+			case Finished(output=output) | Stopped(output=output):
+				decoded = decode(output, tail if kind == "raw" else None)
+			case Skipped():
+				decoded = Decoded([], truncated=False)
+			case Errored(message=message):
+				decoded = Decoded([message], truncated=False)
+			case _:
+				assert_never(comp)
+		payload, truncated = "\n".join(decoded.lines), decoded.truncated
+	log = str(report_path) if report_path is not None else None
+	if kind != "raw" and fmt is not None and len(payload) > fmt.limit:
+		return wire.AgentEnvelope(
+			name=result.name,
+			exit_code=comp.returncode,
+			output_kind=kind,
+			payload=over_limit_pointer(kind, fmt.limit, report_path),
+			truncated=True,
+			log=log,
+		)
 	return wire.AgentEnvelope(
 		name=result.name,
 		exit_code=comp.returncode,
 		output_kind=kind,
-		payload="\n".join(decoded.lines),
-		truncated=decoded.truncated,
+		payload=payload,
+		truncated=truncated,
+		log=log,
 	)
 
 
-def agent_envelopes(node: TaskNode, result: RunResult) -> tuple[wire.AgentEnvelope, ...]:
+def agent_envelopes(
+	node: TaskNode, result: RunResult, report_paths: tuple[Path | None, ...] = ()
+) -> tuple[wire.AgentEnvelope, ...]:
 	"""The failing leaves of a finished run as AgentJSON envelopes, in DFS order. A ``Skipped``
-	leaf never ran, so it is not a failure to surface — only its blocker is.
+	leaf never ran, so it is not a failure to surface — only its blocker is. ``report_paths``
+	(DFS-aligned with ``node``'s leaves, from :func:`camas.core.gate.with_agent_format`) supplies
+	each path-mode leaf's report file; omit it for a node with no path-mode leaf.
 	"""
 	leaves = tuple(info.task for info in flatten_leaves(expand_matrix(node)))
+	paths = report_paths or (None,) * len(leaves)
 	return tuple(
-		to_agent_envelope(task, tr)
-		for task, tr in zip(leaves, result.results, strict=True)
+		to_agent_envelope(task, tr, report_path=rp)
+		for task, tr, rp in zip(leaves, result.results, paths, strict=True)
 		if not isinstance(tr.completion, Skipped) and tr.completion.returncode != 0
 	)
 
@@ -245,7 +295,7 @@ def to_gate_response(
 	outcome: GateOutcome, budget: wire.BudgetReport | None, rerun: wire.GateRerun
 ) -> wire.GateResponse:
 	diagnostics = (
-		agent_envelopes(outcome.node, outcome.result)
+		agent_envelopes(outcome.node, outcome.result, outcome.report_paths)
 		if outcome.residual_class == "needs_reasoning"
 		and outcome.node is not None
 		and outcome.result is not None

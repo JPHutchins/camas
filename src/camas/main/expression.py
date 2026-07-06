@@ -113,6 +113,16 @@ def eval_opt_bool(node: ast.expr | None) -> bool:
 			raise ValueError(f"expected bool literal, got {ast.dump(node)}")
 
 
+def eval_opt_int(node: ast.expr | None) -> int | None:
+	match node:
+		case None:
+			return None
+		case ast.Constant(value=int() as i):
+			return i
+		case _:
+			raise ValueError(f"expected int literal, got {ast.dump(node)}")
+
+
 def _output_kind(node: ast.expr) -> OutputKind:
 	match node:
 		case ast.Constant(value="sarif" | "rdjson" | "lsp" | "junit" | "tap" | "raw" as kind):
@@ -133,7 +143,14 @@ def eval_agent_format(node: ast.expr | None) -> AgentFormat | None:
 			kind_node = call_args[1] if len(call_args) > 1 else kw.get("kind")
 			if args_node is None or kind_node is None:
 				raise ValueError("AgentFormat requires args and kind")
-			return AgentFormat(eval_str_lit(args_node), _output_kind(kind_node))
+			limit_node = call_args[2] if len(call_args) > 2 else kw.get("limit")
+			limit = eval_opt_int(limit_node)
+			args_val, kind_val = eval_str_lit(args_node), _output_kind(kind_node)
+			return (
+				AgentFormat(args_val, kind_val, limit)
+				if limit is not None
+				else AgentFormat(args_val, kind_val)
+			)
 		case ast.Tuple(elts=[args_node, kind_node]):
 			return AgentFormat(eval_str_lit(args_node), _output_kind(kind_node))
 		case _:
@@ -471,9 +488,21 @@ def when_kwarg(when: str | tuple[str, ...] | WhenPredicate | None) -> str:
 
 
 def agent_format_kwarg(agent_format: AgentFormat | None) -> str:
+	"""Renders ``limit`` only when it differs from :class:`AgentFormat`'s default, so the common
+	case round-trips as the terse two-arg call.
+
+	>>> agent_format_kwarg(AgentFormat("--out sarif", "sarif"))
+	', agent_format=AgentFormat("--out sarif", "sarif")'
+	>>> agent_format_kwarg(AgentFormat("--out sarif", "sarif", 500))
+	', agent_format=AgentFormat("--out sarif", "sarif", 500)'
+	"""
 	if agent_format is None:
 		return ""
-	return f", agent_format=AgentFormat({quote(agent_format.args)}, {quote(agent_format.kind)})"
+	default_limit = AgentFormat._field_defaults["limit"]
+	limit = f", {agent_format.limit}" if agent_format.limit != default_limit else ""
+	return (
+		f", agent_format=AgentFormat({quote(agent_format.args)}, {quote(agent_format.kind)}{limit})"
+	)
 
 
 def quote(value: str) -> str:

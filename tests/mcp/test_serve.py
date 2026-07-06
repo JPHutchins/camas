@@ -12,7 +12,7 @@ import pytest
 from mcp import types
 from mcp.shared.memory import create_connected_server_and_client_session
 
-from camas import Config, Parallel, Sequential, Task
+from camas import AgentFormat, Config, Parallel, Sequential, Task
 from camas.core import timings
 from camas.core.completion import RunResult, TaskResult
 from camas.main.check import CheckerErr, CheckerNotFound, CheckerOk
@@ -1370,6 +1370,36 @@ async def test_gate_call_block_when_check_fails(tmp_path: Path) -> None:
 	assert not result.isError
 	assert "BLOCK" in text
 	assert "bad" in text
+
+
+async def test_gate_call_path_mode_reads_report_file(tmp_path: Path) -> None:
+	writer = Task(
+		(
+			"python",
+			"-c",
+			"import sys; sys.stderr.write('boom'); open(sys.argv[1], 'w').write('<xml/>'); sys.exit(1)",
+		),
+		name="writer",
+		agent_format=AgentFormat("{report}", "junit"),
+	)
+	session = _session({"all": Parallel(writer)}, Config(default_task=Parallel(writer)), tmp_path)
+	result = await serve.call(session, "camas_gate", {"task": "all"})
+	text = _text(result)
+	assert "<xml/>" in text
+	assert "boom" not in text
+
+
+async def test_gate_call_over_limit_structured_payload_points_to_file(tmp_path: Path) -> None:
+	writer = Task(
+		("python", "-c", "import sys; open(sys.argv[1], 'w').write('x' * 1000); sys.exit(1)"),
+		name="writer",
+		agent_format=AgentFormat("{report}", "junit", limit=10),
+	)
+	session = _session({"all": Parallel(writer)}, Config(default_task=Parallel(writer)), tmp_path)
+	result = await serve.call(session, "camas_gate", {"task": "all"})
+	text = _text(result)
+	assert "x" * 1000 not in text
+	assert "limit" in text
 
 
 async def test_gate_call_with_budget_reports_partition(tmp_path: Path) -> None:

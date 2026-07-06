@@ -232,6 +232,29 @@ def test_eval_node_accepts_agent_format_tuple_shorthand() -> None:
 	assert node.agent_format == AgentFormat("--x", "sarif")
 
 
+def test_eval_node_accepts_agent_format_limit() -> None:
+	node = parse_expression("Task('c', agent_format=AgentFormat('--x', 'sarif', 500))")
+	assert isinstance(node, Task)
+	assert node.agent_format == AgentFormat("--x", "sarif", 500)
+
+
+def test_eval_node_accepts_agent_format_limit_kwarg() -> None:
+	node = parse_expression("Task('c', agent_format=AgentFormat('--x', 'sarif', limit=500))")
+	assert isinstance(node, Task)
+	assert node.agent_format == AgentFormat("--x", "sarif", 500)
+
+
+def test_agent_format_limit_round_trips_when_non_default() -> None:
+	task = Task("c", agent_format=AgentFormat("--x", "sarif", 500))
+	assert parse_expression(to_expression(task)) == task
+	assert "500" in to_expression(task)
+
+
+def test_agent_format_default_limit_omitted_from_expression() -> None:
+	task = Task("c", agent_format=AgentFormat("--x", "sarif"))
+	assert to_expression(task) == 'Task("c", agent_format=AgentFormat("--x", "sarif"))'
+
+
 def test_eval_when_accepts_str_and_tuple() -> None:
 	assert parse_expression('Task("cargo build", when="src")') == Task("cargo build", when="src")
 	assert parse_expression('Task("cargo build", when=("a", "b"))') == Task(

@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 from camas import AgentFormat, Parallel, Sequential, Task
 from camas.core.completion import RunResult
-from camas.core.gate import GateOutcome, decision_of, run_gate, with_agent_format
+from camas.core.gate import GateOutcome, decision_of, run_gate, uses_path_mode, with_agent_format
 from camas.core.task import task_label
 from camas.core.timings import TaskTiming
 
@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 	import pytest
 
 	from camas.v0.task import TaskNode
+
 
 CHECK_PASS = Task(("python", "-c", "pass"), name="check")
 CHECK_FAIL = Task(("python", "-c", "raise SystemExit(1)"), name="check")
@@ -92,23 +93,56 @@ async def test_gate_budget_skips_over_budget_check() -> None:
 	assert out.budget.node is None
 
 
-def test_with_agent_format_appends_to_tuple_command() -> None:
+def test_with_agent_format_appends_to_tuple_command(tmp_path: Path) -> None:
 	t = Task(("ruff", "check", "."), agent_format=AgentFormat("--output-format sarif", "sarif"))
-	result = with_agent_format(t)
-	assert isinstance(result, Task)
-	assert result.cmd == ("ruff", "check", ".", "--output-format", "sarif")
+	result = with_agent_format(t, tmp_path)
+	assert isinstance(result.node, Task)
+	assert result.node.cmd == ("ruff", "check", ".", "--output-format", "sarif")
+	assert result.report_paths == (None,)
 
 
-def test_with_agent_format_recurses_groups_and_leaves_plain_untouched() -> None:
+def test_with_agent_format_recurses_groups_and_leaves_plain_untouched(tmp_path: Path) -> None:
 	fmt = Task("ruff check .", name="lint", agent_format=AgentFormat("--out sarif", "sarif"))
 	plain = Task("mypy .", name="types")
-	out = with_agent_format(Sequential(fmt, plain))
+	out = with_agent_format(Sequential(fmt, plain), tmp_path).node
 	assert isinstance(out, Sequential)
 	first, second = out.tasks
 	assert isinstance(first, Task)
 	assert isinstance(second, Task)
 	assert first.cmd == "ruff check . --out sarif"
 	assert second.cmd == "mypy ."
+
+
+def test_with_agent_format_substitutes_report_token(tmp_path: Path) -> None:
+	t = Task("pytest", agent_format=AgentFormat("--junitxml {report}", "junit"))
+	result = with_agent_format(t, tmp_path)
+	assert isinstance(result.node, Task)
+	assert "{report}" not in result.node.cmd
+	report_path = result.report_paths[0]
+	assert report_path is not None
+	assert report_path.parent == tmp_path
+	assert str(report_path) in result.node.cmd
+
+
+def test_uses_path_mode_detects_report_token() -> None:
+	assert uses_path_mode(Task("pytest", agent_format=AgentFormat("--junitxml {report}", "junit")))
+	assert not uses_path_mode(
+		Task("ruff check .", agent_format=AgentFormat("--out sarif", "sarif"))
+	)
+	assert not uses_path_mode(Task("mypy ."))
+
+
+async def test_gate_path_mode_reads_report_file_after_run() -> None:
+	report_marker = "REPORT_CONTENT"
+	writer = Task(
+		("python", "-c", f"import sys; open(sys.argv[1], 'w').write('{report_marker}')"),
+		name="writer",
+		agent_format=AgentFormat("{report}", "junit"),
+	)
+	out = await run_gate(Parallel(writer), ())
+	assert out.residual_class == "green"
+	assert out.report_paths[0] is not None
+	assert out.report_paths[0].read_text() == report_marker
 
 
 async def test_gate_tags_residual_with_agent_format_kind() -> None:

@@ -348,6 +348,13 @@ class AgentEnvelope(BaseModel):
 	output_kind: Literal["sarif", "rdjson", "lsp", "junit", "tap", "raw"]
 	payload: str
 	truncated: bool = False
+	"""True when ``payload`` is a tail excerpt (``raw``) or was omitted for exceeding
+	``agent_format.limit`` (structured).
+	"""
+	log: str | None = None
+	"""This leaf's path-mode report file (see ``agent_format``'s ``{report}``) — set whenever the
+	leaf ran in path mode, whether or not ``payload`` was; ``None`` for a leaf read from stdout.
+	"""
 
 
 class GateRerun(BaseModel):
