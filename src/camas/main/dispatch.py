@@ -140,8 +140,8 @@ def fix_cli(argv: list[str]) -> int:
 	(``Config.agent.fix`` — whatever the user named it), scoped to the changed paths — taken from
 	``--paths`` or, failing that, the ``PostToolBatch`` event piped on stdin (the Claude Code
 	autofix hook). In the ``camas mcp`` namespace so it never collides with a user's own
-	``camas <task>``. A clean no-op (exit 0) when no fix node is registered — without registration
-	there is simply nothing for the hook to run.
+	``camas <task>``. Always exits ``0`` — it runs the fix node for its mutations, not as a
+	pass/fail check; an unregistered fix node is simply a no-op.
 	"""
 	parser = argparse.ArgumentParser(
 		prog="camas mcp fix", description="Run the registered agent fix node."
@@ -182,7 +182,8 @@ def fix_cli(argv: list[str]) -> int:
 		return 0
 	if scoped is None:
 		return 0
-	return finish_run(asyncio.run(run(scoped, effects=(), jobs=None, base=base)))
+	_ = finish_run(asyncio.run(run(scoped, effects=(), jobs=None, base=base)))
+	return 0
 
 
 def print_interrupt_banner(count: int) -> None:
