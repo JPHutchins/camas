@@ -3,10 +3,20 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from camas import AgentFormat, Parallel, Sequential, Task
+from camas.core.completion import RunResult
 from camas.core.gate import GateOutcome, decision_of, run_gate, with_agent_format
 from camas.core.task import task_label
 from camas.core.timings import TaskTiming
+
+if TYPE_CHECKING:
+	from pathlib import Path
+
+	import pytest
+
+	from camas.v0.task import TaskNode
 
 CHECK_PASS = Task(("python", "-c", "pass"), name="check")
 CHECK_FAIL = Task(("python", "-c", "raise SystemExit(1)"), name="check")
@@ -37,6 +47,24 @@ async def test_gate_failing_check_needs_reasoning() -> None:
 async def test_gate_scoped_to_nothing_is_green_noop() -> None:
 	node = Task(("cargo", "check", "{paths}"), name="rust", paths="rust")
 	assert await run_gate(node, ("src/app.py",)) == GateOutcome("green", None, None, None)
+
+
+async def test_gate_threads_base_into_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+	captured: dict[str, Path | None] = {}
+
+	async def fake_run(
+		node: TaskNode,
+		*,
+		jobs: int | None = None,
+		base: Path | None = None,
+		interactive: bool = True,
+	) -> RunResult:
+		captured["base"] = base
+		return RunResult(0, (), 0.0)
+
+	monkeypatch.setattr("camas.core.gate.run", fake_run)
+	await run_gate(Parallel(CHECK_PASS), (), base=tmp_path)
+	assert captured["base"] == tmp_path
 
 
 async def test_gate_runs_untimed_check_under_budget() -> None:
