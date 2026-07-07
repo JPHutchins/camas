@@ -227,17 +227,29 @@ def name_scope_config(scope: Mapping[str, object]) -> Config | None:
 		default_github_effects=config.default_github_effects,
 		camas_dir=config.camas_dir,
 		agent=promote_agent(config.agent),
+		discover=config.discover,
+		discoverable=config.discoverable,
 	)
 
 
-def load_tasks_from_py(path: Path) -> LoadOk:
-	"""Execute a Python task-definition file and collect its module-level bindings."""
+def load_own(path: Path) -> LoadOk:
+	"""Execute a Python task-definition file and collect its module-level bindings.
+	Reserved-name rejection is deferred to the composed view (:mod:`camas.main.discover`),
+	which checks the merged namespace instead of this file's own.
+	"""
 	scope: Final = runpy.run_path(str(path))
-	tasks: Final = name_scope_bindings(scope)
-	reject_reserved_names(tasks)
 	return LoadOk(
-		tasks=tasks,
+		tasks=name_scope_bindings(scope),
 		source=path,
 		scope_effects=name_scope_effects(scope),
 		config=name_scope_config(scope),
 	)
+
+
+def load_tasks_from_py(path: Path) -> LoadOk:
+	"""``path`` loaded and composed with the ``tasks.py`` files found in its descendant
+	directories (:func:`camas.main.discover.composed_view`).
+	"""
+	from .discover import composed_view
+
+	return composed_view(path)

@@ -44,4 +44,4 @@ matrix = Sequential(
 	},
 )
 
-_ = Config(default_task=all, github_task=check)
+_ = Config(default_task=all, github_task=check, discover=False)

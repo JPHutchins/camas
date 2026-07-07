@@ -43,7 +43,8 @@ Agent: TypeAlias = Claude
 
 class Config(NamedTuple):
 	"""Project configuration, bound under any name (conventionally ``_``) at
-	module scope in ``tasks.py``.
+	module scope in ``tasks.py``. ``discover``/``discoverable`` govern composition
+	with descendant ``tasks.py`` files in a monorepo (:mod:`camas.main.discover`).
 	"""
 
 	default_task: TaskNode | None = None
@@ -56,6 +57,11 @@ class Config(NamedTuple):
 	"""Project subdirectory for run logs and the timing cache; delete it to opt out."""
 	agent: Agent | None = None
 	"""The agent integration (the gate's fix and check nodes); ``None`` when unconfigured."""
+	discover: bool = True
+	"""Whether this ``tasks.py`` composes descendant ``tasks.py`` files under its own
+	namespace (:mod:`camas.main.discover`)."""
+	discoverable: bool = True
+	"""Whether an ancestor's ``tasks.py`` may compose this one into its own tree."""
 
 	def camas_path(self, base: Path) -> Path:
 		"""The resolved camas directory under ``base``."""
