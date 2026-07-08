@@ -168,15 +168,13 @@ def spawn_cwd(base: Path | None, cwd: Path | None) -> Path | None:
 	>>> spawn_cwd(Path("base"), Path("rel")) == Path("base") / "rel"
 	True
 	"""
-	match base, cwd:
-		case None, _:
-			return cwd
-		case _, None:
-			return base
-		case _, _ if cwd.is_absolute():
-			return cwd
-		case _, _:
-			return base / cwd
+	if base is None:
+		return cwd
+	if cwd is None:
+		return base
+	if cwd.is_absolute():
+		return cwd
+	return base / cwd
 
 
 async def run_cmd(task: Task, leaf_index: int, ctx: RunContext) -> TaskResult:

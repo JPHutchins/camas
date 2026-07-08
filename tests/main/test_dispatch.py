@@ -202,7 +202,9 @@ def test_interrupt_banner_colored(
 def test_interrupted_run_prints_banner_and_exits_130(
 	capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-	async def fake_run(task: TaskNode, effects: object = (), jobs: object = None) -> RunResult:
+	async def fake_run(
+		task: TaskNode, effects: object = (), jobs: object = None, base: object = None
+	) -> RunResult:
 		return RunResult(returncode=130, results=(), elapsed=0.0, interrupt_count=3)
 
 	monkeypatch.setattr("camas.main.dispatch.run", fake_run)

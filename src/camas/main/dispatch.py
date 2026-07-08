@@ -29,6 +29,7 @@ from ..core.scope import scope_to_changed, to_changed, with_default_paths
 from ..core.task import task_label
 from ..v0.config import Config
 from .argv import apply_passthrough, parse_axis_values, parse_matrix_kv, split_passthrough
+from .discover import load_py_state, state_from_scope
 from .effects import default_effect_names, resolve_effects, running_under_agent
 from .expression import parse_expression
 from .format import (
@@ -42,13 +43,7 @@ from .format import (
 from .init import write_starter_tasks_py
 from .parser import RESERVED_FLAGS, build_parser, resolve_jobs
 from .state import EMPTY_STATE, LoadErr, LoadOk, TasksState
-from .tasks import (
-	load_tasks,
-	load_tasks_from_py,
-	name_scope_bindings,
-	name_scope_config,
-	name_scope_effects,
-)
+from .tasks import load_tasks
 
 if TYPE_CHECKING:
 	import io
@@ -60,10 +55,10 @@ if TYPE_CHECKING:
 	from ..v0.task import TaskNode
 
 
-_NAME_LIKE: Final = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
-"""A bare task name, hyphens allowed — distinct from a camas expression, which
-carries parens, quotes, or braces. A ``-`` is taken as part of the name (the
-convention alias), never as subtraction."""
+_NAME_LIKE: Final = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*(?:\.[A-Za-z_][A-Za-z0-9_-]*)*$")
+"""A bare task name, hyphens and dotted namespace segments allowed — distinct
+from a camas expression, which carries parens, quotes, or braces. A ``-`` is
+taken as part of the name (the convention alias), never as subtraction."""
 
 
 def dispatch_arg(arg: str, tasks: Mapping[str, TaskNode]) -> TaskNode:
@@ -116,6 +111,7 @@ def run_under(
 	jobs: int | None,
 	dry_run: bool,
 	passthrough: tuple[str, ...],
+	base: Path | None = None,
 ) -> int:
 	"""Plan and run the leaves of ``source`` that fit ``budget_s``; return the exit code."""
 	if passthrough:
@@ -129,7 +125,7 @@ def run_under(
 	if dry_run:
 		print_tree(with_default_paths(plan.node), show_cmd=True)
 		return 0
-	return finish_run(asyncio.run(run(plan.node, effects=effects, jobs=jobs)))
+	return finish_run(asyncio.run(run(plan.node, effects=effects, jobs=jobs, base=base)))
 
 
 def finish_run(result: RunResult) -> int:
@@ -186,7 +182,7 @@ def fix_cli(argv: list[str]) -> int:
 		return 0
 	if scoped is None:
 		return 0
-	return finish_run(asyncio.run(run(scoped, effects=(), jobs=None)))
+	return finish_run(asyncio.run(run(scoped, effects=(), jobs=None, base=base)))
 
 
 def print_interrupt_banner(count: int) -> None:
@@ -209,9 +205,10 @@ def reconfigure_stdio_utf8() -> None:
 
 def run_cli(scope: Mapping[str, object]) -> None:
 	"""Intercept the ``mcp`` subcommand (routing to :mod:`camas.mcp.cli`), then
-	collect Task/Sequential/Parallel and Effect bindings from ``scope`` (skipping
-	``_``-prefixed names) and dispatch CLI args, citing ``scope['__file__']`` as
-	the :class:`LoadOk` ``source`` for per-task help and ``--check``.
+	dispatch CLI args against ``scope`` loaded as a :class:`~.state.TasksState`
+	(:func:`state_from_scope` — ``scope``'s own bindings, composed with its
+	discovered descendants, citing ``scope['__file__']`` as the source for
+	per-task help and ``--check``).
 
 	The standalone entry point for a PEP 723 ``tasks.py`` run via ``python tasks.py``
 	or ``uv run --script tasks.py`` — hand it the module globals::
@@ -226,16 +223,7 @@ def run_cli(scope: Mapping[str, object]) -> None:
 	if argv and argv[0] == "mcp":
 		importlib.import_module("camas.mcp.cli").main(argv[1:])
 		return
-	source_obj = scope.get("__file__")
-	source = Path(source_obj) if isinstance(source_obj, (str, Path)) else None
-	dispatch(
-		LoadOk(
-			tasks=name_scope_bindings(scope),
-			source=source,
-			scope_effects=name_scope_effects(scope),
-			config=name_scope_config(scope),
-		)
-	)
+	dispatch(state_from_scope(scope))
 
 
 def exit_for_load_err(err: LoadErr) -> None:
@@ -430,6 +418,7 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 						jobs=budget_jobs,
 						dry_run=args.dry_run,
 						passthrough=split.passthrough,
+						base=source.parent if source is not None else None,
 					)
 				)
 
@@ -450,7 +439,18 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 			except ValueError as e:
 				print(f"error: {e}", file=sys.stderr)
 				sys.exit(2)
-			sys.exit(finish_run(asyncio.run(run(task, effects=effects, jobs=jobs))))
+			sys.exit(
+				finish_run(
+					asyncio.run(
+						run(
+							task,
+							effects=effects,
+							jobs=jobs,
+							base=source.parent if source is not None else None,
+						)
+					)
+				)
+			)
 
 		case _:
 			assert_never(state)
@@ -458,10 +458,7 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 
 def _load_py(path: Path) -> TasksState:
 	"""Evaluate ``path`` and return a :class:`LoadOk` / :class:`LoadErr`."""
-	try:
-		return load_tasks_from_py(path)
-	except Exception as e:
-		return LoadErr(source=path, exception=e)
+	return load_py_state(path)
 
 
 def resolve_tasks_source(argv: list[str]) -> tuple[TasksState, list[str]]:
