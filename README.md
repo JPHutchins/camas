@@ -253,6 +253,26 @@ For the Claude Code plugin, you **register** the auto-fix node — whatever you 
 
 `camas mcp fix` runs the registered `Config.agent.fix` node (not a task named `fix` — that's just `camas fix`, your own task); it reads the changed files from the PostToolBatch event on stdin (`--paths` still works for a manual run). With no fix registered it is a clean no-op, so the hook is harmless without it. The launcher runs in your project's environment — `camas mcp init --claude` resolves and pins it: to `tasks.py`'s PEP 723 declaration (`dependencies = ["camas>=X.Y"]`) when present, else to the running camas release version; re-run `camas mcp init --claude` after bumping either to keep it current.
 
+## Monorepos
+
+A `tasks.py` composes others with `Project`. Binding one imports a child `tasks.py` as a task node — a self-contained child project — that runs whatever a bare `camas` runs in that directory, and mounts the child's own tasks under the binding name:
+
+```python
+from camas import Config, Parallel, Project
+
+libs = Project("libs")            # camas libs, camas libs.search.lint, ...
+api  = Project("services/api")    # name the handle whatever you like
+
+_ = Config(
+    default_task=...,                     # what bare `camas` runs here
+    github_task=Parallel(libs, api),      # each child's CI default, composed in parallel
+)
+```
+
+A reference resolves by context — the child's default locally, its `github_task` under CI, its agent default under an agent — so a `Parallel` of references is the composite CI task, each child contributing its own. `camas libs.search.lint` reaches a task the child exposes (because `libs/tasks.py` itself did `search = Project("search")`), and expressions compose across namespaces (`camas '{libs.search.lint, api.deploy}'`).
+
+Nodes stay anchored where they were authored: a leaf's `cwd` and its `paths=`/`when=` scopes are relative to its own `tasks.py`, rebased across the boundary no matter where `camas` is invoked from. Children are referenced by path relative to the importing file and live within its directory. The [monorepo fixture](https://github.com/JPHutchins/camas/tree/main/tests/fixtures/monorepo) exercises the permutations.
+
 ## Effects plugins
 
 Define an `Effect` in your `tasks.py` and it's discovered automatically — usable by name from `--effects` and listed under `camas --effects`. See [examples/effect-plugin/](https://github.com/JPHutchins/camas/tree/main/tests/fixtures/effect-plugin) for a typed `Tail` effect that streams per-task output as it arrives.

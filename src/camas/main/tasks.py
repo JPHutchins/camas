@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import runpy
 import sys
 from typing import TYPE_CHECKING, Any, Final, TypeGuard, cast
 
@@ -231,13 +230,7 @@ def name_scope_config(scope: Mapping[str, object]) -> Config | None:
 
 
 def load_tasks_from_py(path: Path) -> LoadOk:
-	"""Execute a Python task-definition file and collect its module-level bindings."""
-	scope: Final = runpy.run_path(str(path))
-	tasks: Final = name_scope_bindings(scope)
-	reject_reserved_names(tasks)
-	return LoadOk(
-		tasks=tasks,
-		source=path,
-		scope_effects=name_scope_effects(scope),
-		config=name_scope_config(scope),
-	)
+	"""``path`` loaded with its ``Project`` references resolved (:func:`camas.main.compose.load_scope`)."""
+	from .compose import load_scope
+
+	return load_scope(path)

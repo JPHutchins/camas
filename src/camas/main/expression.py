@@ -223,6 +223,16 @@ def eval_task_pos(node: ast.expr, allow_refs: bool) -> TaskNode | Ref:
 			return eval_node(node, allow_refs)
 
 
+def _dotted(node: ast.expr) -> str:
+	match node:
+		case ast.Name(id=name):
+			return name
+		case ast.Attribute(value=value, attr=attr):
+			return f"{_dotted(value)}.{attr}"
+		case _:
+			raise ValueError(f"unsupported syntax: {ast.dump(node)}")
+
+
 def eval_node(
 	node: ast.expr,
 	allow_refs: bool = False,
@@ -237,6 +247,8 @@ def eval_node(
 	Task(cmd='echo hi', name=None, env={}, cwd=None)
 	>>> eval_node(ast.parse('lint', mode="eval").body, allow_refs=True)
 	Ref(name='lint')
+	>>> eval_node(ast.parse('libs.a', mode="eval").body, allow_refs=True)
+	Ref(name='libs.a')
 	>>> eval_node(ast.parse('Ref("x")', mode="eval").body, allow_refs=True)
 	Ref(name='x')
 	>>> eval_node(ast.parse('Sequential(Task("a"), "b")', mode="eval").body).tasks  # type: ignore[union-attr]
@@ -285,6 +297,8 @@ def eval_node(
 					raise ValueError(f"unknown type: {name!r}")
 		case ast.Name(id=name) if allow_refs:
 			return Ref(name)
+		case ast.Attribute() if allow_refs:
+			return Ref(_dotted(node))
 		case _:
 			raise ValueError(f"unsupported syntax: {ast.dump(node)}")
 
@@ -292,14 +306,17 @@ def eval_node(
 def parse_expression(expr: str, tasks: Mapping[str, TaskNode] | None = None) -> TaskNode:
 	"""Parse a typed Python expression string into a TaskNode tree using AST (no eval).
 
-	When ``tasks`` is provided, bare identifiers in the expression become Refs that are
-	resolved against ``tasks`` after parsing. Bare strings, tuple literals, and set
-	literals are coerced into ``Task`` / ``Sequential`` / ``Parallel`` respectively.
+	When ``tasks`` is provided, bare identifiers and dotted attribute chains in the
+	expression become Refs that are resolved against ``tasks`` after parsing. Bare
+	strings, tuple literals, and set literals are coerced into ``Task`` /
+	``Sequential`` / ``Parallel`` respectively.
 
 	>>> parse_expression('Task("echo hi")')
 	Task(cmd='echo hi', name=None, env={}, cwd=None)
 	>>> parse_expression('Parallel(a)', tasks={"a": Task("x")})
 	Parallel(tasks=(Task(cmd='x', name=None, env={}, cwd=None),), name=None, matrix=None, env={}, cwd=None)
+	>>> parse_expression('{libs.a, libs.b}', tasks={"libs.a": Task("build a"), "libs.b": Task("build b")})
+	Parallel(tasks=(Task(cmd='build a', name=None, env={}, cwd=None), Task(cmd='build b', name=None, env={}, cwd=None)), name=None, matrix=None, env={}, cwd=None)
 	>>> parse_expression('"echo hi"')
 	Task(cmd='echo hi', name=None, env={}, cwd=None)
 	>>> parse_expression('("a", "b")').tasks  # type: ignore[union-attr]

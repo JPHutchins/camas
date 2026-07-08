@@ -22,6 +22,11 @@ if use_mypyc:
 	# the built-in ``Exception`` as a field type (KeyError: 'Exception' at import).
 	# starter.py stays interpreted: it is the --init template, shipped as plain
 	# source and read back as text by init.py.
+	# compose/ is a package, so the non-recursive main/*.py glob below never reaches it:
+	# it defines ProjectLoadError, caught across compiled call boundaries (mypyc miscompiles
+	# a native exception class used in ``except``), and its work is runpy + filesystem
+	# resolution of Project references (children run interpreted through runpy regardless),
+	# so compilation would buy nothing.
 	# __init__.py stays interpreted: a compiled package __init__ runs its body in
 	# create_module, before the import machinery sets __path__, so its eager
 	# ``from .entrypoint import …`` chain reaches the interpreted ``.check``

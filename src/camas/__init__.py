@@ -23,6 +23,16 @@ defines task ``lint`` — so ``name=`` is only for renaming or for naming a
 nested, anonymous group. (The ``[tool.camas.tasks]`` TOML form makes this
 explicit: the table key is the name.)
 
+A ``tasks.py`` composes others with ``Project``: ``libs =
+Project("libs")`` binds ``libs/tasks.py`` as a task node that runs what
+a bare ``camas`` runs there, and mounts that child's tasks under the
+binding name (``camas libs``, ``camas libs.search.lint``). Nodes stay
+anchored where they were authored — ``cwd`` and ``paths=``/``when=``
+scopes rebase to the child's directory. Compose the children's github
+defaults into one CI task with
+``Config(github_task=Parallel(libs, api))``; see the README's Monorepos
+section.
+
 ``Task``/``Sequential``/``Parallel`` also accept a ``help="..."``
 kwarg that overrides what ``camas --list`` prints for that task —
 rarely needed (the cmd or tree usually self-documents; this codebase
@@ -374,6 +384,7 @@ from .v0 import Claude as Claude
 from .v0 import Config as Config
 from .v0 import Effect as Effect
 from .v0 import Parallel as Parallel
+from .v0 import Project as Project
 from .v0 import Sequential as Sequential
 from .v0 import Task as Task
 from .v0 import by_suffix as by_suffix

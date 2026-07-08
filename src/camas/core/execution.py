@@ -38,6 +38,7 @@ from .traversal import flatten_leaves, subtree_leaf_indices
 
 if TYPE_CHECKING:
 	from collections.abc import Sequence
+	from pathlib import Path
 
 	from ..v0.effect import Effect
 	from .effect import EventSink
@@ -73,6 +74,10 @@ class RunContext(NamedTuple):
 	limiter: Limiter
 	interrupts: Interrupts
 	states: Sequence[LeafState]
+	base: Path | None
+	"""The frame a leaf's ``cwd`` is spawned relative to (:func:`spawn_cwd`); ``None`` when the
+	tasks source has no on-disk location to anchor to (a scope run without a ``__file__``),
+	leaving a relative ``cwd`` to resolve against the process working directory."""
 
 
 if sys.platform != "win32":
@@ -150,6 +155,32 @@ def subprocess_env(merged: dict[str, str]) -> dict[str, str]:
 	return {"FORCE_COLOR": "1", "CLICOLOR_FORCE": "1"} | base
 
 
+def spawn_cwd(base: Path | None, cwd: Path | None) -> Path | None:
+	"""A leaf's spawn-time cwd: ``cwd`` is authored relative to ``base``; an absolute ``cwd``,
+	an unset ``cwd``, or an unset ``base`` each pass through unresolved.
+
+	>>> from pathlib import Path
+	>>> spawn_cwd(None, None) is None
+	True
+	>>> spawn_cwd(None, Path("rel")) == Path("rel")
+	True
+	>>> spawn_cwd(Path("base"), None) == Path("base")
+	True
+	>>> here = Path.cwd()
+	>>> spawn_cwd(Path("base"), here) == here
+	True
+	>>> spawn_cwd(Path("base"), Path("rel")) == Path("base") / "rel"
+	True
+	"""
+	if base is None:
+		return cwd
+	if cwd is None:
+		return base
+	if cwd.is_absolute():
+		return cwd
+	return base / cwd
+
+
 async def run_cmd(task: Task, leaf_index: int, ctx: RunContext) -> TaskResult:
 	"""Run one leaf as a subprocess, dispatching Started/Output/Completed events."""
 	async with ctx.limiter:
@@ -166,7 +197,7 @@ async def run_cmd(task: Task, leaf_index: int, ctx: RunContext) -> TaskResult:
 			stdout=asyncio.subprocess.PIPE,
 			stderr=STDOUT,
 			env=subprocess_env({**os.environ, **task.env}),
-			cwd=task.cwd,
+			cwd=spawn_cwd(ctx.base, task.cwd),
 		)
 		ctx.interrupts.procs[leaf_index] = proc
 		output: Final[list[bytes]] = []
@@ -237,6 +268,7 @@ async def run(
 	jobs: int | None = None,
 	*,
 	interactive: bool = True,
+	base: Path | None = None,
 ) -> RunResult:
 	"""Execute a task tree, dispatching events to every effect.
 
@@ -286,7 +318,7 @@ async def run(
 			slot[effect_idx] = effect_ctx
 
 	interrupts: Final = Interrupts(procs={})
-	ctx: Final = RunContext(dispatch, leaves, index_map, limiter, interrupts, states)
+	ctx: Final = RunContext(dispatch, leaves, index_map, limiter, interrupts, states, base)
 	loop: Final = asyncio.get_running_loop()
 
 	def on_sigint() -> None:

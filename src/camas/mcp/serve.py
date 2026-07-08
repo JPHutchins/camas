@@ -35,11 +35,12 @@ from ..core.render import render_tree_lines, strip_ansi
 from ..core.scope import scope_to_changed, to_changed, with_default_paths
 from ..core.task import task_label
 from ..main.argv import apply_passthrough
+from ..main.compose import load_py_tasks_state
 from ..main.format import format_load_error_hint, format_version_skew_hint
 from ..main.init import create_starter_tasks_py, starter_text
 from ..main.pep723 import camas_requirement_from, version_specifier
 from ..main.state import EMPTY_STATE, LoadErr, LoadOk, TasksState
-from ..main.tasks import load_tasks, load_tasks_from_py
+from ..main.tasks import load_tasks
 from ..v0.completion import Finished, Skipped, Stopped
 from ..v0.config import Config
 from . import wire
@@ -154,6 +155,20 @@ def project_source(state: TasksState) -> Path | None:
 			return source
 		case _:
 			assert_never(state)
+
+
+def base_from(source: Path | None, fallback: Path) -> Path:
+	"""The frame every leaf ``cwd`` and every ``--paths``/``paths`` entry is rebased against:
+	the directory of the composed project's own ``tasks.py`` when one was resolved, else
+	``fallback`` — the same fallback :func:`camas.core.execution.spawn_cwd` and
+	:func:`camas.core.scope.to_changed` apply to an unrebased leaf.
+	"""
+	return source.parent if source is not None else fallback
+
+
+def base_for(session: Session) -> Path:
+	"""The rebasing frame for the MCP server path (:func:`base_from`)."""
+	return base_from(project_source(session.project), session.base)
 
 
 class VersionSkew(NamedTuple):
@@ -616,7 +631,7 @@ async def run_for(
 		return success(
 			with_warning(session, dry_run_text(node)), to_plan_response(node), session.compat
 		)
-	result = await run(node, jobs=req.jobs, interactive=False)
+	result = await run(node, jobs=req.jobs, interactive=False, base=base_for(session))
 	logs = write_logs(create_run_log_dir(session.camas_dir, name, session.reserve_run()), result)
 	timings.record_run(session.camas_dir, result)
 	resp = attach_logs(to_run_response(node, result, verbosity=req.verbosity), logs)
@@ -691,7 +706,7 @@ async def run_budget(
 			resp,
 			session.compat,
 		)
-	result = await run(plan.node, jobs=req.jobs, interactive=False)
+	result = await run(plan.node, jobs=req.jobs, interactive=False, base=base_for(session))
 	logs = write_logs(create_run_log_dir(session.camas_dir, label, session.reserve_run()), result)
 	timings.record_run(session.camas_dir, result)
 	resp = attach_budget(
@@ -1082,10 +1097,7 @@ def resolve_project(base: Path) -> TasksState:
 	for candidate in (base, *base.parents):
 		tasks_py = candidate / "tasks.py"
 		if tasks_py.is_file():
-			try:
-				return load_tasks_from_py(tasks_py)
-			except Exception as e:
-				return LoadErr(source=tasks_py, exception=e)
+			return load_py_tasks_state(tasks_py)
 		pyproject = candidate / "pyproject.toml"
 		if pyproject.is_file():
 			try:
@@ -1176,12 +1188,13 @@ async def gate_for(
 		node = gate_source(tasks, config, req.task)
 	except ValueError as e:
 		return error_result(str(e))
-	changed = to_changed(req.paths, session.base)
+	changed = to_changed(req.paths, base_for(session))
 	outcome = await run_gate(
 		node,
 		changed,
 		under=req.under,
 		jobs=req.jobs,
+		base=base_for(session),
 		timings=timings.load(session.camas_dir),
 	)
 	budget = to_budget_report(outcome.budget) if outcome.budget is not None else None
@@ -1222,7 +1235,7 @@ async def fix_for(
 		fix_node = config.gate_fix() if config is not None else None
 	scoped: TaskNode | None = None
 	if fix_node is not None:
-		changed = to_changed(req.paths, session.base)
+		changed = to_changed(req.paths, base_for(session))
 		expanded = expand_matrix(fix_node)
 		scoped = scope_to_changed(expanded, changed) if changed else with_default_paths(expanded)
 	empty_cause: str | None
@@ -1236,7 +1249,7 @@ async def fix_for(
 			else "no fix leaf covers the paths"
 		)
 	else:
-		result = await run(scoped, jobs=req.jobs, interactive=False)
+		result = await run(scoped, jobs=req.jobs, interactive=False, base=base_for(session))
 		resp = to_run_response(scoped, result)
 		empty_cause = None
 	return success(
@@ -1360,8 +1373,8 @@ def gate_cli(argv: list[str]) -> int:
 		case LoadErr(source=source, exception=exception):
 			print(gate_cli_load_error(state, source, exception), file=sys.stderr)
 			return 2
-		case LoadOk(tasks=tasks, config=config):
-			return run_gate_cli(args, base, tasks, config)
+		case LoadOk(tasks=tasks, config=config, source=source):
+			return run_gate_cli(args, base_from(source, base), tasks, config)
 		case _:
 			assert_never(state)
 
@@ -1395,7 +1408,14 @@ def run_gate_cli(
 			print(budget_headline(to_budget_report(plan)))
 		return 0
 	outcome = asyncio.run(
-		run_gate(node, changed, under=args.under, jobs=args.jobs, timings=timings.load(camas_dir))
+		run_gate(
+			node,
+			changed,
+			under=args.under,
+			jobs=args.jobs,
+			base=base,
+			timings=timings.load(camas_dir),
+		)
 	)
 	budget = to_budget_report(outcome.budget) if outcome.budget is not None else None
 	rerun = wire.GateRerun(task=args.task, paths=changed, under=args.under)

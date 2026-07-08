@@ -26,6 +26,7 @@ else:  # pragma: no cover
 
 if TYPE_CHECKING:
 	from collections.abc import Mapping
+	from pathlib import Path
 
 	from ..v0.task import TaskNode
 	from .budget import BudgetPlan
@@ -107,6 +108,7 @@ async def run_gate(
 	*,
 	under: float | None = None,
 	jobs: int | None = None,
+	base: Path | None = None,
 	timings: Mapping[TaskLabel, TaskTiming] | None = None,
 ) -> GateOutcome:
 	"""Run the check ``node`` over the ``changed`` paths and classify the residual.
@@ -127,6 +129,6 @@ async def run_gate(
 	if scoped is None:
 		return GateOutcome("green", None, None, plan)
 	checks_node = with_agent_format(scoped)
-	checks = await run(checks_node, jobs=jobs, interactive=False)
+	checks = await run(checks_node, jobs=jobs, base=base, interactive=False)
 	residual: ResidualClass = "needs_reasoning" if checks.returncode != 0 else "green"
 	return GateOutcome(residual, checks_node, checks, plan)

@@ -9,6 +9,7 @@ import signal
 import sys
 import time
 from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -20,6 +21,7 @@ from camas.core.execution import (
 	await_run,
 	restore_tty,
 	run,
+	spawn_cwd,
 	step_interrupt,
 	suppress_ctrl_c_echo,
 )
@@ -30,7 +32,6 @@ from camas.v0.task_event import CompletedEvent
 
 if TYPE_CHECKING:
 	from collections.abc import Sequence
-	from pathlib import Path
 
 	from camas.core.completion import RunResult, TaskResult
 	from camas.v0.task import TaskNode
@@ -304,6 +305,38 @@ def test_run_result_has_structured_results() -> None:
 	assert result.elapsed > 0
 	names = {r.name for r in result.results}
 	assert names == {"a", "b"}
+
+
+def test_spawn_cwd_resolves_relative_against_base(tmp_path: Path) -> None:
+	assert spawn_cwd(tmp_path, Path("sub")) == tmp_path / "sub"
+
+
+def _printed_cwd(result: RunResult) -> Path:
+	completion = result.results[0].completion
+	assert isinstance(completion, Finished)
+	return Path(completion.output[0].decode().strip())
+
+
+def test_run_resolves_relative_cwd_against_base(tmp_path: Path) -> None:
+	(tmp_path / "sub").mkdir()
+	task = Task(("python", "-c", "import os; print(os.getcwd())"), cwd=Path("sub"))
+	result = asyncio.run(run(task, base=tmp_path))
+	assert result.returncode == 0
+	assert _printed_cwd(result).resolve() == (tmp_path / "sub").resolve()
+
+
+def test_run_cwd_none_runs_in_base(tmp_path: Path) -> None:
+	task = Task(("python", "-c", "import os; print(os.getcwd())"))
+	result = asyncio.run(run(task, base=tmp_path))
+	assert result.returncode == 0
+	assert _printed_cwd(result).resolve() == tmp_path.resolve()
+
+
+def test_run_base_none_preserves_process_cwd() -> None:
+	task = Task(("python", "-c", "import os; print(os.getcwd())"))
+	result = asyncio.run(run(task))
+	assert result.returncode == 0
+	assert _printed_cwd(result).resolve() == Path.cwd().resolve()
 
 
 class FakeProc:
