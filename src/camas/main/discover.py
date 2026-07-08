@@ -5,16 +5,19 @@
 descendant directories, each under a dotted namespace keyed by directory name.
 
 :func:`discover_children` walks a directory depth-first for the nearest descendant directories
-containing a ``tasks.py``, skipping hidden and known non-task directories (``node_modules``,
-``.venv``, ``venv``, ``__pycache__``) and symlinked directories (cycle safety); a directory that
-itself has a ``tasks.py`` is a leaf of the search, so a nested ``tasks.py`` composes only its
-own subtree.
+containing a camas ``tasks.py`` — one whose source declares a ``camas`` import
+(:func:`is_camas_tasks_file`); an unrelated module named ``tasks.py`` (Celery, Django, ...) is
+never executed and its directory is walked like any other. The walk skips hidden and known
+non-task directories (``node_modules``, ``.venv``, ``venv``, ``__pycache__``) and symlinked
+directories (cycle safety); a directory that itself has a camas ``tasks.py`` is a leaf of the
+search, so a nested ``tasks.py`` composes only its own subtree.
 
 :func:`compose_from` recursively composes a loaded ``tasks.py``
 (:class:`~camas.main.state.LoadOk`) with each discovered child: the child's tasks are rebased
 (:func:`rebase_tree`) into the composing directory's frame and merged under
-``f"{segment}.{name}"`` (``segment`` the child directory's own name); the child's
-``Config.default_task``, if any, is merged under the bare ``segment`` too. Composition is
+``f"{mount}.{name}"`` — ``mount`` the child directory's own name, extended with parent
+directory segments while it collides (:func:`resolve_mounts`); the child's
+``Config.default_task``, if any, is merged under the bare ``mount`` too. Composition is
 opt-out on both ends: a ``Config.discover=False`` parent composes none of its descendants, and
 a ``Config.discoverable=False`` child (and everything under it) is never composed into an
 ancestor.
@@ -30,6 +33,7 @@ group — a leaf that sets none of these keeps deferring, now one level further 
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Final
@@ -51,7 +55,7 @@ from .tasks import (
 )
 
 if TYPE_CHECKING:
-	from collections.abc import Mapping
+	from collections.abc import Mapping, Sequence
 
 	from ..v0.task import PathScope, TaskNode, WhenPredicate
 	from .state import TasksState
@@ -71,31 +75,69 @@ def is_pruned_dir(name: str) -> bool:
 	return name.startswith(".") or name in IGNORE_DIRS
 
 
+_CAMAS_IMPORT: Final = re.compile(r"^\s*(?:from|import)\s+camas\b", re.MULTILINE)
+"""A ``camas`` import statement at the start of a line — the marker distinguishing a camas
+task-definitions file from an unrelated module that happens to be named ``tasks.py``."""
+
+
+def is_camas_tasks_file(path: Path) -> bool:
+	r"""True when ``path`` is a file whose source declares a ``camas`` import
+	(:data:`_CAMAS_IMPORT`) — the marker :func:`discover_children` requires before a discovered
+	``tasks.py`` is ever executed.
+
+	>>> import tempfile
+	>>> p = Path(tempfile.mkdtemp()) / "tasks.py"
+	>>> _ = p.write_text("from camas import Task")
+	>>> is_camas_tasks_file(p)
+	True
+	>>> _ = p.write_text("from celery import shared_task")
+	>>> is_camas_tasks_file(p)
+	False
+	>>> _ = p.write_text("# import camas\\nx = 1")
+	>>> is_camas_tasks_file(p)
+	False
+	>>> is_camas_tasks_file(p.parent / "missing.py")
+	False
+	"""
+	return path.is_file() and bool(
+		_CAMAS_IMPORT.search(path.read_text(encoding="utf-8", errors="replace"))
+	)
+
+
 def discover_children(root_dir: Path) -> tuple[Path, ...]:
-	"""The nearest descendant directories under ``root_dir`` containing a ``tasks.py``, found by
-	depth-first, name-sorted traversal. Hidden directories, :data:`IGNORE_DIRS`, and symlinked
-	directories are pruned. A directory that itself has a ``tasks.py`` is a leaf of the search —
-	its own descendants are never visited, so a nested ``tasks.py`` composes only its own subtree.
+	"""The nearest descendant directories under ``root_dir`` containing a camas ``tasks.py``
+	(:func:`is_camas_tasks_file`), found by depth-first, name-sorted traversal. Hidden
+	directories, :data:`IGNORE_DIRS`, and symlinked directories are pruned. A directory that
+	itself has a camas ``tasks.py`` is a leaf of the search — its own descendants are never
+	visited, so a nested ``tasks.py`` composes only its own subtree. A directory whose
+	``tasks.py`` is not a camas file is walked like any other, so foreign task modules neither
+	execute nor block discovery beneath them.
 
 	>>> import tempfile
 	>>> root = Path(tempfile.mkdtemp())
 	>>> _ = (root / "child").mkdir()
-	>>> _ = (root / "child" / "tasks.py").write_text("")
+	>>> _ = (root / "child" / "tasks.py").write_text("import camas")
 	>>> _ = (root / "child" / "deeper").mkdir()
-	>>> _ = (root / "child" / "deeper" / "tasks.py").write_text("")
+	>>> _ = (root / "child" / "deeper" / "tasks.py").write_text("import camas")
 	>>> _ = (root / "gap" / "nested").mkdir(parents=True)
-	>>> _ = (root / "gap" / "nested" / "tasks.py").write_text("")
+	>>> _ = (root / "gap" / "nested" / "tasks.py").write_text("import camas")
+	>>> _ = (root / "foreign").mkdir()
+	>>> _ = (root / "foreign" / "tasks.py").write_text("from celery import shared_task")
+	>>> _ = (root / "foreign" / "sub").mkdir()
+	>>> _ = (root / "foreign" / "sub" / "tasks.py").write_text("import camas")
 	>>> _ = (root / ".venv").mkdir()
-	>>> _ = (root / ".venv" / "tasks.py").write_text("")
+	>>> _ = (root / ".venv" / "tasks.py").write_text("import camas")
 	>>> sorted(p.relative_to(root).as_posix() for p in discover_children(root))
-	['child', 'gap/nested']
+	['child', 'foreign/sub', 'gap/nested']
 	"""
 	entries = sorted((p for p in root_dir.iterdir() if p.is_dir()), key=lambda p: p.name)
 	return tuple(
 		found
 		for entry in entries
 		if not entry.is_symlink() and not is_pruned_dir(entry.name)
-		for found in ((entry,) if (entry / "tasks.py").is_file() else discover_children(entry))
+		for found in (
+			(entry,) if is_camas_tasks_file(entry / "tasks.py") else discover_children(entry)
+		)
 	)
 
 
@@ -216,7 +258,10 @@ def rebase_when(
 		case str():
 			return rebase_str_prefix(when, rel)
 		case tuple():
-			return tuple(rebase_str_prefix(w, rel) for w in when)
+			return tuple(
+				rebase_str_prefix(w, rel)  # ty: ignore[invalid-argument-type]
+				for w in when
+			)
 		case _:
 			return wrap_when(when, rel)
 
@@ -338,26 +383,102 @@ class ComposeChildError(Exception):
 		self.cause = cause
 
 
+def prospective_keys(name: str, task_keys: tuple[str, ...], has_default: bool) -> tuple[str, ...]:
+	"""Every key a child mounted at ``name`` would add: the bare ``name`` when the child has a
+	default task, plus ``name``-dotted forms of its task keys.
+
+	>>> prospective_keys("api", ("deploy", "logs"), True)
+	('api', 'api.deploy', 'api.logs')
+	>>> prospective_keys("api", ("deploy",), False)
+	('api.deploy',)
+	"""
+	return (*((name,) if has_default else ()), *(f"{name}.{key}" for key in task_keys))
+
+
+def resolve_mounts(
+	children: Sequence[tuple[PurePosixPath, tuple[str, ...], bool]],
+	taken: frozenset[str],
+) -> tuple[tuple[str, ...], ...]:
+	"""The mount segments for each child ``(rel, task_keys, has_default)``: its directory name,
+	extended with parent directory segments from ``rel`` while its dotted mount name collides —
+	with a sibling's mount name, or with a ``taken`` key (:func:`prospective_keys`). A mount
+	whose ``rel`` is exhausted keeps its shortest still-colliding name; the collision then
+	surfaces at merge.
+
+	>>> resolve_mounts([(PurePosixPath("services/api"), ("deploy",), True)], frozenset())
+	(('api',),)
+	>>> resolve_mounts(
+	...     [
+	...         (PurePosixPath("services/api"), ("deploy",), True),
+	...         (PurePosixPath("vendor/api"), ("deploy",), True),
+	...     ],
+	...     frozenset(),
+	... )
+	(('services', 'api'), ('vendor', 'api'))
+	>>> resolve_mounts(
+	...     [(PurePosixPath("x"), ("t",), False), (PurePosixPath("a/x"), ("t",), False)],
+	...     frozenset(),
+	... )
+	(('x',), ('a', 'x'))
+	>>> resolve_mounts([(PurePosixPath("services/api"), ("deploy",), True)], frozenset({"api"}))
+	(('services', 'api'),)
+	>>> resolve_mounts([(PurePosixPath("api"), ("deploy",), True)], frozenset({"api"}))
+	(('api',),)
+	"""
+	depths: Final = [1] * len(children)
+
+	def segments(i: int) -> tuple[str, ...]:
+		rel, _, _ = children[i]
+		return rel.parts[len(rel.parts) - depths[i] :]
+
+	def name(i: int) -> str:
+		return ".".join(segments(i))
+
+	def extend(i: int) -> bool:
+		rel, _, _ = children[i]
+		if depths[i] < len(rel.parts):
+			depths[i] += 1
+			return True
+		return False
+
+	while True:
+		by_name: dict[str, tuple[int, ...]] = {}
+		for i in range(len(children)):
+			by_name[name(i)] = (*by_name.get(name(i), ()), i)
+		clashes = [i for group in by_name.values() if len(group) > 1 for i in group]
+		clashes += [
+			i
+			for i, (_, task_keys, has_default) in enumerate(children)
+			if any(k in taken for k in prospective_keys(name(i), task_keys, has_default))
+		]
+		extended = [extend(i) for i in clashes]
+		if not any(extended):
+			return tuple(segments(i) for i in range(len(children)))
+
+
 def compose_from(root_dir: Path, own: LoadOk) -> LoadOk:
 	"""``own`` (already loaded from ``root_dir / "tasks.py"``) composed with every discovered
 	child (:func:`discover_children`) it is configured to discover: each child's tasks are
-	rebased (:func:`rebase_tree`) and merged under ``f"{segment}.{name}"`` — ``segment`` the
-	child directory's name — and its ``Config.default_task``, if any, under the bare
-	``segment``; a child recurses through this same composition before its own tasks are
-	merged, so a grandchild's tasks arrive already namespaced under the child's own segment. A
-	child whose ``Config.discoverable`` is ``False`` (and everything below it) is skipped
-	entirely. Only ``default_task`` is taken from a child's ``Config`` — its ``scope_effects``
-	are not composed.
+	rebased (:func:`rebase_tree`) and merged under ``f"{mount}.{name}"`` — ``mount`` the child
+	directory's name, extended with parent directory segments while it collides
+	(:func:`resolve_mounts`) — and its ``Config.default_task``, if any, under the bare
+	``mount``; a child recurses through this same composition before its own tasks are merged,
+	so a grandchild's tasks arrive already namespaced under the child's own mount. A child
+	whose ``Config.discoverable`` is ``False`` (and everything below it) is skipped entirely.
+	Only ``default_task`` is taken from a child's ``Config`` — its ``scope_effects`` are not
+	composed.
 
 	Raises:
 		ComposeChildError: when loading a child ``tasks.py`` raises.
-		ValueError: when two files define the same merged task name, a child directory's name
-			is invalid (:func:`check_segment`), or the merged namespace has a reserved name.
+		ValueError: when a collision survives full mount extension (two files still define the
+			same merged task name), a mount segment is invalid (:func:`check_segment`), or the
+			merged namespace has a reserved name.
 	"""
 	own_source: Final = root_dir / "tasks.py"
 	merged: dict[str, TaskNode] = dict(own.tasks)
 	origin: dict[str, Path] = dict.fromkeys(own.tasks, own_source)
 	if own.config is None or own.config.discover:
+		views: list[tuple[Path, PurePosixPath, LoadOk]] = []
 		for child_dir in discover_children(root_dir):
 			child_tasks_py = child_dir / "tasks.py"
 			try:
@@ -366,12 +487,30 @@ def compose_from(root_dir: Path, own: LoadOk) -> LoadOk:
 				raise ComposeChildError(child_tasks_py, e) from e
 			if child_own.config is not None and not child_own.config.discoverable:
 				continue
-			child_view = compose_from(child_dir, child_own)
-			rel = PurePosixPath(child_dir.relative_to(root_dir).as_posix())
-			segment = child_dir.name
-			check_segment(segment, child_tasks_py)
+			views.append(
+				(
+					child_tasks_py,
+					PurePosixPath(child_dir.relative_to(root_dir).as_posix()),
+					compose_from(child_dir, child_own),
+				)
+			)
+		mounts: Final = resolve_mounts(
+			[
+				(
+					rel,
+					tuple(view.tasks),
+					view.config is not None and view.config.default_task is not None,
+				)
+				for _, rel, view in views
+			],
+			frozenset(origin),
+		)
+		for (child_tasks_py, rel, child_view), mount_segments in zip(views, mounts, strict=True):
+			mount = ".".join(mount_segments)
+			for segment in mount_segments:
+				check_segment(segment, child_tasks_py)
 			for key, node in child_view.tasks.items():
-				merged_key = f"{segment}.{key}"
+				merged_key = f"{mount}.{key}"
 				if merged_key in origin:
 					raise ValueError(
 						f"task {merged_key!r} defined in both {origin[merged_key]} and "
@@ -381,12 +520,12 @@ def compose_from(root_dir: Path, own: LoadOk) -> LoadOk:
 				origin[merged_key] = child_tasks_py
 			default_task = child_view.config.default_task if child_view.config is not None else None
 			if default_task is not None:
-				if segment in origin:
+				if mount in origin:
 					raise ValueError(
-						f"task {segment!r} defined in both {origin[segment]} and {child_tasks_py}"
+						f"task {mount!r} defined in both {origin[mount]} and {child_tasks_py}"
 					)
-				merged[segment] = rebase_tree(default_task, rel, is_root=True)
-				origin[segment] = child_tasks_py
+				merged[mount] = rebase_tree(default_task, rel, is_root=True)
+				origin[mount] = child_tasks_py
 	reject_reserved_names(merged)
 	return own._replace(tasks=merged)
 

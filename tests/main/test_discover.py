@@ -15,6 +15,7 @@ from camas.main.discover import (
 	compose_from,
 	composed_view,
 	discover_children,
+	is_camas_tasks_file,
 	is_pruned_dir,
 	load_py_state,
 	rebase_cwd,
@@ -36,24 +37,21 @@ def _write(path: Path, source: str) -> Path:
 	return path
 
 
-# --- discover_children ---
-
-
 def test_discover_children_nearest_wins_no_descent_past_a_found_tasks_py(tmp_path: Path) -> None:
-	_write(tmp_path / "child" / "tasks.py", "")
-	_write(tmp_path / "child" / "deeper" / "tasks.py", "")
+	_write(tmp_path / "child" / "tasks.py", "import camas\n")
+	_write(tmp_path / "child" / "deeper" / "tasks.py", "import camas\n")
 	assert discover_children(tmp_path) == (tmp_path / "child",)
 
 
 def test_discover_children_gap_dirs_collapse(tmp_path: Path) -> None:
-	_write(tmp_path / "gap" / "nested" / "tasks.py", "")
+	_write(tmp_path / "gap" / "nested" / "tasks.py", "import camas\n")
 	assert discover_children(tmp_path) == (tmp_path / "gap" / "nested",)
 
 
 def test_discover_children_sorted_deterministic(tmp_path: Path) -> None:
-	_write(tmp_path / "zeta" / "tasks.py", "")
-	_write(tmp_path / "alpha" / "tasks.py", "")
-	_write(tmp_path / "mid" / "tasks.py", "")
+	_write(tmp_path / "zeta" / "tasks.py", "import camas\n")
+	_write(tmp_path / "alpha" / "tasks.py", "import camas\n")
+	_write(tmp_path / "mid" / "tasks.py", "import camas\n")
 	assert discover_children(tmp_path) == (
 		tmp_path / "alpha",
 		tmp_path / "mid",
@@ -63,12 +61,12 @@ def test_discover_children_sorted_deterministic(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("pruned", ["node_modules", ".venv", "venv", "__pycache__", ".hidden"])
 def test_discover_children_prunes_ignored_and_hidden_dirs(tmp_path: Path, pruned: str) -> None:
-	_write(tmp_path / pruned / "tasks.py", "")
+	_write(tmp_path / pruned / "tasks.py", "import camas\n")
 	assert discover_children(tmp_path) == ()
 
 
 def test_discover_children_planted_node_modules_tasks_py_not_found(tmp_path: Path) -> None:
-	_write(tmp_path / "node_modules" / "some-pkg" / "tasks.py", "")
+	_write(tmp_path / "node_modules" / "some-pkg" / "tasks.py", "import camas\n")
 	assert discover_children(tmp_path) == ()
 
 
@@ -76,7 +74,7 @@ def test_discover_children_planted_node_modules_tasks_py_not_found(tmp_path: Pat
 	sys.platform == "win32", reason="symlink creation requires elevated privileges on Windows"
 )
 def test_discover_children_skips_symlinked_dir(tmp_path: Path) -> None:
-	real = _write(tmp_path / "real" / "tasks.py", "").parent
+	real = _write(tmp_path / "real" / "tasks.py", "import camas\n").parent
 	link = tmp_path / "link"
 	link.symlink_to(real, target_is_directory=True)
 	assert discover_children(tmp_path) == (real,)
@@ -88,7 +86,21 @@ def test_is_pruned_dir_pure() -> None:
 	assert not is_pruned_dir("src")
 
 
-# --- rebase_cwd / rebase_str_prefix ---
+def test_discover_children_skips_foreign_tasks_py(tmp_path: Path) -> None:
+	_write(tmp_path / "worker" / "tasks.py", "from celery import shared_task\n")
+	assert discover_children(tmp_path) == ()
+
+
+def test_discover_children_walks_through_foreign_tasks_py_dir(tmp_path: Path) -> None:
+	_write(tmp_path / "worker" / "tasks.py", "from celery import shared_task\n")
+	_write(tmp_path / "worker" / "queue" / "tasks.py", "import camas\n")
+	assert discover_children(tmp_path) == (tmp_path / "worker" / "queue",)
+
+
+def test_is_camas_tasks_file_requires_an_import_statement(tmp_path: Path) -> None:
+	commented = _write(tmp_path / "tasks.py", "# import camas\nx = 1\n")
+	assert not is_camas_tasks_file(commented)
+	assert is_camas_tasks_file(_write(tmp_path / "sub" / "tasks.py", "\tfrom camas import Task\n"))
 
 
 def test_rebase_cwd_none_root_anchors_to_rel() -> None:
@@ -119,9 +131,6 @@ def test_rebase_str_prefix_dot_collapses_to_rel() -> None:
 
 def test_rebase_str_prefix_nests_under_rel() -> None:
 	assert rebase_str_prefix("src", PurePosixPath("services/api")) == "services/api/src"
-
-
-# --- rebase_paths / wrap_pathscope ---
 
 
 def test_rebase_paths_none_stays_none() -> None:
@@ -173,9 +182,6 @@ def test_wrap_pathscope_mixed_changed_keeps_only_matches() -> None:
 	)
 
 
-# --- rebase_when / wrap_when ---
-
-
 def test_rebase_when_none_stays_none() -> None:
 	assert rebase_when(None, PurePosixPath("api")) is None
 
@@ -199,9 +205,6 @@ def test_wrap_when_filters_to_rel_before_calling_inner() -> None:
 	wrapped = wrap_when(lambda c: "x" in c, PurePosixPath("api"))
 	assert wrapped(("api/x", "other/y")) is True
 	assert wrapped(("other/y",)) is False
-
-
-# --- rebase_tree ---
 
 
 def test_rebase_tree_leaf_paths_str_and_root_cwd() -> None:
@@ -269,9 +272,6 @@ def test_rebase_tree_callable_paths_and_when_are_wrapped() -> None:
 	assert rebased.when(("api/x",)) is True
 
 
-# --- check_segment ---
-
-
 def test_check_segment_accepts_plain_name() -> None:
 	check_segment("api", Path("tasks.py"))
 
@@ -286,9 +286,6 @@ def test_check_segment_rejects_dotted_name() -> None:
 		check_segment("a.b", Path("services/a.b/tasks.py"))
 
 
-# --- ComposeChildError ---
-
-
 def test_compose_child_error_carries_source_and_cause() -> None:
 	cause = RuntimeError("boom")
 	source = Path("child/tasks.py")
@@ -296,9 +293,6 @@ def test_compose_child_error_carries_source_and_cause() -> None:
 	assert err.source == source
 	assert err.cause is cause
 	assert "boom" in str(err)
-
-
-# --- compose_from / composed_view ---
 
 
 def test_compose_from_dotted_key(tmp_path: Path) -> None:
@@ -323,7 +317,7 @@ def test_compose_from_bare_namespace_default_key(tmp_path: Path) -> None:
 
 def test_compose_from_recurses_into_grandchildren(tmp_path: Path) -> None:
 	_write(tmp_path / "tasks.py", "")
-	_write(tmp_path / "libs" / "tasks.py", "")
+	_write(tmp_path / "libs" / "tasks.py", "import camas\n")
 	_write(
 		tmp_path / "libs" / "search" / "tasks.py",
 		"from camas import Task\nlint = Task('lint search')\n",
@@ -362,7 +356,7 @@ def test_compose_from_discoverable_false_prunes_whole_subtree(tmp_path: Path) ->
 
 def test_compose_from_empty_child_contributes_nothing(tmp_path: Path) -> None:
 	_write(tmp_path / "tasks.py", "")
-	_write(tmp_path / "api" / "tasks.py", "")
+	_write(tmp_path / "api" / "tasks.py", "import camas\n")
 	loaded = compose_from(tmp_path, load_own(tmp_path / "tasks.py"))
 	assert loaded.tasks == {}
 
@@ -401,6 +395,50 @@ def test_compose_from_effects_only_child_not_composed(tmp_path: Path) -> None:
 	loaded = compose_from(tmp_path, load_own(tmp_path / "tasks.py"))
 	assert loaded.tasks == {}
 	assert loaded.scope_effects == {}
+
+
+def test_compose_from_foreign_child_is_never_executed(tmp_path: Path) -> None:
+	_write(tmp_path / "tasks.py", "")
+	_write(tmp_path / "worker" / "tasks.py", "raise RuntimeError('celery module, not camas')\n")
+	loaded = compose_from(tmp_path, load_own(tmp_path / "tasks.py"))
+	assert loaded.tasks == {}
+
+
+def test_compose_from_sibling_gap_collision_extends_both(tmp_path: Path) -> None:
+	_write(tmp_path / "tasks.py", "")
+	_write(
+		tmp_path / "services" / "api" / "tasks.py",
+		"from camas import Task\ndeploy = Task('deploy services')\n",
+	)
+	_write(
+		tmp_path / "vendor" / "api" / "tasks.py",
+		"from camas import Task\ndeploy = Task('deploy vendor')\n",
+	)
+	loaded = compose_from(tmp_path, load_own(tmp_path / "tasks.py"))
+	assert set(loaded.tasks) == {"services.api.deploy", "vendor.api.deploy"}
+	assert loaded.tasks["services.api.deploy"].cwd == Path("services/api")
+	assert loaded.tasks["vendor.api.deploy"].cwd == Path("vendor/api")
+
+
+def test_compose_from_stuck_sibling_keeps_short_name(tmp_path: Path) -> None:
+	_write(tmp_path / "tasks.py", "")
+	_write(tmp_path / "x" / "tasks.py", "from camas import Task\nt = Task('t short')\n")
+	_write(tmp_path / "a" / "x" / "tasks.py", "from camas import Task\nt = Task('t deep')\n")
+	loaded = compose_from(tmp_path, load_own(tmp_path / "tasks.py"))
+	assert set(loaded.tasks) == {"x.t", "a.x.t"}
+
+
+def test_compose_from_root_binding_collision_extends_child(tmp_path: Path) -> None:
+	_write(tmp_path / "tasks.py", "from camas import Task\napi = Task('root api')\n")
+	_write(
+		tmp_path / "services" / "api" / "tasks.py",
+		"from camas import Config, Task\n"
+		"deploy = Task('deploy api')\n"
+		"_ = Config(default_task=deploy)\n",
+	)
+	loaded = compose_from(tmp_path, load_own(tmp_path / "tasks.py"))
+	assert set(loaded.tasks) == {"api", "services.api", "services.api.deploy"}
+	assert loaded.tasks["api"] == Task("root api", name="api")
 
 
 def test_compose_from_bare_key_collision_names_both_files(tmp_path: Path) -> None:
@@ -455,9 +493,6 @@ def test_composed_view_matches_compose_from(tmp_path: Path) -> None:
 	)
 
 
-# --- load_py_state ---
-
-
 def test_load_py_state_composes_successfully(tmp_path: Path) -> None:
 	_write(tmp_path / "tasks.py", "")
 	_write(tmp_path / "api" / "tasks.py", "from camas import Task\nbuild = Task('build api')\n")
@@ -468,7 +503,9 @@ def test_load_py_state_composes_successfully(tmp_path: Path) -> None:
 
 def test_load_py_state_wraps_child_error_with_child_source(tmp_path: Path) -> None:
 	_write(tmp_path / "tasks.py", "")
-	broken = _write(tmp_path / "api" / "tasks.py", "raise RuntimeError('boom child')\n")
+	broken = _write(
+		tmp_path / "api" / "tasks.py", "import camas\nraise RuntimeError('boom child')\n"
+	)
 	state = load_py_state(tmp_path / "tasks.py")
 	assert isinstance(state, LoadErr)
 	assert state.source == broken
@@ -482,9 +519,6 @@ def test_load_py_state_own_error_uses_own_source(tmp_path: Path) -> None:
 	assert isinstance(state, LoadErr)
 	assert state.source == broken
 	assert "boom own" in str(state.exception)
-
-
-# --- state_from_scope ---
 
 
 def test_state_from_scope_composes_descendants(tmp_path: Path) -> None:
@@ -528,7 +562,9 @@ def test_state_from_scope_discover_false_skips_composition(tmp_path: Path) -> No
 
 def test_state_from_scope_wraps_child_error_with_child_source(tmp_path: Path) -> None:
 	root = tmp_path / "tasks.py"
-	broken = _write(tmp_path / "api" / "tasks.py", "raise RuntimeError('boom scope child')\n")
+	broken = _write(
+		tmp_path / "api" / "tasks.py", "import camas\nraise RuntimeError('boom scope child')\n"
+	)
 	scope: dict[str, object] = {"__file__": str(root)}
 	state = state_from_scope(scope)
 	assert isinstance(state, LoadErr)
@@ -552,9 +588,6 @@ def test_state_from_scope_generic_error_uses_source(tmp_path: Path) -> None:
 	assert isinstance(state, LoadErr)
 	assert state.source == root
 	assert "defined in both" in str(state.exception)
-
-
-# --- name_scope_config carries discover/discoverable (regression) ---
 
 
 def test_name_scope_config_preserves_discover_and_discoverable_defaults() -> None:
