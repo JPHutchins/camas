@@ -23,6 +23,19 @@ defines task ``lint`` — so ``name=`` is only for renaming or for naming a
 nested, anonymous group. (The ``[tool.camas.tasks]`` TOML form makes this
 explicit: the table key is the name.)
 
+A ``tasks.py`` composes the ``tasks.py`` files below it: each nearest
+descendant mounts as a dotted namespace named by its directory —
+``libs/search/tasks.py`` ⇒ ``camas libs.search.lint``, directories
+without one collapse, a colliding namespace extends itself with parent
+directories until unique — and the bare namespace name runs that
+child's own default task. Nodes stay anchored where they were authored
+(``cwd`` and ``paths=``/``when=`` scopes are rebased to the child's
+directory), and only a file that imports camas participates, so an
+unrelated module named ``tasks.py`` is never executed. Opt out with
+``Config(discover=False)`` (compose nothing below me) or
+``Config(discoverable=False)`` (private to ancestors); see the
+README's Monorepos section.
+
 ``Task``/``Sequential``/``Parallel`` also accept a ``help="..."``
 kwarg that overrides what ``camas --list`` prints for that task —
 rarely needed (the cmd or tree usually self-documents; this codebase

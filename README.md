@@ -253,6 +253,30 @@ For the Claude Code plugin, you **register** the auto-fix node — whatever you 
 
 `camas mcp fix` runs the registered `Config.agent.fix` node (not a task named `fix` — that's just `camas fix`, your own task); it reads the changed files from the PostToolBatch event on stdin (`--paths` still works for a manual run). With no fix registered it is a clean no-op, so the hook is harmless without it. The launcher runs in your project's environment — `camas mcp init --claude` resolves and pins it: to `tasks.py`'s PEP 723 declaration (`dependencies = ["camas>=X.Y"]`) when present, else to the running camas release version; re-run `camas mcp init --claude` after bumping either to keep it current.
 
+## Monorepos
+
+A `tasks.py` composes the `tasks.py` files below it, automatically. Discovery walks the tree depth-first for the nearest `tasks.py` in each branch and mounts it as a namespace named by its directory; directories in between contribute nothing, and a discovered file composes its own subtree the same way before it's mounted:
+
+```
+tasks.py               # hello
+libs/tasks.py          # libs (its default), libs.build
+libs/search/tasks.py   # libs.search (its default), libs.search.lint, libs.search.test
+services/api/tasks.py  # api (its default), api.deploy — no services/tasks.py, the gap collapses
+```
+
+`camas libs.search.lint` runs the child task from the root; `camas libs.search` runs that child's `Config.default_task`; expressions compose across namespaces (`camas '{libs.search.lint, api.deploy}'`). Inside `libs/search/` the same file is just itself — `camas lint`, no prefix — because the nearest `tasks.py` up from your cwd is the one that loads, and it composes only *its* subtree.
+
+Every node is anchored where it was authored: a leaf's `cwd` is relative to its own `tasks.py`'s directory — unset means that directory itself — no matter where camas is invoked from. `paths=`/`when=` scopes and `--paths` arguments are rebased across the namespace boundary the same way: a child's `paths="."` scopes to `libs/search`, and a `paths=`/`when=` callable receives the child-relative changed set it was written against.
+
+Only a `tasks.py` that imports camas participates: a module that happens to be named `tasks.py` (Celery, Django, Invoke) is skipped without being executed, and discovery continues beneath it. Hidden directories, `node_modules`, `.venv`, `venv`, and `__pycache__` are never walked; neither are symlinked directories. Two `Config` switches opt out of the rest:
+
+```python
+_ = Config(discover=False)      # this file composes nothing below it
+_ = Config(discoverable=False)  # this file (and its whole subtree) is private to ancestors
+```
+
+A colliding namespace extends itself with parent directory segments until unique: `services/api` and `vendor/api` mount as `services.api` and `vendor.api`, and a root `api` binding pushes a discovered `services/api/tasks.py` out to `services.api`. A collision that survives full extension (a root `search` binding beside a `search/` directory) fails the load naming both files, as does a discovered child that raises on evaluation — attributed to the child file, and `--list`/`--tree` still work and point at it. A broken child can't hide behind `discoverable=False`: the flag lives in the file, so the file must evaluate for it to be read. Composition takes tasks only — a child's `Effect` classes and the rest of its `Config` stay local — and `[tool.camas.tasks]` in a `pyproject.toml` never composes, as root or as child. The [monorepo fixture](https://github.com/JPHutchins/camas/tree/main/tests/fixtures/monorepo) exercises every permutation.
+
 ## Effects plugins
 
 Define an `Effect` in your `tasks.py` and it's discovered automatically — usable by name from `--effects` and listed under `camas --effects`. See [examples/effect-plugin/](https://github.com/JPHutchins/camas/tree/main/tests/fixtures/effect-plugin) for a typed `Tail` effect that streams per-task output as it arrives.
