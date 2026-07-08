@@ -29,7 +29,7 @@ from ..core.scope import scope_to_changed, to_changed, with_default_paths
 from ..core.task import task_label
 from ..v0.config import Config
 from .argv import apply_passthrough, parse_axis_values, parse_matrix_kv, split_passthrough
-from .compose import load_py_state, state_from_scope
+from .compose import load_py_tasks_state, state_from_scope
 from .effects import default_effect_names, resolve_effects, running_under_agent
 from .expression import parse_expression
 from .format import (
@@ -206,8 +206,8 @@ def reconfigure_stdio_utf8() -> None:
 def run_cli(scope: Mapping[str, object]) -> None:
 	"""Intercept the ``mcp`` subcommand (routing to :mod:`camas.mcp.cli`), then
 	dispatch CLI args against ``scope`` loaded as a :class:`~.state.TasksState`
-	(:func:`state_from_scope` — ``scope``'s own bindings, composed with its
-	discovered descendants, citing ``scope['__file__']`` as the source for
+	(:func:`state_from_scope` — ``scope``'s own bindings with its ``Project``
+	references resolved, citing ``scope['__file__']`` as the source for
 	per-task help and ``--check``).
 
 	The standalone entry point for a PEP 723 ``tasks.py`` run via ``python tasks.py``
@@ -458,7 +458,7 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 
 def _load_py(path: Path) -> TasksState:
 	"""Evaluate ``path`` and return a :class:`LoadOk` / :class:`LoadErr`."""
-	return load_py_state(path)
+	return load_py_tasks_state(path)
 
 
 def resolve_tasks_source(argv: list[str]) -> tuple[TasksState, list[str]]:

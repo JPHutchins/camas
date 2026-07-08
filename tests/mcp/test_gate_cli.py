@@ -63,6 +63,30 @@ def test_gate_cli_green(
 	assert out["rerun"]["paths"] == ["sample.py"]
 
 
+def test_gate_cli_anchors_leaf_cwd_to_tasks_dir_from_subdir(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	"""Invoked from a child cwd, the leaf spawns in the resolved tasks.py directory (the rebasing
+	frame), not the process cwd — matching the MCP server's ``base_for``.
+	"""
+	monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+	root = tmp_path.resolve()
+	script = (
+		"import pathlib, sys; "
+		f"sys.exit(0 if pathlib.Path.cwd().resolve() == pathlib.Path({str(root)!r}).resolve() else 1)"
+	)
+	(tmp_path / "tasks.py").write_text(
+		"from camas import Config, Task\n"
+		f"check = Task(('python', '-c', {script!r}), name='check')\n"
+		"_ = Config(default_task=check)\n"
+	)
+	sub = tmp_path / "sub"
+	sub.mkdir()
+	monkeypatch.chdir(sub)
+	assert serve.gate_cli(["--paths", "x.py"]) == 0
+	assert json.loads(capsys.readouterr().out)["decision"] == "continue"
+
+
 def test_gate_cli_block_prints_residual_to_stderr(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

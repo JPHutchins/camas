@@ -13,7 +13,6 @@ import time
 from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path  # noqa: TC003
 from subprocess import STDOUT
 from typing import TYPE_CHECKING, Any, Final, NamedTuple, Protocol, TypeAlias
 
@@ -39,6 +38,7 @@ from .traversal import flatten_leaves, subtree_leaf_indices
 
 if TYPE_CHECKING:
 	from collections.abc import Sequence
+	from pathlib import Path
 
 	from ..v0.effect import Effect
 	from .effect import EventSink
@@ -75,6 +75,9 @@ class RunContext(NamedTuple):
 	interrupts: Interrupts
 	states: Sequence[LeafState]
 	base: Path | None
+	"""The frame a leaf's ``cwd`` is spawned relative to (:func:`spawn_cwd`); ``None`` when the
+	tasks source has no on-disk location to anchor to (a scope run without a ``__file__``),
+	leaving a relative ``cwd`` to resolve against the process working directory."""
 
 
 if sys.platform != "win32":
@@ -156,6 +159,7 @@ def spawn_cwd(base: Path | None, cwd: Path | None) -> Path | None:
 	"""A leaf's spawn-time cwd: ``cwd`` is authored relative to ``base``; an absolute ``cwd``,
 	an unset ``cwd``, or an unset ``base`` each pass through unresolved.
 
+	>>> from pathlib import Path
 	>>> spawn_cwd(None, None) is None
 	True
 	>>> spawn_cwd(None, Path("rel")) == Path("rel")

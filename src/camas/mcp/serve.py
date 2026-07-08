@@ -35,7 +35,7 @@ from ..core.render import render_tree_lines, strip_ansi
 from ..core.scope import scope_to_changed, to_changed, with_default_paths
 from ..core.task import task_label
 from ..main.argv import apply_passthrough
-from ..main.compose import load_py_state
+from ..main.compose import load_py_tasks_state
 from ..main.format import format_load_error_hint, format_version_skew_hint
 from ..main.init import create_starter_tasks_py, starter_text
 from ..main.pep723 import camas_requirement_from, version_specifier
@@ -157,15 +157,18 @@ def project_source(state: TasksState) -> Path | None:
 			assert_never(state)
 
 
-def base_for(session: Session) -> Path:
-	"""The frame every leaf ``cwd`` and every ``--paths``/``paths`` entry is rebased
-	against: the directory of the composed project's own ``tasks.py`` when one was
-	resolved (:func:`project_source`), else the session's own base — the same fallback
-	:func:`camas.core.execution.spawn_cwd` and :func:`camas.core.scope.to_changed` apply
-	to an unrebased leaf.
+def base_from(source: Path | None, fallback: Path) -> Path:
+	"""The frame every leaf ``cwd`` and every ``--paths``/``paths`` entry is rebased against:
+	the directory of the composed project's own ``tasks.py`` when one was resolved, else
+	``fallback`` — the same fallback :func:`camas.core.execution.spawn_cwd` and
+	:func:`camas.core.scope.to_changed` apply to an unrebased leaf.
 	"""
-	source = project_source(session.project)
-	return source.parent if source is not None else session.base
+	return source.parent if source is not None else fallback
+
+
+def base_for(session: Session) -> Path:
+	"""The rebasing frame for the MCP server path (:func:`base_from`)."""
+	return base_from(project_source(session.project), session.base)
 
 
 class VersionSkew(NamedTuple):
@@ -1094,7 +1097,7 @@ def resolve_project(base: Path) -> TasksState:
 	for candidate in (base, *base.parents):
 		tasks_py = candidate / "tasks.py"
 		if tasks_py.is_file():
-			return load_py_state(tasks_py)
+			return load_py_tasks_state(tasks_py)
 		pyproject = candidate / "pyproject.toml"
 		if pyproject.is_file():
 			try:
@@ -1370,8 +1373,8 @@ def gate_cli(argv: list[str]) -> int:
 		case LoadErr(source=source, exception=exception):
 			print(gate_cli_load_error(state, source, exception), file=sys.stderr)
 			return 2
-		case LoadOk(tasks=tasks, config=config):
-			return run_gate_cli(args, base, tasks, config)
+		case LoadOk(tasks=tasks, config=config, source=source):
+			return run_gate_cli(args, base_from(source, base), tasks, config)
 		case _:
 			assert_never(state)
 
@@ -1405,7 +1408,14 @@ def run_gate_cli(
 			print(budget_headline(to_budget_report(plan)))
 		return 0
 	outcome = asyncio.run(
-		run_gate(node, changed, under=args.under, jobs=args.jobs, timings=timings.load(camas_dir))
+		run_gate(
+			node,
+			changed,
+			under=args.under,
+			jobs=args.jobs,
+			base=base,
+			timings=timings.load(camas_dir),
+		)
 	)
 	budget = to_budget_report(outcome.budget) if outcome.budget is not None else None
 	rerun = wire.GateRerun(task=args.task, paths=changed, under=args.under)

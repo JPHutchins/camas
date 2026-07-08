@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from camas import Parallel, Project, Task
-from camas.main.compose import load_py_state, load_scope, state_from_scope
+from camas.main.compose import load_py_tasks_state, load_scope, state_from_scope
 from camas.main.state import LoadErr, LoadOk
 
 
@@ -108,6 +108,21 @@ def test_github_task_composite_resolves(tmp_path: Path) -> None:
 	assert isinstance(config.github_task, Parallel)
 	(child,) = config.github_task.tasks
 	assert child.name == "build"
+
+
+def test_inline_project_composes_without_namespace(tmp_path: Path) -> None:
+	_write(
+		tmp_path / "tasks.py",
+		"from camas import Config, Parallel, Project\n"
+		"_ = Config(default_task=Parallel(Project('libs'), name='all'))\n",
+	)
+	_write(tmp_path / "libs" / "tasks.py", _leaf("build"))
+	loaded = load_scope(tmp_path / "tasks.py")
+	assert loaded.config is not None
+	assert isinstance(loaded.config.default_task, Parallel)
+	(child,) = loaded.config.default_task.tasks
+	assert child.name == "build"
+	assert not any(key.endswith(".build") for key in loaded.tasks)
 
 
 def test_context_github_selects_github_task(
@@ -225,7 +240,7 @@ def test_project_without_default_is_attributed_to_child(tmp_path: Path) -> None:
 		"_ = Config(default_task=root)\n",
 	)
 	_write(tmp_path / "child" / "tasks.py", "from camas import Task\nx = Task('true', name='x')\n")
-	state = load_py_state(tmp_path / "tasks.py")
+	state = load_py_tasks_state(tmp_path / "tasks.py")
 	assert isinstance(state, LoadErr)
 	assert state.source == tmp_path / "child" / "tasks.py"
 	assert "defines no default task" in str(state.exception)
@@ -240,7 +255,7 @@ def test_broken_child_attributed_to_child(tmp_path: Path) -> None:
 		"_ = Config(default_task=root)\n",
 	)
 	_write(tmp_path / "broken" / "tasks.py", "raise RuntimeError('boom')\n")
-	state = load_py_state(tmp_path / "tasks.py")
+	state = load_py_tasks_state(tmp_path / "tasks.py")
 	assert isinstance(state, LoadErr)
 	assert state.source == tmp_path / "broken" / "tasks.py"
 	assert "boom" in str(state.exception)
@@ -262,7 +277,7 @@ def test_broken_grandchild_attributed_to_grandchild(tmp_path: Path) -> None:
 		"_ = Config(default_task=m)\n",
 	)
 	_write(tmp_path / "mid" / "deep" / "tasks.py", "raise RuntimeError('deep boom')\n")
-	state = load_py_state(tmp_path / "tasks.py")
+	state = load_py_tasks_state(tmp_path / "tasks.py")
 	assert isinstance(state, LoadErr)
 	assert state.source == tmp_path / "mid" / "deep" / "tasks.py"
 	assert "deep boom" in str(state.exception)
@@ -270,7 +285,7 @@ def test_broken_grandchild_attributed_to_grandchild(tmp_path: Path) -> None:
 
 def test_top_file_error_is_attributed_to_itself(tmp_path: Path) -> None:
 	tasks_py = _write(tmp_path / "tasks.py", "raise RuntimeError('top boom')\n")
-	state = load_py_state(tasks_py)
+	state = load_py_tasks_state(tasks_py)
 	assert isinstance(state, LoadErr)
 	assert state.source == tasks_py
 	assert "top boom" in str(state.exception)
@@ -278,7 +293,7 @@ def test_top_file_error_is_attributed_to_itself(tmp_path: Path) -> None:
 
 def test_load_py_state_ok(tmp_path: Path) -> None:
 	tasks_py = _write(tmp_path / "tasks.py", _leaf("build"))
-	state = load_py_state(tasks_py)
+	state = load_py_tasks_state(tasks_py)
 	assert isinstance(state, LoadOk)
 	assert "build" in state.tasks
 
