@@ -27,6 +27,7 @@ HEADLINE: Final = frozenset(
 		"Config",
 		"Effect",
 		"Parallel",
+		"Project",
 		"Sequential",
 		"Task",
 		"by_suffix",

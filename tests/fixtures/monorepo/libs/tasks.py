@@ -1,7 +1,6 @@
-"""camas task definitions for the libs tree."""
+from camas import Config, Project, Task
 
-from camas import Config, Task
-
-build = Task(("python", "-c", "import os; print('libs-build', os.getcwd())"))
+build = Task(("python", "-c", "import os; print('libs-build', os.getcwd())"), name="build")
+search = Project("search")
 
 _ = Config(default_task=build)

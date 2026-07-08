@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import runpy
 import sys
 from typing import TYPE_CHECKING, Any, Final, TypeGuard, cast
 
@@ -227,29 +226,11 @@ def name_scope_config(scope: Mapping[str, object]) -> Config | None:
 		default_github_effects=config.default_github_effects,
 		camas_dir=config.camas_dir,
 		agent=promote_agent(config.agent),
-		discover=config.discover,
-		discoverable=config.discoverable,
-	)
-
-
-def load_own(path: Path) -> LoadOk:
-	"""Execute a Python task-definition file and collect its module-level bindings.
-	Reserved-name rejection is deferred to the composed view (:mod:`camas.main.discover`),
-	which checks the merged namespace instead of this file's own.
-	"""
-	scope: Final = runpy.run_path(str(path))
-	return LoadOk(
-		tasks=name_scope_bindings(scope),
-		source=path,
-		scope_effects=name_scope_effects(scope),
-		config=name_scope_config(scope),
 	)
 
 
 def load_tasks_from_py(path: Path) -> LoadOk:
-	"""``path`` loaded and composed with the ``tasks.py`` files found in its descendant
-	directories (:func:`camas.main.discover.composed_view`).
-	"""
-	from .discover import composed_view
+	"""``path`` loaded with its ``Project`` references resolved (:func:`camas.main.compose.load_scope`)."""
+	from .compose import load_scope
 
-	return composed_view(path)
+	return load_scope(path)

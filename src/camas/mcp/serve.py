@@ -35,7 +35,7 @@ from ..core.render import render_tree_lines, strip_ansi
 from ..core.scope import scope_to_changed, to_changed, with_default_paths
 from ..core.task import task_label
 from ..main.argv import apply_passthrough
-from ..main.discover import load_py_state
+from ..main.compose import load_py_state
 from ..main.format import format_load_error_hint, format_version_skew_hint
 from ..main.init import create_starter_tasks_py, starter_text
 from ..main.pep723 import camas_requirement_from, version_specifier

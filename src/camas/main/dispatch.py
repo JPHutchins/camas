@@ -29,7 +29,7 @@ from ..core.scope import scope_to_changed, to_changed, with_default_paths
 from ..core.task import task_label
 from ..v0.config import Config
 from .argv import apply_passthrough, parse_axis_values, parse_matrix_kv, split_passthrough
-from .discover import load_py_state, state_from_scope
+from .compose import load_py_state, state_from_scope
 from .effects import default_effect_names, resolve_effects, running_under_agent
 from .expression import parse_expression
 from .format import (

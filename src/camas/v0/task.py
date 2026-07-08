@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Literal, NamedTuple, TypeAlias
+from typing import TYPE_CHECKING, Literal, NamedTuple, TypeAlias, cast
 
 if TYPE_CHECKING:
 	from collections.abc import Callable, Mapping
@@ -296,3 +296,18 @@ class Parallel(Group):  # pyrefly: ignore[bad-class-definition]
 
 
 TaskNode: TypeAlias = Task | Sequential | Parallel
+
+
+class ProjectRef(NamedTuple):
+	"""A :func:`Project` reference before the loader resolves it; never reaches the engine."""
+
+	path: str
+
+
+def Project(path: str) -> TaskNode:  # noqa: N802  # constructor-style factory, like Task/Parallel
+	"""Another ``tasks.py`` as a task node — a private, immutable child project, referenced by
+	``path`` relative to the importing file (a directory resolves its ``tasks.py``). Runs what a
+	bare ``camas`` runs in that directory; bound at module scope, its tasks mount under the
+	binding's name for dotted dispatch (``libs``, ``libs.search.lint``).
+	"""
+	return cast("TaskNode", ProjectRef(path))
