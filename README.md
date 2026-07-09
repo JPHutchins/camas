@@ -228,11 +228,12 @@ _ = Config(agent=Claude(fix=Sequential(py, web, autofix)))
 
 `--paths` works on any task — `camas check --paths src/a.py`. Without it, every `{paths}` resolves to its full-run default (`ruff format src`); with it, each `{paths}` command runs only over the changed files it covers, and one covering none is dropped. A command **without** `{paths}` can't be narrowed, so its `paths=` is a no-op and it always runs — unless it declares `when=` (below), camas errs on correctness (a tool it can't narrow might be affected by the edit). `--paths` is repeatable, or comma-separated.
 
-A command that can't take `{paths}` (`cargo build`, `nix flake check`, `ctest`) is scoped with `when=` instead — a directory-prefix string, a tuple of prefixes, or a `(changed) -> bool` callable. On a scoped run a leaf whose `when=` doesn't match the changed set is dropped; a full run never consults it. Like `paths=`, a group's `when=` is the default for descendant leaves that set none:
+A command that can't take `{paths}` (`cargo build`, `nix flake check`, `ctest`) is scoped with `when=` instead — a directory-prefix string or `Path` (coerced to its POSIX prefix), a tuple of those, or a `(changed) -> bool` callable. On a scoped run a leaf whose `when=` doesn't match the changed set is dropped; a full run never consults it. Like `paths=`, a group's `when=` is the default for descendant leaves that set none. A leaf with a `cwd` but no `when=` gates on its `cwd` directory — the monorepo file-tree default; set `when="."` to opt back into always-run:
 
 ```python
 build = Task("cargo build", when="src")                # runs only when src/ changed
 flake = Task("nix flake check", when=("flake.nix", "nix"))
+tests = Task("cargo test", cwd="code-gen")             # when= defaults to "code-gen"
 ```
 
 A `paths=` callable is called with `()` on a full run — one that filters the changed set would return `()` and strip the command's arguments entirely (a formatter reading stdin on no args hangs). `by_suffix(suffixes, default=...)` is the safe factory: it filters the changed files by suffix on a scoped run and returns `default` on a full run:
@@ -275,7 +276,7 @@ _ = Config(
 
 A reference composes the child's **matching field**: the same bare `libs` grabs the child's `default_task` in `default_task`, its `github_task` in `github_task`, its fix node in `agent.fix`, its check node in `agent.check` — the slot the reference sits in selects which field of the child's own `Config` it contributes. So a `Parallel` of references in any slot is that slot composed across the monorepo, each child contributing its own. A binding name resolves by context instead — `camas libs` runs whatever a bare `camas` runs in that directory (its default locally, its `github_task` under CI, its agent default under an agent). `camas libs.search.lint` reaches a task the child exposes (because `libs/tasks.py` itself did `search = Project("search")`), and expressions compose across namespaces (`camas '{libs.search.lint, api.deploy}'`).
 
-Nodes stay anchored where they were authored: a leaf's `cwd` and its `paths=`/`when=` scopes are relative to its own `tasks.py`, rebased across the boundary no matter where `camas` is invoked from. Children are referenced by path relative to the importing file and live within its directory. The [monorepo fixture](https://github.com/JPHutchins/camas/tree/main/tests/fixtures/monorepo) exercises the permutations.
+Nodes stay anchored where they were authored: a leaf's `cwd` and its `paths=`/`when=` scopes are relative to its own `tasks.py`, rebased across the boundary no matter where `camas` is invoked from. Because a leaf's `when=` defaults to its `cwd`, a scoped run (the gate, or `--paths`) automatically runs only the children whose directory changed — no per-leaf `when=` anywhere in a child's `tasks.py`. Children are referenced by path relative to the importing file and live within its directory. The [monorepo fixture](https://github.com/JPHutchins/camas/tree/main/tests/fixtures/monorepo) exercises the permutations.
 
 ## Effects plugins
 
