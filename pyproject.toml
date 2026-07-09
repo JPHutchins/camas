@@ -81,6 +81,7 @@ dev = [
 "pytest-cov>=7,<8",
 "cyclopts>=4,<5",
 "ruff>=0.12,<1",
+"actionlint-py>=1.7,<2",
 "zuban>=0.7,<1",
 "pyrefly>=0.61,<1",
 "types-setuptools",

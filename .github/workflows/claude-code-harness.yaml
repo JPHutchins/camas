@@ -46,7 +46,7 @@ jobs:
       - name: Install uv (pinned)
         run: |
           pipx install --force uv==0.9.15
-          echo "$(pipx environment --value PIPX_BIN_DIR)" >> "$GITHUB_PATH"
+          pipx environment --value PIPX_BIN_DIR >> "$GITHUB_PATH"
       - run: uv --version
 
       - run: npm install -g @anthropic-ai/claude-code@2.1.197

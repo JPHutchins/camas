@@ -9,6 +9,7 @@ format_check = Task("uv run ruff format --check {paths}", paths=".")
 lint = Task("uv run ruff check {paths}", paths=".")
 lint_fix = Task("uv run ruff check --fix {paths}", mutates=True, paths=".")
 fix = Sequential(lint_fix, format)
+actionlint = Task("uv run actionlint")
 mypy = Task("uv run mypy .")
 ty = Task("uv run ty check")
 zuban = Task("uv run zuban check src tests --exclude tests.fixtures")
@@ -28,8 +29,8 @@ release = Task(
 	help="assert clean synced main, bump VERSION, commit, tag (camas release -- X.Y.Z)",
 )
 
-all = Sequential(fix, Parallel(typecheck, coverage))
-check = Parallel(format_check, lint, typecheck, test)
+all = Sequential(fix, Parallel(actionlint, typecheck, coverage))
+check = Parallel(format_check, lint, actionlint, typecheck, test)
 
 matrix = Sequential(
 	Task("uv sync"),
