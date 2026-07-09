@@ -30,6 +30,13 @@ jobs:
   harness:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # A required-reviewers rule on this environment (repo Settings → Environments →
+    # model-api-e2e) holds MODEL_API_KEY back until a maintainer approves the run. Agent pushes
+    # made with the maintainer's token report the maintainer as github.actor, so an actor guard
+    # would not gate them; the environment approval pauses every run — push, schedule, dispatch —
+    # before the job starts. The environment must exist with @JPHutchins as a required reviewer;
+    # until then this name resolves to an unprotected auto-created environment (no gate).
+    environment: model-api-e2e
     permissions:
       contents: read
     steps:
