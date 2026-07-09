@@ -323,6 +323,19 @@ def expand_parallel_matrix(
 	)
 
 
+def _when_from_cwd(cwd: Path | None) -> str | None:
+	"""The ``when`` prefix a leaf falls back to when it sets none: a relative ``cwd`` as its own
+	POSIX prefix, so a task rooted in a subdir runs only when that subdir changed. An absolute
+	``cwd`` — which could never match the repo-relative changed set — has no fallback.
+
+	>>> _when_from_cwd(Path("code-gen"))
+	'code-gen'
+	>>> _when_from_cwd(None) is None
+	True
+	"""
+	return cwd.as_posix() if cwd is not None and not cwd.is_absolute() else None
+
+
 def expand_matrix(
 	task: TaskNode,
 	ancestor_env: Mapping[str, str] | None = None,
@@ -336,7 +349,9 @@ def expand_matrix(
 	Execution and scoping read the accumulated values from leaves. A group rebuilt without a
 	matrix retains its own env/cwd/paths/when for display; a matrix expansion's synthesized
 	wrapper nodes carry env/cwd only — paths and when live on the specialized leaves. A child's
-	own ``cwd``/``paths``/``when`` takes precedence over an ancestor's.
+	own ``cwd``/``paths``/``when`` takes precedence over an ancestor's. A leaf that ends up with a
+	relative ``cwd`` but no ``when`` falls back to gating on its ``cwd`` directory
+	(:func:`_when_from_cwd`); set ``when="."`` to opt back into always-run.
 
 	>>> expand_matrix(Task("echo hi"))
 	Task(cmd='echo hi', name=None, env={}, cwd=None)
@@ -351,19 +366,25 @@ def expand_matrix(
 	'.'
 	>>> expand_matrix(Parallel(Task("cargo build"), when="src")).tasks[0].when  # type: ignore[union-attr]
 	'src'
+	>>> expand_matrix(Task("cargo build", cwd="code-gen")).when
+	'code-gen'
+	>>> expand_matrix(Task("cargo build", cwd="code-gen", when="only")).when
+	'only'
 	"""
 	parent_env: Final = dict(ancestor_env) if ancestor_env else {}
 	match task:
 		case Task():
+			leaf_cwd: Final = task.cwd if task.cwd is not None else ancestor_cwd
+			leaf_when: Final = task.when if task.when is not None else ancestor_when
 			return Task(
 				cmd=task.cmd,
 				name=task.name,
 				env={**parent_env, **task.env},
-				cwd=task.cwd if task.cwd is not None else ancestor_cwd,
+				cwd=leaf_cwd,
 				help=task.help,
 				mutates=task.mutates,
 				paths=task.paths if task.paths is not None else ancestor_paths,
-				when=task.when if task.when is not None else ancestor_when,
+				when=leaf_when if leaf_when is not None else _when_from_cwd(leaf_cwd),
 				agent_format=task.agent_format,
 			)
 		case Sequential(tasks=tasks, matrix=matrix, env=env, cwd=cwd, paths=paths, when=when):

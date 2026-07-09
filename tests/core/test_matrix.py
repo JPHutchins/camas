@@ -3,11 +3,18 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from camas import Parallel, Sequential, Task
 from camas.core.matrix import expand_matrix
 from camas.core.traversal import flatten_leaves
+
+
+def _leaf(node: object) -> Task:
+	assert isinstance(node, Task)
+	return node
 
 
 def test_no_matrix_passthrough() -> None:
@@ -312,3 +319,25 @@ def test_callable_when_survives_specialization() -> None:
 			assert when is predicate
 		case _:
 			raise AssertionError(f"unexpected: {result}")
+
+
+def test_relative_cwd_becomes_when_fallback() -> None:
+	assert _leaf(expand_matrix(Task("cargo build", cwd="code-gen"))).when == "code-gen"
+
+
+def test_container_cwd_becomes_leaf_when_fallback() -> None:
+	result = expand_matrix(Parallel(Task("cargo build", name="cargo"), cwd="code-gen"))
+	assert isinstance(result, Parallel)
+	assert _leaf(result.tasks[0]).when == "code-gen"
+
+
+def test_explicit_when_wins_over_cwd_fallback() -> None:
+	assert _leaf(expand_matrix(Task("cargo build", cwd="code-gen", when="only"))).when == "only"
+
+
+def test_when_dot_opts_out_of_cwd_fallback() -> None:
+	assert _leaf(expand_matrix(Task("cargo build", cwd="code-gen", when="."))).when == "."
+
+
+def test_absolute_cwd_has_no_when_fallback() -> None:
+	assert _leaf(expand_matrix(Task("cargo build", cwd=Path.cwd()))).when is None

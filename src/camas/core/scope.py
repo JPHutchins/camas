@@ -16,7 +16,9 @@ A command with **no** ``{paths}`` can't be narrowed, so it always runs — unles
 predicate (own or inherited) excludes the changed set — and its ``paths`` (own or inherited) is
 a no-op regardless; camas errs on correctness otherwise: a tool that can't narrow might be
 affected by the edit. ``paths`` only ever prunes a ``{paths}`` command; ``when`` can prune either
-kind of leaf, on a scoped run, gating before any ``paths`` narrowing — never on a full run.
+kind of leaf, on a scoped run, gating before any ``paths`` narrowing — never on a full run. A
+leaf with a ``cwd`` but no explicit ``when`` gates on its ``cwd`` directory (baked by
+:func:`camas.core.matrix.expand_matrix`); ``when="."`` opts back into always-run.
 
 :func:`with_default_paths` resolves the full-run default and is applied before every run.
 :func:`scope_to_changed` resolves and prunes against a changed set — the entry point for

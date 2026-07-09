@@ -179,6 +179,22 @@ def test_paths_outside_namespace_runs_nothing() -> None:
 	assert "nothing to run" in r.stdout, r.stdout
 
 
+def test_scoped_run_gates_composed_child_by_its_directory() -> None:
+	r = _camas(SHOW_OUTPUT, "--paths", "libs/x.py")
+	assert r.returncode == 0
+	assert "libs-build" in r.stdout, r.stdout
+	assert "api-deploy" not in r.stdout, r.stdout
+	assert "web-build" not in r.stdout, r.stdout
+
+
+def test_scoped_run_gates_other_composed_child_by_its_directory() -> None:
+	r = _camas(SHOW_OUTPUT, "--paths", "services/api/x.py")
+	assert r.returncode == 0
+	assert "api-deploy" in r.stdout, r.stdout
+	assert "libs-build" not in r.stdout, r.stdout
+	assert "web-build" not in r.stdout, r.stdout
+
+
 def test_run_from_child_subdir_gets_local_view() -> None:
 	r = _camas(SHOW_OUTPUT, "lint", cwd=FIXTURE / "libs" / "search" / "src")
 	assert r.returncode == 0

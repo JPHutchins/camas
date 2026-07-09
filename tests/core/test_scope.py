@@ -200,6 +200,25 @@ def test_group_when_inherited_via_expand_matrix() -> None:
 	assert kept.tasks == (Task("cargo build", name="cargo", when="src"),)
 
 
+def test_cwd_fallback_gates_tokenless_leaf_to_its_directory() -> None:
+	tree = expand_matrix(Task("cargo build", name="cargo", cwd="code-gen"))
+	assert scope_to_changed(tree, ("code-gen/main.rs",)) == tree
+	assert scope_to_changed(tree, ("docs/readme.md",)) is None
+
+
+def test_cwd_fallback_gates_paths_leaf_that_paths_alone_would_not_prune() -> None:
+	"""A ``{paths}`` leaf with a ``cwd`` and a broad ``paths="."`` gates on its own directory
+	first, then narrows the surviving changes into its ``cwd`` frame."""
+	tree = expand_matrix(Task("ruff check {paths}", name="lint", cwd="pkg", paths="."))
+	assert scope_to_changed(tree, ("other/x.py",)) is None
+	assert _cmd(scope_to_changed(tree, ("pkg/a.py",))) == "ruff check a.py"
+
+
+def test_when_dot_opts_cwd_leaf_back_into_always_run() -> None:
+	tree = expand_matrix(Task("cargo build", name="cargo", cwd="pkg", when="."))
+	assert scope_to_changed(tree, ("other/x.py",)) == tree
+
+
 def test_by_suffix_full_run_default() -> None:
 	scope = by_suffix((".c", ".h"), default=("src", "include"))
 	assert scope(()) == ("src", "include")

@@ -24,6 +24,40 @@ WhenPredicate: TypeAlias = "Callable[[tuple[str, ...]], bool]"
 changed set and is never called for a full run (``changed == ()``)."""
 
 
+def _prefix(value: str | Path) -> str:
+	"""A ``when`` prefix in its stored form: a ``Path`` as POSIX, a string unchanged.
+
+	>>> _prefix(Path("code-gen")), _prefix("src")
+	('code-gen', 'src')
+	"""
+	return value.as_posix() if isinstance(value, Path) else value
+
+
+def _coerce_when(
+	when: str | Path | tuple[str | Path, ...] | WhenPredicate | None,
+) -> str | tuple[str, ...] | WhenPredicate | None:
+	"""Coerce a ``when`` argument to its stored form: a ``Path`` (or a ``Path`` inside a tuple)
+	becomes its POSIX prefix; a string, tuple of strings, callable, or ``None`` is unchanged.
+
+	>>> _coerce_when(Path("code-gen"))
+	'code-gen'
+	>>> _coerce_when((Path("src"), "include"))
+	('src', 'include')
+	>>> _coerce_when("src"), _coerce_when(None)
+	('src', None)
+	"""
+	match when:
+		case str() | Path():
+			return _prefix(when)
+		case tuple():
+			return tuple(
+				_prefix(w)  # ty: ignore[invalid-argument-type]
+				for w in when
+			)
+		case _:
+			return when
+
+
 def by_suffix(suffixes: tuple[str, ...], default: tuple[str, ...] = (".",)) -> PathScope:
 	"""A ``PathScope`` that filters the changed files by suffix on a scoped run and returns
 	``default`` on a full run, so a ``{paths}`` command never loses its arguments to an empty
@@ -90,10 +124,13 @@ class Task:
 	``paths`` is a no-op and the command always runs unless a ``when`` predicate (below) prunes it.
 
 	``when`` is a run-if-changed predicate (:mod:`camas.core.scope`) for a leaf whose command
-	can't take ``{paths}`` (``cargo build``, ``nix flake check``): a directory-prefix string, a
-	tuple of prefixes (OR'd), or a ``(changed) -> bool`` callable. On a scoped run a leaf whose
-	``when`` doesn't match the changed set is pruned; a full run never consults ``when``. A leaf
-	that also sets ``paths``/``{paths}`` is gated by ``when`` first, then narrowed as usual.
+	can't take ``{paths}`` (``cargo build``, ``nix flake check``): a directory-prefix string or
+	``Path`` (coerced to its POSIX prefix), a tuple of those (OR'd), or a ``(changed) -> bool``
+	callable. On a scoped run a leaf whose ``when`` doesn't match the changed set is pruned; a
+	full run never consults ``when``. A leaf that also sets ``paths``/``{paths}`` is gated by
+	``when`` first, then narrowed as usual. When ``when`` is unset, a leaf with a ``cwd`` gates on
+	its ``cwd`` directory (:func:`camas.core.matrix.expand_matrix`) — a monorepo file-tree default;
+	set ``when="."`` to opt back into always-run.
 
 	``agent_format`` is the agent-only structured-output variant (:class:`AgentFormat`): the gate
 	appends its ``args`` and tags the diagnostics ``kind``; a human run leaves the command as-is.
@@ -115,6 +152,10 @@ class Task:
 	Task(cmd='ruff format {paths}', name=None, env={}, cwd=None, mutates=True, paths='.')
 	>>> Task("cargo build", when=("src", "include"))
 	Task(cmd='cargo build', name=None, env={}, cwd=None, when=('src', 'include'))
+	>>> Task("cargo build", when=Path("src")).when
+	'src'
+	>>> Task("cargo build", when=(Path("src"), "include")).when
+	('src', 'include')
 	>>> Task("ruff check .", agent_format=AgentFormat("--output-format sarif", "sarif"))
 	Task(cmd='ruff check .', name=None, env={}, cwd=None, agent_format=AgentFormat(args='--output-format sarif', kind='sarif'))
 	>>> Task("ruff check .", agent_format=("--output-format sarif", "sarif")).agent_format
@@ -144,7 +185,7 @@ class Task:
 		help: str | None = None,
 		mutates: bool = False,
 		paths: str | PathScope | None = None,
-		when: str | tuple[str, ...] | WhenPredicate | None = None,
+		when: str | Path | tuple[str | Path, ...] | WhenPredicate | None = None,
 		agent_format: AgentFormat | tuple[str, OutputKind] | None = None,
 	) -> None:
 		put = object.__setattr__
@@ -155,7 +196,7 @@ class Task:
 		put(self, "help", help)
 		put(self, "mutates", mutates)
 		put(self, "paths", paths)
-		put(self, "when", when)
+		put(self, "when", _coerce_when(when))
 		put(
 			self,
 			"agent_format",
@@ -234,7 +275,7 @@ class Group:
 		cwd: str | Path | None = None,
 		help: str | None = None,
 		paths: str | PathScope | None = None,
-		when: str | tuple[str, ...] | WhenPredicate | None = None,
+		when: str | Path | tuple[str | Path, ...] | WhenPredicate | None = None,
 	) -> None:
 		put = object.__setattr__
 		put(self, "tasks", tuple(Task(cmd=t) if isinstance(t, str) else t for t in tasks))
@@ -244,7 +285,7 @@ class Group:
 		put(self, "cwd", Path(cwd) if isinstance(cwd, str) else cwd)
 		put(self, "help", help)
 		put(self, "paths", paths)
-		put(self, "when", when)
+		put(self, "when", _coerce_when(when))
 
 	def __hash__(self) -> int:
 		matrix_key = None if self.matrix is None else tuple(sorted(self.matrix.items()))
