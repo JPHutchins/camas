@@ -33,7 +33,7 @@ from ..core.hook_event import changed_from_stdin
 from ..core.matrix import expand_matrix, override_matrix
 from ..core.render import render_tree_lines, strip_ansi
 from ..core.scope import scope_to_changed, to_changed, with_default_paths
-from ..core.task import task_label
+from ..core.task import did_you_mean, task_label
 from ..main.argv import apply_passthrough
 from ..main.compose import load_py_tasks_state
 from ..main.format import format_load_error_hint, format_version_skew_hint
@@ -664,7 +664,9 @@ def resolve_run_node(
 		name, node = default.name or "default task", default
 	elif req.task not in tasks:
 		known = ", ".join(sorted(tasks)) or "none"
-		raise ValueError(f"no task named {req.task!r} (known: {known})")
+		raise ValueError(
+			f"no task named {req.task!r}{did_you_mean(req.task, tasks)} (known: {known})"
+		)
 	else:
 		name, node = req.task, tasks[req.task]
 	if req.matrix_overrides:
@@ -732,7 +734,7 @@ def budget_source(
 	if task is not None:
 		if task not in tasks:
 			known = ", ".join(sorted(tasks)) or "none"
-			raise ValueError(f"no task named {task!r} (known: {known})")
+			raise ValueError(f"no task named {task!r}{did_you_mean(task, tasks)} (known: {known})")
 		return tasks[task]
 	default = config.run_default() if config is not None else None
 	if default is None:
@@ -750,7 +752,7 @@ def gate_source(tasks: Mapping[str, TaskNode], config: Config | None, task: str 
 	if task is not None:
 		if task not in tasks:
 			known = ", ".join(sorted(tasks)) or "none"
-			raise ValueError(f"no task named {task!r} (known: {known})")
+			raise ValueError(f"no task named {task!r}{did_you_mean(task, tasks)} (known: {known})")
 		return tasks[task]
 	check = config.gate_check(github=False) if config is not None else None
 	if check is None:
@@ -1229,7 +1231,9 @@ async def fix_for(
 	if req.task is not None:
 		if req.task not in tasks:
 			known = ", ".join(sorted(tasks)) or "none"
-			return error_result(f"no task named {req.task!r} (known: {known})")
+			return error_result(
+				f"no task named {req.task!r}{did_you_mean(req.task, tasks)} (known: {known})"
+			)
 		fix_node = tasks[req.task]
 	else:
 		fix_node = config.gate_fix() if config is not None else None
