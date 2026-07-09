@@ -61,7 +61,7 @@ jobs:
           node-version: "22"
 
       # Install the CLI and the deterministic commenter.
-      - run: npm install -g @anthropic-ai/claude-code@2.1.197 @jphutchins/code-review@0.1.0-alpha.10
+      - run: npm install -g @anthropic-ai/claude-code@2.1.197 @jphutchins/code-review@0.1.0-alpha.11
 
       # Install project deps so the agent can validate findings. uv comes from PyPI (already
       # allowlisted below) rather than astral-sh/setup-uv, which resolves versions via
@@ -286,6 +286,14 @@ jobs:
             "${BUDGET_PRICES[@]}" \
             >"$RUNNER_TEMP/review-settings.json"
 
+          # Absolute run deadline, exported so EVERY budget hook — the main agent's and each fan-out
+          # subagent's — measures the SAME true remaining wall. Without it each hook derives elapsed
+          # from its own transcript's start, which reads ≈0 inside a freshly-spawned subagent, so the
+          # skill's parallel fan-out runs unsteered until the wall and never checkpoints $DRAFT
+          # (issue #45). The env var is inherited by every `claude` subprocess, main and subagent.
+          CODE_REVIEW_DEADLINE_EPOCH="$(code-review deadline --wall "$AGENT_WALL")"
+          export CODE_REVIEW_DEADLINE_EPOCH
+
           # `timeout` is the hard backstop beneath the hooks: SIGTERM at the wall, SIGKILL after a grace
           # period; an overrun (124/137) is a warning, not a step failure — the pipeline proceeds with
           # whatever the agent emitted, and `adapt` preserves its usage/cost even when the deliverable
@@ -314,8 +322,19 @@ jobs:
           # --agent-file prefers the agent's own self-validated $DRAFT over parsing its free-text
           # result (§6.1 extraction ladder); $DRAFT lives outside the worktree so a PR-planted
           # repo-root findings-draft.json can never win this rung.
+          #
+          # --transcript recovers real per-model spend from the live session transcript (main +
+          # subagents) when a wall-clock kill left envelope.json empty (issue #39) — otherwise the
+          # comment would report $0.00 despite real cost sitting in the transcript (issue #36). Pick
+          # the review session's main transcript: the newest .jsonl, excluding subagent files (which
+          # live under <session>/subagents/ and are summed by `adapt` via the main).
+          REVIEW_TRANSCRIPT="$(find "$HOME/.claude/projects" -name '*.jsonl' -not -path '*/subagents/*' -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2- || true)"
+          TRANSCRIPT_ARGS=()
+          if [ -n "$REVIEW_TRANSCRIPT" ]; then
+            TRANSCRIPT_ARGS=(--transcript "$REVIEW_TRANSCRIPT")
+          fi
           mkdir -p findings
-          code-review adapt envelope.json --adapter claude-code --agent-file "$DRAFT" --route "$ROUTE" --effort "$EFFORT" >findings/envelope.json
+          code-review adapt envelope.json --adapter claude-code --agent-file "$DRAFT" --route "$ROUTE" --effort "$EFFORT" "${TRANSCRIPT_ARGS[@]}" >findings/envelope.json
           jq -c '.findings' findings/envelope.json >findings/findings.json
 
           # Discard the agent's edits and restore the clean PR-head snapshot — `--hard` doesn't
@@ -433,7 +452,7 @@ jobs:
         with:
           node-version: "22"
 
-      - run: npm install -g @jphutchins/code-review@0.1.0-alpha.10
+      - run: npm install -g @jphutchins/code-review@0.1.0-alpha.11
 
       # Egress is armed at job start (harden-runner Pre step), so this must allow the npm registry
       # for the commenter install above, plus the GitHub API + blob host for artifact download (§8.4).
