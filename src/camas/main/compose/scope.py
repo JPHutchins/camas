@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import runpy
 import sys
+from enum import Enum, auto
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Final
 
@@ -36,26 +37,78 @@ if TYPE_CHECKING:
 	from ..state import TasksState
 
 
-def context_default(config: Config | None, *, github: bool, agent: bool) -> TaskNode | None:
-	"""The node a bare ``camas`` runs for ``config`` in the current context: the agent default
-	under an agent, else the github task under CI, else the plain default task.
-
-	>>> context_default(None, github=False, agent=False) is None
-	True
-	>>> context_default(Config(default_task=Task("d")), github=False, agent=False)
-	Task(cmd='d', name=None, env={}, cwd=None)
-	>>> context_default(
-	...     Config(default_task=Task("d"), github_task=Task("g")), github=True, agent=False
-	... )
-	Task(cmd='g', name=None, env={}, cwd=None)
-	>>> context_default(Config(default_task=Task("d")), github=False, agent=True)
-	Task(cmd='d', name=None, env={}, cwd=None)
+class Field(Enum):
+	"""The parent-``Config`` slot a composed ``Project`` reference is assigned to. A reference
+	grabs the child's *same* field (:func:`child_node`), so ``fix=Parallel(libs, api)`` composes
+	each child's ``fix`` — not whatever a bare ``camas`` happens to run there. ``CONTEXT`` is the
+	odd one out: a binding name (``libs = Project(...)``) runs what a bare ``camas`` runs in that
+	directory for the current invocation's context.
 	"""
-	if config is None:
-		return None
-	if agent:
-		return config.run_default()
-	return config.bare_task(github=github)
+
+	DEFAULT = auto()
+	GITHUB = auto()
+	FIX = auto()
+	CHECK = auto()
+	RUN_DEFAULT = auto()
+	CONTEXT = auto()
+
+
+def child_node(field: Field, config: Config, *, github: bool, agent: bool) -> TaskNode | None:
+	"""The node the child's ``config`` contributes to a parent ``field``: its matching accessor,
+	or, for a binding (``CONTEXT``), the node a bare ``camas`` runs there in this context.
+
+	>>> both = Config(default_task=Task("d"), github_task=Task("g"))
+	>>> child_node(Field.DEFAULT, both, github=True, agent=True)
+	Task(cmd='d', name=None, env={}, cwd=None)
+	>>> child_node(Field.GITHUB, both, github=False, agent=False)
+	Task(cmd='g', name=None, env={}, cwd=None)
+	>>> child_node(Field.CONTEXT, both, github=True, agent=False)
+	Task(cmd='g', name=None, env={}, cwd=None)
+	>>> child_node(Field.RUN_DEFAULT, both, github=False, agent=False)
+	Task(cmd='g', name=None, env={}, cwd=None)
+	>>> child_node(Field.FIX, both, github=False, agent=False) is None
+	True
+	"""
+	match field:
+		case Field.DEFAULT:
+			return config.bare_task(github=False)
+		case Field.GITHUB:
+			return config.bare_task(github=True)
+		case Field.FIX:
+			return config.gate_fix()
+		case Field.CHECK:
+			return config.gate_check(github=False)
+		case Field.RUN_DEFAULT:
+			return config.run_default()
+		case Field.CONTEXT:
+			return config.run_default() if agent else config.bare_task(github=github)
+		case _:
+			assert_never(field)
+
+
+def field_role(field: Field) -> str:
+	"""The role named in the load error a child raises when its ``field`` accessor yields nothing.
+
+	>>> field_role(Field.FIX)
+	'fix'
+	>>> field_role(Field.CONTEXT)
+	'default'
+	>>> [field_role(f) for f in (Field.GITHUB, Field.CHECK, Field.RUN_DEFAULT)]
+	['github', 'check', 'agent default']
+	"""
+	match field:
+		case Field.DEFAULT | Field.CONTEXT:
+			return "default"
+		case Field.GITHUB:
+			return "github"
+		case Field.FIX:
+			return "fix"
+		case Field.CHECK:
+			return "check"
+		case Field.RUN_DEFAULT:
+			return "agent default"
+		case _:
+			assert_never(field)
 
 
 def _compose_scope(
@@ -65,13 +118,14 @@ def _compose_scope(
 	*,
 	seen: frozenset[Path],
 ) -> LoadOk:
-	"""``scope``'s bindings with every ``Project`` resolved and merged: the binding name runs the
-	child's context default, its tasks mount under that name dotted.
+	"""``scope``'s bindings with every ``Project`` resolved and merged: a ``Config`` field grabs
+	each child's same field (its :class:`Field`), a binding name runs the child's context default,
+	and a child's tasks mount under that name dotted.
 	"""
 	github: Final = os.environ.get("GITHUB_ACTIONS") == "true"
 	agent: Final = running_under_agent()
 	child_cache: dict[Path, tuple[PurePosixPath, LoadOk]] = {}
-	node_cache: dict[int, TaskNode] = {}
+	node_cache: dict[tuple[int, Field], TaskNode] = {}
 
 	def child_view(marker: ProjectRef) -> tuple[PurePosixPath, LoadOk]:
 		if base_dir is None:
@@ -96,30 +150,38 @@ def _compose_scope(
 			child_cache[tasks_py] = (rel, child)
 		return child_cache[tasks_py]
 
-	def context_node(marker: ProjectRef) -> TaskNode:
+	def project_node(marker: ProjectRef, field: Field) -> TaskNode:
 		rel, child = child_view(marker)
-		node = context_default(child.config, github=github, agent=agent)
+		node = (
+			child_node(field, child.config, github=github, agent=agent)
+			if child.config is not None
+			else None
+		)
 		if node is None:
 			raise ProjectLoadError(
 				child.source if child.source is not None else Path("tasks.py"),
-				RuntimeError("defines no default task to run for this context"),
+				RuntimeError(f"defines no {field_role(field)} task to run for this context"),
 			)
 		return rebase_tree(node, rel, is_root=True)
 
-	def resolve(node: TaskNode | ProjectRef) -> TaskNode:
-		if id(node) not in node_cache:
-			node_cache[id(node)] = _resolved(node)
-		return node_cache[id(node)]
+	def resolve(node: TaskNode | ProjectRef, field: Field) -> TaskNode:
+		key = (id(node), field)
+		if key not in node_cache:
+			node_cache[key] = _resolved(node, field)
+		return node_cache[key]
 
-	def _resolved(node: TaskNode | ProjectRef) -> TaskNode:
+	def _resolved(node: TaskNode | ProjectRef, field: Field) -> TaskNode:
 		match node:
 			case ProjectRef():
-				return context_node(node)
+				return project_node(node, field)
 			case Task():
 				return node
 			case Group() as group:
+				children = tuple(resolve(child, field) for child in group.tasks)
+				if all(new is old for new, old in zip(children, group.tasks, strict=True)):
+					return group
 				return type(group)(
-					*(resolve(child) for child in group.tasks),
+					*children,
 					name=group.name,
 					matrix=group.matrix,
 					env=group.env,
@@ -131,23 +193,23 @@ def _compose_scope(
 			case _:
 				assert_never(node)
 
-	def resolve_field(node: TaskNode | None) -> TaskNode | None:
-		return None if node is None else resolve(node)
+	def resolve_field(node: TaskNode | None, field: Field) -> TaskNode | None:
+		return None if node is None else resolve(node, field)
 
 	def resolve_config(config: Config) -> Config:
 		agent_cfg = config.agent
 		return Config(
-			default_task=resolve_field(config.default_task),
-			github_task=resolve_field(config.github_task),
+			default_task=resolve_field(config.default_task, Field.DEFAULT),
+			github_task=resolve_field(config.github_task, Field.GITHUB),
 			default_effects=config.default_effects,
 			default_github_effects=config.default_github_effects,
 			camas_dir=config.camas_dir,
 			agent=None
 			if agent_cfg is None
 			else Claude(
-				fix=resolve(agent_cfg.fix),
-				check=resolve_field(agent_cfg.check),
-				default=resolve_field(agent_cfg.default),
+				fix=resolve(agent_cfg.fix, Field.FIX),
+				check=resolve_field(agent_cfg.check, Field.CHECK),
+				default=resolve_field(agent_cfg.default, Field.RUN_DEFAULT),
 			),
 		)
 
@@ -161,12 +223,12 @@ def _compose_scope(
 		):
 			resolved_scope[name] = value
 		elif isinstance(value, ProjectRef):
-			resolved_scope[name] = resolve(value)
+			resolved_scope[name] = resolve(value, Field.CONTEXT)
 			rel, child = child_view(value)
-			for key, child_node in child.tasks.items():
-				namespaces[f"{name}.{key}"] = rebase_tree(child_node, rel, is_root=True)
+			for key, mounted in child.tasks.items():
+				namespaces[f"{name}.{key}"] = rebase_tree(mounted, rel, is_root=True)
 		else:
-			resolved_scope[name] = resolve(value)
+			resolved_scope[name] = resolve(value, Field.CONTEXT)
 
 	own: Final = LoadOk(
 		tasks=name_scope_bindings(resolved_scope),
