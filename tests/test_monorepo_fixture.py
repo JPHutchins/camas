@@ -9,6 +9,9 @@ import sys
 from pathlib import Path
 from typing import Final
 
+from camas import Parallel
+from camas.main.compose import load_scope
+
 FIXTURE: Final = Path(__file__).parent / "fixtures" / "monorepo"
 BADCHILD: Final = Path(__file__).parent / "fixtures" / "monorepo-badchild"
 
@@ -33,6 +36,7 @@ def _camas(
 		text=True,
 		encoding="utf-8",
 		env=env,
+		stdin=subprocess.DEVNULL,
 		check=False,
 	)
 
@@ -44,20 +48,34 @@ def test_list_shows_composed_namespaces() -> None:
 		"hello",
 		"libs",
 		"libs.build",
+		"libs.fix",
+		"libs.check",
 		"libs.search",
 		"libs.search.lint",
 		"libs.search.test",
 		"api",
 		"api.deploy",
+		"api.fix",
+		"api.check",
 		"web",
 		"web.build",
 		"web.ship",
+		"web.fix",
+		"web.check",
 	):
 		assert name in r.stdout, r.stdout
 
 
-def test_bare_default_runs_at_root() -> None:
+def test_bare_default_composes_each_child_default() -> None:
 	r = _camas(SHOW_OUTPUT)
+	assert r.returncode == 0
+	assert f"libs-build {FIXTURE / 'libs'}" in r.stdout, r.stdout
+	assert f"api-deploy {FIXTURE / 'services' / 'api'}" in r.stdout, r.stdout
+	assert "web-build ." in r.stdout, r.stdout
+
+
+def test_named_root_task_runs_at_root() -> None:
+	r = _camas(SHOW_OUTPUT, "hello")
 	assert r.returncode == 0
 	assert f"hello {FIXTURE}" in r.stdout, r.stdout
 
@@ -117,6 +135,29 @@ def test_github_composite_runs_each_child_github_default() -> None:
 	assert f"libs-build {FIXTURE / 'libs'}" in r.stdout, r.stdout
 	assert f"api-deploy {FIXTURE / 'services' / 'api'}" in r.stdout, r.stdout
 	assert f"web-ship {FIXTURE / 'web'}" in r.stdout, r.stdout
+
+
+def test_fix_composite_runs_each_child_fix() -> None:
+	r = _camas("mcp", "fix", "--dry-run")
+	assert r.returncode == 0
+	for cwd, printed in (("libs", "libs-fix"), ("services/api", "api-fix"), ("web", "web-fix")):
+		assert f"'{printed}'" in r.stdout, r.stdout
+		assert f"(cwd: {Path(cwd)})" in r.stdout, r.stdout
+
+
+def test_each_config_field_composes_the_childs_matching_field() -> None:
+	config = load_scope(FIXTURE / "tasks.py").config
+	assert config is not None
+	assert config.agent is not None
+	fields = (
+		(config.default_task, ["build", "deploy", "build"]),
+		(config.github_task, ["build", "deploy", "ship"]),
+		(config.agent.fix, ["fix", "fix", "fix"]),
+		(config.agent.check, ["check", "check", "check"]),
+	)
+	for node, expected in fields:
+		assert isinstance(node, Parallel)
+		assert [leaf.name for leaf in node.tasks] == expected
 
 
 def test_expression_composes_dotted_refs() -> None:

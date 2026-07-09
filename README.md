@@ -255,21 +255,25 @@ For the Claude Code plugin, you **register** the auto-fix node — whatever you 
 
 ## Monorepos
 
-A `tasks.py` composes others with `Project`. Binding one imports a child `tasks.py` as a task node — a self-contained child project — that runs whatever a bare `camas` runs in that directory, and mounts the child's own tasks under the binding name:
+A `tasks.py` composes others with `Project`. Binding one imports a child `tasks.py` as a task node — a self-contained child project — and mounts the child's own tasks under the binding name:
 
 ```python
-from camas import Config, Parallel, Project
+from camas import Claude, Config, Parallel, Project
 
 libs = Project("libs")            # camas libs, camas libs.search.lint, ...
 api  = Project("services/api")    # name the handle whatever you like
 
 _ = Config(
-    default_task=...,                     # what bare `camas` runs here
-    github_task=Parallel(libs, api),      # each child's CI default, composed in parallel
+    default_task=Parallel(libs, api),          # each child's default_task, in parallel
+    github_task=Parallel(libs, api),           # each child's github_task
+    agent=Claude(
+        fix=Parallel(libs, api),               # each child's fix node
+        check=Parallel(libs, api),             # each child's check node
+    ),
 )
 ```
 
-A reference resolves by context — the child's default locally, its `github_task` under CI, its agent default under an agent — so a `Parallel` of references is the composite CI task, each child contributing its own. `camas libs.search.lint` reaches a task the child exposes (because `libs/tasks.py` itself did `search = Project("search")`), and expressions compose across namespaces (`camas '{libs.search.lint, api.deploy}'`).
+A reference composes the child's **matching field**: the same bare `libs` grabs the child's `default_task` in `default_task`, its `github_task` in `github_task`, its fix node in `agent.fix`, its check node in `agent.check` — the slot the reference sits in selects which field of the child's own `Config` it contributes. So a `Parallel` of references in any slot is that slot composed across the monorepo, each child contributing its own. A binding name resolves by context instead — `camas libs` runs whatever a bare `camas` runs in that directory (its default locally, its `github_task` under CI, its agent default under an agent). `camas libs.search.lint` reaches a task the child exposes (because `libs/tasks.py` itself did `search = Project("search")`), and expressions compose across namespaces (`camas '{libs.search.lint, api.deploy}'`).
 
 Nodes stay anchored where they were authored: a leaf's `cwd` and its `paths=`/`when=` scopes are relative to its own `tasks.py`, rebased across the boundary no matter where `camas` is invoked from. Children are referenced by path relative to the importing file and live within its directory. The [monorepo fixture](https://github.com/JPHutchins/camas/tree/main/tests/fixtures/monorepo) exercises the permutations.
 

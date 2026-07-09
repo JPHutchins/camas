@@ -169,14 +169,122 @@ def test_config_agent_fields_resolved(tmp_path: Path) -> None:
 		tmp_path / "tasks.py",
 		"from camas import Claude, Config, Project\n"
 		"child = Project('child')\n"
-		"fix = child\n"
 		"_ = Config(default_task=child, agent=Claude(fix=child))\n",
 	)
-	_write(tmp_path / "child" / "tasks.py", _leaf("build"))
+	_write(
+		tmp_path / "child" / "tasks.py",
+		"from camas import Claude, Config, Task\n"
+		"build = Task(('python', '-c', 'pass'), name='build')\n"
+		"fixer = Task(('python', '-c', 'pass'), name='fixer')\n"
+		"_ = Config(default_task=build, agent=Claude(fix=fixer))\n",
+	)
 	config = load_scope(tmp_path / "tasks.py").config
 	assert config is not None
 	assert config.agent is not None
-	assert config.agent.fix.name == "build"
+	assert config.agent.fix.name == "fixer"
+
+
+def test_each_field_composes_the_childs_matching_field(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+	monkeypatch.delenv("CLAUDECODE", raising=False)
+	monkeypatch.delenv("CAMAS_AGENT", raising=False)
+	_write(
+		tmp_path / "tasks.py",
+		"from camas import Claude, Config, Parallel, Project\n"
+		"child = Project('child')\n"
+		"_ = Config(\n"
+		"    default_task=Parallel(child),\n"
+		"    github_task=Parallel(child),\n"
+		"    agent=Claude(fix=Parallel(child), check=Parallel(child)),\n"
+		")\n",
+	)
+	_write(
+		tmp_path / "child" / "tasks.py",
+		"from camas import Claude, Config, Task\n"
+		"default = Task(('python', '-c', 'pass'), name='c-default')\n"
+		"github = Task(('python', '-c', 'pass'), name='c-github')\n"
+		"fixer = Task(('python', '-c', 'pass'), name='c-fix')\n"
+		"checker = Task(('python', '-c', 'pass'), name='c-check')\n"
+		"_ = Config(\n"
+		"    default_task=default,\n"
+		"    github_task=github,\n"
+		"    agent=Claude(fix=fixer, check=checker),\n"
+		")\n",
+	)
+	config = load_scope(tmp_path / "tasks.py").config
+	assert config is not None
+	assert config.agent is not None
+	assert isinstance(config.default_task, Parallel)
+	assert isinstance(config.github_task, Parallel)
+	assert isinstance(config.agent.fix, Parallel)
+	assert isinstance(config.agent.check, Parallel)
+	assert config.default_task.tasks[0].name == "c-default"
+	assert config.github_task.tasks[0].name == "c-github"
+	assert config.agent.fix.tasks[0].name == "c-fix"
+	assert config.agent.check.tasks[0].name == "c-check"
+
+
+def test_field_slot_is_independent_of_ambient_context(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+	monkeypatch.delenv("CLAUDECODE", raising=False)
+	monkeypatch.delenv("CAMAS_AGENT", raising=False)
+	_write(
+		tmp_path / "tasks.py",
+		"from camas import Config, Parallel, Project\n"
+		"web = Project('web')\n"
+		"_ = Config(github_task=Parallel(web))\n",
+	)
+	_write(tmp_path / "web" / "tasks.py", _leaf("build", github="ship"))
+	config = load_scope(tmp_path / "tasks.py").config
+	assert config is not None
+	assert isinstance(config.github_task, Parallel)
+	assert config.github_task.tasks[0].name == "build-gh"
+
+
+def test_composing_a_missing_child_fix_is_attributed_to_child(tmp_path: Path) -> None:
+	_write(
+		tmp_path / "tasks.py",
+		"from camas import Claude, Config, Project, Task\n"
+		"root = Task(('python', '-c', 'pass'), name='root')\n"
+		"child = Project('child')\n"
+		"_ = Config(default_task=root, agent=Claude(fix=child))\n",
+	)
+	_write(tmp_path / "child" / "tasks.py", _leaf("build"))
+	state = load_py_tasks_state(tmp_path / "tasks.py")
+	assert isinstance(state, LoadErr)
+	assert state.source == tmp_path / "child" / "tasks.py"
+	assert "defines no fix task" in str(state.exception)
+
+
+def test_agent_default_composes_each_child_run_default(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+	monkeypatch.delenv("CLAUDECODE", raising=False)
+	monkeypatch.delenv("CAMAS_AGENT", raising=False)
+	_write(
+		tmp_path / "tasks.py",
+		"from camas import Claude, Config, Parallel, Project, Task\n"
+		"root = Task(('python', '-c', 'pass'), name='root')\n"
+		"child = Project('child')\n"
+		"_ = Config(default_task=root, agent=Claude(fix=root, default=Parallel(child)))\n",
+	)
+	_write(
+		tmp_path / "child" / "tasks.py",
+		"from camas import Claude, Config, Task\n"
+		"work = Task(('python', '-c', 'pass'), name='work')\n"
+		"agent_default = Task(('python', '-c', 'pass'), name='agent-default')\n"
+		"_ = Config(default_task=work, agent=Claude(fix=work, default=agent_default))\n",
+	)
+	config = load_scope(tmp_path / "tasks.py").config
+	assert config is not None
+	assert config.agent is not None
+	assert isinstance(config.agent.default, Parallel)
+	assert config.agent.default.tasks[0].name == "agent-default"
 
 
 def test_duplicate_project_reference_shares_load(tmp_path: Path) -> None:
