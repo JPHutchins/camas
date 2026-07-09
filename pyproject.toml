@@ -81,7 +81,6 @@ dev = [
 "pytest-cov>=7,<8",
 "cyclopts>=4,<5",
 "ruff>=0.12,<1",
-"actionlint-py>=1.7,<2",
 "zuban>=0.7,<1",
 "pyrefly>=0.61,<1",
 "types-setuptools",
@@ -90,6 +89,13 @@ dev = [
 "tomli>=2",
 "typing_extensions>=4.12",
 ]
+# actionlint-py is sdist-only and downloads the actionlint binary from GitHub releases at build
+# time; kept in its own default group so the egress-locked harness job can drop it with
+# --no-group lint (it does not use actionlint), while every other flow still syncs it.
+lint = ["actionlint-py>=1.7,<2"]
+
+[tool.uv]
+default-groups = ["dev", "lint"]
 
 [tool.pytest.ini_options]
 testpaths = ["src", "tests"]

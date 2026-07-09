@@ -87,7 +87,6 @@ mcp = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "actionlint-py" },
     { name = "camas", extra = ["all"] },
     { name = "cyclopts" },
     { name = "exceptiongroup" },
@@ -103,6 +102,9 @@ dev = [
     { name = "types-setuptools" },
     { name = "typing-extensions" },
     { name = "zuban" },
+]
+lint = [
+    { name = "actionlint-py" },
 ]
 
 [package.metadata]
@@ -122,7 +124,6 @@ provides-extras = ["github-checks", "ctrf", "check", "mcp", "all"]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "actionlint-py", specifier = ">=1.7,<2" },
     { name = "camas", extras = ["all"] },
     { name = "cyclopts", specifier = ">=4,<5" },
     { name = "exceptiongroup", specifier = ">=1.2" },
@@ -139,6 +140,7 @@ dev = [
     { name = "typing-extensions", specifier = ">=4.12" },
     { name = "zuban", specifier = ">=0.7,<1" },
 ]
+lint = [{ name = "actionlint-py", specifier = ">=1.7,<2" }]
 
 [[package]]
 name = "certifi"

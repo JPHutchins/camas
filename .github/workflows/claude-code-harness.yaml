@@ -75,7 +75,9 @@ jobs:
       # The contract suite needs any interpreter >=3.10; --python 3.12 pins the runner's system
       # Python so uv does not download the .python-version default (3.14) from a GitHub release
       # asset host that is not on the allowlist. UV_PYTHON_DOWNLOADS=never makes a missing one fail
-      # fast, before the DeepSeek-billed run.
+      # fast, before the DeepSeek-billed run. --no-group lint drops actionlint-py, which the suite
+      # does not use and which builds by downloading its binary from a release host off the
+      # allowlist (it would fail the egress lock).
       - name: Run the Claude Code integration suite
         env:
           CAMAS_CC_E2E: "1"
@@ -89,4 +91,4 @@ jobs:
           UV_PYTHON_DOWNLOADS: never
         run: |
           [ -n "$ANTHROPIC_AUTH_TOKEN" ] || { echo "::error::MODEL_API_KEY secret is not set"; exit 1; }
-          uv run --python 3.12 pytest tests/claude_code/ -v --no-cov -p no:cacheprovider
+          uv run --python 3.12 --no-group lint pytest tests/claude_code/ -v --no-cov -p no:cacheprovider
