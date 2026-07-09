@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from camas import Config, Parallel, Sequential, Task
+from camas import Claude, Config, Parallel, Sequential, Task
 
 format = Task("uv run ruff format {paths}", mutates=True, paths=".")
 format_check = Task("uv run ruff format --check {paths}", paths=".")
@@ -31,6 +31,7 @@ release = Task(
 
 all = Sequential(fix, Parallel(actionlint, typecheck, coverage))
 check = Parallel(format_check, lint, actionlint, typecheck, test)
+gate = Parallel(format_check, lint, actionlint, typecheck, coverage)
 
 matrix = Sequential(
 	Task("uv sync"),
@@ -45,4 +46,4 @@ matrix = Sequential(
 	},
 )
 
-_ = Config(default_task=all, github_task=check)
+_ = Config(default_task=all, github_task=check, agent=Claude(fix=fix, check=gate))
