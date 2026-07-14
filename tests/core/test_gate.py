@@ -3,14 +3,18 @@
 
 from __future__ import annotations
 
+import os
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from camas import AgentFormat, Parallel, Sequential, Task
 from camas.core.completion import RunResult
 from camas.core.gate import (
+	REPORT_DIR_PREFIX,
 	GateOutcome,
 	decision_of,
+	prune_stale_report_dirs,
 	run_gate,
 	uses_path_mode,
 	with_agent_format,
@@ -153,6 +157,21 @@ def test_with_agent_format_report_path_backslashes_survive_into_argv(
 	assert isinstance(from_str.node, Task)
 	assert isinstance(from_str.node.cmd, str)
 	assert resolve_cmd(from_str.node.cmd) == ("pytest", "--junitxml", windows_path)
+
+
+def test_prune_stale_report_dirs_removes_only_stale(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	monkeypatch.setattr("camas.core.gate.tempfile.gettempdir", lambda: str(tmp_path))
+	stale = tmp_path / f"{REPORT_DIR_PREFIX}stale"
+	fresh = tmp_path / f"{REPORT_DIR_PREFIX}fresh"
+	stale.mkdir()
+	fresh.mkdir()
+	old = time.time() - 7200.0
+	os.utime(stale, (old, old))
+	prune_stale_report_dirs()
+	assert not stale.exists()
+	assert fresh.exists()
 
 
 def test_uses_path_mode_detects_report_token() -> None:
