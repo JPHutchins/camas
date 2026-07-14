@@ -192,6 +192,54 @@ def test_agent_envelope_path_mode_reads_report_file_not_stdout(tmp_path: Path) -
 	assert env.truncated is False
 
 
+def test_agent_envelope_path_mode_missing_report_falls_back_to_stdout(tmp_path: Path) -> None:
+	"""A tool that crashed before writing its report must still deliver its stdout diagnostics,
+	not an empty payload."""
+	report_path = tmp_path / "never-written.report"
+	task = Task("pytest", name="t", agent_format=AgentFormat("--junitxml {report}", "junit"))
+	env = to_agent_envelope(
+		task,
+		TaskResult("t", Finished(1, 0.1, (b"ImportError: boom\n",))),
+		report_path=report_path,
+	)
+	assert env.payload == "ImportError: boom"
+	assert env.log == str(report_path)
+	assert env.truncated is False
+
+
+def test_agent_envelope_path_mode_empty_report_falls_back_to_stdout(tmp_path: Path) -> None:
+	report_path = tmp_path / "report.xml"
+	report_path.write_text("")
+	task = Task("pytest", name="t", agent_format=AgentFormat("--junitxml {report}", "junit"))
+	env = to_agent_envelope(
+		task, TaskResult("t", Finished(137, 0.1, (b"Killed\n",))), report_path=report_path
+	)
+	assert env.payload == "Killed"
+	assert env.exit_code == 137
+
+
+def test_agent_envelope_path_mode_raw_over_limit_points_at_report_file(tmp_path: Path) -> None:
+	"""A ``raw`` report file is bounded like any structured payload — path mode is exactly what
+	makes the pointer valid."""
+	report_path = tmp_path / "report.txt"
+	report_path.write_text("way too long for the limit")
+	task = Task("x", name="t", agent_format=AgentFormat("--log {report}", "raw", limit=10))
+	env = to_agent_envelope(task, TaskResult("t", Finished(1, 0.1, ())), report_path=report_path)
+	assert "way too long" not in env.payload
+	assert str(report_path) in env.payload
+	assert env.output_kind == "raw"
+	assert env.truncated is True
+
+
+def test_agent_envelope_stdout_raw_with_limit_still_tails_not_pointers() -> None:
+	task = Task("x", name="t", agent_format=AgentFormat("--verbose", "raw", limit=5))
+	lines = tuple(f"{i}\n".encode() for i in range(60))
+	env = to_agent_envelope(task, TaskResult("t", Finished(1, 0.1, lines)), tail=5)
+	assert env.payload == "\n".join(str(i) for i in range(55, 60))
+	assert "limit" not in env.payload
+	assert env.truncated is True
+
+
 def test_agent_envelope_path_mode_over_limit_points_at_report_file(tmp_path: Path) -> None:
 	report_path = tmp_path / "report.xml"
 	report_path.write_text("way too long for the limit")

@@ -229,20 +229,23 @@ def to_agent_envelope(
 	task: Task, result: TaskResult, *, tail: int = 50, report_path: Path | None = None
 ) -> wire.AgentEnvelope:
 	"""``result``'s AgentEnvelope: stdout tail-capped for ``raw``, verbatim for a structured
-	``kind`` — read from ``report_path`` (path mode) when given, else from stdout. A structured
-	payload over its ``agent_format.limit`` is replaced with :func:`over_limit_pointer` rather
-	than dumped or tailed, since a truncated structured document is invalid.
+	``kind`` — read from ``report_path`` (path mode) when the file holds a payload, else from
+	stdout, so a tool that crashed before writing its report still delivers its stdout
+	diagnostics. A payload over its ``agent_format.limit`` — any structured ``kind``, or a
+	``raw`` report file (stdout ``raw`` is already tail-capped) — is replaced with
+	:func:`over_limit_pointer` rather than dumped or tailed, since a truncated structured
+	document is invalid; the pointer names the report file only when the payload came from it.
 	"""
 	comp = result.completion
 	fmt = task.agent_format
 	kind = fmt.kind if fmt is not None else "raw"
-	if report_path is not None:
-		payload = (
-			report_path.read_text(encoding="utf-8", errors="replace")
-			if report_path.is_file()
-			else ""
-		)
-		truncated = False
+	report_payload = (
+		report_path.read_text(encoding="utf-8", errors="replace")
+		if report_path is not None and report_path.is_file()
+		else ""
+	)
+	if report_payload:
+		payload, truncated = report_payload, False
 	else:
 		match comp:
 			case Finished(output=output) | Stopped(output=output):
@@ -255,12 +258,12 @@ def to_agent_envelope(
 				assert_never(comp)
 		payload, truncated = "\n".join(decoded.lines), decoded.truncated
 	log = str(report_path) if report_path is not None else None
-	if kind != "raw" and fmt is not None and len(payload) > fmt.limit:
+	if fmt is not None and len(payload) > fmt.limit and (kind != "raw" or bool(report_payload)):
 		return wire.AgentEnvelope(
 			name=result.name,
 			exit_code=comp.returncode,
 			output_kind=kind,
-			payload=over_limit_pointer(kind, fmt.limit, report_path),
+			payload=over_limit_pointer(kind, fmt.limit, report_path if report_payload else None),
 			truncated=True,
 			log=log,
 		)

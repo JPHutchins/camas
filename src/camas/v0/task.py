@@ -91,10 +91,10 @@ class AgentFormat(NamedTuple):
 	payload instead of stdout — for a tool (``pytest --junitxml``, ``pytest-json-report``) that
 	writes its diagnostics to a file rather than printing them.
 
-	``limit`` bounds a structured (non-``raw``) payload in characters. A payload over ``limit``
-	is neither dumped nor tailed — a truncated structured document is invalid — but replaced
-	with a pointer to the full file/log instead; never applies to ``raw``, which the gate
-	line-tails.
+	``limit`` bounds a structured (non-``raw``) payload — and any path-mode report file,
+	``raw`` included — in characters. A payload over ``limit`` is neither dumped nor tailed —
+	a truncated structured document is invalid — but replaced with a pointer to the full
+	file/log instead; stdout ``raw`` is exempt, since the gate line-tails it.
 
 	>>> AgentFormat("--output-format sarif", "sarif")
 	AgentFormat(args='--output-format sarif', kind='sarif', limit=8000)
