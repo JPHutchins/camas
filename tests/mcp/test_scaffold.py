@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from camas.mcp.scaffold import (
+	AGENT_TEMPLATES,
 	installed_version_spec,
 	launch_command,
 	launch_command_str,
@@ -836,6 +837,46 @@ def test_write_claude_idempotent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 	assert write_claude([]) == 0
 	mtime2 = (tmp_path / ".claude" / "agents" / "camas-lint-fixer-haiku.md").stat().st_mtime
 	assert mtime2 > mtime1
+
+
+_PEP723_TASKS = (
+	"# /// script\n"
+	'# requires-python = ">=3.10"\n'
+	'# dependencies = ["camas[mcp]"]\n'
+	"# ///\n"
+	"from camas import run_cli\n"
+	"if __name__ == '__main__':\n"
+	"\trun_cli(globals())\n"
+)
+
+
+def test_run_cli_script_entry_init_claude_matches_project_init_agent_set(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	"""The PEP 723 script entry (``uv run tasks.py mcp init --claude``) and the project init
+	(``camas mcp init --claude``) write the same tiered agent set — the parity the e2e
+	``test_pep723_init_claude_via_script_entry_writes_uv_launcher`` asserts, guarded here so
+	plain CI catches a divergence without the harness.
+	"""
+	from camas.main.dispatch import run_cli
+
+	monkeypatch.setattr("shutil.which", _which("uv"))
+	script_dir = tmp_path / "script"
+	project_dir = tmp_path / "project"
+	for d in (script_dir, project_dir):
+		d.mkdir()
+		(d / "tasks.py").write_text(_PEP723_TASKS)
+	monkeypatch.chdir(script_dir)
+	monkeypatch.setattr("sys.argv", ["tasks.py", "mcp", "init", "--claude"])
+	with pytest.raises(SystemExit) as exc:
+		run_cli({})
+	assert exc.value.code == 0
+	monkeypatch.chdir(project_dir)
+	assert write_claude([]) == 0
+	script_agents = sorted(p.name for p in (script_dir / ".claude" / "agents").iterdir())
+	project_agents = sorted(p.name for p in (project_dir / ".claude" / "agents").iterdir())
+	assert script_agents == project_agents == sorted(dest for _, dest in AGENT_TEMPLATES)
+	assert (script_dir / ".claude" / "skills" / "gate" / "SKILL.md").exists()
 
 
 def test_entrypoint_mcp_init_routes_to_scaffold(

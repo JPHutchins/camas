@@ -13,7 +13,7 @@ Regression guard: ``uv run --script tasks.py mcp --help`` routes to the MCP CLI 
 ``camas mcp init``) and does NOT raise ``no task named 'mcp'`` — the pre-``dea221e`` failure mode
 where ``run_cli`` bound ``mcp`` as a task. The headless server-load step (proving the
 ``uv run tasks.py mcp`` launcher Claude Code starts actually answers ``camas_list``) is opt-in via
-``CAMAS_CC_PEP723_HEADLESS`` because it downloads camas from PyPI on each launch — slow and
+``CAMAS_CC_PEP723_HEADLESS`` because it builds camas from this checkout on each launch — slow and
 network-bound, unlike the deterministic file/launcher assertions that always run.
 """
 
@@ -40,16 +40,26 @@ _ENABLED = bool(os.environ.get("CAMAS_CC_E2E")) and shutil.which("claude") is no
 
 # A non-Python repo's tasks.py is a PEP 723 inline-script block pinning camas[mcp]; the ``[mcp]``
 # extra is required because the ``mcp`` subcommand imports pydantic (a camas[mcp] dep), and
-# ``run_cli(globals())`` is the script entry ``dea221e`` routed to ``mcp``.
+# ``run_cli(globals())`` is the script entry ``dea221e`` routed to ``mcp``. The ``tool.uv.sources``
+# path pin resolves camas from THIS checkout, so the suite exercises the code under test — a bare
+# ``camas[mcp]`` resolves the released camas from PyPI, which cannot validate unreleased changes.
 _TASKS = (
 	"# /// script\n"
 	'# requires-python = ">=3.10"\n'
 	'# dependencies = ["camas[mcp]"]\n'
+	"#\n"
+	"# [tool.uv.sources]\n"
+	'# camas = {{ path = "{repo}" }}\n'
 	"# ///\n"
 	"from camas import run_cli\n"
 	"if __name__ == '__main__':\n"
 	"\trun_cli(globals())\n"
 )
+
+
+def _write_tasks_py(tmp_path: Path) -> None:
+	(tmp_path / "tasks.py").write_text(_TASKS.format(repo=_REPO_ROOT.as_posix()))
+
 
 _INIT_FILES = (
 	".mcp.json",
@@ -93,7 +103,7 @@ def test_pep723_init_claude_via_script_entry_writes_uv_launcher(
 	tmp_path: Path,
 	run_headless: Callable[..., CompletedProcess[str]],
 ) -> None:
-	(tmp_path / "tasks.py").write_text(_TASKS)
+	_write_tasks_py(tmp_path)
 	_init_via_script_entry(tmp_path)
 
 	for rel in _INIT_FILES:
@@ -110,11 +120,9 @@ def test_pep723_init_claude_headless_server_loads(
 	run_headless: Callable[..., CompletedProcess[str]],
 ) -> None:
 	if not _HEADLESS:
-		pytest.skip(
-			"set CAMAS_CC_PEP723_HEADLESS=1 to run the uvx server-load step (downloads camas)"
-		)
+		pytest.skip("set CAMAS_CC_PEP723_HEADLESS=1 to run the uvx server-load step (builds camas)")
 
-	(tmp_path / "tasks.py").write_text(_TASKS)
+	_write_tasks_py(tmp_path)
 	_init_via_script_entry(tmp_path)
 
 	headless = run_headless(
@@ -131,7 +139,7 @@ def test_pep723_init_claude_headless_server_loads(
 
 @pytest.mark.skipif(not _ENABLED, reason="set CAMAS_CC_E2E=1 with claude on PATH")
 def test_pep723_script_entry_routes_mcp_not_task_binding(tmp_path: Path) -> None:
-	(tmp_path / "tasks.py").write_text(_TASKS)
+	_write_tasks_py(tmp_path)
 	proc = subprocess.run(
 		[_UV, "run", "--script", "tasks.py", "mcp", "--help"],
 		cwd=tmp_path,
