@@ -31,7 +31,6 @@ else:  # pragma: no cover
 
 if TYPE_CHECKING:
 	from collections.abc import Mapping
-	from pathlib import Path
 
 	from ..v0.task import TaskNode
 	from .budget import BudgetPlan
@@ -100,6 +99,36 @@ def _allocate_report_path(report_dir: Path) -> Path:
 	return Path(raw_path)
 
 
+def _append_args(
+	cmd: str | tuple[str, ...], args: str, report_path: Path | None
+) -> str | tuple[str, ...]:
+	"""Append ``args`` to ``cmd`` with :data:`REPORT_TOKEN` substituted — shell-quoted into a
+	string command, per-token after splitting the template into a tuple command — so the
+	substituted path never re-parses through POSIX ``shlex`` (a Windows path would lose its
+	backslashes), mirroring ``{paths}`` injection (:func:`camas.core.scope._inject`).
+	"""
+	match cmd:
+		case str():
+			substituted = (
+				args
+				if report_path is None
+				else args.replace(REPORT_TOKEN, shlex.quote(str(report_path)))
+			)
+			return f"{cmd} {substituted}"
+		case tuple():
+			tokens = shlex.split(args)
+			return (
+				*cmd,
+				*(
+					tokens
+					if report_path is None
+					else (tok.replace(REPORT_TOKEN, str(report_path)) for tok in tokens)
+				),
+			)
+		case _:
+			assert_never(cmd)
+
+
 def with_agent_format(node: TaskNode, report_dir: Path) -> FormattedNode:
 	"""Append each leaf's ``agent_format.args`` to its command — the agent-only structured-output
 	variant the gate runs; a human run never applies this, so ``cmd`` is otherwise untouched.
@@ -126,17 +155,11 @@ def with_agent_format(node: TaskNode, report_dir: Path) -> FormattedNode:
 			if node.agent_format is None:
 				return FormattedNode(node, (None,))
 			args = node.agent_format.args
-			if REPORT_TOKEN in args:
-				report_path = _allocate_report_path(report_dir)
-				args = args.replace(REPORT_TOKEN, str(report_path))
-			else:
-				report_path = None
-			cmd = (
-				f"{node.cmd} {args}"
-				if isinstance(node.cmd, str)
-				else (*node.cmd, *shlex.split(args))
+			report_path = _allocate_report_path(report_dir) if REPORT_TOKEN in args else None
+			return FormattedNode(
+				dataclasses.replace(node, cmd=_append_args(node.cmd, args, report_path)),
+				(report_path,),
 			)
-			return FormattedNode(dataclasses.replace(node, cmd=cmd), (report_path,))
 		case Group() as group:
 			formatted = tuple(with_agent_format(c, report_dir) for c in group.tasks)
 			return FormattedNode(

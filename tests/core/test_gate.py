@@ -3,17 +3,23 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from camas import AgentFormat, Parallel, Sequential, Task
 from camas.core.completion import RunResult
-from camas.core.gate import GateOutcome, decision_of, run_gate, uses_path_mode, with_agent_format
+from camas.core.gate import (
+	GateOutcome,
+	decision_of,
+	run_gate,
+	uses_path_mode,
+	with_agent_format,
+)
+from camas.core.matrix import resolve_cmd
 from camas.core.task import task_label
 from camas.core.timings import TaskTiming
 
 if TYPE_CHECKING:
-	from pathlib import Path
-
 	import pytest
 
 	from camas.v0.task import TaskNode
@@ -122,6 +128,31 @@ def test_with_agent_format_substitutes_report_token(tmp_path: Path) -> None:
 	assert report_path is not None
 	assert report_path.parent == tmp_path
 	assert str(report_path) in result.node.cmd
+
+
+def test_with_agent_format_report_path_backslashes_survive_into_argv(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	"""A substituted report path is never re-parsed through POSIX shlex — a Windows temp path
+	must reach the argv with its backslashes intact, on every platform.
+	"""
+	windows_path = "C:\\Users\\x\\tmp.report"
+
+	def _fixed_path(_report_dir: Path) -> Path:
+		return Path(windows_path)
+
+	monkeypatch.setattr("camas.core.gate._allocate_report_path", _fixed_path)
+	from_tuple = with_agent_format(
+		Task(("pytest",), agent_format=AgentFormat("--junitxml={report}", "junit")), tmp_path
+	)
+	assert isinstance(from_tuple.node, Task)
+	assert from_tuple.node.cmd == ("pytest", f"--junitxml={windows_path}")
+	from_str = with_agent_format(
+		Task("pytest", agent_format=AgentFormat("--junitxml {report}", "junit")), tmp_path
+	)
+	assert isinstance(from_str.node, Task)
+	assert isinstance(from_str.node.cmd, str)
+	assert resolve_cmd(from_str.node.cmd) == ("pytest", "--junitxml", windows_path)
 
 
 def test_uses_path_mode_detects_report_token() -> None:
