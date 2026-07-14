@@ -29,7 +29,9 @@ Usage:
     [--paths P]… [--under D]  0 (continue) / 2 (block); scope to --paths or a piped
     [--jobs N] [--nudge]      PostToolBatch/Stop event (the camas-fixer agents + benchmark);
                               --under takes a duration (5, 1.5s, 500ms, 2m, 1h); --nudge emits
-                              the async Stop-hook nudge text instead of the JSON verdict
+                              the async Stop-hook nudge text instead of the JSON verdict — at
+                              most once per prompt, and exit 0 (no rewake) when no check node
+                              or camas[mcp] is missing
 
 Options:
   --rich        accepted for back-compat; rich output is the default
@@ -135,6 +137,8 @@ def main(argv: list[str]) -> None:
 		try:
 			from .serve import gate_cli
 		except ImportError as e:
+			if "--nudge" in argv:
+				sys.exit(0)
 			report_import_failure(e, feature_hint="camas mcp gate: requires feature camas[mcp]")
 		sys.exit(gate_cli(argv[1:]))
 	unexpected = [arg for arg in argv if arg not in ("--rich", "--plain")]

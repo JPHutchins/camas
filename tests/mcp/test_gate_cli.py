@@ -152,6 +152,74 @@ def test_nudge_text_quotes_diagnostics() -> None:
 	assert "camas-lint-fixer-sonnet" in text
 
 
+_FIX_ONLY_TASKS = (
+	"from camas import Claude, Config, Task\n"
+	'tidy = Task(("python", "-c", "pass"), name="tidy", mutates=True, paths=".")\n'
+	"_ = Config(agent=Claude(fix=tidy))\n"
+)
+
+
+def _stop_event(prompt_id: str, **extra: object) -> str:
+	return json.dumps(
+		{"session_id": "s-1", "prompt_id": prompt_id, "hook_event_name": "Stop", **extra}
+	)
+
+
+def test_gate_cli_nudge_fix_only_project_exits_zero(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	"""A fix-only project has nothing to gate — the async Stop hook must not rewake the agent
+	over a configuration state (the harness rewake-loop regression).
+	"""
+	monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+	monkeypatch.chdir(tmp_path)
+	(tmp_path / "tasks.py").write_text(_FIX_ONLY_TASKS)
+	assert serve.gate_cli(["--nudge"]) == 0
+	assert "no check node" in capsys.readouterr().err
+
+
+def test_gate_cli_nudge_load_error_exits_zero(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+	monkeypatch.chdir(tmp_path)
+	(tmp_path / "tasks.py").write_text("raise ValueError('boom')\n")
+	assert serve.gate_cli(["--nudge"]) == 0
+	assert "cannot load" in capsys.readouterr().err
+
+
+def test_gate_cli_nudge_wakes_at_most_once_per_prompt(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	_chdir_project(tmp_path, monkeypatch, "FIXME")
+	(tmp_path / "sample.py").write_text("FIXME\n")
+	marker_dir = tmp_path / "markers"
+	marker_dir.mkdir()
+	monkeypatch.setattr("camas.mcp.serve.tempfile.gettempdir", lambda: str(marker_dir))
+	monkeypatch.setattr("sys.stdin", io.StringIO(_stop_event("p-1")))
+	assert serve.gate_cli(["--nudge"]) == 2
+	assert "camas-lint-fixer-haiku" in capsys.readouterr().err
+	monkeypatch.setattr("sys.stdin", io.StringIO(_stop_event("p-1")))
+	assert serve.gate_cli(["--nudge"]) == 0
+	assert capsys.readouterr().err == ""
+	monkeypatch.setattr("sys.stdin", io.StringIO(_stop_event("p-2")))
+	assert serve.gate_cli(["--nudge"]) == 2
+	assert "camas-lint-fixer-haiku" in capsys.readouterr().err
+
+
+def test_gate_cli_nudge_honors_stop_hook_active(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	_chdir_project(tmp_path, monkeypatch, "FIXME")
+	(tmp_path / "sample.py").write_text("FIXME\n")
+	marker_dir = tmp_path / "markers"
+	marker_dir.mkdir()
+	monkeypatch.setattr("camas.mcp.serve.tempfile.gettempdir", lambda: str(marker_dir))
+	monkeypatch.setattr("sys.stdin", io.StringIO(_stop_event("p-1", stop_hook_active=True)))
+	assert serve.gate_cli(["--nudge"]) == 0
+	assert capsys.readouterr().err == ""
+
+
 def test_nudge_text_without_diagnostics() -> None:
 	resp = wire.GateResponse(
 		decision="block",

@@ -39,8 +39,9 @@ needs your reasoning.
 **The Stop-hook nudge.** If your turn ends before you delegated (or a fixer's residual never got
 picked up), a background check runs after you stop and, if the workspace isn't green, wakes you
 with a reminder to launch the fixer ladder — so a skipped check-and-fix loop doesn't go silently
-unnoticed. Prefer delegating proactively per the ladder above; treat the nudge as a backstop, not
-your primary signal.
+unnoticed. It wakes you at most once per prompt and never for a configuration gap (no check node
+registered), so it cannot loop your turn. Prefer delegating proactively per the ladder above;
+treat the nudge as a backstop, not your primary signal.
 
 Never mask a residual — yours or a fixer's: do not suppress, disable, or loosen a check to make
 the gate pass. A green gate must mean the work is actually correct.
