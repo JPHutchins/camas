@@ -282,6 +282,12 @@ def build_parser(state: TasksState = EMPTY_STATE) -> argparse.ArgumentParser:
 		help="write a commented starter tasks.py into the current directory and exit",
 	)
 	parser.add_argument(
+		"--verbose",
+		action="store_true",
+		help="with --init, scaffold the kitchen-sink template — every Task/Sequential/"
+		"Parallel/Config option worked and explained — instead of the minimal starter",
+	)
+	parser.add_argument(
 		"--effects",
 		nargs="?",
 		default=None,
@@ -339,6 +345,7 @@ RESERVED_FLAGS: Final = frozenset(
 		"tree",
 		"check",
 		"init",
+		"verbose",
 		"effects",
 		"matrix",
 		"jobs",

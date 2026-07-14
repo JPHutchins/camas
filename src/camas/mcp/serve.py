@@ -351,7 +351,7 @@ async def call(session: Session, name: str, arguments: dict[str, Any]) -> types.
 		case ToolName.FIX:
 			return await fix_call(session, arguments)
 		case ToolName.INIT:
-			return init_call(session)
+			return init_call(session, arguments)
 		case _:
 			known = ", ".join(repr(tool.value) for tool in ToolName)
 			return error_result(f"unknown tool {name!r}; expected one of: {known}")
@@ -533,16 +533,20 @@ def tools(task_names: tuple[str, ...], compat: Compat) -> Tools:
 			name=ToolName.INIT.value,
 			description=textwrap.dedent("""\
 				Scaffold a commented starter tasks.py in THIS project's root when it has none — the
-				MCP mirror of `camas --init`, for driving camas purely over the MCP. Writes the same
-				worked template (leaf tasks, Sequential/Parallel composition, a matrix, a Config
-				default task, and the Claude agent integration) with cross-platform placeholder
-				commands, creates the .camas/ run-log and timing directory beside it, and returns the
-				path plus the file's content so you can edit from there. Refuses to overwrite an
-				existing tasks.py (returns status 'exists', file untouched). The tasks it creates are
-				immediately runnable via camas_run — no restart. Then read camas_docs and validate
-				edits with camas_check.
+				MCP mirror of `camas --init`, for driving camas purely over the MCP. Defaults
+				(verbose=true) to the kitchen-sink template: every Task/Sequential/Parallel/Config
+				option worked and explained in place — path scoping ({paths}/when=), matrix
+				expansion, agent_format structured output, and Config(agent=Claude(fix=...,
+				check=..., default=...)) — with cross-platform placeholder commands, so you can read
+				it once and see the whole authoring surface. Pass verbose=false for the same short
+				template `camas --init` (no --verbose) writes instead. Either way this creates the
+				.camas/ run-log and timing directory beside it, and returns the path plus the file's
+				content so you can edit from there. Refuses to overwrite an existing tasks.py
+				(returns status 'exists', file untouched). The tasks it creates are immediately
+				runnable via camas_run — no restart. Then read camas_docs and validate edits with
+				camas_check.
 			""").strip(),
-			input_schema=NO_ARGS_SCHEMA,
+			input_schema=wire.InitRequest.model_json_schema(),
 			output_model=wire.InitResponse,
 			title="Scaffold a starter tasks.py",
 			annotations=INIT_ANNOTATIONS,
@@ -587,19 +591,27 @@ def docs_call(session: Session) -> types.CallToolResult:
 	return success(with_warning(session, docs_text(resp)), resp, session.compat)
 
 
-def init_call(session: Session) -> types.CallToolResult:
+def init_call(session: Session, arguments: dict[str, Any]) -> types.CallToolResult:
 	"""Handle ``camas_init``: scaffold a commented starter ``tasks.py`` in the project root,
 	refusing to overwrite an existing one, and re-resolve so the new tasks are immediately live.
+	Defaults to the kitchen-sink template (``verbose=True``); pass ``verbose=False`` for the
+	same minimal one ``camas --init`` writes.
 	"""
 	try:
-		created = create_starter_tasks_py(session.base)
+		req = wire.InitRequest.model_validate(arguments)
+	except ValidationError as e:
+		return error_result(f"invalid camas_init arguments:\n{e}")
+	try:
+		created = create_starter_tasks_py(session.base, verbose=req.verbose)
 	except FileExistsError:
 		resp = wire.InitResponse(status="exists", path=str(session.base / "tasks.py"))
 		return success(init_text(resp), resp, session.compat)
 	except OSError as e:
 		return error_result(f"camas_init: could not scaffold tasks.py: {e}")
 	session.refresh()
-	resp = wire.InitResponse(status="created", path=str(created), content=starter_text())
+	resp = wire.InitResponse(
+		status="created", path=str(created), content=starter_text(verbose=req.verbose)
+	)
 	return success(init_text(resp), resp, session.compat)
 
 

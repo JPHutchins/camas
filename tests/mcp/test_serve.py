@@ -143,7 +143,8 @@ def test_tools_default_omits_rich_fields() -> None:
 	assert (tool_fix.title, tool_fix.outputSchema, tool_fix.annotations) == (None, None, None)
 	assert _task_enum(tool_fix.inputSchema) == ["a", "b"]
 	assert (tool_init.title, tool_init.outputSchema, tool_init.annotations) == (None, None, None)
-	assert tool_init.inputSchema == serve.NO_ARGS_SCHEMA
+	assert tool_init.inputSchema["properties"]["verbose"]["default"] is True
+	assert tool_init.inputSchema["additionalProperties"] is False
 
 
 def test_tools_rich_includes_title_annotations_and_schema() -> None:

@@ -7,7 +7,9 @@ name, ``camas --list`` enumerates them, ``camas --help`` shows
 everything (tasks + effects + hints), ``camas --effects`` lists the
 available output renderers, ``camas --tree`` prints every task's full
 expansion, ``camas --init`` scaffolds a commented starter ``tasks.py``
-when none exists, and ``--AXIS VAL`` overrides a matrix axis from the CLI.
+when none exists (``--verbose`` for a kitchen-sink template covering every
+option instead of the minimal one), and ``--AXIS VAL`` overrides a matrix
+axis from the CLI.
 
 A leaf is *any* shell command. The doctests below all run
 ``python -c ...`` snippets only because every CI environment has

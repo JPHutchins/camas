@@ -20,8 +20,8 @@ if use_mypyc:
 	# lazy-imports; _ctrf_model itself is already skipped by the [!_] glob below.
 	# check.py and state.py stay interpreted: mypyc's NamedTuple codegen rejects
 	# the built-in ``Exception`` as a field type (KeyError: 'Exception' at import).
-	# starter.py stays interpreted: it is the --init template, shipped as plain
-	# source and read back as text by init.py.
+	# starter.py and starter_verbose.py stay interpreted: they are the --init
+	# templates, shipped as plain source and read back as text by init.py.
 	# compose/ is a package, so the non-recursive main/*.py glob below never reaches it:
 	# it defines ProjectLoadError, caught across compiled call boundaries (mypyc miscompiles
 	# a native exception class used in ``except``), and its work is runpy + filesystem
@@ -31,7 +31,7 @@ if use_mypyc:
 	# create_module, before the import machinery sets __path__, so its eager
 	# ``from .entrypoint import …`` chain reaches the interpreted ``.check``
 	# sibling while camas.main is not yet a package (mypy >= 1.20).
-	_main_excluded = {"__init__.py", "check.py", "state.py", "starter.py"}
+	_main_excluded = {"__init__.py", "check.py", "state.py", "starter.py", "starter_verbose.py"}
 	_effect_excluded = {"github_checks.py", "ctrf.py"}
 	ext_modules = mypycify(
 		[

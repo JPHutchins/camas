@@ -266,7 +266,7 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 			# flags surface instead of being silently consumed.
 			args = parser.parse_args(split.head)
 			if args.init:
-				sys.exit(write_starter_tasks_py(Path.cwd()))
+				sys.exit(write_starter_tasks_py(Path.cwd(), verbose=args.verbose))
 			if args.list or args.tree:
 				print(format_load_error_hint(err.source, err.exception))
 				sys.exit(0)
@@ -313,7 +313,7 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 			args = parser.parse_args(split.head)
 
 			if args.init:
-				sys.exit(write_starter_tasks_py(Path.cwd()))
+				sys.exit(write_starter_tasks_py(Path.cwd(), verbose=args.verbose))
 
 			if args.list:
 				print_task_summary_listing(

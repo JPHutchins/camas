@@ -11,6 +11,7 @@ from camas.mcp.wire import (
 	DocsResponse,
 	Errored,
 	Finished,
+	InitRequest,
 	LeafReport,
 	ListRequest,
 	ListResponse,
@@ -21,6 +22,15 @@ from camas.mcp.wire import (
 	TaskInfo,
 	run_input_schema,
 )
+
+
+def test_init_request_defaults_to_verbose() -> None:
+	assert InitRequest.model_validate({}).verbose is True
+
+
+def test_init_request_rejects_unknown_field() -> None:
+	with pytest.raises(ValidationError):
+		InitRequest.model_validate({"bogus": 1})
 
 
 def test_list_request_defaults_to_unexpanded() -> None:

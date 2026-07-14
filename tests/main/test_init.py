@@ -3,21 +3,34 @@
 
 from __future__ import annotations
 
+import inspect
 import os
+import re
 import subprocess
 import sys
-from typing import TYPE_CHECKING
+from datetime import datetime
+from typing import TYPE_CHECKING, get_args
 
 import pytest
 
-from camas import Sequential
+from camas import Sequential, Task, v0
+from camas.main import starter_verbose
+from camas.main.check import CheckerOk, find_typechecker, run_typecheck
 from camas.main.dispatch import dispatch
 from camas.main.init import starter_text, write_starter_tasks_py
 from camas.main.state import EMPTY_STATE, LoadErr
 from camas.main.tasks import load_tasks_from_py
+from camas.v0.completion import Finished
+from camas.v0.task import OutputKind
+from camas.v0.task_event import CompletedEvent, StartedEvent
 
 if TYPE_CHECKING:
 	from pathlib import Path
+
+requires_checker = pytest.mark.skipif(
+	find_typechecker() is None,
+	reason="real-checker test requires ty or mypy on PATH (install camas[check])",
+)
 
 
 def _camas(*args: str, cwd: Path) -> subprocess.CompletedProcess[str]:
@@ -123,3 +136,160 @@ def test_starter_runs_standalone(tmp_path: Path) -> None:
 	)
 	assert result.returncode == 0, result.stderr
 	assert all(name in result.stdout for name in ("hello", "greet", "ci"))
+
+
+def test_write_starter_verbose(tmp_path: Path) -> None:
+	assert write_starter_tasks_py(tmp_path, verbose=True) == 0
+	written = (tmp_path / "tasks.py").read_text(encoding="utf-8")
+	assert written == starter_text(verbose=True)
+	assert written != starter_text()
+	assert (tmp_path / ".camas" / ".gitignore").read_text(encoding="utf-8") == "*\n"
+
+
+def test_dispatch_init_verbose(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+	monkeypatch.chdir(tmp_path)
+	with pytest.raises(SystemExit, match="0"):
+		dispatch(EMPTY_STATE, ["--init", "--verbose"])
+	written = (tmp_path / "tasks.py").read_text(encoding="utf-8")
+	assert written == starter_text(verbose=True)
+
+
+def test_dispatch_init_default_stays_minimal(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	monkeypatch.chdir(tmp_path)
+	with pytest.raises(SystemExit, match="0"):
+		dispatch(EMPTY_STATE, ["--init"])
+	assert (tmp_path / "tasks.py").read_text(encoding="utf-8") == starter_text()
+
+
+def test_verbose_starter_loads_with_config(tmp_path: Path) -> None:
+	write_starter_tasks_py(tmp_path, verbose=True)
+	loaded = load_tasks_from_py(tmp_path / "tasks.py")
+	assert set(loaded.tasks) == {
+		"hello",
+		"compile_step",
+		"documented",
+		"native",
+		"flake",
+		"docs_build",
+		"fmt",
+		"lint",
+		"web_lint",
+		"checked",
+		"subproject",
+		"greet",
+		"meet",
+		"frontend",
+		"versions",
+		"ci",
+	}
+	assert set(loaded.scope_effects) == {"Announce"}
+	assert loaded.config is not None
+	assert loaded.config.default_task == loaded.tasks["ci"]
+	assert isinstance(loaded.config.github_task, Sequential)
+	assert loaded.config.camas_dir == ".camas"
+	assert loaded.config.default_effects is None
+	assert loaded.config.default_github_effects is None
+	assert loaded.config.agent is not None
+	assert loaded.config.agent.fix == loaded.tasks["fmt"]
+	assert loaded.config.agent.check == loaded.tasks["ci"]
+	assert loaded.config.agent.default == loaded.tasks["hello"]
+
+
+def test_verbose_starter_runs_to_completion(tmp_path: Path) -> None:
+	"""Bare ``camas`` in a verbose-scaffolded directory runs the whole default
+	tree green — the placeholder tasks must be infallible cross-platform."""
+	write_starter_tasks_py(tmp_path, verbose=True)
+	result = _camas("--effects=(Summary(show_passing=True),)", cwd=tmp_path)
+	assert result.returncode == 0, result.stderr
+	assert "hello from the kitchen-sink starter" in result.stdout
+	assert "hello, Ada!" in result.stdout
+	assert "hi Jane, meet Wendy" in result.stdout
+	assert "checked on 3.13" in result.stdout
+	assert "subproject build" in result.stdout
+
+
+@requires_checker
+def test_verbose_starter_typechecks(tmp_path: Path) -> None:
+	write_starter_tasks_py(tmp_path, verbose=True)
+	result = run_typecheck(tmp_path / "tasks.py")
+	assert isinstance(result, CheckerOk), result
+
+
+def _v0_exports() -> dict[str, object]:
+	eager = {
+		name: val
+		for name, val in vars(v0).items()
+		if not name.startswith("_") and not inspect.ismodule(val)
+	}
+	return {**eager, "run_cli": v0.run_cli}
+
+
+def test_verbose_starter_mentions_every_v0_export() -> None:
+	text = starter_text(verbose=True)
+	missing = [name for name in _v0_exports() if not re.search(rf"\b{re.escape(name)}\b", text)]
+	assert missing == []
+
+
+def _constructor_options() -> dict[str, bool]:
+	"""Every parameter of every eager public v0 callable (protocols excluded), mapped to
+	whether any constructor takes it as an option (keyword-only or defaulted) — those must
+	appear in the verbose template as a ``name=`` usage, the rest as a word.
+	"""
+	constructors = {
+		val
+		for name, val in vars(v0).items()
+		if not name.startswith("_")
+		and not inspect.ismodule(val)
+		and callable(val)
+		and not getattr(val, "_is_protocol", False)
+	}
+	options: dict[str, bool] = {}
+	for constructor in constructors:
+		for name, param in inspect.signature(constructor).parameters.items():
+			if param.kind in (param.VAR_POSITIONAL, param.VAR_KEYWORD):
+				continue
+			as_kwarg = param.kind is param.KEYWORD_ONLY or param.default is not param.empty
+			options[name] = options.get(name, False) or as_kwarg
+	return options
+
+
+def test_verbose_starter_demonstrates_every_constructor_option() -> None:
+	text = starter_text(verbose=True)
+	missing = [
+		name
+		for name, as_kwarg in _constructor_options().items()
+		if not re.search(
+			rf"\b{re.escape(name)}\s*=" if as_kwarg else rf"\b{re.escape(name)}\b", text
+		)
+	]
+	assert missing == []
+
+
+def test_verbose_starter_names_every_output_kind() -> None:
+	text = starter_text(verbose=True)
+	missing = [kind for kind in get_args(OutputKind) if not re.search(rf"\b{kind}\b", text)]
+	assert missing == []
+
+
+def test_verbose_module_scope_callables(tmp_path: Path) -> None:
+	assert starter_verbose.touches_docs(("docs/guide.md",)) is True
+	assert starter_verbose.touches_docs(("src/app.py",)) is False
+	assert starter_verbose.web_paths(("app.ts", "app.py")) == ("app.ts",)
+	assert starter_verbose.web_paths(()) == ("web",)
+	version_file = tmp_path / ".python-version"
+	version_file.write_text("# pin\n\n3.12\n3.13\n", encoding="utf-8")
+	assert starter_verbose.python_versions_from(version_file) == ("3.12", "3.13")
+	assert starter_verbose.python_versions_from(tmp_path / "absent") == ("3.13",)
+
+
+async def test_verbose_module_announce_effect(capsys: pytest.CaptureFixture[str]) -> None:
+	effect = starter_verbose.Announce()
+	task = Task("echo hi", name="greeter")
+	now = datetime(2026, 1, 1, 12, 0, 0)
+	await effect.setup(task)
+	await effect.on_event(StartedEvent(task, 0, now), (), None)
+	await effect.on_event(CompletedEvent(task, 0, Finished(0, 0.1, ()), now), (), None)
+	await effect.teardown((None,))
+	assert "announce: greeter is done" in capsys.readouterr().out
