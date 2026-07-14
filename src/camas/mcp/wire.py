@@ -36,7 +36,15 @@ class Stopped(BaseModel):
 	output: list[str] = Field(default_factory=list)
 
 
-Completion = Annotated[Finished | Skipped | Stopped, Field(discriminator="type")]
+class Errored(BaseModel):
+	"""A leaf whose command could not be spawned; it never ran."""
+
+	type: Literal["errored"] = "errored"
+	returncode: int
+	message: str
+
+
+Completion = Annotated[Finished | Skipped | Stopped | Errored, Field(discriminator="type")]
 """Tagged union mirroring ``camas.v0.completion.Completion``."""
 
 

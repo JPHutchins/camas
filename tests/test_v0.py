@@ -12,7 +12,7 @@ import pytest
 
 import camas
 import camas.v0
-from camas.v0.completion import Completion, Finished, Skipped
+from camas.v0.completion import Completion, Errored, Finished, Skipped
 from camas.v0.config import Agent, Claude, Config
 from camas.v0.effect import Effect
 from camas.v0.leaf_state import Completed, LeafState, Running, Waiting
@@ -37,6 +37,7 @@ HEADLINE: Final = frozenset(
 
 PUBLIC_API: Final = (
 	Completion,
+	Errored,
 	Finished,
 	Skipped,
 	Agent,

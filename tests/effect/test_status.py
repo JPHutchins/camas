@@ -18,7 +18,7 @@ from camas.effect.status import (
 	Idle,
 	Status,
 )
-from camas.v0.completion import Finished, Skipped, Stopped
+from camas.v0.completion import Errored, Finished, Skipped, Stopped
 from camas.v0.leaf_state import LeafState, Waiting
 from camas.v0.task_event import CompletedEvent, OutputEvent, StartedEvent, TaskEvent
 
@@ -88,6 +88,30 @@ def test_stopped_completion_renders_stopped_line(capsys: pytest.CaptureFixture[s
 	out = capsys.readouterr().out
 	assert "■ [lint] stopped" in out
 	assert "exit=130 (0.500s)" in out
+
+
+def test_errored_completion_renders_errored_line(capsys: pytest.CaptureFixture[str]) -> None:
+	a = make_task("ghost")
+	task = Parallel(a)
+	events: list[TaskEvent] = [
+		StartedEvent(a, 0, TS),
+		CompletedEvent(a, 0, Errored(127, "no such file or directory: ghost"), TS),
+	]
+	asyncio.run(drive(Status(), task, events))
+	out = capsys.readouterr().out
+	assert "⚠ [ghost] errored" in out
+	assert "no such file or directory: ghost" in out
+
+
+def test_empty_errored_template_suppresses_line(capsys: pytest.CaptureFixture[str]) -> None:
+	a = make_task("ghost")
+	task = Parallel(a)
+	events: list[TaskEvent] = [
+		StartedEvent(a, 0, TS),
+		CompletedEvent(a, 0, Errored(127, "no such file or directory: ghost"), TS),
+	]
+	asyncio.run(drive(Status(errored_fmt=""), task, events))
+	assert "errored" not in capsys.readouterr().out
 
 
 def test_empty_stopped_template_suppresses_line(capsys: pytest.CaptureFixture[str]) -> None:

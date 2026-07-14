@@ -10,7 +10,7 @@ import sys
 from enum import IntEnum
 from typing import IO, TYPE_CHECKING, Final, NamedTuple, TypeAlias
 
-from ..v0.completion import Finished, Skipped, Stopped
+from ..v0.completion import Errored, Finished, Skipped, Stopped
 from ..v0.task import Parallel, Sequential, Task
 from .scope import resolve_default_leaf
 from .task import task_label
@@ -137,7 +137,7 @@ def elapsed_of(completion: Completion) -> float | None:
 	match completion:
 		case Finished(elapsed=elapsed) | Stopped(elapsed=elapsed):
 			return elapsed
-		case Skipped():
+		case Skipped() | Errored():
 			return None
 		case _:
 			assert_never(completion)

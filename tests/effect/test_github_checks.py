@@ -36,7 +36,7 @@ from camas.effect.github_checks import (
 	render_body,
 	resolve_config,
 )
-from camas.v0.completion import Finished, Skipped, Stopped
+from camas.v0.completion import Errored, Finished, Skipped, Stopped
 from camas.v0.task_event import CompletedEvent, OutputEvent, StartedEvent
 
 if TYPE_CHECKING:
@@ -202,6 +202,19 @@ def test_render_body_stopped() -> None:
 	assert title == "⏹️ Stopped (exit 130) in 0.50s"
 	assert summary == "`cmd`"
 	assert "bye" in text
+
+
+def test_conclusion_for_errored_is_failure() -> None:
+	assert conclusion_for(Errored(127, "no such file or directory: x")) == "failure"
+
+
+def test_render_body_errored() -> None:
+	title, summary, text = render_body(
+		Task("cmd"), b"", Errored(127, "no such file or directory: cmd")
+	)
+	assert title == "💥 Errored"
+	assert summary == "no such file or directory: cmd"
+	assert text == ""
 
 
 def test_render_body_in_progress() -> None:

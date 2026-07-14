@@ -1,7 +1,9 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""Completion outcomes: a finished task ran to exit; a skipped task never ran."""
+"""Completion outcomes: a finished task ran to exit; a skipped task never ran; an
+errored task's command could not even be started.
+"""
 
 from __future__ import annotations
 
@@ -13,6 +15,9 @@ if TYPE_CHECKING:
 
 INTERRUPT_RC: Final = 130
 """Exit code for a signal-interrupted run (128 + SIGINT)."""
+
+NOT_FOUND_RC: Final = 127
+"""Exit code for a leaf whose command executable does not exist (shell 'command not found')."""
 
 
 class Finished(NamedTuple):
@@ -58,4 +63,15 @@ class Stopped(NamedTuple):
 	output: Sequence[bytes]
 
 
-Completion: TypeAlias = Finished | Skipped | Stopped
+class Errored(NamedTuple):
+	"""Completion outcome: the leaf's command could not be spawned — it never started.
+
+	>>> Errored(127, "no such file or directory: does-not-exist")
+	Errored(returncode=127, message='no such file or directory: does-not-exist')
+	"""
+
+	returncode: int
+	message: str
+
+
+Completion: TypeAlias = Finished | Skipped | Stopped | Errored

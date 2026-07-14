@@ -22,7 +22,7 @@ from camas.effect.termtree import (
 	render_frame,
 	render_lines,
 )
-from camas.v0.completion import INTERRUPT_RC, Finished, Skipped, Stopped
+from camas.v0.completion import INTERRUPT_RC, Errored, Finished, Skipped, Stopped
 from camas.v0.leaf_state import Completed, Interrupting, LeafState, Running, Waiting
 from camas.v0.task_event import (
 	CompletedEvent,
@@ -111,6 +111,21 @@ def test_render_frame_failure_summary() -> None:
 	frame = render_frame(
 		rows, states, term_width=80, term_height=24, now=TS, wall_elapsed=0.0, prev_visible=0
 	)
+	assert "FAIL" in frame.text
+
+
+def test_render_frame_errored_shows_error_and_summary() -> None:
+	a = make_task("ghost")
+	tree = Parallel(a)
+	rows = flatten_rows(tree)
+	states: tuple[LeafState, ...] = (
+		Completed(a, Errored(127, "no such file or directory: ghost")),
+	)
+	frame = render_frame(
+		rows, states, term_width=80, term_height=24, now=TS, wall_elapsed=0.0, prev_visible=0
+	)
+	assert "ERROR" in frame.text
+	assert "no such file or directory: ghost" in frame.text
 	assert "FAIL" in frame.text
 
 
@@ -263,6 +278,18 @@ def test_print_failures_outputs_failed_task(capsys: pytest.CaptureFixture[str]) 
 	assert "FAILED: b" in captured.out
 	assert "error details" in captured.out
 	assert "FAILED: a" not in captured.out
+
+
+def test_print_failures_outputs_errored_task(capsys: pytest.CaptureFixture[str]) -> None:
+	a = make_task("ghost")
+	states: tuple[LeafState, ...] = (
+		Completed(a, Errored(127, "no such file or directory: ghost")),
+	)
+	print_failures(states, term_width=80)
+	captured = capsys.readouterr()
+	assert "FAILED: ghost" in captured.out
+	assert "no such file or directory: ghost" in captured.out
+	assert "exit code: 127" in captured.out
 
 
 def test_print_passes_outputs_passed_task(capsys: pytest.CaptureFixture[str]) -> None:

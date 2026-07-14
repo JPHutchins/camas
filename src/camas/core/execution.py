@@ -25,7 +25,7 @@ else:  # pragma: no cover
 	from taskgroup import TaskGroup
 	from typing_extensions import assert_never
 
-from ..v0.completion import INTERRUPT_RC, Finished, Skipped, Stopped
+from ..v0.completion import INTERRUPT_RC, NOT_FOUND_RC, Errored, Finished, Skipped, Stopped
 from ..v0.leaf_state import Interrupting, LeafState, Waiting
 from ..v0.task import Parallel, Sequential, Task, TaskNode
 from ..v0.task_event import CompletedEvent, OutputEvent, StartedEvent, TaskEvent
@@ -192,13 +192,21 @@ async def run_cmd(task: Task, leaf_index: int, ctx: RunContext) -> TaskResult:
 			return TaskResult(task_label(task), stopped)
 		start_pc: Final = time.perf_counter()
 		await ctx.dispatch(leaf_index, StartedEvent(task, leaf_index, datetime.now()))
-		proc: Final = await asyncio.create_subprocess_exec(
-			*resolve_cmd(task.cmd),
-			stdout=asyncio.subprocess.PIPE,
-			stderr=STDOUT,
-			env=subprocess_env({**os.environ, **task.env}),
-			cwd=spawn_cwd(ctx.base, task.cwd),
-		)
+		argv: Final = resolve_cmd(task.cmd)
+		try:
+			proc: Final = await asyncio.create_subprocess_exec(
+				*argv,
+				stdout=asyncio.subprocess.PIPE,
+				stderr=STDOUT,
+				env=subprocess_env({**os.environ, **task.env}),
+				cwd=spawn_cwd(ctx.base, task.cwd),
+			)
+		except FileNotFoundError:
+			errored: Final = Errored(NOT_FOUND_RC, f"no such file or directory: {argv[0]}")
+			await ctx.dispatch(
+				leaf_index, CompletedEvent(task, leaf_index, errored, datetime.now())
+			)
+			return TaskResult(task_label(task), errored)
 		ctx.interrupts.procs[leaf_index] = proc
 		output: Final[list[bytes]] = []
 		try:

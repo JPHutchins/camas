@@ -56,10 +56,11 @@ class Interrupting(NamedTuple):
 
 
 class Completed(NamedTuple):
-	"""Leaf state: task is done — ran to exit, was skipped, or was stopped by a signal.
+	"""Leaf state: task is done — ran to exit, was skipped, was stopped by a signal, or
+	errored before it could even start.
 
 	The `completion` payload is a sum type: pattern-match on `Finished(...)`,
-	`Skipped(...)`, or `Stopped(...)` to distinguish the cases.
+	`Skipped(...)`, `Stopped(...)`, or `Errored(...)` to distinguish the cases.
 
 	>>> from camas.v0 import Task
 	>>> from camas.v0.completion import Finished, Skipped

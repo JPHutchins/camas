@@ -13,7 +13,7 @@ import pytest
 
 from camas import Parallel, Task
 from camas.effect.ctrf import Ctrf
-from camas.v0.completion import Finished, Skipped, Stopped
+from camas.v0.completion import Errored, Finished, Skipped, Stopped
 from camas.v0.leaf_state import LeafState, Waiting
 from camas.v0.task_event import CompletedEvent, StartedEvent, TaskEvent
 
@@ -140,6 +140,23 @@ def test_ctrf_skipped_and_stopped_statuses(capsys: pytest.CaptureFixture[str]) -
 	assert "stdout" not in by_name["skip"]
 	assert by_name["stop"]["status"] == "other"
 	assert by_name["stop"]["stdout"] == ["partial"]
+
+
+def test_ctrf_errored_leaf_reports_failed(capsys: pytest.CaptureFixture[str]) -> None:
+	a = make_task("ghost")
+	task = Parallel(a)
+	events: list[TaskEvent] = [
+		StartedEvent(a, 0, TS),
+		CompletedEvent(a, 0, Errored(127, "no such file or directory: ghost"), TS),
+	]
+	asyncio.run(drive(Ctrf(), task, events))
+	report = json.loads(capsys.readouterr().out)
+	assert report["results"]["summary"]["failed"] == 1
+	test = report["results"]["tests"][0]
+	assert test["status"] == "failed"
+	assert test["duration"] == 0
+	assert test["stdout"] == ["no such file or directory: ghost"]
+	assert test["extra"]["exitCode"] == 127
 
 
 def test_ctrf_pending_leaf_never_completed(capsys: pytest.CaptureFixture[str]) -> None:

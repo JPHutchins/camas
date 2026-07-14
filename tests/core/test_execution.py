@@ -26,7 +26,7 @@ from camas.core.execution import (
 	suppress_ctrl_c_echo,
 )
 from camas.core.leaf_state import KILL_PRESSES
-from camas.v0.completion import INTERRUPT_RC, Finished, Skipped, Stopped
+from camas.v0.completion import INTERRUPT_RC, NOT_FOUND_RC, Errored, Finished, Skipped, Stopped
 from camas.v0.leaf_state import Interrupting, LeafState, Running
 from camas.v0.task_event import CompletedEvent
 
@@ -258,6 +258,29 @@ def test_task_with_stdout_output() -> None:
 		if isinstance(r.completion, Finished)
 		for line in r.completion.output
 	)
+
+
+def test_nonexistent_executable_errors_without_traceback() -> None:
+	task = Task(("camas-does-not-exist-xyz", "--flag"), name="ghost")
+	result = asyncio.run(run(task))
+	assert result.returncode == 1
+	assert len(result.results) == 1
+	completion = result.results[0].completion
+	assert isinstance(completion, Errored)
+	assert completion.returncode == NOT_FOUND_RC
+	assert "camas-does-not-exist-xyz" in completion.message
+
+
+def test_sequential_skips_sibling_after_nonexistent_executable() -> None:
+	task = Sequential(
+		Task(("camas-does-not-exist-xyz",), name="ghost"),
+		Task(("python", "-c", "pass"), name="after"),
+	)
+	result = asyncio.run(run(task))
+	assert result.returncode == 1
+	by_name = {r.name: r.completion for r in result.results}
+	assert isinstance(by_name["ghost"], Errored)
+	assert by_name["after"] == Skipped(NOT_FOUND_RC, "ghost")
 
 
 def test_sequential_skip_nested_group() -> None:

@@ -24,7 +24,7 @@ from ..main.check import (
 	run_typecheck,
 )
 from ..main.state import LoadErr, LoadOk
-from ..v0.completion import Finished, Skipped, Stopped
+from ..v0.completion import Errored, Finished, Skipped, Stopped
 from . import wire
 
 if sys.version_info >= (3, 11):
@@ -193,6 +193,9 @@ def report(task: Task, result: TaskResult, *, verbosity: Verbosity, tail: int) -
 		case Skipped(returncode=rc, blocked_by=bb):
 			decoded = Decoded([], truncated=False)
 			completion = wire.Skipped(returncode=rc, blocked_by=bb)
+		case Errored(returncode=rc, message=message):
+			decoded = Decoded([], truncated=False)
+			completion = wire.Errored(returncode=rc, message=message)
 		case _:
 			assert_never(comp)
 	return wire.LeafReport(
@@ -213,6 +216,8 @@ def to_agent_envelope(task: Task, result: TaskResult, *, tail: int = 50) -> wire
 			decoded = decode(output, cap)
 		case Skipped():
 			decoded = Decoded([], truncated=False)
+		case Errored(message=message):
+			decoded = Decoded([message], truncated=False)
 		case _:
 			assert_never(comp)
 	return wire.AgentEnvelope(
