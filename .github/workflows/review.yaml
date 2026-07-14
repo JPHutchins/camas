@@ -45,7 +45,9 @@ jobs:
       # Single line, not a block scalar: the reusable workflow splices this value into harden-runner's
       # folded allowed-endpoints AFTER YAML parsing, so embedded newlines reach the endpoint parser
       # verbatim and break it (pypi.org parsed with port 0, the next host dropped).
-      extra_endpoints: pypi.org:443 files.pythonhosted.org:443
+      # release-assets: actionlint-py is sdist-only and its build backend downloads the actionlint
+      # binary from the GitHub release-asset host during any fresh `uv sync`.
+      extra_endpoints: pypi.org:443 files.pythonhosted.org:443 release-assets.githubusercontent.com:443
       mechanic_wall: 3m
       mechanic_hard_kill: 4.5m
       full_wall: 24m
