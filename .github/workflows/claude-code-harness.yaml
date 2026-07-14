@@ -58,8 +58,9 @@ jobs:
 
       - run: npm install -g @anthropic-ai/claude-code@2.1.197
 
-      # Allowlist = the hosts setup (uv wheels from PyPI, claude-code from npm) and the headless
-      # suite (DeepSeek) reach; a blocked host shows in this step's summary.
+      # Allowlist = the hosts setup (uv wheels from PyPI, claude-code from npm), the headless suite
+      # (DeepSeek), and the suite's own inner `uv` invocations (which re-sync the full dev group,
+      # actionlint-py included) reach; a blocked host shows in this step's summary.
       - name: Lock network egress
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
@@ -71,13 +72,15 @@ jobs:
             registry.npmjs.org:443
             github.com:443
             objects.githubusercontent.com:443
+            release-assets.githubusercontent.com:443
 
       # The contract suite needs any interpreter >=3.10; --python 3.12 pins the runner's system
-      # Python so uv does not download the .python-version default (3.14) from a GitHub release
-      # asset host that is not on the allowlist. UV_PYTHON_DOWNLOADS=never makes a missing one fail
-      # fast, before the DeepSeek-billed run. --no-group lint drops actionlint-py, which the suite
-      # does not use and which builds by downloading its binary from a release host off the
-      # allowlist (it would fail the egress lock).
+      # Python so uv does not download the .python-version default (3.14) from
+      # release-assets.githubusercontent.com — on the allowlist above now, but the download itself
+      # is still unneeded. UV_PYTHON_DOWNLOADS=never makes a missing one fail fast, before the
+      # DeepSeek-billed run. --no-group lint drops actionlint-py from this invocation's own sync;
+      # the suite's inner `uv run` calls (and the MCP launcher claude spawns) still sync the full
+      # dev group, which is why actionlint-py's release-asset build also needed the host allowlisted.
       - name: Run the Claude Code integration suite
         env:
           CAMAS_CC_E2E: "1"
