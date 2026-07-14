@@ -119,6 +119,8 @@ def eval_opt_int(node: ast.expr | None) -> int | None:
 			return None
 		case ast.Constant(value=int() as i):
 			return i
+		case ast.Constant(value=None):
+			return None
 		case _:
 			raise ValueError(f"expected int literal, got {ast.dump(node)}")
 

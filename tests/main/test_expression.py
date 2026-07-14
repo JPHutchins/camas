@@ -244,6 +244,13 @@ def test_eval_node_accepts_agent_format_limit_kwarg() -> None:
 	assert node.agent_format == AgentFormat("--x", "sarif", 500)
 
 
+def test_eval_node_accepts_agent_format_limit_none_as_default() -> None:
+	node = parse_expression("Task('c', agent_format=AgentFormat('--x', 'sarif', limit=None))")
+	assert isinstance(node, Task)
+	assert node.agent_format == AgentFormat("--x", "sarif")
+	assert parse_expression(to_expression(node)) == node
+
+
 def test_agent_format_limit_round_trips_when_non_default() -> None:
 	task = Task("c", agent_format=AgentFormat("--x", "sarif", 500))
 	assert parse_expression(to_expression(task)) == task
