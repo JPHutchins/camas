@@ -152,6 +152,19 @@ def test_nudge_text_quotes_diagnostics() -> None:
 	assert "camas-lint-fixer-sonnet" in text
 
 
+def test_nudge_text_without_diagnostics() -> None:
+	resp = wire.GateResponse(
+		decision="block",
+		residual_class="needs_reasoning",
+		rerun=wire.GateRerun(),
+	)
+	text = serve.nudge_text(resp)
+	assert "not green" in text
+	assert "camas-lint-fixer-haiku" in text
+	assert "camas-test-fixer" in text
+	assert "Residual (failing checks):" not in text
+
+
 def test_gate_cli_reads_stdin_event(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
