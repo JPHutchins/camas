@@ -30,7 +30,7 @@ jobs:
         run: |
           uv run camas 'Sequential(
             "uv sync",
-            {format_check, lint, mypy, pyright, ty, pyrefly, test},
+            {format_check, lint, actionlint, mypy, pyright, ty, pyrefly, test},
             env={"UV_PROJECT_ENVIRONMENT": ".venv-{PY}", "UV_PYTHON": "{PY}"},
             matrix={"PY": ("3.10", "3.11", "3.12", "3.13", "3.14", "3.15")},
           )'
@@ -166,7 +166,8 @@ jobs:
             https://github.com/mvdan/sh/releases/download/v3.13.1/shfmt_v3.13.1_linux_amd64
           chmod +x "$HOME/.local/bin/shfmt"
 
-      - run: $HOME/.local/bin/shfmt -d .github/scripts/*.sh
+      - run: |
+          "$HOME/.local/bin/shfmt" -d .github/scripts/*.sh
         working-directory: .
 
       - name: Install demo recording tools
@@ -200,7 +201,7 @@ jobs:
             git worktree add storage gh-storage
           else
             git worktree add --orphan -b gh-storage storage
-            (cd storage && git rm -rf . >/dev/null 2>&1 || true)
+            git -C storage rm -rf . >/dev/null 2>&1 || true
           fi
 
           mkdir -p storage/demos/archive

@@ -26,7 +26,7 @@ from ..core.hook_event import stdin_changed
 from ..core.matrix import expand_matrix, matrix_axes, override_matrix
 from ..core.render import print_tree, render_tree_lines
 from ..core.scope import scope_to_changed, to_changed, with_default_paths
-from ..core.task import task_label
+from ..core.task import did_you_mean, task_label
 from ..v0.config import Config
 from .argv import apply_passthrough, parse_axis_values, parse_matrix_kv, split_passthrough
 from .compose import load_py_tasks_state, state_from_scope
@@ -74,7 +74,10 @@ def dispatch_arg(arg: str, tasks: Mapping[str, TaskNode]) -> TaskNode:
 			return tasks[candidate]
 	if _NAME_LIKE.match(arg):
 		known = ", ".join(sorted(tasks)) or "none"
-		print(f"error: no task named {arg!r} (known: {known})", file=sys.stderr)
+		print(
+			f"error: no task named {arg!r}{did_you_mean(arg, tasks)} (known: {known})",
+			file=sys.stderr,
+		)
 		sys.exit(2)
 	return parse_expression(arg, tasks=tasks)
 

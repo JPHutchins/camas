@@ -16,6 +16,7 @@ if sys.version_info >= (3, 11):
 else:  # pragma: no cover
 	from typing_extensions import assert_never
 
+from ..core.task import did_you_mean
 from ..v0.task import AgentFormat, Group, OutputKind, Parallel, Sequential, Task, TaskNode
 
 if TYPE_CHECKING:
@@ -532,7 +533,9 @@ def resolve_refs(
 				raise ValueError(f"cycle in task refs: {chain}")
 			if name not in defs:
 				known = ", ".join(sorted(defs)) or "none"
-				raise ValueError(f"unknown task ref {name!r} (known: {known})")
+				raise ValueError(
+					f"unknown task ref {name!r}{did_you_mean(name, defs)} (known: {known})"
+				)
 			return resolve_refs(defs[name], defs, visiting | {name})
 		case Task():
 			return node

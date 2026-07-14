@@ -353,6 +353,13 @@ def test_dispatch_arg_hyphenated_unknown_errors(capsys: pytest.CaptureFixture[st
 	assert "no task named 'test-all'" in capsys.readouterr().err
 
 
+def test_dispatch_arg_unknown_suggests_closest(capsys: pytest.CaptureFixture[str]) -> None:
+	# #193: lead the "no task named" error with the nearest known task name.
+	with pytest.raises(SystemExit, match="2"):
+		dispatch_arg("libs-fix", {"libs.fix": Task("x"), "libs.build": Task("y")})
+	assert "did you mean 'libs.fix'?" in capsys.readouterr().err
+
+
 def test_dispatch_arg_unknown_name() -> None:
 	with pytest.raises(SystemExit, match="2"):
 		dispatch_arg("nope", {"a": Task("x")})

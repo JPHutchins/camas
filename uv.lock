@@ -8,6 +8,12 @@ resolution-markers = [
 ]
 
 [[package]]
+name = "actionlint-py"
+version = "1.7.12.24"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/6f/0b/3f29683dfbe94208fb5c3806806a6ef419972892e25c3c4f95198f68c978/actionlint_py-1.7.12.24.tar.gz", hash = "sha256:7571b0724fde79b2572b98b2b53792c470249d4db29951b57fc49b9cd3eaf11e", size = 12071, upload-time = "2026-03-31T06:21:35.015Z" }
+
+[[package]]
 name = "annotated-types"
 version = "0.7.0"
 source = { registry = "https://pypi.org/simple" }
@@ -97,6 +103,9 @@ dev = [
     { name = "typing-extensions" },
     { name = "zuban" },
 ]
+lint = [
+    { name = "actionlint-py" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -131,6 +140,7 @@ dev = [
     { name = "typing-extensions", specifier = ">=4.12" },
     { name = "zuban", specifier = ">=0.7,<1" },
 ]
+lint = [{ name = "actionlint-py", specifier = ">=1.7,<2" }]
 
 [[package]]
 name = "certifi"

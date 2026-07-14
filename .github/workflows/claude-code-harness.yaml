@@ -30,6 +30,13 @@ jobs:
   harness:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # A required-reviewers rule on this environment (repo Settings → Environments →
+    # model-api-e2e) holds MODEL_API_KEY back until a maintainer approves the run. Agent pushes
+    # made with the maintainer's token report the maintainer as github.actor, so an actor guard
+    # would not gate them; the environment approval pauses every run — push, schedule, dispatch —
+    # before the job starts. The environment must exist with @JPHutchins as a required reviewer;
+    # until then this name resolves to an unprotected auto-created environment (no gate).
+    environment: model-api-e2e
     permissions:
       contents: read
     steps:
@@ -46,13 +53,14 @@ jobs:
       - name: Install uv (pinned)
         run: |
           pipx install --force uv==0.9.15
-          echo "$(pipx environment --value PIPX_BIN_DIR)" >> "$GITHUB_PATH"
+          pipx environment --value PIPX_BIN_DIR >> "$GITHUB_PATH"
       - run: uv --version
 
       - run: npm install -g @anthropic-ai/claude-code@2.1.197
 
-      # Allowlist = the hosts setup (uv wheels from PyPI, claude-code from npm) and the headless
-      # suite (DeepSeek) reach; a blocked host shows in this step's summary.
+      # Allowlist = the hosts setup (uv wheels from PyPI, claude-code from npm), the headless suite
+      # (DeepSeek), and the suite's own inner `uv` invocations (which re-sync the full dev group,
+      # actionlint-py included) reach; a blocked host shows in this step's summary.
       - name: Lock network egress
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
@@ -64,11 +72,15 @@ jobs:
             registry.npmjs.org:443
             github.com:443
             objects.githubusercontent.com:443
+            release-assets.githubusercontent.com:443
 
       # The contract suite needs any interpreter >=3.10; --python 3.12 pins the runner's system
-      # Python so uv does not download the .python-version default (3.14) from a GitHub release
-      # asset host that is not on the allowlist. UV_PYTHON_DOWNLOADS=never makes a missing one fail
-      # fast, before the DeepSeek-billed run.
+      # Python so uv does not download the .python-version default (3.14) from
+      # release-assets.githubusercontent.com — on the allowlist above now, but the download itself
+      # is still unneeded. UV_PYTHON_DOWNLOADS=never makes a missing one fail fast, before the
+      # DeepSeek-billed run. --no-group lint drops actionlint-py from this invocation's own sync;
+      # the suite's inner `uv run` calls (and the MCP launcher claude spawns) still sync the full
+      # dev group, which is why actionlint-py's release-asset build also needed the host allowlisted.
       - name: Run the Claude Code integration suite
         env:
           CAMAS_CC_E2E: "1"
@@ -82,4 +94,4 @@ jobs:
           UV_PYTHON_DOWNLOADS: never
         run: |
           [ -n "$ANTHROPIC_AUTH_TOKEN" ] || { echo "::error::MODEL_API_KEY secret is not set"; exit 1; }
-          uv run --python 3.12 pytest tests/claude_code/ -v --no-cov -p no:cacheprovider
+          uv run --python 3.12 --no-group lint pytest tests/claude_code/ -v --no-cov -p no:cacheprovider
