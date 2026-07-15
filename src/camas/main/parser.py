@@ -370,6 +370,17 @@ skipped when synthesizing ``--AXIS`` overrides — an axis named ``github_matrix
 overwrite ``args.github_matrix``, and one named ``dry_run`` would shadow ``--dry-run``."""
 
 
+def is_reserved_axis(name: str) -> bool:
+	"""Whether matrix axis ``name`` normalizes to a built-in flag's dest — such an axis gets no
+	``--AXIS`` override (it would collide), so dispatch and per-task help both skip it; it stays
+	reachable via ``--matrix NAME=...``.
+
+	>>> is_reserved_axis("PY"), is_reserved_axis("dry_run"), is_reserved_axis("dry-run")
+	(False, True, True)
+	"""
+	return name.lower().replace("-", "_") in RESERVED_DESTS
+
+
 def expression_metavar(tasks: Mapping[str, TaskNode] | None) -> str:
 	"""Positional metavar: prepends ``task`` when tasks exist; ``mcp`` is always reserved."""
 	return "task | expression | mcp" if tasks else "expression | mcp"

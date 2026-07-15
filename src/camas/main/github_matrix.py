@@ -47,11 +47,15 @@ if TYPE_CHECKING:
 	from ..v0.task import TaskNode
 
 
-def matrix_combinations(task: TaskNode) -> tuple[dict[str, str], ...]:
+def matrix_combinations(
+	task: TaskNode, axes: tuple[str, ...] | None = None
+) -> tuple[dict[str, str], ...]:
 	"""The distinct matrix bindings ``task`` would actually run, in first-seen order.
 
 	Sourced from :func:`camas.core.matrix.expand_matrix` — the run-set SSOT — so the result is
-	what camas runs, not a re-derived guess. A leaf under no matrix contributes nothing.
+	what camas runs, not a re-derived guess. A leaf under no matrix contributes nothing. ``axes``
+	reuses an already-computed axis list (it must equal :func:`camas.core.matrix.matrix_axes`);
+	it defaults to deriving them from ``task``.
 
 	>>> from camas import Parallel, Task
 	>>> matrix_combinations(Parallel(Task("t"), matrix={"PY": ("3.12", "3.13")}))
@@ -64,11 +68,11 @@ def matrix_combinations(task: TaskNode) -> tuple[dict[str, str], ...]:
 	... ))
 	({'PROFILE': 'release', 'PY': '3.13'}, {'PROFILE': 'debug', 'PY': '3.12'}, {'PROFILE': 'debug', 'PY': '3.13'})
 	"""
-	axes: Final = tuple(matrix_axes(task))
+	resolved: Final = tuple(matrix_axes(task)) if axes is None else axes
 	combos: list[dict[str, str]] = []
 	seen: set[tuple[tuple[str, str], ...]] = set()
 	for info in flatten_leaves(expand_matrix(task)):
-		combo = {a: info.task.env[a] for a in axes if a in info.task.env}
+		combo = {a: info.task.env[a] for a in resolved if a in info.task.env}
 		key = tuple(sorted(combo.items()))
 		if combo and key not in seen:
 			seen.add(key)
@@ -139,7 +143,7 @@ def to_matrix_object(task: TaskNode) -> dict[str, list[str]]:
 		if not values:
 			raise ValueError(f"matrix axis {name!r} has no values")
 	axes: Final = tuple(axes_map)
-	combos: Final = matrix_combinations(task)
+	combos: Final = matrix_combinations(task, axes)
 	if not is_cross_product(combos, axes):
 		raise ValueError(
 			"matrix is not a clean cross-product; object-of-arrays cannot represent a "

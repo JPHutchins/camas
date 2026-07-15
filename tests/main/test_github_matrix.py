@@ -415,11 +415,17 @@ def test_task_help_omits_github_matrix_when_no_axes(capsys: pytest.CaptureFixtur
 	assert "[--dry-run]" in out
 
 
-def test_task_help_omits_axis_flag_for_reserved_dest(capsys: pytest.CaptureFixture[str]) -> None:
-	"""The usage line's ``--AXIS`` list uses the same ``RESERVED_DESTS`` filter dispatch does, so
-	a reserved-dest axis never advertises a ``--AXIS`` override the runner would refuse.
+def test_task_help_filters_reserved_axis_from_flags_and_block(
+	capsys: pytest.CaptureFixture[str],
+) -> None:
+	"""A reserved-dest axis (``dry_run``) is dropped from both the usage line's ``--AXIS`` list
+	and the "Matrix axes" override block — matching what dispatch registers — while a normal axis
+	(``PY``) stays in both.
 	"""
-	task = Parallel(Task("echo {dry_run}"), matrix={"dry_run": ("a", "b")})
+	task = Parallel(Task("echo {PY} {dry_run}"), matrix={"PY": ("3.12",), "dry_run": ("a", "b")})
 	with pytest.raises(SystemExit, match="0"):
 		dispatch(_state({"check": task}), ["check", "--help"])
-	assert "[--dry_run VAL" not in capsys.readouterr().out
+	out = capsys.readouterr().out
+	assert "--dry_run" not in out
+	assert "[--PY VAL[,VAL...]]" in out
+	assert "Matrix axes" in out

@@ -260,12 +260,11 @@ def print_task_help(name: str, task: TaskNode) -> None:
 	"""Print subcommand help for a single task: its expanded tree and any
 	matrix axes the user can override from the CLI.
 	"""
-	from .parser import RESERVED_DESTS
+	from .parser import is_reserved_axis
 
 	axes = matrix_axes(task)
-	axis_flags = "".join(
-		f" [--{k} VAL[,VAL...]]" for k in axes if k.lower().replace("-", "_") not in RESERVED_DESTS
-	)
+	overridable = {k: v for k, v in axes.items() if not is_reserved_axis(k)}
+	axis_flags = "".join(f" [--{k} VAL[,VAL...]]" for k in overridable)
 	preview = "[--dry-run | --github-matrix]" if axes else "[--dry-run]"
 	print(f"usage: camas {name} [-h] {preview} [--effects EFFECTS]{axis_flags}")
 	if task.help is not None:
@@ -274,9 +273,9 @@ def print_task_help(name: str, task: TaskNode) -> None:
 	print()
 	print(f"runs the {name!r} task:")
 	print_tree(task, show_cmd=True)
-	if axes:
+	if overridable:
 		print()
-		print(format_matrix_axes_help(axes, color_on()))
+		print(format_matrix_axes_help(overridable, color_on()))
 
 
 def format_annotation(annotation: Any, color: bool) -> str:
