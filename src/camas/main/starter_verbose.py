@@ -113,10 +113,16 @@ web_lint = Task('python -c "" {paths}', paths=web_paths)
 # tags the resulting diagnostics as kind, but a human run leaves the command untouched. kind is
 # one of the standards camas passes through verbatim, never parsing: sarif, rdjson, lsp, junit,
 # tap, or raw (the default when agent_format is unset). The tuple shorthand
-# agent_format=("--output-format sarif", "sarif") coerces to the same thing.
+# agent_format=("--output-format sarif", "sarif") coerces to the same thing. limit= (default
+# 8000) caps a structured payload in characters — over it, the gate swaps in a pointer to the
+# full file/log instead of dumping or tailing a truncated (and invalid) document; raw is exempt,
+# since the gate line-tails it instead. A tool that writes its diagnostics to a file rather than
+# stdout (pytest --junitxml, pytest-json-report) puts the literal {report} in args instead —
+# agent_format=("--junitxml {report}", "junit") — and the gate substitutes an allocated path,
+# then reads that file for the payload.
 checked = Task(
 	"python -c \"print('checked')\"",
-	agent_format=AgentFormat("--output-format sarif", "sarif"),
+	agent_format=AgentFormat("--output-format sarif", "sarif", limit=4_000),
 )
 
 # cwd runs the leaf from that directory (accepts a bare str too, e.g. cwd="rust"); Path() —
