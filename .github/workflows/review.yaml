@@ -22,7 +22,7 @@ jobs:
       github.event.workflow_run.event == 'pull_request' &&
       (github.event.workflow_run.conclusion == 'success' ||
        github.event.workflow_run.conclusion == 'failure')
-    uses: JPHutchins/code-review/.github/workflows/review-reusable.yaml@v0.1.0-alpha.22
+    uses: JPHutchins/code-review/.github/workflows/review-reusable.yaml@v0.1.0-alpha.23
     with:
       head_sha:      ${{ github.event.workflow_run.head_sha }}
       head_branch:   ${{ github.event.workflow_run.head_branch }}
@@ -31,6 +31,8 @@ jobs:
       conclusion:    ${{ github.event.workflow_run.conclusion }}
       trigger_event: ${{ github.event.workflow_run.event }}
       api_base_url:  ${{ vars.API_BASE_URL }}
+      model_full:    deepseek-v4-pro
+      model_mechanic: deepseek-v4-flash
       # Python check-running, egress-minimal: install uv via pipx from PyPI (already allowlisted)
       # rather than setup-uv (which pulls from raw.githubusercontent.com + releases.astral.sh). Export
       # uv onto PATH and UV_PYTHON_DOWNLOADS=never to the agent step via $GITHUB_PATH/$GITHUB_ENV so
@@ -48,9 +50,9 @@ jobs:
       # release-assets: actionlint-py is sdist-only and its build backend downloads the actionlint
       # binary from the GitHub release-asset host during any fresh `uv sync`.
       extra_endpoints: pypi.org:443 files.pythonhosted.org:443 release-assets.githubusercontent.com:443
-      mechanic_wall: 3m
-      mechanic_hard_kill: 4.5m
-      full_wall: 24m
-      full_hard_kill: 36m
+      mechanic_time_limit: 3m
+      mechanic_grace_period: 90s
+      full_review_time_limit: 24m
+      full_review_grace_period: 12m
     secrets:
       MODEL_API_KEY: ${{ secrets.MODEL_API_KEY }}
