@@ -20,6 +20,28 @@ if TYPE_CHECKING:
 	from ...v0.task import PathScope, TaskNode, WhenPredicate
 
 
+def qualify(name: str | None, namespace: str) -> str | None:
+	"""A task or group ``name`` prefixed with its Project ``namespace`` segment, dotted — the
+	composed leaf's display identity, so ``libs``'s ``build`` reads as ``libs.build`` in every
+	effect. An empty ``namespace``, or a node with no name (``None`` or ``""``), passes through
+	unchanged — a nameless node has nothing to qualify, so prefixing would only dangle the dot.
+
+	>>> qualify("build", "libs")
+	'libs.build'
+	>>> qualify("search.lint", "libs")
+	'libs.search.lint'
+	>>> qualify("build", "")
+	'build'
+	>>> qualify(None, "libs") is None
+	True
+	>>> qualify("", "libs")
+	''
+	"""
+	if not namespace or not name:
+		return name
+	return f"{namespace}.{name}"
+
+
 def rebase_cwd(cwd: Path | None, rel: PurePosixPath, *, is_root: bool) -> Path | None:
 	"""``cwd`` re-anchored into the referencing directory's frame at ``rel``.
 
@@ -153,22 +175,26 @@ def wrap_when(inner: WhenPredicate, rel: PurePosixPath) -> WhenPredicate:
 	return predicate
 
 
-def rebase_tree(node: TaskNode, rel: PurePosixPath, *, is_root: bool) -> TaskNode:
-	"""``node`` rebuilt with its ``cwd``/``paths``/``when`` re-anchored under ``rel``; descendants
+def rebase_tree(node: TaskNode, rel: PurePosixPath, namespace: str, *, is_root: bool) -> TaskNode:
+	"""``node`` rebuilt with its ``cwd``/``paths``/``when`` re-anchored under ``rel`` and every
+	node's ``name`` prefixed with the Project ``namespace`` segment (:func:`qualify`); descendants
 	rebase with ``is_root=False`` so only the tree's own top node inherits an unset ``cwd``.
 
 	>>> rebase_tree(
-	...     Task("ruff {paths}", paths="."), PurePosixPath("services/api"), is_root=True
+	...     Task("ruff {paths}", paths="."), PurePosixPath("services/api"), "api", is_root=True
 	... ) == Task("ruff {paths}", cwd=Path("services/api"), paths="services/api")
 	True
 	>>> rebase_tree(
-	...     Task("cargo build", cwd="rust"), PurePosixPath("services/api"), is_root=False
+	...     Task("cargo build", cwd="rust"), PurePosixPath("services/api"), "api", is_root=False
 	... ) == Task("cargo build", cwd=Path("services/api/rust"))
 	True
 	>>> from camas.v0.task import Sequential
 	>>> rebase_tree(
-	...     Sequential(Task("cargo build"), name="ci"), PurePosixPath("services/api"), is_root=True
-	... ) == Sequential(Task("cargo build"), cwd=Path("services/api"), name="ci")
+	...     Sequential(Task("cargo build", name="c"), name="ci"),
+	...     PurePosixPath("services/api"),
+	...     "api",
+	...     is_root=True,
+	... ) == Sequential(Task("cargo build", name="api.c"), cwd=Path("services/api"), name="api.ci")
 	True
 	"""
 	match node:
@@ -185,7 +211,7 @@ def rebase_tree(node: TaskNode, rel: PurePosixPath, *, is_root: bool) -> TaskNod
 		):
 			return Task(
 				cmd=cmd,
-				name=name,
+				name=qualify(name, namespace),
 				env=env,
 				cwd=rebase_cwd(cwd, rel, is_root=is_root),
 				help=help,
@@ -196,8 +222,8 @@ def rebase_tree(node: TaskNode, rel: PurePosixPath, *, is_root: bool) -> TaskNod
 			)
 		case Group() as group:
 			return type(group)(
-				*(rebase_tree(child, rel, is_root=False) for child in group.tasks),
-				name=group.name,
+				*(rebase_tree(child, rel, namespace, is_root=False) for child in group.tasks),
+				name=qualify(group.name, namespace),
 				matrix=group.matrix,
 				env=group.env,
 				cwd=rebase_cwd(group.cwd, rel, is_root=is_root),
