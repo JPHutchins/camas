@@ -16,7 +16,7 @@ import msgspec
 
 from ..core.render import strip_ansi
 from ..core.task import task_label
-from ..v0.completion import Finished, Skipped, Stopped
+from ..v0.completion import Errored, Finished, Skipped, Stopped
 from ..v0.leaf_state import Completed, Interrupting, Running, Waiting
 
 if sys.version_info >= (3, 11):
@@ -110,11 +110,13 @@ def cmd_str(task: Task) -> str:
 def status_of(completion: Completion) -> CtrfStatus:
 	"""Map a camas Completion to a CTRF status.
 
-	>>> from camas.v0.completion import Finished, Skipped, Stopped
+	>>> from camas.v0.completion import Errored, Finished, Skipped, Stopped
 	>>> status_of(Finished(0, 0.1, ())), status_of(Finished(1, 0.1, ()))
 	('passed', 'failed')
 	>>> status_of(Skipped(2)), status_of(Stopped(130, 0.1, ()))
 	('skipped', 'other')
+	>>> status_of(Errored(127, "no such file or directory: x"))
+	'failed'
 	"""
 	match completion:
 		case Finished(returncode=rc):
@@ -123,21 +125,25 @@ def status_of(completion: Completion) -> CtrfStatus:
 			return "skipped"
 		case Stopped():
 			return "other"
+		case Errored():
+			return "failed"
 		case _:
 			assert_never(completion)
 
 
 def duration_ms(completion: Completion) -> int:
-	"""A completion's elapsed time in whole milliseconds; 0 for a skip.
+	"""A completion's elapsed time in whole milliseconds; 0 for a skip or an error.
 
-	>>> from camas.v0.completion import Finished, Skipped, Stopped
+	>>> from camas.v0.completion import Errored, Finished, Skipped, Stopped
 	>>> duration_ms(Finished(0, 1.5, ())), duration_ms(Stopped(130, 0.5, ())), duration_ms(Skipped(1))
 	(1500, 500, 0)
+	>>> duration_ms(Errored(127, "no such file or directory: x"))
+	0
 	"""
 	match completion:
 		case Finished(elapsed=e) | Stopped(elapsed=e):
 			return round(e * 1000)
-		case Skipped():
+		case Skipped() | Errored():
 			return 0
 		case _:
 			assert_never(completion)
@@ -146,7 +152,7 @@ def duration_ms(completion: Completion) -> int:
 def output_lines(completion: Completion, tail: int) -> list[str]:
 	r"""The last ``tail`` bytes of a completion's output as ANSI-stripped lines.
 
-	>>> from camas.v0.completion import Finished, Skipped, Stopped
+	>>> from camas.v0.completion import Errored, Finished, Skipped, Stopped
 	>>> output_lines(Finished(0, 0.1, (b"a\n", b"b\n")), 8192)
 	['a', 'b']
 	>>> output_lines(Stopped(130, 0.1, (b"x\n",)), 8192)
@@ -159,12 +165,16 @@ def output_lines(completion: Completion, tail: int) -> list[str]:
 	[]
 	>>> output_lines(Skipped(1), 8192)
 	[]
+	>>> output_lines(Errored(127, "no such file or directory: x"), 8192)
+	['no such file or directory: x']
 	"""
 	match completion:
 		case Finished(output=o) | Stopped(output=o):
 			buf = b"".join(o)
 		case Skipped():
 			return []
+		case Errored(message=message):
+			return [message] if tail > 0 else []
 		case _:
 			assert_never(completion)
 	if tail <= 0 or not buf:

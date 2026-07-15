@@ -19,7 +19,7 @@ from camas.main.check import CheckerErr, CheckerNotFound, CheckerOk
 from camas.main.state import LoadErr, LoadOk
 from camas.mcp import serve, wire
 from camas.mcp.serve import Compat, Session
-from camas.v0.completion import Finished, Skipped, Stopped
+from camas.v0.completion import Errored, Finished, Skipped, Stopped
 from camas.v0.config import Claude
 
 if TYPE_CHECKING:
@@ -991,6 +991,16 @@ def test_write_logs_writes_output_skips_empty_and_skipped(tmp_path: Path) -> Non
 	assert "\x1b" not in stopped
 
 
+def test_write_logs_skips_errored_leaf(tmp_path: Path) -> None:
+	result = RunResult(
+		returncode=1,
+		results=(TaskResult("ghost", Errored(127, "no such file or directory: ghost")),),
+		elapsed=0.01,
+	)
+	logs = serve.write_logs(tmp_path, result)
+	assert logs == (None,)
+
+
 def test_failing_log_links_only_for_failed_leaves(tmp_path: Path) -> None:
 	resp = wire.RunResponse(
 		returncode=1,
@@ -1011,6 +1021,18 @@ def test_failing_log_links_only_for_failed_leaves(tmp_path: Path) -> None:
 	links = serve.failing_log_links(resp, (tmp_path / "a.log", tmp_path / "b.log"))
 	assert len(links) == 1
 	assert links[0].name == "bad"
+
+
+def test_leaf_lines_covers_errored_status() -> None:
+	leaf = wire.LeafReport(
+		name="ghost",
+		command="does-not-exist",
+		completion=wire.Errored(
+			returncode=127, message="no such file or directory: does-not-exist"
+		),
+	)
+	lines = serve.leaf_lines(leaf, None)
+	assert lines == ["ERROR  ghost (exit 127): no such file or directory: does-not-exist"]
 
 
 def test_run_text_covers_every_status() -> None:

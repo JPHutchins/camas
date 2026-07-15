@@ -41,7 +41,7 @@ from ..main.init import create_starter_tasks_py, starter_text
 from ..main.pep723 import camas_requirement_from, version_specifier
 from ..main.state import EMPTY_STATE, LoadErr, LoadOk, TasksState
 from ..main.tasks import load_tasks
-from ..v0.completion import Finished, Skipped, Stopped
+from ..v0.completion import Errored, Finished, Skipped, Stopped
 from ..v0.config import Config
 from . import wire
 from .catalog import to_list_response
@@ -864,7 +864,7 @@ def write_leaf_log(run_dir: Path, index: int, leaf: TaskResult) -> Path | None:
 			path = run_dir / f"{index:03d}_{slug(leaf.name)}.log"
 			path.write_text(decode_log(output), encoding="utf-8")
 			return path
-		case Skipped():
+		case Skipped() | Errored():
 			return None
 		case _:
 			assert_never(leaf.completion)
@@ -1140,6 +1140,8 @@ def leaf_lines(leaf: wire.LeafReport, log: Path | None) -> list[str]:
 		case wire.Skipped(blocked_by=blocked_by):
 			blame = f" — blocked by {blocked_by!r}" if blocked_by is not None else ""
 			return [f"SKIP   {leaf.name}{blame}"]
+		case wire.Errored(returncode=rc, message=message):
+			return [f"ERROR  {leaf.name} (exit {rc}): {message}"]
 		case _:
 			assert_never(leaf.completion)
 

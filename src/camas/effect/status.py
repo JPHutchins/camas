@@ -26,7 +26,7 @@ else:  # pragma: no cover
 from ..core.color import CAMAS_VIOLET, GREEN, GREY, RED, RESET, YELLOW
 from ..core.render import strip_ansi
 from ..core.task import task_label
-from ..v0.completion import Completion, Finished, Skipped, Stopped
+from ..v0.completion import Completion, Errored, Finished, Skipped, Stopped
 from ..v0.task_event import CompletedEvent, OutputEvent, StartedEvent, TaskEvent
 
 if TYPE_CHECKING:
@@ -58,6 +58,10 @@ SKIPPED_FMT: Final = (
 STOPPED_FMT: Final = (
 	f"{GREY}[{{timestamp:%Y-%m-%d %H:%M:%S}}.{{ms:03d}}]{RESET} "
 	f"{YELLOW}■ [{{name}}] stopped{RESET} exit={{rc}} ({{elapsed:.3f}}s)"
+)
+ERRORED_FMT: Final = (
+	f"{GREY}[{{timestamp:%Y-%m-%d %H:%M:%S}}.{{ms:03d}}]{RESET} "
+	f"{RED}⚠ [{{name}}] errored{RESET} {{msg}}"
 )
 OUTPUT_FMT: Final = (
 	f"{GREY}[{{timestamp:%Y-%m-%d %H:%M:%S}}.{{ms:03d}}] · [{{name}}]{RESET} {{line}}"
@@ -123,6 +127,7 @@ def fmt_completed(
 	failed_fmt: str,
 	skipped_fmt: str,
 	stopped_fmt: str,
+	errored_fmt: str,
 	task: Task,
 	c: Completion,
 	ts: datetime,
@@ -132,15 +137,17 @@ def fmt_completed(
 	>>> from datetime import datetime
 	>>> from camas import Task
 	>>> t0 = datetime(2026, 5, 21, 14, 30, 0, 123000)
-	>>> fmt_completed(FINISHED_FMT, FAILED_FMT, SKIPPED_FMT, STOPPED_FMT, Task("a", name="lint"), Finished(0, 1.5, ()), t0)
+	>>> fmt_completed(FINISHED_FMT, FAILED_FMT, SKIPPED_FMT, STOPPED_FMT, ERRORED_FMT, Task("a", name="lint"), Finished(0, 1.5, ()), t0)
 	'\x1b[90m[2026-05-21 14:30:00.123]\x1b[0m \x1b[32m✓ [lint] success\x1b[0m (1.500s)'
-	>>> fmt_completed(FINISHED_FMT, FAILED_FMT, SKIPPED_FMT, STOPPED_FMT, Task("a", name="lint"), Finished(2, 0.5, ()), t0)
+	>>> fmt_completed(FINISHED_FMT, FAILED_FMT, SKIPPED_FMT, STOPPED_FMT, ERRORED_FMT, Task("a", name="lint"), Finished(2, 0.5, ()), t0)
 	'\x1b[90m[2026-05-21 14:30:00.123]\x1b[0m \x1b[31m✗ [lint] error\x1b[0m exit=2 (0.500s)'
-	>>> fmt_completed(FINISHED_FMT, FAILED_FMT, SKIPPED_FMT, STOPPED_FMT, Task("a", name="follow"), Skipped(2), t0)
+	>>> fmt_completed(FINISHED_FMT, FAILED_FMT, SKIPPED_FMT, STOPPED_FMT, ERRORED_FMT, Task("a", name="follow"), Skipped(2), t0)
 	'\x1b[90m[2026-05-21 14:30:00.123]\x1b[0m \x1b[90m⏭ [follow] skipped\x1b[0m (prior rc=2)'
-	>>> fmt_completed(FINISHED_FMT, FAILED_FMT, SKIPPED_FMT, STOPPED_FMT, Task("a", name="lint"), Stopped(130, 0.5, ()), t0)
+	>>> fmt_completed(FINISHED_FMT, FAILED_FMT, SKIPPED_FMT, STOPPED_FMT, ERRORED_FMT, Task("a", name="lint"), Stopped(130, 0.5, ()), t0)
 	'\x1b[90m[2026-05-21 14:30:00.123]\x1b[0m \x1b[33m■ [lint] stopped\x1b[0m exit=130 (0.500s)'
-	>>> fmt_completed("", FAILED_FMT, SKIPPED_FMT, STOPPED_FMT, Task("a"), Finished(0, 1.0, ()), t0) is None
+	>>> fmt_completed(FINISHED_FMT, FAILED_FMT, SKIPPED_FMT, STOPPED_FMT, ERRORED_FMT, Task("a", name="lint"), Errored(127, "no such file or directory: lint"), t0)
+	'\x1b[90m[2026-05-21 14:30:00.123]\x1b[0m \x1b[31m⚠ [lint] errored\x1b[0m no such file or directory: lint'
+	>>> fmt_completed("", FAILED_FMT, SKIPPED_FMT, STOPPED_FMT, ERRORED_FMT, Task("a"), Finished(0, 1.0, ()), t0) is None
 	True
 	"""
 	name = task_label(task)
@@ -164,6 +171,12 @@ def fmt_completed(
 			return (
 				stopped_fmt.format(name=name, cmd=cmd, rc=rc, elapsed=e, timestamp=ts, ms=ms)
 				if stopped_fmt
+				else None
+			)
+		case Errored(returncode=rc, message=msg):
+			return (
+				errored_fmt.format(name=name, cmd=cmd, rc=rc, msg=msg, timestamp=ts, ms=ms)
+				if errored_fmt
 				else None
 			)
 		case _:
@@ -254,6 +267,8 @@ def block_for(mode: OutputMode, task: Task, c: Completion, output: bytes) -> str
 	''
 	>>> block_for("github", Task("a", name="x"), Skipped(1), b"")
 	''
+	>>> block_for("errors", Task("a", name="x"), Errored(127, "no such file or directory: x"), b"")
+	''
 	"""
 	if not output:
 		return ""
@@ -322,6 +337,7 @@ class Status:
 		failed_fmt: str = FAILED_FMT,
 		skipped_fmt: str = SKIPPED_FMT,
 		stopped_fmt: str = STOPPED_FMT,
+		errored_fmt: str = ERRORED_FMT,
 		output_fmt: str = OUTPUT_FMT,
 	) -> None:
 		self._output_mode: Final = output_mode
@@ -330,6 +346,7 @@ class Status:
 		self._failed_fmt: Final = failed_fmt
 		self._skipped_fmt: Final = skipped_fmt
 		self._stopped_fmt: Final = stopped_fmt
+		self._errored_fmt: Final = errored_fmt
 		self._output_fmt: Final = output_fmt
 
 	async def setup(self, task: TaskNode) -> LeafCtx:
@@ -353,6 +370,7 @@ class Status:
 						self._failed_fmt,
 						self._skipped_fmt,
 						self._stopped_fmt,
+						self._errored_fmt,
 						t,
 						c,
 						ts,
@@ -367,6 +385,7 @@ class Status:
 						self._failed_fmt,
 						self._skipped_fmt,
 						self._stopped_fmt,
+						self._errored_fmt,
 						t,
 						c,
 						ts,

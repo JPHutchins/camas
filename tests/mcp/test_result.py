@@ -17,7 +17,7 @@ from camas.mcp.result import (
 	to_check_response,
 	to_run_response,
 )
-from camas.v0.completion import Finished, Skipped, Stopped
+from camas.v0.completion import Errored, Finished, Skipped, Stopped
 
 if TYPE_CHECKING:
 	from camas.mcp.result import Verbosity
@@ -94,6 +94,23 @@ def test_stopped_leaf_maps_to_wire_stopped() -> None:
 	assert (resp.passed, resp.failed, resp.skipped, resp.interrupt_count) == (0, 1, 0, 1)
 
 
+def test_errored_leaf_maps_to_wire_errored() -> None:
+	node = Task(("does-not-exist-xyz",), name="ghost")
+	result = RunResult(
+		returncode=1,
+		results=(
+			TaskResult("ghost", Errored(127, "no such file or directory: does-not-exist-xyz")),
+		),
+		elapsed=0.01,
+	)
+	resp = to_run_response(node, result, verbosity="full")
+	comp = resp.leaves[0].completion
+	assert isinstance(comp, wire.Errored)
+	assert comp.returncode == 127
+	assert comp.message == "no such file or directory: does-not-exist-xyz"
+	assert (resp.passed, resp.failed, resp.skipped) == (0, 1, 0)
+
+
 def test_agent_envelope_finished_carries_verbatim_payload() -> None:
 	task = Task(
 		"ruff check .", name="lint", agent_format=AgentFormat("--output-format sarif", "sarif")
@@ -116,6 +133,14 @@ def test_agent_envelope_stopped_carries_partial_output() -> None:
 	)
 	assert env.exit_code == 130
 	assert env.payload == "partial"
+
+
+def test_agent_envelope_errored_carries_message_as_payload() -> None:
+	env = to_agent_envelope(
+		Task("x", name="x"), TaskResult("x", Errored(127, "no such file or directory: x"))
+	)
+	assert env.exit_code == 127
+	assert env.payload == "no such file or directory: x"
 
 
 async def test_agent_envelopes_are_failures_only() -> None:

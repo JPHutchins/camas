@@ -229,7 +229,7 @@ omit = ["tests/test_demos.py", "tests/claude_code/*", "src/camas/__main__.py"]
 
 [tool.coverage.report]
 fail_under = 100
-partial_branches = ["pragma: no branch", "case LeafInfo", "case Waiting"]
+partial_branches = ["pragma: no branch", "case LeafInfo", "case Waiting", "case Errored"]
 exclude_also = ["async for .* in proc\\.stdout"]
 exclude_lines = [
 "@overload",

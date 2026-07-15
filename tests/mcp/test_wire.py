@@ -9,6 +9,7 @@ from pydantic import ValidationError
 from camas.mcp.wire import (
 	CheckResponse,
 	DocsResponse,
+	Errored,
 	Finished,
 	LeafReport,
 	ListRequest,
@@ -87,6 +88,23 @@ def test_run_response_round_trips_completion_union() -> None:
 	assert dumped["leaves"][0]["completion"]["type"] == "finished"
 	assert dumped["leaves"][1]["completion"]["type"] == "stopped"
 	assert RunResponse.model_validate(dumped) == resp
+
+
+def test_leaf_report_discriminates_errored_completion() -> None:
+	report = LeafReport.model_validate(
+		{
+			"name": "ghost",
+			"command": "does-not-exist",
+			"completion": {
+				"type": "errored",
+				"returncode": 127,
+				"message": "no such file or directory: does-not-exist",
+			},
+		}
+	)
+	assert isinstance(report.completion, Errored)
+	assert report.completion.returncode == 127
+	assert report.completion.message == "no such file or directory: does-not-exist"
 
 
 def test_list_response_markers() -> None:

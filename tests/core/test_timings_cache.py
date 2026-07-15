@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 from camas import Parallel, Sequential, Task
 from camas.core import timings
 from camas.core.completion import RunResult, TaskResult
-from camas.v0.completion import Finished, Skipped, Stopped
+from camas.v0.completion import Errored, Finished, Skipped, Stopped
 
 if TYPE_CHECKING:
 	from pathlib import Path
@@ -60,6 +60,19 @@ def test_record_skips_run_with_no_timed_leaf(tmp_path: Path) -> None:
 	timings.record_run(tmp_path, _result(TaskResult("s", Skipped(1, "blk")), elapsed=0.0))
 	assert timings.load(tmp_path) == {}
 	assert not (tmp_path / timings.CACHE_NAME).exists()
+
+
+def test_record_skips_errored_leaf(tmp_path: Path) -> None:
+	timings.record_run(
+		tmp_path,
+		_result(TaskResult("ghost", Errored(127, "no such file or directory: ghost")), elapsed=0.0),
+	)
+	assert timings.load(tmp_path) == {}
+	assert not (tmp_path / timings.CACHE_NAME).exists()
+
+
+def test_elapsed_of_errored_is_none() -> None:
+	assert timings.elapsed_of(Errored(127, "no such file or directory: x")) is None
 
 
 def test_load_skips_malformed_lines(tmp_path: Path) -> None:

@@ -25,7 +25,7 @@ else:  # pragma: no cover
 	from taskgroup import TaskGroup
 	from typing_extensions import assert_never
 
-from ..v0.completion import INTERRUPT_RC, Finished, Skipped, Stopped
+from ..v0.completion import INTERRUPT_RC, NOT_FOUND_RC, Errored, Finished, Skipped, Stopped
 from ..v0.leaf_state import Interrupting, LeafState, Waiting
 from ..v0.task import Parallel, Sequential, Task, TaskNode
 from ..v0.task_event import CompletedEvent, OutputEvent, StartedEvent, TaskEvent
@@ -181,6 +181,23 @@ def spawn_cwd(base: Path | None, cwd: Path | None) -> Path | None:
 	return base / cwd
 
 
+def spawn_error_message(exc: OSError, argv: Sequence[str]) -> str:
+	"""The Errored message for a leaf whose spawn raised ``exc``: the canonical
+	'no such file or directory' for a missing executable, else the OS ``strerror``.
+
+	>>> spawn_error_message(FileNotFoundError(2, "No such file or directory"), ("ghost",))
+	'no such file or directory: ghost'
+	>>> spawn_error_message(PermissionError(13, "Permission denied"), ("./script.sh",))
+	'permission denied: ./script.sh'
+	>>> spawn_error_message(OSError(), ("weird",))
+	'could not start command: weird'
+	"""
+	if isinstance(exc, FileNotFoundError):
+		return f"no such file or directory: {argv[0]}"
+	reason: Final = exc.strerror.lower() if exc.strerror else "could not start command"
+	return f"{reason}: {argv[0]}"
+
+
 async def run_cmd(task: Task, leaf_index: int, ctx: RunContext) -> TaskResult:
 	"""Run one leaf as a subprocess, dispatching Started/Output/Completed events."""
 	async with ctx.limiter:
@@ -192,13 +209,21 @@ async def run_cmd(task: Task, leaf_index: int, ctx: RunContext) -> TaskResult:
 			return TaskResult(task_label(task), stopped)
 		start_pc: Final = time.perf_counter()
 		await ctx.dispatch(leaf_index, StartedEvent(task, leaf_index, datetime.now()))
-		proc: Final = await asyncio.create_subprocess_exec(
-			*resolve_cmd(task.cmd),
-			stdout=asyncio.subprocess.PIPE,
-			stderr=STDOUT,
-			env=subprocess_env({**os.environ, **task.env}),
-			cwd=spawn_cwd(ctx.base, task.cwd),
-		)
+		argv: Final = resolve_cmd(task.cmd)
+		try:
+			proc: Final = await asyncio.create_subprocess_exec(
+				*argv,
+				stdout=asyncio.subprocess.PIPE,
+				stderr=STDOUT,
+				env=subprocess_env({**os.environ, **task.env}),
+				cwd=spawn_cwd(ctx.base, task.cwd),
+			)
+		except OSError as exc:
+			errored: Final = Errored(NOT_FOUND_RC, spawn_error_message(exc, argv))
+			await ctx.dispatch(
+				leaf_index, CompletedEvent(task, leaf_index, errored, datetime.now())
+			)
+			return TaskResult(task_label(task), errored)
 		ctx.interrupts.procs[leaf_index] = proc
 		output: Final[list[bytes]] = []
 		try:

@@ -48,7 +48,7 @@ if TYPE_CHECKING:
 
 from ..core.render import strip_ansi
 from ..core.task import task_label
-from ..v0.completion import Completion, Finished, Skipped, Stopped
+from ..v0.completion import Completion, Errored, Finished, Skipped, Stopped
 from ..v0.task_event import CompletedEvent, OutputEvent, StartedEvent, TaskEvent
 
 GH_API_VERSION: Final = "2022-11-28"
@@ -219,6 +219,8 @@ def conclusion_for(completion: Completion) -> str:
 	'skipped'
 	>>> conclusion_for(Stopped(130, 0.1, ()))
 	'cancelled'
+	>>> conclusion_for(Errored(127, "no such file or directory: x"))
+	'failure'
 	"""
 	match completion:
 		case Finished(returncode=rc):
@@ -227,6 +229,8 @@ def conclusion_for(completion: Completion) -> str:
 			return "skipped"
 		case Stopped():
 			return "cancelled"
+		case Errored():
+			return "failure"
 		case _:
 			assert_never(completion)
 
@@ -273,6 +277,8 @@ def render_body(task: Task, tail: bytes, completion: Completion | None) -> tuple
 			return ("⏭️ Skipped", f"Skipped because an earlier task exited {rc}.", "")
 		case Stopped(returncode=rc, elapsed=elapsed):
 			return (f"⏹️ Stopped (exit {rc}) in {elapsed:.2f}s", f"`{cmd_str}`", text)
+		case Errored(message=message):
+			return ("💥 Errored", message, "")
 		case _:
 			assert_never(completion)
 

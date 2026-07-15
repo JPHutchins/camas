@@ -37,7 +37,7 @@ from ..core.render import (
 )
 from ..core.task import task_label
 from ..core.traversal import flatten_leaves
-from ..v0.completion import Finished, Skipped, Stopped
+from ..v0.completion import Errored, Finished, Skipped, Stopped
 from ..v0.leaf_state import Completed, Interrupting, LeafState, Running, Waiting
 from ..v0.task import Task, TaskNode
 from ..v0.task_event import TaskEvent
@@ -134,6 +134,8 @@ def bucket_glyph_color(states: Sequence[LeafState]) -> tuple[str, str]:
 	True
 	>>> bucket_glyph_color([Completed(t, Stopped(130, 0.1, ()))]) == ('─', YELLOW)
 	True
+	>>> bucket_glyph_color([Completed(t, Errored(127, "no such file or directory: x"))]) == ('─', RED)
+	True
 	"""
 	if any(isinstance(s, Waiting) for s in states):
 		return PROG_WAITING, GREY
@@ -143,8 +145,10 @@ def bucket_glyph_color(states: Sequence[LeafState]) -> tuple[str, str]:
 		return PROG_RUNNING, CAMAS_VIOLET
 	if any(
 		isinstance(s, Completed)
-		and isinstance(s.completion, Finished)
-		and s.completion.returncode != 0
+		and (
+			(isinstance(s.completion, Finished) and s.completion.returncode != 0)
+			or isinstance(s.completion, Errored)
+		)
 		for s in states
 	):
 		return PROG_DONE, RED
@@ -283,7 +287,7 @@ def render_lines(
 								lines.append(
 									f"\r{header}{padding} {CYAN}|{GREY} SKIP {CYAN}|{RESET}{CLEAR_LINE}"
 								)
-							case Stopped(elapsed=elapsed, output=output):  # pragma: no branch
+							case Stopped(elapsed=elapsed, output=output):
 								stream_line = strip_ansi(last_line_display(output))
 								stream = (
 									f"  {truncate_middle(stream_line, gap - 2)}"
@@ -293,6 +297,12 @@ def render_lines(
 								padding = " " * max(gap - visual_width(stream), 0)
 								lines.append(
 									f"\r{header}{GREY}{stream}{RESET}{padding} {CYAN}|{DARK_RED} STOP {CYAN}|{RESET} {elapsed:7.3f}s{CLEAR_LINE}"
+								)
+							case Errored(message=message):
+								stream = f"  {truncate_middle(message, gap - 2)}" if gap > 2 else ""
+								padding = " " * max(gap - visual_width(stream), 0)
+								lines.append(
+									f"\r{header}{GREY}{stream}{RESET}{padding} {CYAN}|{RED} ERROR{CYAN}|{RESET}{CLEAR_LINE}"
 								)
 					case Running(start_time=start_time, last_line=last_line):
 						elapsed = (now - start_time).total_seconds()
@@ -332,8 +342,10 @@ def render_lines(
 		)
 		failed: Final = any(
 			isinstance(s, Completed)
-			and isinstance(s.completion, Finished)
-			and s.completion.returncode != 0
+			and (
+				(isinstance(s.completion, Finished) and s.completion.returncode != 0)
+				or isinstance(s.completion, Errored)
+			)
 			for s in states
 		)
 		summary_color: Final = DARK_RED if stopped else (RED if failed else GREEN)
@@ -458,6 +470,8 @@ def print_failures(states: Sequence[LeafState], term_width: int) -> None:
 		match state:
 			case Completed(task=task, completion=Finished(returncode=rc, output=output)) if rc > 0:
 				print_task_output(task, output, "FAILED", RED, rc, term_width)
+			case Completed(task=task, completion=Errored(returncode=rc, message=message)):
+				print_task_output(task, (message.encode(),), "FAILED", RED, rc, term_width)
 			case _:
 				pass
 
