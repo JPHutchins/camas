@@ -251,6 +251,37 @@ def test_eval_node_accepts_agent_format_limit_none_as_default() -> None:
 	assert parse_expression(to_expression(node)) == node
 
 
+def test_eval_node_accepts_agent_format_tuple_with_limit() -> None:
+	node = parse_expression("Task('c', agent_format=('--junitxml {report}', 'junit', 500))")
+	assert isinstance(node, Task)
+	assert node.agent_format == AgentFormat("--junitxml {report}", "junit", 500)
+	assert parse_expression(to_expression(node)) == node
+
+
+def test_eval_node_rejects_agent_format_bool_limit() -> None:
+	with pytest.raises(SystemExit, match="2"):
+		parse_expression("Task('c', agent_format=AgentFormat('--x', 'sarif', False))")
+
+
+def test_eval_node_rejects_agent_format_non_positive_limit() -> None:
+	with pytest.raises(SystemExit, match="2"):
+		parse_expression("Task('c', agent_format=AgentFormat('--x', 'sarif', 0))")
+	with pytest.raises(SystemExit, match="2"):
+		parse_expression("Task('c', agent_format=AgentFormat('--x', 'sarif', -5))")
+
+
+def test_agent_format_constructor_rejects_bool_limit() -> None:
+	with pytest.raises(ValueError, match="positive int"):
+		AgentFormat("--x", "sarif", True)
+
+
+def test_agent_format_constructor_rejects_non_positive_limit() -> None:
+	with pytest.raises(ValueError, match="positive int"):
+		AgentFormat("--x", "sarif", 0)
+	with pytest.raises(ValueError, match="positive int"):
+		AgentFormat("--x", "sarif", -1)
+
+
 def test_agent_format_limit_round_trips_when_non_default() -> None:
 	task = Task("c", agent_format=AgentFormat("--x", "sarif", 500))
 	assert parse_expression(to_expression(task)) == task

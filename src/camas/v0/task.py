@@ -81,7 +81,8 @@ OutputKind: TypeAlias = Literal["sarif", "rdjson", "lsp", "junit", "tap", "raw"]
 tags and passes through verbatim, never parsing. ``raw`` (the default) is plain text."""
 
 
-class AgentFormat(NamedTuple):
+@dataclass(frozen=True)
+class AgentFormat:
 	"""A leaf's agent-only structured-output variant: ``args`` (a producing flag the user
 	supplies — camas never infers it) appended to the command, and the ``kind`` of diagnostics
 	it makes the tool emit. Applied only when an agent runs; a human run leaves the command as-is.
@@ -94,17 +95,25 @@ class AgentFormat(NamedTuple):
 	``limit`` bounds a structured (non-``raw``) payload — and any path-mode report file,
 	``raw`` included — in characters. A payload over ``limit`` is neither dumped nor tailed —
 	a truncated structured document is invalid — but replaced with a pointer to the full
-	file/log instead; stdout ``raw`` is exempt, since the gate line-tails it.
+	file/log instead; stdout ``raw`` is exempt, since the gate line-tails it. It must be a
+	positive int (a bool or a value ``<= 0`` raises ``ValueError``).
 
 	>>> AgentFormat("--output-format sarif", "sarif")
 	AgentFormat(args='--output-format sarif', kind='sarif', limit=8000)
 	>>> AgentFormat("--junitxml {report}", "junit").args
 	'--junitxml {report}'
+	>>> AgentFormat("--out", "sarif", 0)
+	Traceback (most recent call last):
+	ValueError: AgentFormat limit must be a positive int, got 0
 	"""
 
 	args: str
 	kind: OutputKind
 	limit: int = 8_000
+
+	def __post_init__(self) -> None:
+		if isinstance(self.limit, bool) or self.limit <= 0:
+			raise ValueError(f"AgentFormat limit must be a positive int, got {self.limit!r}")
 
 
 _EMPTY_ENV: Mapping[str, str] = MappingProxyType({})

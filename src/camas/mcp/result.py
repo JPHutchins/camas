@@ -229,12 +229,14 @@ def to_agent_envelope(
 	task: Task, result: TaskResult, *, tail: int = 50, report_path: Path | None = None
 ) -> wire.AgentEnvelope:
 	"""``result``'s AgentEnvelope: stdout tail-capped for ``raw``, verbatim for a structured
-	``kind`` — read from ``report_path`` (path mode) when the file holds a payload, else from
-	stdout, so a tool that crashed before writing its report still delivers its stdout
-	diagnostics. A payload over its ``agent_format.limit`` — any structured ``kind``, or a
-	``raw`` report file (stdout ``raw`` is already tail-capped) — is replaced with
-	:func:`over_limit_pointer` rather than dumped or tailed, since a truncated structured
-	document is invalid; the pointer names the report file only when the payload came from it.
+	``kind`` — read from ``report_path`` (path mode) only when the tool ran to its own exit
+	(``Finished``) and the file holds a payload, else from stdout/message, so a tool killed
+	(``Stopped``) or that never started (``Errored``) still delivers its captured diagnostics
+	rather than a partial or empty report. A payload over its ``agent_format.limit`` — any
+	structured ``kind``, or a ``raw`` report file (stdout ``raw`` is already tail-capped) — is
+	replaced with :func:`over_limit_pointer` rather than dumped or tailed, since a truncated
+	structured document is invalid; the pointer names the report file only when the payload came
+	from it.
 	"""
 	comp = result.completion
 	fmt = task.agent_format
@@ -244,7 +246,8 @@ def to_agent_envelope(
 		if report_path is not None and report_path.is_file()
 		else ""
 	)
-	if report_payload:
+	used_report = bool(report_payload) and isinstance(comp, Finished)
+	if used_report:
 		payload, truncated = report_payload, False
 	else:
 		match comp:
@@ -258,12 +261,12 @@ def to_agent_envelope(
 				assert_never(comp)
 		payload, truncated = "\n".join(decoded.lines), decoded.truncated
 	log = str(report_path) if report_path is not None else None
-	if fmt is not None and len(payload) > fmt.limit and (kind != "raw" or bool(report_payload)):
+	if fmt is not None and len(payload) > fmt.limit and (kind != "raw" or used_report):
 		return wire.AgentEnvelope(
 			name=result.name,
 			exit_code=comp.returncode,
 			output_kind=kind,
-			payload=over_limit_pointer(kind, fmt.limit, report_path if report_payload else None),
+			payload=over_limit_pointer(kind, fmt.limit, report_path if used_report else None),
 			truncated=True,
 			log=log,
 		)

@@ -192,6 +192,22 @@ def test_agent_envelope_path_mode_reads_report_file_not_stdout(tmp_path: Path) -
 	assert env.truncated is False
 
 
+def test_agent_envelope_path_mode_stopped_falls_back_to_stdout(tmp_path: Path) -> None:
+	"""A tool killed by signal (Stopped) after writing partial/possibly-invalid report content
+	must deliver its captured stderr, not the partial file."""
+	report_path = tmp_path / "report.xml"
+	report_path.write_text("<partial-invalid-xml")
+	task = Task("pytest", name="t", agent_format=AgentFormat("--junitxml {report}", "junit"))
+	env = to_agent_envelope(
+		task,
+		TaskResult("t", Stopped(137, 0.1, (b"Killed by signal 9\n",))),
+		report_path=report_path,
+	)
+	assert env.payload == "Killed by signal 9"
+	assert "<partial-invalid-xml" not in env.payload
+	assert env.log == str(report_path)
+
+
 def test_agent_envelope_path_mode_missing_report_falls_back_to_stdout(tmp_path: Path) -> None:
 	"""A tool that crashed before writing its report must still deliver its stdout diagnostics,
 	not an empty payload."""
