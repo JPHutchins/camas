@@ -163,6 +163,28 @@ def test_dispatch_init_default_stays_minimal(
 	assert (tmp_path / "tasks.py").read_text(encoding="utf-8") == starter_text()
 
 
+def test_dispatch_verbose_without_init_warns(capsys: pytest.CaptureFixture[str]) -> None:
+	with pytest.raises(SystemExit):
+		dispatch(EMPTY_STATE, ["--verbose"])
+	assert "--verbose only applies to --init" in capsys.readouterr().err
+
+
+def test_verbose_without_init_warns_but_still_runs(tmp_path: Path) -> None:
+	"""``--verbose`` only affects ``--init``; on a normal run it warns to stderr without
+	changing the task's exit behavior."""
+	write_starter_tasks_py(tmp_path)
+	result = _camas("--verbose", "hello", cwd=tmp_path)
+	assert result.returncode == 0, result.stderr
+	assert "--verbose only applies to --init" in result.stderr
+
+
+def test_normal_run_has_no_verbose_warning(tmp_path: Path) -> None:
+	write_starter_tasks_py(tmp_path)
+	result = _camas("hello", cwd=tmp_path)
+	assert result.returncode == 0, result.stderr
+	assert "--verbose" not in result.stderr
+
+
 def test_verbose_starter_loads_with_config(tmp_path: Path) -> None:
 	write_starter_tasks_py(tmp_path, verbose=True)
 	loaded = load_tasks_from_py(tmp_path / "tasks.py")
