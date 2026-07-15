@@ -1302,7 +1302,7 @@ def nudge_text(resp: wire.GateResponse) -> str:
 	about it directly. ``asyncRewake`` shows this on Claude's stderr as a system reminder.
 	"""
 	lines: list[str] = ["camas: a residual needs reasoning — the workspace is not green."]
-	if resp.diagnostics is not None:
+	if resp.diagnostics:
 		lines.extend(["", "Residual (failing checks):"])
 		for env in resp.diagnostics:
 			lines.append(f"  {env.name} (exit {env.exit_code}, {env.output_kind})")
@@ -1339,17 +1339,17 @@ def should_nudge(event: HookEvent) -> bool:
 	"""
 	if event.stop_hook_active:
 		return False
-	if event.session_id is None or event.prompt_id is None:
+	if not event.session_id or not event.prompt_id:
 		return True
 	try:
 		return _nudge_marker(event.session_id).read_text(encoding="utf-8") != event.prompt_id
-	except OSError:
+	except (OSError, ValueError):
 		return True
 
 
 def record_nudge(event: HookEvent) -> None:
 	"""Persist that this event's prompt was nudged, for :func:`should_nudge`."""
-	if event.session_id is None or event.prompt_id is None:
+	if not event.session_id or not event.prompt_id:
 		return
 	with suppress(OSError):
 		_nudge_marker(event.session_id).write_text(event.prompt_id, encoding="utf-8")

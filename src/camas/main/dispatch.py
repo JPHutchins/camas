@@ -138,10 +138,10 @@ def finish_run(result: RunResult) -> int:
 def fix_cli(argv: list[str]) -> int:
 	"""``camas mcp fix [--paths P]…``: run the project's *registered* agent fix node
 	(``Config.agent.fix`` — whatever the user named it), scoped to the changed paths — taken from
-	``--paths`` or, failing that, the ``PostToolBatch`` event piped on stdin (the Claude Code
-	autofix hook). In the ``camas mcp`` namespace so it never collides with a user's own
-	``camas <task>``. Always exits ``0`` — it runs the fix node for its mutations, not as a
-	pass/fail check; an unregistered fix node is simply a no-op.
+	``--paths`` or, failing that, the ``PostToolBatch`` or ``Stop`` event piped on stdin (the
+	Claude Code autofix hook and the settle-time Stop fix hook). In the ``camas mcp`` namespace so
+	it never collides with a user's own ``camas <task>``. Always exits ``0`` — it runs the fix
+	node for its mutations, not as a pass/fail check; an unregistered fix node is simply a no-op.
 	"""
 	parser = argparse.ArgumentParser(
 		prog="camas mcp fix", description="Run the registered agent fix node."

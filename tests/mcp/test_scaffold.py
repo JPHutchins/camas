@@ -13,6 +13,7 @@ from camas.mcp.scaffold import (
 	installed_version_spec,
 	launch_command,
 	launch_command_str,
+	parse_json_object,
 	resolve_pin,
 	tasks_py_path,
 	write_agent_skill_templates,
@@ -408,6 +409,22 @@ def test_non_object_json_errors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
 	assert write_mcp_json([]) == 2
 
 
+def test_parse_json_object_invalid_utf8_returns_none(tmp_path: Path) -> None:
+	"""An invalid-UTF-8 file (UnicodeDecodeError, a ValueError not an OSError) falls back
+	cleanly instead of crashing."""
+	corrupt = tmp_path / ".mcp.json"
+	corrupt.write_bytes(b"\xff\xfe")
+	assert parse_json_object(corrupt) is None
+
+
+def test_write_mcp_json_invalid_utf8_errors(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	monkeypatch.chdir(tmp_path)
+	(tmp_path / ".mcp.json").write_bytes(b"\xff\xfe")
+	assert write_mcp_json([]) == 2
+
+
 def test_non_object_mcpservers_errors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 	monkeypatch.chdir(tmp_path)
 	(tmp_path / ".mcp.json").write_text(json.dumps({"mcpServers": "nope"}))
@@ -532,6 +549,17 @@ def test_write_hooks_errors_on_malformed_settings(
 	(tmp_path / ".claude").mkdir(parents=True)
 	(tmp_path / ".claude" / "settings.json").write_bytes(b"\x00not json")
 	assert write_hooks([]) == 2
+
+
+def test_write_hooks_errors_on_invalid_utf8_settings(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	monkeypatch.chdir(tmp_path)
+	monkeypatch.setattr("shutil.which", _which("camas"))
+	(tmp_path / ".claude").mkdir(parents=True)
+	(tmp_path / ".claude" / "settings.json").write_bytes(b"\xff\xfe")
+	assert write_hooks([]) == 2
+	assert "not valid JSON" in capsys.readouterr().err
 
 
 def test_write_hooks_errors_on_non_object_root(
@@ -779,6 +807,81 @@ def test_write_hooks_removes_camas_only_groups(
 	ptb = settings["hooks"]["PostToolBatch"]
 	assert len(ptb) == 1
 	assert ptb[0]["hooks"][0]["command"] == "camas mcp fix"
+
+
+def _sweep_survivors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: str) -> set[str]:
+	"""The hook commands left under a neutral event after ``write_hooks`` re-sweeps a settings.json
+	seeding ``command`` beside a non-camas sentinel. The neutral event is one write_hooks never
+	writes to, so its own PostToolBatch/Stop hooks can't mask a swept ``command``: the sentinel
+	always survives; ``command`` survives only when it is not recognized as a camas hook.
+	"""
+	monkeypatch.chdir(tmp_path)
+	monkeypatch.setattr("shutil.which", _which("camas"))
+	(tmp_path / ".claude").mkdir(parents=True)
+	(tmp_path / ".claude" / "settings.json").write_text(
+		json.dumps(
+			{
+				"hooks": {
+					"PreToolUse": [
+						{
+							"hooks": [
+								{"type": "command", "command": command},
+								{"type": "command", "command": "echo sentinel"},
+							]
+						}
+					]
+				}
+			}
+		)
+	)
+	assert write_hooks([]) == 0
+	settings = json.loads((tmp_path / ".claude" / "settings.json").read_text())
+	return {
+		h["command"] for group in settings["hooks"].get("PreToolUse", []) for h in group["hooks"]
+	}
+
+
+@pytest.mark.parametrize(
+	"command",
+	[
+		"camas mcp fix",
+		"uv run tasks.py mcp gate --under 5s --nudge",
+		"uvx 'camas[mcp]' mcp fix",
+	],
+)
+def test_camas_hook_matcher_sweeps_every_launcher_form(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: str
+) -> None:
+	survivors = _sweep_survivors(tmp_path, monkeypatch, command)
+	assert command not in survivors
+	assert "echo sentinel" in survivors
+
+
+@pytest.mark.parametrize("command", ["my-camas-tool mcp gateway", "camas mcp fixture --list"])
+def test_camas_hook_matcher_does_not_false_match(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: str
+) -> None:
+	survivors = _sweep_survivors(tmp_path, monkeypatch, command)
+	assert command in survivors
+	assert "echo sentinel" in survivors
+
+
+def test_write_hooks_reinit_does_not_accumulate_pep723_hooks(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	"""A PEP 723 launcher (uv run tasks.py mcp, no bare "camas") must be swept on re-init, so
+	repeated `camas mcp init --claude` never stacks duplicate Stop/PostToolBatch hooks."""
+	monkeypatch.chdir(tmp_path)
+	(tmp_path / "tasks.py").write_text(
+		'# /// script\n# dependencies = ["camas[mcp]>=0.1.8"]\n# ///\nfrom camas import Task\n'
+	)
+	monkeypatch.setattr("shutil.which", _which("uv"))
+	assert write_hooks([]) == 0
+	assert write_hooks([]) == 0
+	settings = json.loads((tmp_path / ".claude" / "settings.json").read_text())
+	assert len(settings["hooks"]["PostToolBatch"]) == 1
+	assert len(settings["hooks"]["Stop"]) == 1
+	assert "uv run tasks.py mcp fix" in settings["hooks"]["PostToolBatch"][0]["hooks"][0]["command"]
 
 
 _TIERED_AGENT_FILES = (

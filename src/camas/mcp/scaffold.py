@@ -227,10 +227,14 @@ def portability_note(command: str) -> str:
 
 
 def parse_json_object(path: Path) -> dict[str, Any] | None:
-	"""Parse an existing JSON file as a JSON object; ``None`` if unreadable or not one."""
+	"""Parse an existing JSON file as a JSON object; ``None`` if unreadable or not one.
+
+	``ValueError`` subsumes ``json.JSONDecodeError`` and the ``UnicodeDecodeError`` an invalid-
+	UTF-8 file raises, so both corrupt-file cases fall back cleanly.
+	"""
 	try:
 		loaded: object = json.loads(path.read_text(encoding="utf-8"))
-	except (OSError, json.JSONDecodeError):
+	except (OSError, ValueError):
 		return None
 	return cast("dict[str, Any]", loaded) if isinstance(loaded, dict) else None
 
@@ -249,12 +253,16 @@ def _object_list(value: object) -> list[dict[str, Any]]:
 	return cast("list[dict[str, Any]]", value) if isinstance(value, list) else []
 
 
+_CAMAS_HOOK_RE: Final = re.compile(r"\bmcp (?:fix|gate)\b")
+
+
 def _is_camas_hook(command: str) -> bool:
-	"""True when ``command`` is a camas hook invocation — the launcher (containing ``camas``)
-	plus the ``mcp fix`` autofix or ``mcp gate`` check/nudge subcommand, possibly with trailing
-	args.
+	"""True when ``command`` is a camas hook invocation — the camas-invented ``mcp fix`` autofix
+	or ``mcp gate`` check/nudge subcommand, word-bounded so any launcher form matches (``camas``,
+	``uv run tasks.py`` for PEP 723, ``uvx camas[mcp]``) while ``mcp gateway``/``mcp fixture`` do
+	not.
 	"""
-	return "camas" in command and ("mcp fix" in command or "mcp gate" in command)
+	return _CAMAS_HOOK_RE.search(command) is not None
 
 
 def _kept_hooks(group: dict[str, Any]) -> list[dict[str, Any]]:
@@ -319,7 +327,7 @@ def write_hooks(argv: list[str], *, quiet: bool = False, launcher: Launcher | No
 		raw: object = json.loads(settings_path.read_text(encoding="utf-8"))
 	except OSError:
 		raw = {}
-	except json.JSONDecodeError:
+	except ValueError:
 		print(f"error: {settings_path} is not valid JSON", file=sys.stderr)
 		return 2
 	if not isinstance(raw, dict):

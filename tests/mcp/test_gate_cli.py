@@ -220,6 +220,45 @@ def test_gate_cli_nudge_honors_stop_hook_active(
 	assert capsys.readouterr().err == ""
 
 
+def test_gate_cli_nudge_invalid_utf8_marker_allows_nudge(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	"""A marker with invalid UTF-8 bytes (UnicodeDecodeError, a ValueError) must not crash — it
+	reads as unreadable, so one nudge is still allowed."""
+	_chdir_project(tmp_path, monkeypatch, "FIXME")
+	(tmp_path / "sample.py").write_text("FIXME\n")
+	marker_dir = tmp_path / "markers"
+	marker_dir.mkdir()
+	monkeypatch.setattr("camas.mcp.serve.tempfile.gettempdir", lambda: str(marker_dir))
+	monkeypatch.setattr("sys.stdin", io.StringIO(_stop_event("p-1")))
+	assert serve.gate_cli(["--nudge"]) == 2
+	capsys.readouterr()
+	(marker,) = tuple(marker_dir.iterdir())
+	marker.write_bytes(b"\xff\xfe")
+	monkeypatch.setattr("sys.stdin", io.StringIO(_stop_event("p-1")))
+	assert serve.gate_cli(["--nudge"]) == 2
+	assert "camas-lint-fixer-haiku" in capsys.readouterr().err
+
+
+def test_gate_cli_nudge_empty_session_id_writes_no_shared_marker(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	"""An empty session_id is treated like None: the nudge fires but no marker is written, so
+	sessions never share one."""
+	_chdir_project(tmp_path, monkeypatch, "FIXME")
+	(tmp_path / "sample.py").write_text("FIXME\n")
+	marker_dir = tmp_path / "markers"
+	marker_dir.mkdir()
+	monkeypatch.setattr("camas.mcp.serve.tempfile.gettempdir", lambda: str(marker_dir))
+	monkeypatch.setattr(
+		"sys.stdin",
+		io.StringIO(json.dumps({"session_id": "", "prompt_id": "p-1", "hook_event_name": "Stop"})),
+	)
+	assert serve.gate_cli(["--nudge"]) == 2
+	assert "camas-lint-fixer-haiku" in capsys.readouterr().err
+	assert list(marker_dir.iterdir()) == []
+
+
 def test_nudge_text_without_diagnostics() -> None:
 	resp = wire.GateResponse(
 		decision="block",
