@@ -23,7 +23,8 @@ if TYPE_CHECKING:
 def qualify(name: str | None, namespace: str) -> str | None:
 	"""A task or group ``name`` prefixed with its Project ``namespace`` segment, dotted — the
 	composed leaf's display identity, so ``libs``'s ``build`` reads as ``libs.build`` in every
-	effect. An empty ``namespace`` or an unnamed node passes through unchanged.
+	effect. An empty ``namespace``, or a node with no name (``None`` or ``""``), passes through
+	unchanged — a nameless node has nothing to qualify, so prefixing would only dangle the dot.
 
 	>>> qualify("build", "libs")
 	'libs.build'
@@ -33,8 +34,10 @@ def qualify(name: str | None, namespace: str) -> str | None:
 	'build'
 	>>> qualify(None, "libs") is None
 	True
+	>>> qualify("", "libs")
+	''
 	"""
-	if not namespace or name is None:
+	if not namespace or not name:
 		return name
 	return f"{namespace}.{name}"
 
