@@ -261,11 +261,13 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 	parser: Final = build_parser(state)
 
 	# ``--init`` scaffolds precisely when there is no valid tasks.py, so it runs identically in
-	# either state, ahead of the match. ``parse_known_args`` here tolerates the per-task matrix
-	# axis flags a normal run passes (added inside the LoadOk arm); the arms re-parse strictly.
+	# either state, ahead of the match. ``parse_known_args`` tolerates the per-task matrix axis
+	# flags a normal run passes (added inside the LoadOk arm); on the ``--init`` path there are no
+	# such flags, so it re-parses strictly first, surfacing an unknown-flag typo before scaffolding.
 	init_args: Final = parser.parse_known_args(split.head)[0]
 	if init_args.init:
-		sys.exit(write_starter_tasks_py(Path.cwd(), verbose=init_args.verbose))
+		strict = parser.parse_args(split.head)
+		sys.exit(write_starter_tasks_py(Path.cwd(), verbose=strict.verbose))
 	if init_args.verbose:
 		print(
 			"warning: --verbose only applies to --init; ignoring it for this run", file=sys.stderr

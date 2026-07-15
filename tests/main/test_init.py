@@ -169,6 +169,26 @@ def test_dispatch_verbose_without_init_warns(capsys: pytest.CaptureFixture[str])
 	assert "--verbose only applies to --init" in capsys.readouterr().err
 
 
+def test_init_rejects_unknown_flag_before_scaffolding(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	"""A typo of a flag alongside ``--init`` errors instead of silently scaffolding — the
+	strict parse in the ``--init`` branch runs before the write."""
+	monkeypatch.chdir(tmp_path)
+	with pytest.raises(SystemExit) as excinfo:
+		dispatch(EMPTY_STATE, ["--init", "--verboes"])
+	assert excinfo.value.code != 0
+	assert "unrecognized arguments: --verboes" in capsys.readouterr().err
+	assert not (tmp_path / "tasks.py").exists()
+
+
+def test_cli_init_unknown_flag_errors(tmp_path: Path) -> None:
+	result = _camas("--init", "--verboes", cwd=tmp_path)
+	assert result.returncode != 0
+	assert "unrecognized arguments: --verboes" in result.stderr
+	assert not (tmp_path / "tasks.py").exists()
+
+
 def test_verbose_without_init_warns_but_still_runs(tmp_path: Path) -> None:
 	"""``--verbose`` only affects ``--init``; on a normal run it warns to stderr without
 	changing the task's exit behavior."""
