@@ -121,12 +121,16 @@ def eval_opt_int(node: ast.expr | None) -> int | None:
 		ValueError: the value is a ``bool`` (an ``int`` subclass) or a non-positive int.
 	"""
 	match node:
-		case None | ast.Constant(value=None):
+		case None:
+			return None
+		case ast.Constant(value=None):
 			return None
 		case ast.Constant(value=bool()):
 			raise ValueError(f"AgentFormat limit must be a positive int, got {ast.dump(node)}")
-		case ast.Constant(value=int() as i) if i > 0:
-			return i
+		case ast.Constant(value=int() as i):
+			if i > 0:
+				return i
+			raise ValueError(f"AgentFormat limit must be a positive int, got {ast.dump(node)}")
 		case _:
 			raise ValueError(f"AgentFormat limit must be a positive int, got {ast.dump(node)}")
 
