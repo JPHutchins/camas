@@ -27,6 +27,11 @@ def test_parser_dry_run_flag() -> None:
 	assert args.dry_run is True
 
 
+def test_parser_verbose_flag() -> None:
+	assert build_parser().parse_args(["--init", "--verbose"]).verbose is True
+	assert build_parser().parse_args(["--init"]).verbose is False
+
+
 def test_parser_jobs_flag() -> None:
 	assert build_parser().parse_args(["--jobs", "4", "x"]).jobs == 4
 

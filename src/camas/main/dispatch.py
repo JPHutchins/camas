@@ -260,13 +260,24 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 
 	parser: Final = build_parser(state)
 
+	# ``--init`` scaffolds precisely when there is no valid tasks.py, so it runs identically in
+	# either state, ahead of the match. ``parse_known_args`` tolerates the per-task matrix axis
+	# flags a normal run passes (added inside the LoadOk arm); on the ``--init`` path there are no
+	# such flags, so it re-parses strictly first, surfacing an unknown-flag typo before scaffolding.
+	init_args: Final = parser.parse_known_args(split.head)[0]
+	if init_args.init:
+		strict = parser.parse_args(split.head)
+		sys.exit(write_starter_tasks_py(Path.cwd(), verbose=strict.verbose))
+	if init_args.verbose:
+		print(
+			"warning: --verbose only applies to --init; ignoring it for this run", file=sys.stderr
+		)
+
 	match state:
 		case LoadErr() as err:
 			# No per-task matrix axes to augment; parse strictly so typos in
 			# flags surface instead of being silently consumed.
 			args = parser.parse_args(split.head)
-			if args.init:
-				sys.exit(write_starter_tasks_py(Path.cwd()))
 			if args.list or args.tree:
 				print(format_load_error_hint(err.source, err.exception))
 				sys.exit(0)
@@ -311,9 +322,6 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 					)
 					augmented_axes[name] = values
 			args = parser.parse_args(split.head)
-
-			if args.init:
-				sys.exit(write_starter_tasks_py(Path.cwd()))
 
 			if args.list:
 				print_task_summary_listing(

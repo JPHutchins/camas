@@ -191,6 +191,24 @@ class InitResponse(BaseModel):
 	"""
 
 
+class InitRequest(BaseModel):
+	"""Arguments to ``camas_init``."""
+
+	model_config = ConfigDict(extra="forbid")
+
+	verbose: bool = Field(
+		default=True,
+		description=(
+			"Scaffold the kitchen-sink template: every Task/Sequential/Parallel/Config option "
+			"worked and explained, including path scoping, agent_format structured output, "
+			"matrix expansion, and Config(agent=Claude(fix=..., check=..., default=...)). "
+			"Defaults to true here (camas_init is MCP-driven, so the fuller reference is the "
+			"better default); pass false for the same minimal template `camas --init` (no "
+			"--verbose) writes."
+		),
+	)
+
+
 class ListRequest(BaseModel):
 	"""Arguments to ``camas_list``."""
 
