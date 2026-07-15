@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import io
 import json
+import os
+import time
 from typing import TYPE_CHECKING
 
 from camas.core import timings
-from camas.core.hook_event import changed_from_stdin
+from camas.core.hook_event import HookEvent, changed_from_stdin
 from camas.mcp import serve, wire
 
 if TYPE_CHECKING:
@@ -257,6 +259,36 @@ def test_gate_cli_nudge_empty_session_id_writes_no_shared_marker(
 	assert serve.gate_cli(["--nudge"]) == 2
 	assert "camas-lint-fixer-haiku" in capsys.readouterr().err
 	assert list(marker_dir.iterdir()) == []
+
+
+def test_prune_stale_nudge_markers_removes_only_stale(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	monkeypatch.setattr("camas.mcp.serve.tempfile.gettempdir", lambda: str(tmp_path))
+	stale = tmp_path / f"{serve.NUDGE_MARKER_PREFIX}stale"
+	fresh = tmp_path / f"{serve.NUDGE_MARKER_PREFIX}fresh"
+	stale.write_text("p-old")
+	fresh.write_text("p-new")
+	old = time.time() - 7200.0
+	os.utime(stale, (old, old))
+	serve.prune_stale_nudge_markers()
+	assert not stale.exists()
+	assert fresh.exists()
+
+
+def test_record_nudge_prunes_stale_markers_while_writing(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	monkeypatch.setattr("camas.mcp.serve.tempfile.gettempdir", lambda: str(tmp_path))
+	stale = tmp_path / f"{serve.NUDGE_MARKER_PREFIX}stale"
+	stale.write_text("p-old")
+	old = time.time() - 7200.0
+	os.utime(stale, (old, old))
+	event = HookEvent(changed=None, session_id="s-9", prompt_id="p-1", stop_hook_active=False)
+	serve.record_nudge(event)
+	assert not stale.exists()
+	(fresh,) = tuple(tmp_path.glob(f"{serve.NUDGE_MARKER_PREFIX}*"))
+	assert fresh.read_text(encoding="utf-8") == "p-1"
 
 
 def test_nudge_text_without_diagnostics() -> None:

@@ -36,6 +36,12 @@ def _session(
 	return Session(state, base, Compat(emit_structured=rich))
 
 
+def _resolved_session(base: Path, *, rich: bool = False) -> Session:
+	"""A session resolved from ``base``'s tasks source, as ``call_handler`` refreshes one before
+	dispatching any read-only handler."""
+	return Session(serve.resolve_project(base), base, Compat(emit_structured=rich))
+
+
 PASS = Task(("python", "-c", "print('ok')"), name="lint")
 FAIL = Task(("python", "-c", "import sys; print('boom'); sys.exit(3)"), name="bad")
 
@@ -470,7 +476,7 @@ def _fixed_checker(result: TypeCheckResult) -> Callable[[Path], TypeCheckResult]
 def test_check_call_ok_typechecked(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 	(tmp_path / "tasks.py").write_text(_VALID_TASKS)
 	monkeypatch.setattr("camas.mcp.result.run_typecheck", _fixed_checker(CheckerOk("ty")))
-	result = serve.check_call(_session({}, None, tmp_path))
+	result = serve.check_call(_resolved_session(tmp_path))
 	assert result.isError is False
 	assert "OK" in _text(result)
 	assert "type-checked clean with ty" in _text(result)
@@ -481,7 +487,7 @@ def test_check_call_type_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
 	monkeypatch.setattr(
 		"camas.mcp.result.run_typecheck", _fixed_checker(CheckerErr("mypy", "error: bad type"))
 	)
-	result = serve.check_call(_session({}, None, tmp_path))
+	result = serve.check_call(_resolved_session(tmp_path))
 	assert result.isError is False
 	text = _text(result)
 	assert "TYPE ERRORS" in text
@@ -491,13 +497,13 @@ def test_check_call_type_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
 def test_check_call_no_checker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 	(tmp_path / "tasks.py").write_text(_VALID_TASKS)
 	monkeypatch.setattr("camas.mcp.result.run_typecheck", _fixed_checker(CheckerNotFound()))
-	assert "no type checker is available" in _text(serve.check_call(_session({}, None, tmp_path)))
+	assert "no type checker is available" in _text(serve.check_call(_resolved_session(tmp_path)))
 
 
 def test_check_call_load_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 	(tmp_path / "tasks.py").write_text("raise RuntimeError('boom in tasks')\n")
 	monkeypatch.setattr("camas.mcp.result.run_typecheck", _fixed_checker(CheckerNotFound()))
-	result = serve.check_call(_session({}, None, tmp_path))
+	result = serve.check_call(_resolved_session(tmp_path))
 	assert result.isError is False
 	text = _text(result)
 	assert "LOAD ERROR" in text
@@ -506,41 +512,44 @@ def test_check_call_load_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
 
 def test_check_call_load_error_pyproject(tmp_path: Path) -> None:
 	(tmp_path / "pyproject.toml").write_text("[tool.camas.tasks]\nlint = 123\n")
-	text = _text(serve.check_call(_session({}, None, tmp_path)))
+	text = _text(serve.check_call(_resolved_session(tmp_path)))
 	assert "LOAD ERROR" in text
 	assert "pyproject.toml" in text
 
 
 def test_check_call_no_tasks(tmp_path: Path) -> None:
-	result = serve.check_call(_session({}, None, tmp_path))
+	result = serve.check_call(_resolved_session(tmp_path))
 	assert result.isError is False
 	assert "no tasks.py" in _text(result)
 
 
 def test_check_call_pyproject_ok_skips_typecheck(tmp_path: Path) -> None:
 	(tmp_path / "pyproject.toml").write_text('[tool.camas.tasks]\nlint = "ruff check ."\n')
-	result = serve.check_call(_session({}, None, tmp_path))
+	result = serve.check_call(_resolved_session(tmp_path))
 	assert result.isError is False
 	text = _text(result)
 	assert "OK" in text
 	assert "no type checker ran" in text
 
 
-def test_check_call_refreshes_session_project(
+async def test_check_via_client_reflects_fresh_disk_state(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
 	monkeypatch.setattr("camas.mcp.result.run_typecheck", _fixed_checker(CheckerOk("ty")))
-	(tmp_path / "tasks.py").write_text("from camas import Task\nbuild = Task('echo build')\n")
-	session = _session({}, None, tmp_path)
-	serve.check_call(session)
-	assert isinstance(session.project, LoadOk)
-	assert "build" in session.project.tasks
+	tasks_py = tmp_path / "tasks.py"
+	tasks_py.write_text("from camas import Task\na = Task('echo a')\n")
+	session = Session(serve.resolve_project(tmp_path), tmp_path, Compat())
+	async with create_connected_server_and_client_session(serve.build_server(session)) as client:
+		tasks_py.write_text("from camas import Task\na = Task('echo a')\nb = Task('echo b')\n")
+		result = await client.call_tool("camas_check", {})
+		assert result.isError is False
+		assert "2 task(s)" in _text(result)
 
 
 def test_check_call_structured_when_rich(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 	(tmp_path / "tasks.py").write_text(_VALID_TASKS)
 	monkeypatch.setattr("camas.mcp.result.run_typecheck", _fixed_checker(CheckerOk("ty")))
-	result = serve.check_call(_session({}, None, tmp_path, rich=True))
+	result = serve.check_call(_resolved_session(tmp_path, rich=True))
 	assert result.structuredContent is not None
 	assert result.structuredContent["status"] == "ok"
 	assert result.structuredContent["checker"] == "ty"
@@ -551,7 +560,7 @@ def test_check_call_reports_server_version(tmp_path: Path, monkeypatch: pytest.M
 
 	(tmp_path / "tasks.py").write_text(_VALID_TASKS)
 	monkeypatch.setattr("camas.mcp.result.run_typecheck", _fixed_checker(CheckerOk("ty")))
-	result = serve.check_call(_session({}, None, tmp_path, rich=True))
+	result = serve.check_call(_resolved_session(tmp_path, rich=True))
 	assert result.structuredContent is not None
 	assert result.structuredContent["server_version"] == version("camas")
 	assert f"camas server version: {version('camas')}" in _text(result)
@@ -568,7 +577,7 @@ def test_check_call_server_version_degrades_when_missing(
 	(tmp_path / "tasks.py").write_text(_VALID_TASKS)
 	monkeypatch.setattr("camas.mcp.result.run_typecheck", _fixed_checker(CheckerOk("ty")))
 	monkeypatch.setattr("camas.mcp.serve.version", _raise)
-	result = serve.check_call(_session({}, None, tmp_path, rich=True))
+	result = serve.check_call(_resolved_session(tmp_path, rich=True))
 	assert result.structuredContent is not None
 	assert result.structuredContent["server_version"] is None
 	assert "camas server version" not in _text(result)
@@ -579,7 +588,7 @@ def test_check_call_reports_scope_warnings(tmp_path: Path, monkeypatch: pytest.M
 		"from camas import Task\ncargo = Task('cargo build', name='cargo', paths='.')\n"
 	)
 	monkeypatch.setattr("camas.mcp.result.run_typecheck", _fixed_checker(CheckerOk("ty")))
-	result = serve.check_call(_session({}, None, tmp_path, rich=True))
+	result = serve.check_call(_resolved_session(tmp_path, rich=True))
 	assert result.isError is False
 	text = _text(result)
 	assert "camas_check: OK" in text
@@ -1264,6 +1273,14 @@ def test_session_refresh_handles_load_error_source(tmp_path: Path) -> None:
 	assert isinstance(session.project, LoadErr)
 
 
+def test_session_refresh_clears_stale_version_warning(tmp_path: Path) -> None:
+	(tmp_path / "tasks.py").write_text(_VALID_TASKS)
+	session = Session(serve.resolve_project(tmp_path), tmp_path, Compat())
+	session.version_warning = "WARNING: stale"
+	session.refresh()
+	assert session.version_warning is None
+
+
 async def test_run_via_client_picks_up_new_task_without_check(tmp_path: Path) -> None:
 	tasks_py = tmp_path / "tasks.py"
 	tasks_py.write_text("from camas import Task\na = Task(('python', '-c', 'pass'))\n")
@@ -1585,19 +1602,6 @@ def test_check_call_prepends_version_warning(
 	assert result.isError is False
 	assert _text(result).startswith("camas ")
 	assert "does not satisfy tasks.py pin ==999.0.0" in _text(result)
-
-
-def test_check_call_clears_stale_version_warning(
-	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-	(tmp_path / "tasks.py").write_text(_VALID_TASKS)
-	monkeypatch.setattr("camas.mcp.result.run_typecheck", _fixed_checker(CheckerOk("ty")))
-	session = Session(serve.resolve_project(tmp_path), tmp_path, Compat())
-	session.version_warning = "WARNING: stale"
-	result = serve.check_call(session)
-	assert result.isError is False
-	assert "WARNING: stale" not in _text(result)
-	assert session.version_warning is None
 
 
 async def test_run_call_prepends_version_warning(tmp_path: Path) -> None:
