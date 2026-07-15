@@ -13,6 +13,7 @@ from camas.main.state import LoadOk
 from camas.mcp import wire
 from camas.mcp.result import (
 	agent_envelopes,
+	has_failing_leaf_without_agent_format,
 	to_agent_envelope,
 	to_check_response,
 	to_run_response,
@@ -150,6 +151,160 @@ async def test_agent_envelopes_are_failures_only() -> None:
 	)
 	envelopes = agent_envelopes(node, await run(node, interactive=False))
 	assert tuple(e.name for e in envelopes) == ("bad",)
+
+
+def test_agent_envelope_under_limit_passes_through() -> None:
+	task = Task("lint", name="lint", agent_format=AgentFormat("--out sarif", "sarif", limit=100))
+	env = to_agent_envelope(task, TaskResult("lint", Finished(1, 0.1, (b"short\n",))))
+	assert env.payload == "short"
+	assert env.truncated is False
+	assert env.log is None
+
+
+def test_agent_envelope_over_limit_is_replaced_with_pointer_not_tailed() -> None:
+	task = Task("lint", name="lint", agent_format=AgentFormat("--out sarif", "sarif", limit=10))
+	env = to_agent_envelope(task, TaskResult("lint", Finished(1, 0.1, (b"way too long\n",))))
+	assert "way too long" not in env.payload
+	assert "limit" in env.payload
+	assert env.truncated is True
+
+
+def test_agent_envelope_raw_kind_ignores_limit_and_tails_instead() -> None:
+	task = Task("lint", name="lint")
+	lines = tuple(f"{i}\n".encode() for i in range(60))
+	env = to_agent_envelope(task, TaskResult("lint", Finished(1, 0.1, lines)), tail=5)
+	assert env.output_kind == "raw"
+	assert env.payload == "\n".join(str(i) for i in range(55, 60))
+	assert env.truncated is True
+
+
+def test_agent_envelope_path_mode_reads_report_file_not_stdout(tmp_path: Path) -> None:
+	report_path = tmp_path / "report.xml"
+	report_path.write_text("<xml/>")
+	task = Task("pytest", name="t", agent_format=AgentFormat("--junitxml {report}", "junit"))
+	env = to_agent_envelope(
+		task,
+		TaskResult("t", Finished(1, 0.1, (b"ignored stdout\n",))),
+		report_path=report_path,
+	)
+	assert env.payload == "<xml/>"
+	assert env.log == str(report_path)
+	assert env.truncated is False
+
+
+def test_agent_envelope_path_mode_stopped_falls_back_to_stdout(tmp_path: Path) -> None:
+	"""A tool killed by signal (Stopped) after writing partial/possibly-invalid report content
+	must deliver its captured stderr, not the partial file."""
+	report_path = tmp_path / "report.xml"
+	report_path.write_text("<partial-invalid-xml")
+	task = Task("pytest", name="t", agent_format=AgentFormat("--junitxml {report}", "junit"))
+	env = to_agent_envelope(
+		task,
+		TaskResult("t", Stopped(137, 0.1, (b"Killed by signal 9\n",))),
+		report_path=report_path,
+	)
+	assert env.payload == "Killed by signal 9"
+	assert "<partial-invalid-xml" not in env.payload
+	assert env.log == str(report_path)
+
+
+def test_agent_envelope_path_mode_missing_report_falls_back_to_stdout(tmp_path: Path) -> None:
+	"""A tool that crashed before writing its report must still deliver its stdout diagnostics,
+	not an empty payload."""
+	report_path = tmp_path / "never-written.report"
+	task = Task("pytest", name="t", agent_format=AgentFormat("--junitxml {report}", "junit"))
+	env = to_agent_envelope(
+		task,
+		TaskResult("t", Finished(1, 0.1, (b"ImportError: boom\n",))),
+		report_path=report_path,
+	)
+	assert env.payload == "ImportError: boom"
+	assert env.log == str(report_path)
+	assert env.truncated is False
+
+
+def test_agent_envelope_path_mode_empty_report_falls_back_to_stdout(tmp_path: Path) -> None:
+	report_path = tmp_path / "report.xml"
+	report_path.write_text("")
+	task = Task("pytest", name="t", agent_format=AgentFormat("--junitxml {report}", "junit"))
+	env = to_agent_envelope(
+		task, TaskResult("t", Finished(137, 0.1, (b"Killed\n",))), report_path=report_path
+	)
+	assert env.payload == "Killed"
+	assert env.exit_code == 137
+
+
+def test_agent_envelope_path_mode_raw_over_limit_points_at_report_file(tmp_path: Path) -> None:
+	"""A ``raw`` report file is bounded like any structured payload — path mode is exactly what
+	makes the pointer valid."""
+	report_path = tmp_path / "report.txt"
+	report_path.write_text("way too long for the limit")
+	task = Task("x", name="t", agent_format=AgentFormat("--log {report}", "raw", limit=10))
+	env = to_agent_envelope(task, TaskResult("t", Finished(1, 0.1, ())), report_path=report_path)
+	assert "way too long" not in env.payload
+	assert str(report_path) in env.payload
+	assert env.output_kind == "raw"
+	assert env.truncated is True
+
+
+def test_agent_envelope_stdout_raw_with_limit_still_tails_not_pointers() -> None:
+	task = Task("x", name="t", agent_format=AgentFormat("--verbose", "raw", limit=5))
+	lines = tuple(f"{i}\n".encode() for i in range(60))
+	env = to_agent_envelope(task, TaskResult("t", Finished(1, 0.1, lines)), tail=5)
+	assert env.payload == "\n".join(str(i) for i in range(55, 60))
+	assert "limit" not in env.payload
+	assert env.truncated is True
+
+
+def test_agent_envelope_path_mode_over_limit_points_at_report_file(tmp_path: Path) -> None:
+	report_path = tmp_path / "report.xml"
+	report_path.write_text("way too long for the limit")
+	task = Task(
+		"pytest",
+		name="t",
+		agent_format=AgentFormat("--junitxml {report}", "junit", limit=10),
+	)
+	env = to_agent_envelope(task, TaskResult("t", Finished(1, 0.1, ())), report_path=report_path)
+	assert str(report_path) in env.payload
+	assert env.log == str(report_path)
+	assert env.truncated is True
+
+
+def test_has_failing_leaf_without_agent_format_true_when_missing() -> None:
+	node = Task(("python", "-c", "raise SystemExit(1)"), name="bad")
+	result = RunResult(
+		returncode=1,
+		results=(TaskResult("bad", Finished(1, 0.1, ())),),
+		elapsed=0.1,
+		interrupt_count=0,
+	)
+	assert has_failing_leaf_without_agent_format(node, result) is True
+
+
+def test_has_failing_leaf_without_agent_format_false_when_present() -> None:
+	node = Task(
+		("python", "-c", "raise SystemExit(1)"),
+		name="bad",
+		agent_format=AgentFormat("--out sarif", "sarif"),
+	)
+	result = RunResult(
+		returncode=1,
+		results=(TaskResult("bad", Finished(1, 0.1, ())),),
+		elapsed=0.1,
+		interrupt_count=0,
+	)
+	assert has_failing_leaf_without_agent_format(node, result) is False
+
+
+def test_has_failing_leaf_without_agent_format_false_when_all_pass() -> None:
+	node = Task(("python", "-c", "pass"), name="ok")
+	result = RunResult(
+		returncode=0,
+		results=(TaskResult("ok", Finished(0, 0.1, ())),),
+		elapsed=0.1,
+		interrupt_count=0,
+	)
+	assert has_failing_leaf_without_agent_format(node, result) is False
 
 
 _PYPROJECT = Path("/proj/pyproject.toml")

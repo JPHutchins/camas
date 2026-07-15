@@ -12,7 +12,7 @@ import pytest
 from mcp import types
 from mcp.shared.memory import create_connected_server_and_client_session
 
-from camas import Config, Parallel, Sequential, Task
+from camas import AgentFormat, Config, Parallel, Sequential, Task
 from camas.core import timings
 from camas.core.completion import RunResult, TaskResult
 from camas.main.check import CheckerErr, CheckerNotFound, CheckerOk
@@ -286,6 +286,20 @@ async def test_run_call_failure_is_not_a_tool_error(tmp_path: Path) -> None:
 	log = tmp_path / ".camas" / "runs" / "bad" / "1" / "000_bad.log"
 	assert log.is_file()
 	assert "boom" in log.read_text()
+
+
+async def test_run_call_nudges_when_failing_leaf_has_no_agent_format(tmp_path: Path) -> None:
+	session = _session({"bad": FAIL}, None, tmp_path)
+	result = await serve.run_call(session, {"task": "bad"})
+	text = _text(result)
+	assert "Tip:" in text
+	assert "agent_format" in text
+
+
+async def test_run_call_omits_nudge_when_passing(tmp_path: Path) -> None:
+	session = _session({"lint": PASS}, None, tmp_path)
+	result = await serve.run_call(session, {"task": "lint"})
+	assert "Tip:" not in _text(result)
 
 
 async def test_run_call_skipped_reports_blocker(tmp_path: Path) -> None:
@@ -1370,6 +1384,59 @@ async def test_gate_call_block_when_check_fails(tmp_path: Path) -> None:
 	assert not result.isError
 	assert "BLOCK" in text
 	assert "bad" in text
+
+
+async def test_gate_call_nudges_when_failing_leaf_has_no_agent_format(tmp_path: Path) -> None:
+	node = Parallel(GATE_FIX, FAIL)
+	session = _session({"all": node}, Config(default_task=node), tmp_path)
+	result = await serve.call(session, "camas_gate", {"task": "all"})
+	text = _text(result)
+	assert "Tip:" in text
+	assert "agent_format" in text
+
+
+async def test_gate_call_omits_nudge_when_failing_leaf_has_agent_format(tmp_path: Path) -> None:
+	tagged_fail = Task(
+		("python", "-c", "import sys; sys.exit(3)"),
+		name="bad",
+		agent_format=AgentFormat("--quiet", "sarif"),
+	)
+	node = Parallel(GATE_FIX, tagged_fail)
+	session = _session({"all": node}, Config(default_task=node), tmp_path)
+	result = await serve.call(session, "camas_gate", {"task": "all"})
+	text = _text(result)
+	assert "BLOCK" in text
+	assert "Tip:" not in text
+
+
+async def test_gate_call_path_mode_reads_report_file(tmp_path: Path) -> None:
+	writer = Task(
+		(
+			"python",
+			"-c",
+			"import sys; sys.stderr.write('boom'); open(sys.argv[1], 'w').write('<xml/>'); sys.exit(1)",
+		),
+		name="writer",
+		agent_format=AgentFormat("{report}", "junit"),
+	)
+	session = _session({"all": Parallel(writer)}, Config(default_task=Parallel(writer)), tmp_path)
+	result = await serve.call(session, "camas_gate", {"task": "all"})
+	text = _text(result)
+	assert "<xml/>" in text
+	assert "boom" not in text
+
+
+async def test_gate_call_over_limit_structured_payload_points_to_file(tmp_path: Path) -> None:
+	writer = Task(
+		("python", "-c", "import sys; open(sys.argv[1], 'w').write('x' * 1000); sys.exit(1)"),
+		name="writer",
+		agent_format=AgentFormat("{report}", "junit", limit=10),
+	)
+	session = _session({"all": Parallel(writer)}, Config(default_task=Parallel(writer)), tmp_path)
+	result = await serve.call(session, "camas_gate", {"task": "all"})
+	text = _text(result)
+	assert "x" * 1000 not in text
+	assert "limit" in text
 
 
 async def test_gate_call_with_budget_reports_partition(tmp_path: Path) -> None:

@@ -86,12 +86,25 @@ class AgentFormat(NamedTuple):
 	supplies — camas never infers it) appended to the command, and the ``kind`` of diagnostics
 	it makes the tool emit. Applied only when an agent runs; a human run leaves the command as-is.
 
+	``args`` containing the literal ``{report}`` switches the leaf to path mode: the gate
+	substitutes it with an allocated file path and, after the leaf runs, reads that file for the
+	payload instead of stdout — for a tool (``pytest --junitxml``, ``pytest-json-report``) that
+	writes its diagnostics to a file rather than printing them.
+
+	``limit`` bounds a structured (non-``raw``) payload — and any path-mode report file,
+	``raw`` included — in characters. A payload over ``limit`` is neither dumped nor tailed —
+	a truncated structured document is invalid — but replaced with a pointer to the full
+	file/log instead; stdout ``raw`` is exempt, since the gate line-tails it.
+
 	>>> AgentFormat("--output-format sarif", "sarif")
-	AgentFormat(args='--output-format sarif', kind='sarif')
+	AgentFormat(args='--output-format sarif', kind='sarif', limit=8000)
+	>>> AgentFormat("--junitxml {report}", "junit").args
+	'--junitxml {report}'
 	"""
 
 	args: str
 	kind: OutputKind
+	limit: int = 8_000
 
 
 _EMPTY_ENV: Mapping[str, str] = MappingProxyType({})
@@ -157,9 +170,9 @@ class Task:
 	>>> Task("cargo build", when=(Path("src"), "include")).when
 	('src', 'include')
 	>>> Task("ruff check .", agent_format=AgentFormat("--output-format sarif", "sarif"))
-	Task(cmd='ruff check .', name=None, env={}, cwd=None, agent_format=AgentFormat(args='--output-format sarif', kind='sarif'))
+	Task(cmd='ruff check .', name=None, env={}, cwd=None, agent_format=AgentFormat(args='--output-format sarif', kind='sarif', limit=8000))
 	>>> Task("ruff check .", agent_format=("--output-format sarif", "sarif")).agent_format
-	AgentFormat(args='--output-format sarif', kind='sarif')
+	AgentFormat(args='--output-format sarif', kind='sarif', limit=8000)
 	>>> hash(Task("a")) == hash(Task("a"))
 	True
 	>>> {Task("a", env={"K": "v"}), Task("a", env={"K": "v"})} == {Task("a", env={"K": "v"})}

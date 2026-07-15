@@ -50,6 +50,7 @@ from . import wire
 from .catalog import to_list_response
 from .docs import to_docs_response
 from .result import (
+	has_failing_leaf_without_agent_format,
 	to_check_response,
 	to_gate_response,
 	to_plan_response,
@@ -638,8 +639,12 @@ async def run_for(
 	logs = write_logs(create_run_log_dir(session.camas_dir, name, session.reserve_run()), result)
 	timings.record_run(session.camas_dir, result)
 	resp = attach_logs(to_run_response(node, result, verbosity=req.verbosity), logs)
+	nudge = improve_loop_nudge(
+		any_truncated=resp.truncated,
+		any_failing_without_agent_format=has_failing_leaf_without_agent_format(node, result),
+	)
 	return success(
-		with_warning(session, run_text(name, resp, logs)),
+		with_warning(session, run_text(name, resp, logs) + nudge),
 		resp,
 		session.compat,
 		links=failing_log_links(resp, logs),
@@ -717,8 +722,12 @@ async def run_budget(
 	resp = attach_budget(
 		attach_logs(to_run_response(plan.node, result, verbosity=req.verbosity), logs), report
 	)
+	nudge = improve_loop_nudge(
+		any_truncated=resp.truncated,
+		any_failing_without_agent_format=has_failing_leaf_without_agent_format(plan.node, result),
+	)
 	return success(
-		with_warning(session, f"{budget_headline(report)}\n\n{run_text(label, resp, logs)}"),
+		with_warning(session, f"{budget_headline(report)}\n\n{run_text(label, resp, logs)}{nudge}"),
 		resp,
 		session.compat,
 		links=failing_log_links(resp, logs),
@@ -951,6 +960,37 @@ def run_text(task: str, resp: wire.RunResponse, logs: tuple[Path | None, ...]) -
 	for leaf, log in zip(resp.leaves, logs, strict=True):
 		lines.extend(leaf_lines(leaf, log))
 	return "\n".join(lines)
+
+
+def improve_loop_nudge(*, any_truncated: bool, any_failing_without_agent_format: bool) -> str:
+	"""The discoverability hint appended to a ``camas_run``/``camas_gate`` summary: truncated
+	output or a failing leaf with no ``agent_format`` is a ``tasks.py`` authoring gap, not a bug
+	to work around — nudge the agent to close it itself. Empty (append as a no-op) when neither
+	condition holds.
+	"""
+	if not (any_truncated or any_failing_without_agent_format):
+		return ""
+	gaps = (
+		*(
+			(
+				"output was truncated (raw past its tail, or a structured payload past "
+				"agent_format's limit=) — see the file/log referenced above for the rest",
+			)
+			if any_truncated
+			else ()
+		),
+		*(
+			("a failing leaf has no agent_format, so its output is unstructured raw text",)
+			if any_failing_without_agent_format
+			else ()
+		),
+	)
+	return (
+		"\n\nTip: " + "; and ".join(gaps) + ". This is a tasks.py gap, not a bug — add/adjust "
+		"that leaf's agent_format=(args, kind) (limit= for a verbose format, or a {report} "
+		"placeholder in args for a tool that writes its report to a file) so failures carry "
+		"full, structured diagnostics next time; see camas_docs, then validate with camas_check."
+	)
 
 
 def dry_run_text(node: TaskNode) -> str:
@@ -1207,7 +1247,15 @@ async def gate_for(
 	budget = to_budget_report(outcome.budget) if outcome.budget is not None else None
 	rerun = wire.GateRerun(task=req.task, paths=changed, under=req.under)
 	resp = to_gate_response(outcome, budget, rerun)
-	return success(with_warning(session, gate_text(resp)), resp, session.compat)
+	nudge = improve_loop_nudge(
+		any_truncated=any(env.truncated for env in resp.diagnostics or ()),
+		any_failing_without_agent_format=(
+			outcome.node is not None
+			and outcome.result is not None
+			and has_failing_leaf_without_agent_format(outcome.node, outcome.result)
+		),
+	)
+	return success(with_warning(session, gate_text(resp) + nudge), resp, session.compat)
 
 
 async def fix_call(session: Session, arguments: dict[str, Any]) -> types.CallToolResult:
