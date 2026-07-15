@@ -299,10 +299,27 @@ _TIDY = (
 )
 
 
+_TIDY_FAILING = (
+	"from camas import Claude, Config, Task\n"
+	'tidy = Task(("python", "-c", "import pathlib, sys; pathlib.Path(\'fixed.txt\').write_text(\'done\'); sys.exit(2)", "{{paths}}"),'
+	' name="tidy", mutates=True, paths={scope!r})\n'
+	"_ = Config(agent=Claude(fix=tidy))\n"
+)
+
+
 def test_fix_cli_resolves_registered_fix_by_reference(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
 	(tmp_path / "tasks.py").write_text(_TIDY.format(scope="."))
+	monkeypatch.chdir(tmp_path)
+	assert fix_cli(["--paths", "x.py"]) == 0
+	assert (tmp_path / "fixed.txt").read_text() == "done"
+
+
+def test_fix_cli_always_exits_zero_even_when_the_fix_node_fails(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	(tmp_path / "tasks.py").write_text(_TIDY_FAILING.format(scope="."))
 	monkeypatch.chdir(tmp_path)
 	assert fix_cli(["--paths", "x.py"]) == 0
 	assert (tmp_path / "fixed.txt").read_text() == "done"

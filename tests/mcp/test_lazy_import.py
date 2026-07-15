@@ -156,6 +156,35 @@ def test_entrypoint_mcp_gate_branch_missing_extra_exits_with_feature_hint(
 	assert "camas mcp gate: requires feature camas[mcp]" in capsys.readouterr().err
 
 
+def test_entrypoint_mcp_gate_nudge_missing_extra_exits_zero(
+	monkeypatch: pytest.MonkeyPatch,
+) -> None:
+	"""The async Stop-hook nudge in a project without the mcp extra must never rewake the agent
+	over a configuration state — exit 0, unlike the plain gate's actionable exit 2."""
+	from camas.main import main
+
+	original_import = __import__
+
+	def fake_import(
+		name: str,
+		globals: Mapping[str, object] | None = None,
+		locals: Mapping[str, object] | None = None,
+		fromlist: Sequence[str] = (),
+		level: int = 0,
+	) -> object:
+		if name == "mcp":
+			raise ModuleNotFoundError("No module named 'mcp'", name="mcp")
+		return original_import(name, globals, locals, fromlist, level)
+
+	for module in ("camas.mcp.serve", "mcp"):
+		monkeypatch.delitem(sys.modules, module, raising=False)
+	monkeypatch.setattr("sys.argv", ["camas", "mcp", "gate", "--under", "5s", "--nudge"])
+	with patch("builtins.__import__", fake_import), pytest.raises(SystemExit) as exc:
+		main()
+
+	assert exc.value.code == 0
+
+
 def test_entrypoint_mcp_gate_branch_diagnoses_non_mcp_missing_import(
 	monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

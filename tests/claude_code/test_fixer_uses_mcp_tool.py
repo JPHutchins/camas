@@ -1,19 +1,20 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""Drive the ``camas-fixer`` subagent end to end against a failing scope, prove it reaches green
-via the MCP gate tool (criterion #3).
+"""Drive the ``camas-lint-fixer-haiku`` subagent end to end against a failing scope, prove it
+reaches green via the MCP gate tool (criterion #3).
 
-The ``camas-fixer`` agent definition ships with ``tools: Read, Edit, mcp__camas__camas_gate,
-mcp__camas__camas_fix`` and ``model: haiku`` — it has no Bash, so it physically cannot shell
-out to the CLI; using the MCP tool is structurally enforced (not measured by introspection —
-``camas_gate``/``camas_fix`` write no server-side run-log, only ``camas_run`` does).
+The ``camas-lint-fixer-haiku`` agent definition ships with ``tools: Read, Edit,
+mcp__camas__camas_gate, mcp__camas__camas_fix`` and ``model: haiku`` — it has no Bash, so it
+physically cannot shell out to the CLI; using the MCP tool is structurally enforced (not
+measured by introspection — ``camas_gate``/``camas_fix`` write no server-side run-log, only
+``camas_run`` does).
 
 Happy path: set up a tasks.py whose check node fails when a file contains ``FORBIDDEN_TOKEN``
 and whose fix node mechanically replaces it with ``ALLOWED_TOKEN``. After ``init --claude``,
 run headless (``--permission-mode bypassPermissions --strict-mcp-config``), instruct the main
-agent to write the forbidden token and spawn camas-fixer on the scope. Assert the marker is
-fixed on disk — proving the MCP-gated fixer loop works end to end.
+agent to write the forbidden token and spawn camas-lint-fixer-haiku on the scope. Assert the
+marker is fixed on disk — proving the MCP-gated fixer loop works end to end.
 
 No broken variant: a sabotaged fixer (``tools:`` dropping ``mcp__camas__camas_gate``) does NOT
 fail to reach green, because both the main agent and the fixer still have ``Edit`` and fix the
@@ -76,8 +77,8 @@ _TASKS = (
 _DELEGATE_PROMPT = (
 	"Create a file named sentinel.txt containing exactly the word FORBIDDEN_TOKEN. "
 	"Use the Write tool and nothing else. "
-	"Then spawn the camas-fixer subagent with its scope set to paths=['sentinel.txt'] "
-	"and wait for it to finish. "
+	"Then spawn the camas-lint-fixer-haiku subagent with its scope set to "
+	"paths=['sentinel.txt'] and wait for it to finish. "
 	"Do NOT edit sentinel.txt yourself — let the subagent do its work."
 )
 
@@ -140,5 +141,6 @@ def test_fixer_subagent_drives_scope_to_green_via_mcp_gate(
 
 	sentinel = tmp_path / "sentinel.txt"
 	assert _marker_is_fixed(sentinel), (
-		f"camas-fixer did not reach green: {sentinel.read_text() if sentinel.exists() else 'no file'}"
+		"camas-lint-fixer-haiku did not reach green: "
+		f"{sentinel.read_text() if sentinel.exists() else 'no file'}"
 	)

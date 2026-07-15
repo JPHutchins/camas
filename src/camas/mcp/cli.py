@@ -19,14 +19,19 @@ Usage:
   camas mcp [--plain]        run the MCP stdio server (rich output by default)
   camas mcp init [--claude]  write this project's .mcp.json entry for the camas server;
     [--launcher uv|uvx|camas]  with --claude also configure Claude Code: .mcp.json +
-                              PostToolBatch autofix hook + camas-fixer subagent + gate skill;
-                              --launcher forces the launch strategy instead of auto-detecting
+                              PostToolBatch/Stop autofix hooks + async Stop nudge hook +
+                              the tiered camas-fixer agents + gate skill; --launcher forces
+                              the launch strategy instead of auto-detecting
   camas mcp fix [--paths P]… run the registered agent fix node (Config.agent.fix) over the
-                              changed paths (--paths, else a piped PostToolBatch event) — the
-                              autofix hook; no-op if unregistered
+                              changed paths (--paths, else a piped PostToolBatch/Stop event) —
+                              the autofix hook; no-op if unregistered
   camas mcp gate [task]     run the gate once, headless — print the verdict as JSON, exit
-    [--paths P]… [--under N]  0 (continue) / 2 (block); scope to --paths or a piped
-                              PostToolBatch event (the camas-fixer subagent + benchmark)
+    [--paths P]… [--under D]  0 (continue) / 2 (block); scope to --paths or a piped
+    [--jobs N] [--nudge]      PostToolBatch/Stop event (the camas-fixer agents + benchmark);
+                              --under takes a duration (5, 1.5s, 500ms, 2m, 1h); --nudge emits
+                              the async Stop-hook nudge text instead of the JSON verdict — at
+                              most once per prompt, and exit 0 (no rewake) when no check node
+                              or camas[mcp] is missing
 
 Options:
   --rich        accepted for back-compat; rich output is the default
@@ -132,6 +137,8 @@ def main(argv: list[str]) -> None:
 		try:
 			from .serve import gate_cli
 		except ImportError as e:
+			if "--nudge" in argv:
+				sys.exit(0)
 			report_import_failure(e, feature_hint="camas mcp gate: requires feature camas[mcp]")
 		sys.exit(gate_cli(argv[1:]))
 	unexpected = [arg for arg in argv if arg not in ("--rich", "--plain")]

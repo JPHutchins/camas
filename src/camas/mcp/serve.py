@@ -7,13 +7,15 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import os
 import re
 import shlex
 import shutil
 import sys
+import tempfile
 import textwrap
-from contextlib import redirect_stdout
+from contextlib import redirect_stdout, suppress
 from dataclasses import dataclass, field
 from enum import Enum
 from importlib.metadata import PackageNotFoundError, version
@@ -29,7 +31,7 @@ from ..core import timings
 from ..core.budget import plan_under
 from ..core.execution import run
 from ..core.gate import run_gate
-from ..core.hook_event import changed_from_stdin
+from ..core.hook_event import NO_EVENT, HookEvent, event_from_stdin
 from ..core.matrix import expand_matrix, override_matrix
 from ..core.render import render_tree_lines, strip_ansi
 from ..core.scope import scope_to_changed, to_changed, with_default_paths
@@ -38,6 +40,7 @@ from ..main.argv import apply_passthrough
 from ..main.compose import load_py_tasks_state
 from ..main.format import format_load_error_hint, format_version_skew_hint
 from ..main.init import create_starter_tasks_py, starter_text
+from ..main.parser import parse_duration
 from ..main.pep723 import camas_requirement_from, version_specifier
 from ..main.state import EMPTY_STATE, LoadErr, LoadOk, TasksState
 from ..main.tasks import load_tasks
@@ -1299,6 +1302,65 @@ def gate_text(resp: wire.GateResponse) -> str:
 	return "\n".join(lines)
 
 
+def nudge_text(resp: wire.GateResponse) -> str:
+	"""The Stop-hook async-nudge message for a ``camas mcp gate --nudge`` block verdict — the
+	residual diagnostics, then an instruction to launch the fixer ladder rather than reasoning
+	about it directly. ``asyncRewake`` shows this on Claude's stderr as a system reminder.
+	"""
+	lines: list[str] = ["camas: a residual needs reasoning — the workspace is not green."]
+	if resp.diagnostics:
+		lines.extend(["", "Residual (failing checks):"])
+		for env in resp.diagnostics:
+			lines.append(f"  {env.name} (exit {env.exit_code}, {env.output_kind})")
+			lines.extend(f"    {line}" for line in env.payload.splitlines())
+			if env.truncated:
+				lines.append("    … earlier output truncated")
+	lines.extend(
+		[
+			"",
+			"Launch the camas fixer ladder in the background rather than reasoning about this "
+			"yourself — see the gate skill: camas-lint-fixer-haiku for a lint/format residual "
+			"(escalate to camas-lint-fixer-sonnet on a hand-back), camas-test-fixer for a "
+			"test/coverage residual.",
+		]
+	)
+	return "\n".join(lines)
+
+
+NUDGE_MARKER_PREFIX: Final = "camas-nudge-"
+"""Prefix on the per-session once-per-prompt nudge markers in the machine temp dir."""
+
+
+def _nudge_marker(session_id: str) -> Path:
+	"""The session's nudge-marker file; its content is the last prompt_id that was nudged."""
+	digest = hashlib.sha256(session_id.encode("utf-8")).hexdigest()[:16]
+	return Path(tempfile.gettempdir()) / f"{NUDGE_MARKER_PREFIX}{digest}"
+
+
+def should_nudge(event: HookEvent) -> bool:
+	"""Whether the async Stop-hook nudge may wake the agent for this ``Stop`` event: never while
+	Claude Code is already continuing from a stop hook (``stop_hook_active``), and at most once
+	per prompt — so a residual that stays red wakes the agent exactly once, not in a rewake loop.
+	An event without session/prompt ids (a manual run) is not throttled.
+	"""
+	if event.stop_hook_active:
+		return False
+	if not event.session_id or not event.prompt_id:
+		return True
+	try:
+		return _nudge_marker(event.session_id).read_text(encoding="utf-8") != event.prompt_id
+	except (OSError, ValueError):
+		return True
+
+
+def record_nudge(event: HookEvent) -> None:
+	"""Persist that this event's prompt was nudged, for :func:`should_nudge`."""
+	if not event.session_id or not event.prompt_id:
+		return
+	with suppress(OSError):
+		_nudge_marker(event.session_id).write_text(event.prompt_id, encoding="utf-8")
+
+
 def rerun_command(rerun: wire.GateRerun) -> str:
 	"""The ``camas mcp gate`` invocation that reproduces a verdict — the handle a higher tier
 	or the main agent re-issues against the same scope.
@@ -1317,10 +1379,16 @@ class GateArgs(NamedTuple):
 	under: float | None
 	jobs: int | None
 	dry_run: bool = False
+	nudge: bool = False
+	"""Emit the Stop-hook async-nudge output instead of the JSON verdict: the fixer-ladder nudge
+	message on stderr and exit 2 (for ``asyncRewake`` to wake the main agent) only when the
+	checks ran and are not green, at most once per prompt (:func:`should_nudge`); silent exit 0
+	on green and on every configuration state (no check node, load error) — a nudge that cannot
+	go green must never rewake the agent in a loop."""
 
 
 def parse_gate_args(argv: list[str]) -> GateArgs:
-	"""Parse ``camas mcp gate [task] [--paths P]… [--under N] [--jobs N]``."""
+	"""Parse ``camas mcp gate [task] [--paths P]… [--under D] [--jobs N] [--nudge]``."""
 	parser = argparse.ArgumentParser(
 		prog="camas mcp gate", description="Run the gate once, headless."
 	)
@@ -1335,7 +1403,7 @@ def parse_gate_args(argv: list[str]) -> GateArgs:
 		help="changed paths to scope to (repeatable, comma-separated)",
 	)
 	parser.add_argument(
-		"--under", type=float, default=None, metavar="SECONDS", help="wall-clock budget"
+		"--under", type=parse_duration, default=None, metavar="DURATION", help="wall-clock budget"
 	)
 	parser.add_argument("--jobs", type=int, default=None, metavar="N", help="max concurrent leaves")
 	parser.add_argument(
@@ -1344,9 +1412,21 @@ def parse_gate_args(argv: list[str]) -> GateArgs:
 		default=False,
 		help="print the resolved path-scoped leaf plan without executing",
 	)
+	parser.add_argument(
+		"--nudge",
+		action="store_true",
+		default=False,
+		help="emit the Stop-hook async-nudge text on stderr and exit 2 when not green, else "
+		"silent exit 0 — for the async Stop hook, not interactive use",
+	)
 	ns = parser.parse_args(argv)
 	return GateArgs(
-		task=ns.task, paths=tuple(ns.paths), under=ns.under, jobs=ns.jobs, dry_run=ns.dry_run
+		task=ns.task,
+		paths=tuple(ns.paths),
+		under=ns.under,
+		jobs=ns.jobs,
+		dry_run=ns.dry_run,
+		nudge=ns.nudge,
 	)
 
 
@@ -1367,10 +1447,12 @@ def gate_cli_load_error(state: TasksState, source: Path, exception: Exception) -
 
 def gate_cli(argv: list[str]) -> int:
 	"""Run the gate once, headless: scope this project's checks to the changed paths (``--paths``,
-	else the files in a ``PostToolBatch`` event on stdin), print the ``GateResponse`` as JSON to
-	stdout, and exit ``0`` (continue) / ``2`` (block) — on a block the agent-facing summary goes
-	to stderr. The process-isolated, machine-readable gate entry that the camas-fixer subagent
-	(via Bash) and the benchmark drive.
+	else the files in a ``PostToolBatch``/``Stop`` event on stdin), print the ``GateResponse`` as
+	JSON to stdout, and exit ``0`` (continue) / ``2`` (block) — on a block the agent-facing
+	summary goes to stderr. With ``--nudge``, prints the Stop-hook nudge text instead of the JSON
+	verdict, self-limiting per :class:`GateArgs`. The process-isolated, machine-readable gate
+	entry that CI, the async Stop hook, and the benchmark drive — the camas-fixer subagents call
+	the ``camas_gate`` MCP tool instead.
 	"""
 	args = parse_gate_args(argv)
 	base = project_base()
@@ -1378,7 +1460,7 @@ def gate_cli(argv: list[str]) -> int:
 	match state:
 		case LoadErr(source=source, exception=exception):
 			print(gate_cli_load_error(state, source, exception), file=sys.stderr)
-			return 2
+			return 0 if args.nudge else 2
 		case LoadOk(tasks=tasks, config=config, source=source):
 			return run_gate_cli(args, base_from(source, base), tasks, config)
 		case _:
@@ -1393,8 +1475,9 @@ def run_gate_cli(
 		node = gate_source(tasks, config, args.task)
 	except ValueError as e:
 		print(f"camas mcp gate: {e}", file=sys.stderr)
-		return 2
-	changed = to_changed(args.paths or changed_from_stdin(), base)
+		return 0 if args.nudge else 2
+	event = event_from_stdin() if not args.paths else NO_EVENT
+	changed = to_changed(args.paths or (event.changed or ()), base)
 	camas_dir = (config if config is not None else Config()).camas_path(base)
 	if args.dry_run:
 		expanded = expand_matrix(node)
@@ -1426,6 +1509,12 @@ def run_gate_cli(
 	budget = to_budget_report(outcome.budget) if outcome.budget is not None else None
 	rerun = wire.GateRerun(task=args.task, paths=changed, under=args.under)
 	resp = to_gate_response(outcome, budget, rerun)
+	if args.nudge:
+		if resp.decision != "block" or not should_nudge(event):
+			return 0
+		record_nudge(event)
+		print(nudge_text(resp), file=sys.stderr)
+		return 2
 	print(resp.model_dump_json(indent=2))
 	if resp.decision == "block":
 		print(gate_text(resp), file=sys.stderr)
