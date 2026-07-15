@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -73,6 +74,20 @@ def test_per_task_help_lists_axes() -> None:
 	assert r.returncode == 0, r.stderr
 	assert "--PY VAL[,VAL...]" in r.stdout, r.stdout
 	assert "Matrix axes" in r.stdout, r.stdout
+
+
+def test_github_matrix_emits_python_axis_as_json() -> None:
+	versions = _python_versions()
+	assert versions, "fixture .python-version is empty"
+	r = _camas("check", "--github-matrix")
+	assert r.returncode == 0, r.stderr
+	assert json.loads(r.stdout) == {"PY": list(versions)}
+
+
+def test_github_matrix_reflects_axis_override() -> None:
+	r = _camas("check", "--github-matrix", "--PY", "3.13,3.14")
+	assert r.returncode == 0, r.stderr
+	assert json.loads(r.stdout) == {"PY": ["3.13", "3.14"]}
 
 
 def test_check_dry_run_expands_one_clone_per_python_version() -> None:

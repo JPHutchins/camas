@@ -90,6 +90,7 @@ dev = [
     { name = "camas", extra = ["all"] },
     { name = "cyclopts" },
     { name = "exceptiongroup" },
+    { name = "jsonschema", marker = "python_full_version < '3.15'" },
     { name = "mypy" },
     { name = "pyrefly" },
     { name = "pyright" },
@@ -99,6 +100,7 @@ dev = [
     { name = "ruff" },
     { name = "taskgroup" },
     { name = "tomli" },
+    { name = "types-jsonschema", marker = "python_full_version < '3.15'" },
     { name = "types-setuptools" },
     { name = "typing-extensions" },
     { name = "zuban" },
@@ -127,6 +129,7 @@ dev = [
     { name = "camas", extras = ["all"] },
     { name = "cyclopts", specifier = ">=4,<5" },
     { name = "exceptiongroup", specifier = ">=1.2" },
+    { name = "jsonschema", marker = "python_full_version < '3.15'", specifier = ">=4,<5" },
     { name = "mypy", specifier = ">=1.19,<2" },
     { name = "pyrefly", specifier = ">=0.61,<1" },
     { name = "pyright", specifier = ">=1.1.408,<2" },
@@ -136,6 +139,7 @@ dev = [
     { name = "ruff", specifier = ">=0.12,<1" },
     { name = "taskgroup", specifier = ">=0.2" },
     { name = "tomli", specifier = ">=2" },
+    { name = "types-jsonschema", marker = "python_full_version < '3.15'" },
     { name = "types-setuptools" },
     { name = "typing-extensions", specifier = ">=4.12" },
     { name = "zuban", specifier = ">=0.7,<1" },
@@ -1604,6 +1608,18 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/df/92/be9abf4d3e589ad5023e2ea965b93e204ec856420d46adf73c5c36c04678/ty-0.0.32-py3-none-win32.whl", hash = "sha256:2ff2ebb4986b24aebcf1444db7db5ca41b36086040e95eea9f8fb851c11e805c", size = 10260689, upload-time = "2026-04-20T19:28:56.541Z" },
     { url = "https://files.pythonhosted.org/packages/14/61/dc86acea899349d2579cb8419aecedd83dc504d7d6a10df65eef546c8300/ty-0.0.32-py3-none-win_amd64.whl", hash = "sha256:ba7284a4a954b598c1b31500352b3ec1f89bff533825592b5958848226fdc7ee", size = 11255371, upload-time = "2026-04-20T19:28:39.917Z" },
     { url = "https://files.pythonhosted.org/packages/43/01/beffec56d71ca25b343ede63adb076456b5b3e211f1c066452a44cd120b3/ty-0.0.32-py3-none-win_arm64.whl", hash = "sha256:7e10aadbdbda989a7d567ee6a37f8b98d4d542e31e3b190a2879fd581f75d658", size = 10658087, upload-time = "2026-04-20T19:28:59.286Z" },
+]
+
+[[package]]
+name = "types-jsonschema"
+version = "4.26.0.20260518"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "referencing", marker = "python_full_version < '3.15'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/dd/46/73b6a5d61a61015c4248030a8cb07e5bdddb4041430fae9e585a68692578/types_jsonschema-4.26.0.20260518.tar.gz", hash = "sha256:e1dd53dc97a64f5eccdd6fa9839666e09bb500a8ebba2db6fdaf1789faea81a6", size = 16638, upload-time = "2026-05-18T06:06:44.106Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/07/d5/134f8a147dcecda10db7f60cfc6af0578a25a5c53c87b3907a64385e0184/types_jsonschema-4.26.0.20260518-py3-none-any.whl", hash = "sha256:30b30a518c7fe335df85c919fcbcc631b69c03d4a4b5b632fa916bea03065307", size = 16072, upload-time = "2026-05-18T06:06:43.264Z" },
 ]
 
 [[package]]

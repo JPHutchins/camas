@@ -145,6 +145,10 @@ The downside is that fork PRs get a read-only `GITHUB_TOKEN` from GitHub and can
 
 **When not to bother.** OSS gets free runners — just GHA-matrix them in parallel for faster wall-clock time. The cost is small: you give up either SSOT (matrix definition moves into YAML) or per-leaf-UI granularity (one PR check entry per runner instead of per leaf) — pick one. What *is* a deal-breaker for OSS is fork PRs: external-contributor PRs return 403 from the Checks API, so per-leaf entries silently don't appear. The `github-checks-demo` job is marked `continue-on-error` so it doesn't block CI when that happens, but `GitHubChecks` isn't a workable OSS solution.
 
+### GitHub Actions matrix (`--github-matrix`)
+
+Fan out across N runners *without* giving up SSOT. `camas <task> --github-matrix` emits the task's axes as the object-of-arrays GHA's `strategy.matrix` consumes, so a `discover` job can source the fan-out from `tasks.py` and downstream jobs read it with `fromJSON` — the matrix lives in one place. Values come from the task's real run-set, so the object expands to exactly the leaves camas runs; a run-set with no clean cross-product (heterogeneous nested matrices, or independent fan-outs in one tree) is rejected rather than silently widened. YAML-side axes like `os` — which a shell command can't change from inside a job anyway — stay in the workflow and compose with `${{ fromJSON(...).PY }}`. This repo dogfoods it: see the [`discover` and `check` jobs](https://github.com/JPHutchins/camas/blob/main/.github/workflows/ci.yaml) fanning out over `.python-version`.
+
 ### Machine-readable report (`Ctrf`)
 
 For a CI artifact or input to an AI code review, add the `Ctrf` effect (opt-in extra: `camas[ctrf]`). It writes the run as a [CTRF](https://ctrf.io) JSON report — each leaf a test with status, duration, output, command, and exit code. `path=` writes a file; the default is stdout.
@@ -462,7 +466,7 @@ $ camas build --help
 <summary>output</summary>
 
 ```
-usage: camas build [-h] [--dry-run] [--effects EFFECTS] [--FLAG VAL[,VAL...]]
+usage: camas build [-h] [--dry-run | --github-matrix] [--effects EFFECTS] [--FLAG VAL[,VAL...]]
 
 Debug and release builds (FLAG='-- --debug' debug, FLAG='' release)
 

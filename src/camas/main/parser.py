@@ -256,10 +256,17 @@ def build_parser(state: TasksState = EMPTY_STATE) -> argparse.ArgumentParser:
 		action="version",
 		version=f"camas {importlib.metadata.version('camas')}",
 	)
-	parser.add_argument(
+	preview = parser.add_mutually_exclusive_group()
+	preview.add_argument(
 		"--dry-run",
 		action="store_true",
 		help="print the task tree without executing",
+	)
+	preview.add_argument(
+		"--github-matrix",
+		action="store_true",
+		help="emit the task's matrix as GitHub Actions strategy.matrix JSON and exit "
+		"(consume via fromJSON; ignores --paths/--under/--jobs/--effects)",
 	)
 	parser.add_argument(
 		"--list",
@@ -341,6 +348,7 @@ RESERVED_FLAGS: Final = frozenset(
 		"help",
 		"version",
 		"dry-run",
+		"github-matrix",
 		"list",
 		"tree",
 		"check",
@@ -353,6 +361,24 @@ RESERVED_FLAGS: Final = frozenset(
 		"paths",
 	}
 )
+
+
+RESERVED_DESTS: Final = frozenset(f.replace("-", "_") for f in RESERVED_FLAGS) | {"expression"}
+"""The ``dest`` argparse derives for each built-in flag (``-`` folded to ``_``), plus the
+positional ``expression``. A matrix axis whose normalized name collides with one of these is
+skipped when synthesizing ``--AXIS`` overrides — an axis named ``github_matrix`` would otherwise
+overwrite ``args.github_matrix``, and one named ``dry_run`` would shadow ``--dry-run``."""
+
+
+def is_reserved_axis(name: str) -> bool:
+	"""Whether matrix axis ``name`` normalizes to a built-in flag's dest — such an axis gets no
+	``--AXIS`` override (it would collide), so dispatch and per-task help both skip it; it stays
+	reachable via ``--matrix NAME=...``.
+
+	>>> is_reserved_axis("PY"), is_reserved_axis("dry_run"), is_reserved_axis("dry-run")
+	(False, True, True)
+	"""
+	return name.lower().replace("-", "_") in RESERVED_DESTS
 
 
 def expression_metavar(tasks: Mapping[str, TaskNode] | None) -> str:

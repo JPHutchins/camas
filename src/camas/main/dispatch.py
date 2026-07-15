@@ -40,8 +40,9 @@ from .format import (
 	print_task_summary_listing,
 	print_task_trees,
 )
+from .github_matrix import emit as emit_github_matrix
 from .init import write_starter_tasks_py
-from .parser import RESERVED_FLAGS, build_parser, resolve_jobs
+from .parser import build_parser, is_reserved_axis, resolve_jobs
 from .state import EMPTY_STATE, LoadErr, LoadOk, TasksState
 from .tasks import load_tasks
 
@@ -310,7 +311,7 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 			augmented_axes: dict[str, tuple[str, ...]] = {}
 			if axis_node is not None:
 				for name, values in matrix_axes(axis_node).items():
-					if name.lower() in RESERVED_FLAGS:
+					if is_reserved_axis(name):
 						continue
 					parser.add_argument(
 						f"--{name}",
@@ -366,19 +367,6 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 			else:
 				resolved = dispatch_arg(args.expression, tasks)
 
-			try:
-				effects: Final = resolve_effects(
-					args.effects,
-					effective_config,
-					github=in_github,
-					agent=in_agent,
-					scope_effects=scope_effects,
-					base=source.parent if source is not None else None,
-				)
-			except ValueError as e:
-				print(f"error: --effects: {e}", file=sys.stderr)
-				sys.exit(2)
-
 			overrides: dict[str, tuple[str, ...]] = {}
 			for raw in args.matrix:
 				try:
@@ -402,6 +390,27 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 				except ValueError as e:
 					print(f"error: {e}", file=sys.stderr)
 					sys.exit(2)
+
+			if args.github_matrix:
+				try:
+					print(emit_github_matrix(resolved, pretty=sys.stdout.isatty()))
+				except ValueError as e:
+					print(f"error: {e}", file=sys.stderr)
+					sys.exit(2)
+				sys.exit(0)
+
+			try:
+				effects: Final = resolve_effects(
+					args.effects,
+					effective_config,
+					github=in_github,
+					agent=in_agent,
+					scope_effects=scope_effects,
+					base=source.parent if source is not None else None,
+				)
+			except ValueError as e:
+				print(f"error: --effects: {e}", file=sys.stderr)
+				sys.exit(2)
 
 			if args.paths is not None:
 				base = source.parent if source is not None else Path.cwd()
