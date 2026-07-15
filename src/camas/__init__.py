@@ -9,7 +9,9 @@ available output renderers, ``camas --tree`` prints every task's full
 expansion, ``camas --init`` scaffolds a commented starter ``tasks.py``
 when none exists (``--verbose`` for a kitchen-sink template covering every
 option instead of the minimal one), and ``--AXIS VAL`` overrides a matrix
-axis from the CLI.
+axis from the CLI. ``camas <matrix-task> --github-matrix`` emits that task's
+axes as GitHub Actions ``strategy.matrix`` JSON, so a CI ``discover`` job
+sources its fan-out from ``tasks.py`` rather than duplicating it in YAML.
 
 A leaf is *any* shell command. The doctests below all run
 ``python -c ...`` snippets only because every CI environment has

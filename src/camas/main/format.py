@@ -260,9 +260,14 @@ def print_task_help(name: str, task: TaskNode) -> None:
 	"""Print subcommand help for a single task: its expanded tree and any
 	matrix axes the user can override from the CLI.
 	"""
+	from .parser import RESERVED_DESTS
+
 	axes = matrix_axes(task)
-	axis_flags = "".join(f" [--{k} VAL[,VAL...]]" for k in axes)
-	print(f"usage: camas {name} [-h] [--dry-run] [--effects EFFECTS]{axis_flags}")
+	axis_flags = "".join(
+		f" [--{k} VAL[,VAL...]]" for k in axes if k.lower().replace("-", "_") not in RESERVED_DESTS
+	)
+	preview = "[--dry-run | --github-matrix]" if axes else "[--dry-run]"
+	print(f"usage: camas {name} [-h] {preview} [--effects EFFECTS]{axis_flags}")
 	if task.help is not None:
 		print()
 		print(task.help)

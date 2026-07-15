@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -86,3 +87,21 @@ def test_unknown_axis_errors() -> None:
 	r = _camas("e2e", "--matrix", "OS=linux")
 	assert r.returncode == 2
 	assert "unknown matrix axis 'OS'" in r.stderr, r.stderr
+
+
+def test_github_matrix_emits_both_axes_as_json() -> None:
+	r = _camas("e2e", "--github-matrix")
+	assert r.returncode == 0, r.stderr
+	assert json.loads(r.stdout) == {
+		"BROWSER": ["chromium", "firefox", "webkit"],
+		"VIEWPORT": ["desktop", "mobile"],
+	}
+
+
+def test_github_matrix_reflects_axis_override() -> None:
+	r = _camas("e2e", "--github-matrix", "--BROWSER", "chromium,firefox")
+	assert r.returncode == 0, r.stderr
+	assert json.loads(r.stdout) == {
+		"BROWSER": ["chromium", "firefox"],
+		"VIEWPORT": ["desktop", "mobile"],
+	}
