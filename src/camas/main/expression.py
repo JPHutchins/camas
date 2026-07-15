@@ -114,15 +114,21 @@ def eval_opt_bool(node: ast.expr | None) -> bool:
 
 
 def eval_opt_int(node: ast.expr | None) -> int | None:
+	"""A positive int literal (the AgentFormat limit), or ``None`` for an absent or ``None``
+	literal.
+
+	Raises:
+		ValueError: the value is a ``bool`` (an ``int`` subclass) or a non-positive int.
+	"""
 	match node:
-		case None:
+		case None | ast.Constant(value=None):
 			return None
-		case ast.Constant(value=int() as i):
+		case ast.Constant(value=bool()):
+			raise ValueError(f"AgentFormat limit must be a positive int, got {ast.dump(node)}")
+		case ast.Constant(value=int() as i) if i > 0:
 			return i
-		case ast.Constant(value=None):
-			return None
 		case _:
-			raise ValueError(f"expected int literal, got {ast.dump(node)}")
+			raise ValueError(f"AgentFormat limit must be a positive int, got {ast.dump(node)}")
 
 
 def _output_kind(node: ast.expr) -> OutputKind:
@@ -139,7 +145,7 @@ def _agent_format(
 	args_node: ast.expr, kind_node: ast.expr, limit_node: ast.expr | None
 ) -> AgentFormat:
 	"""Build an :class:`AgentFormat` from its arg AST nodes, omitting ``limit`` (so the default
-	applies) when absent; ``AgentFormat`` itself rejects a non-positive or bool limit.
+	applies) when absent or ``None``; :func:`eval_opt_int` rejects a non-positive or bool limit.
 	"""
 	limit = eval_opt_int(limit_node)
 	args_val, kind_val = eval_str_lit(args_node), _output_kind(kind_node)
@@ -511,7 +517,8 @@ def agent_format_kwarg(agent_format: AgentFormat | None) -> str:
 	"""
 	if agent_format is None:
 		return ""
-	limit = f", {agent_format.limit}" if agent_format.limit != AgentFormat.limit else ""
+	default_limit = AgentFormat._field_defaults["limit"]
+	limit = f", {agent_format.limit}" if agent_format.limit != default_limit else ""
 	return (
 		f", agent_format=AgentFormat({quote(agent_format.args)}, {quote(agent_format.kind)}{limit})"
 	)
