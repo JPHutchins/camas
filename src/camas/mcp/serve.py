@@ -15,6 +15,7 @@ import shutil
 import sys
 import tempfile
 import textwrap
+import time
 from contextlib import redirect_stdout, suppress
 from dataclasses import dataclass, field
 from enum import Enum
@@ -30,7 +31,7 @@ from pydantic import AnyUrl, BaseModel, ValidationError
 from ..core import timings
 from ..core.budget import plan_under
 from ..core.execution import run
-from ..core.gate import run_gate
+from ..core.gate import STALE_TEMP_MAX_AGE_S, run_gate
 from ..core.hook_event import NO_EVENT, HookEvent, event_from_stdin
 from ..core.matrix import expand_matrix, override_matrix
 from ..core.render import render_tree_lines, strip_ansi
@@ -577,8 +578,7 @@ def list_call(session: Session, arguments: dict[str, Any]) -> types.CallToolResu
 
 
 def check_call(session: Session) -> types.CallToolResult:
-	"""Handle ``camas_check``: re-resolve and re-pin the project from disk, then validate it."""
-	session.refresh()
+	"""Handle ``camas_check``: validate the session's project and report the checker verdict."""
 	resp = to_check_response(session.project).model_copy(
 		update={"server_version": running_version()}
 	)
@@ -1397,6 +1397,27 @@ def _nudge_marker(session_id: str) -> Path:
 	return Path(tempfile.gettempdir()) / f"{NUDGE_MARKER_PREFIX}{digest}"
 
 
+def _unlink_if_stale(path: Path, cutoff: float) -> None:
+	"""Remove ``path`` when it's a file older than ``cutoff``; best-effort, silent on races with
+	the OS reclaiming the temp dir first.
+	"""
+	try:
+		if path.is_file() and path.stat().st_mtime < cutoff:
+			path.unlink()
+	except OSError:  # pragma: no cover
+		pass
+
+
+def prune_stale_nudge_markers(max_age_s: float = STALE_TEMP_MAX_AGE_S) -> None:
+	"""Best-effort sweep of prior sessions' nudge markers older than ``max_age_s`` — bounds their
+	accumulation in the system temp dir, mirroring :func:`camas.core.gate.prune_stale_report_dirs`.
+	"""
+	base = Path(tempfile.gettempdir())
+	cutoff = time.time() - max_age_s
+	for marker in base.glob(f"{NUDGE_MARKER_PREFIX}*"):
+		_unlink_if_stale(marker, cutoff)
+
+
 def should_nudge(event: HookEvent) -> bool:
 	"""Whether the async Stop-hook nudge may wake the agent for this ``Stop`` event: never while
 	Claude Code is already continuing from a stop hook (``stop_hook_active``), and at most once
@@ -1414,9 +1435,12 @@ def should_nudge(event: HookEvent) -> bool:
 
 
 def record_nudge(event: HookEvent) -> None:
-	"""Persist that this event's prompt was nudged, for :func:`should_nudge`."""
+	"""Persist that this event's prompt was nudged, for :func:`should_nudge`, sweeping prior
+	sessions' stale markers first so they never accumulate.
+	"""
 	if not event.session_id or not event.prompt_id:
 		return
+	prune_stale_nudge_markers()
 	with suppress(OSError):
 		_nudge_marker(event.session_id).write_text(event.prompt_id, encoding="utf-8")
 

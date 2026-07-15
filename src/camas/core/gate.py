@@ -49,6 +49,10 @@ REPORT_DIR_PREFIX: Final = "camas-report-"
 :func:`prune_stale_report_dirs` once older than its max age.
 """
 
+STALE_TEMP_MAX_AGE_S: Final = 3600.0
+"""Age past which a prior run's leftovers in the system temp dir are swept — shared by
+:func:`prune_stale_report_dirs` and the MCP nudge-marker sweep so both age out together."""
+
 
 class GateOutcome(NamedTuple):
 	"""A gate run's verdict and the check run that produced it."""
@@ -210,7 +214,7 @@ def _rmtree_if_stale(path: Path, cutoff: float) -> None:
 		pass
 
 
-def prune_stale_report_dirs(max_age_s: float = 3600.0) -> None:
+def prune_stale_report_dirs(max_age_s: float = STALE_TEMP_MAX_AGE_S) -> None:
 	"""Best-effort sweep of this machine's path-mode report directories from prior gate runs
 	older than ``max_age_s`` — bounds their growth in the system temp dir without disturbing the
 	current run's, which an agent may still need to inspect after an over-limit payload.
