@@ -283,6 +283,30 @@ def test_sequential_skips_sibling_after_nonexistent_executable() -> None:
 	assert by_name["after"] == Skipped(NOT_FOUND_RC, "ghost")
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX exec-permission semantics")
+def test_non_executable_file_errors_without_traceback(tmp_path: Path) -> None:
+	script = tmp_path / "not_executable.sh"
+	script.write_text("#!/bin/sh\necho hi\n", encoding="utf-8")
+	script.chmod(0o644)
+	result = asyncio.run(run(Task((str(script),), name="denied")))
+	assert result.returncode == 1
+	completion = result.results[0].completion
+	assert isinstance(completion, Errored)
+	assert completion.returncode == NOT_FOUND_RC
+	assert "permission denied" in completion.message.lower()
+	assert str(script) in completion.message
+
+
+def test_missing_cwd_errors_without_traceback(tmp_path: Path) -> None:
+	task = Task(("python", "-c", "pass"), name="lost", cwd=tmp_path / "does-not-exist")
+	result = asyncio.run(run(task))
+	assert result.returncode == 1
+	completion = result.results[0].completion
+	assert isinstance(completion, Errored)
+	assert completion.returncode == NOT_FOUND_RC
+	assert completion.message
+
+
 def test_sequential_skip_nested_group() -> None:
 	task = Sequential(
 		Task(("python", "-c", "raise SystemExit(1)"), name="fail"),

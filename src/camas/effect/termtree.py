@@ -298,7 +298,7 @@ def render_lines(
 								lines.append(
 									f"\r{header}{GREY}{stream}{RESET}{padding} {CYAN}|{DARK_RED} STOP {CYAN}|{RESET} {elapsed:7.3f}s{CLEAR_LINE}"
 								)
-							case Errored(message=message):  # pragma: no branch
+							case Errored(message=message):
 								stream = f"  {truncate_middle(message, gap - 2)}" if gap > 2 else ""
 								padding = " " * max(gap - visual_width(stream), 0)
 								lines.append(

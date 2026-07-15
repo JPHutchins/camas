@@ -516,6 +516,21 @@ def test_render_lines_strips_ansi_from_done_tail() -> None:
 	assert "colored" in ANSI_ESCAPE_PATTERN.sub("", combined)
 
 
+def test_render_lines_errored_leaf_shows_message_then_continues() -> None:
+	ghost = make_task("ghost")
+	after = make_task("after")
+	rows = flatten_rows(Parallel(ghost, after))
+	states: tuple[LeafState, ...] = (
+		Completed(ghost, Errored(127, "no such file or directory: ghost")),
+		Completed(after, Finished(0, 0.1, (b"ok\n",))),
+	)
+	lines = render_lines(rows, states, term_width=120, display_width=100, now=TS, wall_elapsed=0.0)
+	combined = ANSI_ESCAPE_PATTERN.sub("", "".join(lines))
+	assert "ERROR" in combined
+	assert "no such file or directory: ghost" in combined
+	assert "PASS" in combined
+
+
 def test_render_lines_strips_ansi_from_running_tail() -> None:
 	task = make_task("a")
 	rows = flatten_rows(Parallel(task))
