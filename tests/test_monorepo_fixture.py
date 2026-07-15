@@ -137,6 +137,20 @@ def test_github_composite_runs_each_child_github_default() -> None:
 	assert f"web-ship {FIXTURE / 'web'}" in r.stdout, r.stdout
 
 
+def test_rendered_labels_carry_the_project_namespace() -> None:
+	r = _camas(SHOW_OUTPUT)
+	assert r.returncode == 0
+	for label in ("libs.build", "api.deploy", "web.build"):
+		assert label in r.stdout, r.stdout
+
+
+def test_github_status_lines_carry_the_project_namespace() -> None:
+	r = _camas(github=True)
+	assert r.returncode == 0
+	for label in ("[libs.build]", "[api.deploy]", "[web.ship]"):
+		assert label in r.stdout, r.stdout
+
+
 def test_fix_composite_runs_each_child_fix() -> None:
 	r = _camas("mcp", "fix", "--dry-run")
 	assert r.returncode == 0
@@ -150,10 +164,10 @@ def test_each_config_field_composes_the_childs_matching_field() -> None:
 	assert config is not None
 	assert config.agent is not None
 	fields = (
-		(config.default_task, ["build", "deploy", "build"]),
-		(config.github_task, ["build", "deploy", "ship"]),
-		(config.agent.fix, ["fix", "fix", "fix"]),
-		(config.agent.check, ["check", "check", "check"]),
+		(config.default_task, ["libs.build", "api.deploy", "web.build"]),
+		(config.github_task, ["libs.build", "api.deploy", "web.ship"]),
+		(config.agent.fix, ["libs.fix", "api.fix", "web.fix"]),
+		(config.agent.check, ["libs.check", "api.check", "web.check"]),
 	)
 	for node, expected in fields:
 		assert isinstance(node, Parallel)

@@ -124,8 +124,17 @@ def _compose_scope(
 	"""
 	github: Final = os.environ.get("GITHUB_ACTIONS") == "true"
 	agent: Final = running_under_agent()
+	binding_namespaces: Final = {
+		id(value): name for name, value in scope.items() if isinstance(value, ProjectRef)
+	}
 	child_cache: dict[Path, tuple[PurePosixPath, LoadOk]] = {}
 	node_cache: dict[tuple[int, Field], TaskNode] = {}
+
+	def namespace_of(marker: ProjectRef) -> str:
+		"""The display prefix for ``marker``'s composed tasks: its binding name, or, for an inline
+		``Project(...)``, the referenced directory's basename.
+		"""
+		return binding_namespaces.get(id(marker)) or PurePosixPath(marker.path).name
 
 	def child_view(marker: ProjectRef) -> tuple[PurePosixPath, LoadOk]:
 		if base_dir is None:
@@ -162,7 +171,7 @@ def _compose_scope(
 				child.source if child.source is not None else Path("tasks.py"),
 				RuntimeError(f"defines no {field_role(field)} task to run for this context"),
 			)
-		return rebase_tree(node, rel, is_root=True)
+		return rebase_tree(node, rel, namespace_of(marker), is_root=True)
 
 	def resolve(node: TaskNode | ProjectRef, field: Field) -> TaskNode:
 		key = (id(node), field)
@@ -226,7 +235,7 @@ def _compose_scope(
 			resolved_scope[name] = resolve(value, Field.CONTEXT)
 			rel, child = child_view(value)
 			for key, mounted in child.tasks.items():
-				namespaces[f"{name}.{key}"] = rebase_tree(mounted, rel, is_root=True)
+				namespaces[f"{name}.{key}"] = rebase_tree(mounted, rel, name, is_root=True)
 		else:
 			resolved_scope[name] = resolve(value, Field.CONTEXT)
 

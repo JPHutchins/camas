@@ -41,7 +41,7 @@ def test_project_mounts_child_namespace(tmp_path: Path) -> None:
 	_write(tmp_path / "libs" / "tasks.py", _leaf("build"))
 	tasks = load_scope(tmp_path / "tasks.py").tasks
 	assert set(tasks) == {"root", "libs", "libs.build"}
-	assert tasks["libs"].name == "build"
+	assert tasks["libs"].name == "libs.build"
 
 
 def test_project_rebases_cwd_two_levels(tmp_path: Path) -> None:
@@ -107,10 +107,10 @@ def test_github_task_composite_resolves(tmp_path: Path) -> None:
 	assert config is not None
 	assert isinstance(config.github_task, Parallel)
 	(child,) = config.github_task.tasks
-	assert child.name == "build"
+	assert child.name == "libs.build"
 
 
-def test_inline_project_composes_without_namespace(tmp_path: Path) -> None:
+def test_inline_project_namespaces_by_basename_without_mounting(tmp_path: Path) -> None:
 	_write(
 		tmp_path / "tasks.py",
 		"from camas import Config, Parallel, Project\n"
@@ -121,7 +121,7 @@ def test_inline_project_composes_without_namespace(tmp_path: Path) -> None:
 	assert loaded.config is not None
 	assert isinstance(loaded.config.default_task, Parallel)
 	(child,) = loaded.config.default_task.tasks
-	assert child.name == "build"
+	assert child.name == "libs.build"
 	assert not any(key.endswith(".build") for key in loaded.tasks)
 
 
@@ -140,7 +140,7 @@ def test_context_github_selects_github_task(
 	)
 	_write(tmp_path / "web" / "tasks.py", _leaf("build", github="ship"))
 	tasks = load_scope(tmp_path / "tasks.py").tasks
-	assert tasks["web"].name == "build-gh"
+	assert tasks["web"].name == "web.build-gh"
 
 
 def test_context_agent_selects_run_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -161,7 +161,7 @@ def test_context_agent_selects_run_default(tmp_path: Path, monkeypatch: pytest.M
 		"_ = Config(default_task=work, agent=Claude(fix=work, default=agent_default))\n",
 	)
 	tasks = load_scope(tmp_path / "tasks.py").tasks
-	assert tasks["child"].name == "agent-default"
+	assert tasks["child"].name == "child.agent-default"
 
 
 def test_config_agent_fields_resolved(tmp_path: Path) -> None:
@@ -181,7 +181,7 @@ def test_config_agent_fields_resolved(tmp_path: Path) -> None:
 	config = load_scope(tmp_path / "tasks.py").config
 	assert config is not None
 	assert config.agent is not None
-	assert config.agent.fix.name == "fixer"
+	assert config.agent.fix.name == "child.fixer"
 
 
 def test_each_field_composes_the_childs_matching_field(
@@ -220,10 +220,10 @@ def test_each_field_composes_the_childs_matching_field(
 	assert isinstance(config.github_task, Parallel)
 	assert isinstance(config.agent.fix, Parallel)
 	assert isinstance(config.agent.check, Parallel)
-	assert config.default_task.tasks[0].name == "c-default"
-	assert config.github_task.tasks[0].name == "c-github"
-	assert config.agent.fix.tasks[0].name == "c-fix"
-	assert config.agent.check.tasks[0].name == "c-check"
+	assert config.default_task.tasks[0].name == "child.c-default"
+	assert config.github_task.tasks[0].name == "child.c-github"
+	assert config.agent.fix.tasks[0].name == "child.c-fix"
+	assert config.agent.check.tasks[0].name == "child.c-check"
 
 
 def test_field_slot_is_independent_of_ambient_context(
@@ -242,7 +242,7 @@ def test_field_slot_is_independent_of_ambient_context(
 	config = load_scope(tmp_path / "tasks.py").config
 	assert config is not None
 	assert isinstance(config.github_task, Parallel)
-	assert config.github_task.tasks[0].name == "build-gh"
+	assert config.github_task.tasks[0].name == "web.build-gh"
 
 
 def test_composing_a_missing_child_fix_is_attributed_to_child(tmp_path: Path) -> None:
@@ -284,7 +284,7 @@ def test_agent_default_composes_each_child_run_default(
 	assert config is not None
 	assert config.agent is not None
 	assert isinstance(config.agent.default, Parallel)
-	assert config.agent.default.tasks[0].name == "agent-default"
+	assert config.agent.default.tasks[0].name == "child.agent-default"
 
 
 def test_duplicate_project_reference_shares_load(tmp_path: Path) -> None:
