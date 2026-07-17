@@ -13,7 +13,7 @@ from camas import Config, Parallel, Sequential, Task
 from camas.core import timings
 from camas.core.color import WHITE
 from camas.core.completion import RunResult
-from camas.main.dispatch import dispatch, fix_cli, print_interrupt_banner, run_under
+from camas.main.dispatch import dispatch, fix_cli, mcp_cli_hint, print_interrupt_banner, run_under
 from camas.main.state import LoadOk
 
 if TYPE_CHECKING:
@@ -423,3 +423,75 @@ def test_dispatch_paths_empty_skips(capsys: pytest.CaptureFixture[str]) -> None:
 	with pytest.raises(SystemExit, match="0"):
 		dispatch(_state({"lint": task}), ["lint", "--paths", ""])
 	assert "(no paths given)" in capsys.readouterr().out
+
+
+def _as_agent(monkeypatch: pytest.MonkeyPatch) -> None:
+	monkeypatch.setenv("CLAUDECODE", "1")
+	monkeypatch.delenv("CAMAS_AGENT", raising=False)
+	monkeypatch.delenv("CAMAS_NO_MCP_HINT", raising=False)
+
+
+def test_mcp_cli_hint_names_the_mcp_tools_and_the_opt_out() -> None:
+	hint = mcp_cli_hint()
+	for tool in ("camas_run", "camas_gate", "camas_list", "camas_check", "camas_docs"):
+		assert tool in hint
+	assert "CAMAS_NO_MCP_HINT" in hint
+
+
+def test_dispatch_prints_mcp_hint_to_stderr_under_agent(
+	monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	_as_agent(monkeypatch)
+	with pytest.raises(SystemExit, match="0"):
+		dispatch(_state({"check": Task("echo hi", name="check")}), ["--dry-run", "check"])
+	captured = capsys.readouterr()
+	assert mcp_cli_hint() in captured.err
+	assert mcp_cli_hint() not in captured.out
+
+
+def test_dispatch_prints_mcp_hint_on_help(
+	monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	_as_agent(monkeypatch)
+	with pytest.raises(SystemExit, match="0"):
+		dispatch(_state({"check": Task("echo hi", name="check")}), ["check", "--help"])
+	assert mcp_cli_hint() in capsys.readouterr().err
+
+
+def test_dispatch_prints_mcp_hint_on_list(
+	monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	_as_agent(monkeypatch)
+	with pytest.raises(SystemExit, match="0"):
+		dispatch(_state({"check": Task("echo hi", name="check")}), ["--list"])
+	assert mcp_cli_hint() in capsys.readouterr().err
+
+
+def test_dispatch_skips_mcp_hint_for_github_matrix(
+	monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	_as_agent(monkeypatch)
+	task = Parallel(Task("echo {PY}"), matrix={"PY": ("3.12", "3.13")})
+	with pytest.raises(SystemExit, match="0"):
+		dispatch(_state({"check": task}), ["--github-matrix", "check"])
+	assert mcp_cli_hint() not in capsys.readouterr().err
+
+
+def test_dispatch_skips_mcp_hint_when_silenced(
+	monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	_as_agent(monkeypatch)
+	monkeypatch.setenv("CAMAS_NO_MCP_HINT", "1")
+	with pytest.raises(SystemExit, match="0"):
+		dispatch(_state({"check": Task("echo hi", name="check")}), ["--dry-run", "check"])
+	assert mcp_cli_hint() not in capsys.readouterr().err
+
+
+def test_dispatch_no_mcp_hint_off_agent(
+	monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	monkeypatch.delenv("CLAUDECODE", raising=False)
+	monkeypatch.delenv("CAMAS_AGENT", raising=False)
+	with pytest.raises(SystemExit, match="0"):
+		dispatch(_state({"check": Task("echo hi", name="check")}), ["--dry-run", "check"])
+	assert mcp_cli_hint() not in capsys.readouterr().err

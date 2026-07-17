@@ -199,6 +199,17 @@ def print_interrupt_banner(count: int) -> None:
 	print(f"{WHITE}{line}{RESET}" if color_on() else line)
 
 
+def mcp_cli_hint() -> str:
+	"""The one-line stderr banner nudging an agent from the CLI onto the MCP tools; the
+	agent detection, opt-out, and ``--github-matrix`` exemption that gate it live in :func:`dispatch`.
+	"""
+	return (
+		"camas: prefer the camas MCP tools (camas_run / camas_gate / camas_list / camas_check / "
+		"camas_docs) over this CLI — they return structured JSON, not a terminal stream meant for "
+		"a human. Silence: CAMAS_NO_MCP_HINT=1"
+	)
+
+
 def reconfigure_stdio_utf8() -> None:
 	"""UTF-8 with ``errors="replace"`` on stdout/stderr so Windows consoles and
 	pipes (ANSI code page by default before Python 3.15) can carry the
@@ -250,6 +261,15 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 	"""
 	split: Final = split_passthrough(sys.argv[1:] if argv is None else argv)
 	tasks: Mapping[str, TaskNode] = state.tasks if isinstance(state, LoadOk) else {}
+
+	# --github-matrix is exempt: it has no MCP equivalent yet (#208), so the nudge would
+	# steer toward a tool that does not exist.
+	if (
+		running_under_agent()
+		and not os.environ.get("CAMAS_NO_MCP_HINT")
+		and "--github-matrix" not in split.head
+	):
+		print(mcp_cli_hint(), file=sys.stderr)
 
 	if (
 		len(split.head) >= 2

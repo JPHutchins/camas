@@ -385,7 +385,7 @@ def _camas(*args: str, cwd: Path) -> subprocess.CompletedProcess[str]:
 		capture_output=True,
 		text=True,
 		encoding="utf-8",
-		env={**os.environ, "NO_COLOR": "1"},
+		env={**os.environ, "NO_COLOR": "1", "CLAUDECODE": "", "CAMAS_AGENT": ""},
 		check=False,
 	)
 
