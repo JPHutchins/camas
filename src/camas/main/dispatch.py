@@ -201,7 +201,7 @@ def print_interrupt_banner(count: int) -> None:
 
 def mcp_cli_hint() -> str:
 	"""The one-line stderr banner nudging an agent from the CLI onto the MCP tools; the
-	agent detection, opt-out, and ``--github-matrix`` exemption that gate it live in :func:`dispatch`.
+	agent detection and opt-out that gate it live in :func:`dispatch`.
 	"""
 	return (
 		"camas: prefer the camas MCP tools (camas_run / camas_gate / camas_list / camas_check / "

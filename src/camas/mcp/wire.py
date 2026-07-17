@@ -271,7 +271,7 @@ class RunRequest(BaseModel):
 def _splice_task_enum(schema: dict[str, Any], task_names: tuple[str, ...]) -> dict[str, Any]:
 	"""``schema`` with the live task-name ``enum`` spliced onto the string branch of the
 	``task`` property's ``anyOf`` — the optional-``str`` field shared by ``camas_run``,
-	``camas_gate``, and ``camas_fix``.
+	``camas_gate``, ``camas_fix``, and ``camas_github_matrix``.
 	"""
 	for branch in schema["properties"]["task"]["anyOf"]:
 		if branch.get("type") == "string":

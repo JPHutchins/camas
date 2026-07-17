@@ -1418,7 +1418,10 @@ def resolve_github_matrix_node(
 	else:
 		default = config.bare_task(github=False) if config is not None else None
 		if default is None:
-			raise ValueError("no task given and no default_task configured; name a matrix task")
+			raise ValueError(
+				"no task given and no project default_task to emit; pass a task whose matrix_axes "
+				"is non-empty (see camas_list)"
+			)
 		name, node = default.name or "default task", default
 	if req.matrix_overrides:
 		node = override_matrix(node, {k: tuple(v) for k, v in req.matrix_overrides.items()})

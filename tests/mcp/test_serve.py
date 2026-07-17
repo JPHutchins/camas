@@ -1568,7 +1568,7 @@ async def test_fix_call_tool_is_in_round_trip(tmp_path: Path) -> None:
 
 
 async def test_in_memory_round_trip_includes_fix_tool(tmp_path: Path) -> None:
-	"""The full round trip tool list now has 7 tools including camas_fix."""
+	"""The full round trip tool list now has 8 tools including camas_github_matrix."""
 	session = _session({"lint": PASS}, Config(default_task=PASS), tmp_path)
 	async with create_connected_server_and_client_session(serve.build_server(session)) as client:
 		listed = await client.list_tools()
@@ -1717,7 +1717,7 @@ def test_github_matrix_call_no_task_no_default_is_tool_error(tmp_path: Path) -> 
 	session = _session({"m": _MATRIX}, None, tmp_path)
 	result = serve.github_matrix_call(session, {})
 	assert result.isError is True
-	assert "no default_task" in _text(result)
+	assert "no project default_task" in _text(result)
 
 
 def test_github_matrix_call_validation_error_is_tool_error(tmp_path: Path) -> None:
@@ -1733,3 +1733,11 @@ def test_github_matrix_call_load_error(tmp_path: Path) -> None:
 	)
 	result = serve.github_matrix_call(session, {"task": "m"})
 	assert result.isError is True
+
+
+def test_github_matrix_call_prepends_version_warning(tmp_path: Path) -> None:
+	session = _session({"m": _MATRIX}, None, tmp_path)
+	session.version_warning = "WARNING: version mismatch"
+	result = serve.github_matrix_call(session, {"task": "m"})
+	assert not result.isError
+	assert _text(result).startswith("WARNING: version mismatch")
