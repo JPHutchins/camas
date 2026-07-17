@@ -123,7 +123,7 @@ def to_matrix_object(task: TaskNode) -> dict[str, list[str]]:
 	>>> to_matrix_object(Task("hi"))
 	Traceback (most recent call last):
 	    ...
-	ValueError: task has no matrix axes; --github-matrix requires at least one
+	ValueError: task has no matrix axes to emit as a GitHub Actions job matrix
 	>>> to_matrix_object(Parallel(Task("t"), matrix={"PY": ()}))
 	Traceback (most recent call last):
 	    ...
@@ -138,7 +138,7 @@ def to_matrix_object(task: TaskNode) -> dict[str, list[str]]:
 	"""
 	axes_map: Final = matrix_axes(task)
 	if not axes_map:
-		raise ValueError("task has no matrix axes; --github-matrix requires at least one")
+		raise ValueError("task has no matrix axes to emit as a GitHub Actions job matrix")
 	for name, values in axes_map.items():
 		if not values:
 			raise ValueError(f"matrix axis {name!r} has no values")

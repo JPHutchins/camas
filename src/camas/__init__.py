@@ -127,8 +127,7 @@ of the default ``Termtree``, whose live cursor-redraw frames bloat
 captured stdout. Pass ``--effects='(Status(output_mode=...),)'`` to pick
 a mode (see ``camas --effects`` for the options). Humans keep
 ``Termtree`` (the off-agent default). A detected agent also gets a
-one-line stderr banner steering it back to the MCP tools (every command
-but ``--github-matrix``, which has no MCP equivalent yet); set
+one-line stderr banner steering it back to the MCP tools; set
 ``CAMAS_NO_MCP_HINT=1`` to silence it.
 
 The doctests below invoke ``camas`` as a subprocess so they can verify

@@ -40,6 +40,7 @@ from ..core.task import did_you_mean, task_label
 from ..main.argv import apply_passthrough
 from ..main.compose import load_py_tasks_state
 from ..main.format import format_load_error_hint, format_version_skew_hint
+from ..main.github_matrix import format_matrix_json
 from ..main.init import create_starter_tasks_py, starter_text
 from ..main.parser import parse_duration
 from ..main.pep723 import camas_requirement_from, version_specifier
@@ -54,6 +55,7 @@ from .result import (
 	has_failing_leaf_without_agent_format,
 	to_check_response,
 	to_gate_response,
+	to_github_matrix_response,
 	to_plan_response,
 	to_run_response,
 )
@@ -81,6 +83,7 @@ class ToolName(Enum):
 	GATE = "camas_gate"
 	FIX = "camas_fix"
 	INIT = "camas_init"
+	GITHUB_MATRIX = "camas_github_matrix"
 
 
 NO_ARGS_SCHEMA: Final[dict[str, Any]] = {
@@ -101,6 +104,7 @@ FIX_ANNOTATIONS: Final = types.ToolAnnotations(
 INIT_ANNOTATIONS: Final = types.ToolAnnotations(
 	readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False
 )
+GITHUB_MATRIX_ANNOTATIONS: Final = types.ToolAnnotations(readOnlyHint=True, openWorldHint=False)
 RUN_LOG_KEEP: Final = 10
 NO_RUN_DEFAULT_MSG: Final = (
 	"camas_run has no task to run: name a task, or set a project default in tasks.py — "
@@ -353,6 +357,8 @@ async def call(session: Session, name: str, arguments: dict[str, Any]) -> types.
 			return await fix_call(session, arguments)
 		case ToolName.INIT:
 			return init_call(session, arguments)
+		case ToolName.GITHUB_MATRIX:
+			return github_matrix_call(session, arguments)
 		case _:
 			known = ", ".join(repr(tool.value) for tool in ToolName)
 			return error_result(f"unknown tool {name!r}; expected one of: {known}")
@@ -378,6 +384,7 @@ class Tools(NamedTuple):
 	gate: types.Tool
 	fix: types.Tool
 	init: types.Tool
+	github_matrix: types.Tool
 
 
 def tool_def(
@@ -403,7 +410,7 @@ def tool_def(
 
 
 def tools(task_names: tuple[str, ...], compat: Compat) -> Tools:
-	"""The seven tool definitions, with ``task_names`` spliced into ``camas_run``, ``camas_gate``, and ``camas_fix``'s ``task`` enums."""
+	"""The eight tool definitions, with ``task_names`` spliced into ``camas_run``, ``camas_gate``, ``camas_fix``, and ``camas_github_matrix``'s ``task`` enums."""
 	return Tools(
 		discovery=tool_def(
 			compat,
@@ -551,6 +558,26 @@ def tools(task_names: tuple[str, ...], compat: Compat) -> Tools:
 			output_model=wire.InitResponse,
 			title="Scaffold a starter tasks.py",
 			annotations=INIT_ANNOTATIONS,
+		),
+		github_matrix=tool_def(
+			compat,
+			name=ToolName.GITHUB_MATRIX.value,
+			description=textwrap.dedent("""\
+				Emit a task's matrix as GitHub Actions strategy.matrix JSON (object-of-arrays) — the
+				MCP mirror of `camas --github-matrix`, for authoring or updating a CI workflow. The
+				axis values come from the task's actual run-set (the leaves camas expands), so the
+				object expands under GHA's cross-product semantics to exactly the jobs camas runs:
+				consume the whole object with fromJSON(...), or one axis at a time composed with
+				YAML-side axes a job can't set for itself (a runner's os). Pass task=<name> (pick one
+				whose camas_list matrix_axes is non-empty); omit to use the project default. Pin axes
+				with matrix_overrides (like camas_run), e.g. {"PY": ["3.13"]}. A task with no matrix,
+				or a run-set that is not a clean cross-product (a heterogeneous fan-out has no faithful
+				object-of-arrays), is a tool error, not a run failure. Read-only; runs nothing.
+			""").strip(),
+			input_schema=wire.github_matrix_input_schema(task_names),
+			output_model=wire.GithubMatrixResponse,
+			title="Emit GitHub Actions matrix",
+			annotations=GITHUB_MATRIX_ANNOTATIONS,
 		),
 	)
 
@@ -1088,9 +1115,9 @@ def init_text(resp: wire.InitResponse) -> str:
 def with_warning(session: Session, text: str) -> str:
 	"""``text`` with the version-mismatch warning prepended, or ``text`` unchanged.
 
-	Applied on every tool's success output (not just ``camas_list``/``camas_docs``) so an
-	agent driving ``camas_run``/``camas_check``/``camas_gate``/``camas_fix`` sees the skew
-	at the moment it changes behavior — the {paths} semantics the warning exists to flag.
+	Applied on every tool's success output — not just the read-only ``camas_list``/``camas_docs``
+	but the mutating and behavior-affecting tools too — so an agent sees the skew the moment it
+	changes behavior (the {paths} semantics the warning exists to flag).
 	"""
 	if session.version_warning is None:
 		return text
@@ -1104,7 +1131,8 @@ def success(
 	| wire.CheckResponse
 	| wire.DocsResponse
 	| wire.GateResponse
-	| wire.InitResponse,
+	| wire.InitResponse
+	| wire.GithubMatrixResponse,
 	compat: Compat,
 	*,
 	links: tuple[types.ResourceLink, ...] = (),
@@ -1337,6 +1365,81 @@ def fix_text(resp: wire.RunResponse, *, empty_cause: str | None = None) -> str:
 	return (
 		f"camas_fix: {verdict} (returncode={resp.returncode}) in {resp.elapsed:.2f}s — "
 		f"{resp.passed} passed, {resp.failed} failed, {resp.skipped} skipped"
+	)
+
+
+def github_matrix_call(session: Session, arguments: dict[str, Any]) -> types.CallToolResult:
+	"""Handle ``camas_github_matrix``: resolve the task, then emit its GHA strategy.matrix object."""
+	match session.project:
+		case LoadErr(source=source, exception=exception):
+			return error_result(load_error_hint(session, source, exception))
+		case LoadOk(tasks=tasks, config=config):
+			return github_matrix_for(session, tasks, config, arguments)
+		case _:
+			assert_never(session.project)
+
+
+def github_matrix_for(
+	session: Session,
+	tasks: Mapping[str, TaskNode],
+	config: Config | None,
+	arguments: dict[str, Any],
+) -> types.CallToolResult:
+	"""Validate, resolve the task (matrix-overridden), and emit its GHA object-of-arrays."""
+	try:
+		req = wire.GithubMatrixRequest.model_validate(arguments)
+	except ValidationError as e:
+		return error_result(f"invalid camas_github_matrix arguments:\n{e}")
+	try:
+		name, node = resolve_github_matrix_node(tasks, config, req)
+		resp = to_github_matrix_response(name, node)
+	except ValueError as e:
+		return error_result(str(e))
+	return success(with_warning(session, github_matrix_text(resp)), resp, session.compat)
+
+
+def resolve_github_matrix_node(
+	tasks: Mapping[str, TaskNode], config: Config | None, req: wire.GithubMatrixRequest
+) -> tuple[str, TaskNode]:
+	"""The ``(name, node)`` whose matrix to emit: the named task, else the project default task,
+	then matrix-overridden per the request.
+
+	Raises:
+		ValueError: when ``task`` names no task, none is named and no default_task is configured,
+			or an override targets an unknown matrix axis.
+	"""
+	if req.task is not None:
+		if req.task not in tasks:
+			known = ", ".join(sorted(tasks)) or "none"
+			raise ValueError(
+				f"no task named {req.task!r}{did_you_mean(req.task, tasks)} (known: {known})"
+			)
+		name, node = req.task, tasks[req.task]
+	else:
+		default = config.bare_task(github=False) if config is not None else None
+		if default is None:
+			raise ValueError(
+				"no task given and no project default_task to emit; pass a task whose matrix_axes "
+				"is non-empty (see camas_list)"
+			)
+		name, node = default.name or "default task", default
+	if req.matrix_overrides:
+		node = override_matrix(node, {k: tuple(v) for k, v in req.matrix_overrides.items()})
+	return name, node
+
+
+def github_matrix_text(resp: wire.GithubMatrixResponse) -> str:
+	"""The load-bearing agent-facing summary for ``camas_github_matrix`` — the compact JSON for
+	``$GITHUB_OUTPUT``, the indented form for reading, and how to consume it in a workflow.
+	"""
+	compact = format_matrix_json(resp.matrix, pretty=False)
+	pretty = format_matrix_json(resp.matrix, pretty=True)
+	return (
+		f"camas_github_matrix {resp.task!r}: GitHub Actions strategy.matrix\n\n"
+		f"{pretty}\n\n"
+		f"Compact (for $GITHUB_OUTPUT): {compact}\n"
+		"Consume the whole object with fromJSON(...), or one axis at a time, e.g. "
+		"fromJSON(needs.discover.outputs.matrix).PY."
 	)
 
 

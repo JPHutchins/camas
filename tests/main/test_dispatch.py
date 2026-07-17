@@ -467,14 +467,16 @@ def test_dispatch_prints_mcp_hint_on_list(
 	assert mcp_cli_hint() in capsys.readouterr().err
 
 
-def test_dispatch_skips_mcp_hint_for_github_matrix(
+def test_dispatch_prints_mcp_hint_for_github_matrix(
 	monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
 	_as_agent(monkeypatch)
 	task = Parallel(Task("echo {PY}"), matrix={"PY": ("3.12", "3.13")})
 	with pytest.raises(SystemExit, match="0"):
 		dispatch(_state({"check": task}), ["--github-matrix", "check"])
-	assert mcp_cli_hint() not in capsys.readouterr().err
+	captured = capsys.readouterr()
+	assert mcp_cli_hint() in captured.err
+	assert mcp_cli_hint() not in captured.out
 
 
 def test_dispatch_skips_mcp_hint_when_silenced(

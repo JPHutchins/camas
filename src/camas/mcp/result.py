@@ -23,6 +23,7 @@ from ..main.check import (
 	format_minimal_trace,
 	run_typecheck,
 )
+from ..main.github_matrix import to_matrix_object
 from ..main.state import LoadErr, LoadOk
 from ..v0.completion import Errored, Finished, Skipped, Stopped
 from . import wire
@@ -93,6 +94,14 @@ def to_plan_response(node: TaskNode) -> wire.RunResponse:
 		interrupt_count=0,
 		leaves=leaves,
 	)
+
+
+def to_github_matrix_response(name: str, node: TaskNode) -> wire.GithubMatrixResponse:
+	"""The wire ``GithubMatrixResponse`` for ``node`` — its faithful GHA object-of-arrays, or the
+	``ValueError`` :func:`camas.main.github_matrix.to_matrix_object` raises for a task with no
+	matrix or a non-cross-product run-set (the handler surfaces it as a tool error).
+	"""
+	return wire.GithubMatrixResponse(task=name, matrix=to_matrix_object(node))
 
 
 def to_check_response(state: TasksState) -> wire.CheckResponse:
