@@ -262,13 +262,7 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 	split: Final = split_passthrough(sys.argv[1:] if argv is None else argv)
 	tasks: Mapping[str, TaskNode] = state.tasks if isinstance(state, LoadOk) else {}
 
-	# --github-matrix is exempt: it has no MCP equivalent yet (#208), so the nudge would
-	# steer toward a tool that does not exist.
-	if (
-		running_under_agent()
-		and not os.environ.get("CAMAS_NO_MCP_HINT")
-		and "--github-matrix" not in split.head
-	):
+	if running_under_agent() and not os.environ.get("CAMAS_NO_MCP_HINT"):
 		print(mcp_cli_hint(), file=sys.stderr)
 
 	if (

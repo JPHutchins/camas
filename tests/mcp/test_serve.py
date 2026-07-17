@@ -132,8 +132,8 @@ def test_task_names_empty_on_load_error(tmp_path: Path) -> None:
 
 
 def test_tools_default_omits_rich_fields() -> None:
-	(tool_list, tool_run, tool_check, tool_docs, tool_gate, tool_fix, tool_init) = serve.tools(
-		("a", "b"), Compat(emit_structured=False)
+	(tool_list, tool_run, tool_check, tool_docs, tool_gate, tool_fix, tool_init, tool_gh_matrix) = (
+		serve.tools(("a", "b"), Compat(emit_structured=False))
 	)
 	assert (tool_list.title, tool_list.outputSchema, tool_list.annotations) == (None, None, None)
 	assert _task_enum(tool_run.inputSchema) == ["a", "b"]
@@ -151,11 +151,17 @@ def test_tools_default_omits_rich_fields() -> None:
 	assert (tool_init.title, tool_init.outputSchema, tool_init.annotations) == (None, None, None)
 	assert tool_init.inputSchema["properties"]["verbose"]["default"] is True
 	assert tool_init.inputSchema["additionalProperties"] is False
+	assert (tool_gh_matrix.title, tool_gh_matrix.outputSchema, tool_gh_matrix.annotations) == (
+		None,
+		None,
+		None,
+	)
+	assert _task_enum(tool_gh_matrix.inputSchema) == ["a", "b"]
 
 
 def test_tools_rich_includes_title_annotations_and_schema() -> None:
-	(tool_list, tool_run, tool_check, tool_docs, tool_gate, tool_fix, tool_init) = serve.tools(
-		(), Compat(emit_structured=True)
+	(tool_list, tool_run, tool_check, tool_docs, tool_gate, tool_fix, tool_init, tool_gh_matrix) = (
+		serve.tools((), Compat(emit_structured=True))
 	)
 	assert tool_list.title == "List camas tasks"
 	assert tool_list.annotations is not None
@@ -185,6 +191,10 @@ def test_tools_rich_includes_title_annotations_and_schema() -> None:
 	assert tool_init.outputSchema is not None
 	assert tool_init.annotations is not None
 	assert tool_init.annotations.readOnlyHint is False
+	assert tool_gh_matrix.title == "Emit GitHub Actions matrix"
+	assert tool_gh_matrix.outputSchema is not None
+	assert tool_gh_matrix.annotations is not None
+	assert tool_gh_matrix.annotations.readOnlyHint is True
 
 
 def test_list_tool_description_declares_github_default() -> None:
@@ -1201,6 +1211,7 @@ async def test_in_memory_round_trip(tmp_path: Path) -> None:
 			"camas_gate",
 			"camas_fix",
 			"camas_init",
+			"camas_github_matrix",
 		}
 		catalog = await client.call_tool("camas_list", {})
 		assert "lint" in _text(catalog)
@@ -1569,6 +1580,7 @@ async def test_in_memory_round_trip_includes_fix_tool(tmp_path: Path) -> None:
 			"camas_gate",
 			"camas_fix",
 			"camas_init",
+			"camas_github_matrix",
 		}
 
 
@@ -1641,3 +1653,83 @@ async def test_fix_call_scoped_none_returns_empty_run(tmp_path: Path) -> None:
 	assert "nothing to fix" in text
 	assert "no fix leaf covers the paths" in text
 	assert "no fix node registered" not in text
+
+
+async def test_github_matrix_call_dispatches_via_call(tmp_path: Path) -> None:
+	session = _session({"m": _MATRIX}, None, tmp_path)
+	result = await serve.call(session, "camas_github_matrix", {"task": "m"})
+	assert result.isError is False
+	assert "strategy.matrix" in _text(result)
+
+
+def test_github_matrix_call_emits_compact_and_pretty(tmp_path: Path) -> None:
+	session = _session({"m": _MATRIX}, None, tmp_path)
+	result = serve.github_matrix_call(session, {"task": "m"})
+	assert result.isError is False
+	text = _text(result)
+	assert '{"PY":["3.13","3.14"]}' in text
+	assert "$GITHUB_OUTPUT" in text
+
+
+def test_github_matrix_call_structured_when_rich(tmp_path: Path) -> None:
+	session = _session({"m": _MATRIX}, None, tmp_path, rich=True)
+	result = serve.github_matrix_call(session, {"task": "m"})
+	assert result.structuredContent is not None
+	assert result.structuredContent["task"] == "m"
+	assert result.structuredContent["matrix"] == {"PY": ["3.13", "3.14"]}
+
+
+def test_github_matrix_call_override_pins_axis(tmp_path: Path) -> None:
+	session = _session({"m": _MATRIX}, None, tmp_path, rich=True)
+	result = serve.github_matrix_call(session, {"task": "m", "matrix_overrides": {"PY": ["3.14"]}})
+	assert result.structuredContent is not None
+	assert result.structuredContent["matrix"] == {"PY": ["3.14"]}
+
+
+def test_github_matrix_call_unknown_override_axis_is_tool_error(tmp_path: Path) -> None:
+	session = _session({"m": _MATRIX}, None, tmp_path)
+	result = serve.github_matrix_call(session, {"task": "m", "matrix_overrides": {"XX": ["1"]}})
+	assert result.isError is True
+
+
+def test_github_matrix_call_no_matrix_is_tool_error(tmp_path: Path) -> None:
+	session = _session({"lint": PASS}, None, tmp_path)
+	result = serve.github_matrix_call(session, {"task": "lint"})
+	assert result.isError is True
+	assert "no matrix axes" in _text(result)
+
+
+def test_github_matrix_call_unknown_task_is_tool_error(tmp_path: Path) -> None:
+	session = _session({"m": _MATRIX}, None, tmp_path)
+	result = serve.github_matrix_call(session, {"task": "nope"})
+	assert result.isError is True
+	assert "no task named 'nope'" in _text(result)
+
+
+def test_github_matrix_call_no_task_uses_default(tmp_path: Path) -> None:
+	session = _session({"m": _MATRIX}, Config(default_task=_MATRIX), tmp_path)
+	result = serve.github_matrix_call(session, {})
+	assert result.isError is False
+	assert "3.13" in _text(result)
+
+
+def test_github_matrix_call_no_task_no_default_is_tool_error(tmp_path: Path) -> None:
+	session = _session({"m": _MATRIX}, None, tmp_path)
+	result = serve.github_matrix_call(session, {})
+	assert result.isError is True
+	assert "no default_task" in _text(result)
+
+
+def test_github_matrix_call_validation_error_is_tool_error(tmp_path: Path) -> None:
+	session = _session({"m": _MATRIX}, None, tmp_path)
+	result = serve.github_matrix_call(session, {"matrix_overrides": "nope"})
+	assert result.isError is True
+	assert "invalid camas_github_matrix arguments" in _text(result)
+
+
+def test_github_matrix_call_load_error(tmp_path: Path) -> None:
+	session = Session(
+		LoadErr(source=tmp_path / "tasks.py", exception=RuntimeError("boom")), tmp_path, Compat()
+	)
+	result = serve.github_matrix_call(session, {"task": "m"})
+	assert result.isError is True

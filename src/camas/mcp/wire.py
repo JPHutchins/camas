@@ -412,3 +412,42 @@ def gate_input_schema(task_names: tuple[str, ...]) -> dict[str, Any]:
 	False
 	"""
 	return _splice_task_enum(GateRequest.model_json_schema(), task_names)
+
+
+class GithubMatrixRequest(BaseModel):
+	"""Arguments to ``camas_github_matrix``."""
+
+	model_config = ConfigDict(extra="forbid")
+
+	task: str | None = Field(
+		default=None,
+		description="Task whose matrix to emit — one of the names from camas_list (pick one whose "
+		"matrix_axes is non-empty). Omit to use the project's default task.",
+	)
+	matrix_overrides: dict[str, list[str]] = Field(
+		default_factory=dict,
+		description="Pin matrix axes by name before emitting, e.g. {'PY': ['3.13']}; axis names "
+		"must exist. Mirrors the CLI's --PY/--matrix overrides.",
+	)
+
+
+class GithubMatrixResponse(BaseModel):
+	"""A task's matrix as a GitHub Actions ``strategy.matrix`` object-of-arrays."""
+
+	task: str
+	"""The task the matrix was emitted for."""
+	matrix: dict[str, list[str]]
+	"""Axis name → its distinct values in first-seen order; expands under GHA cross-product
+	semantics to exactly the jobs camas runs. Serialize compact for ``$GITHUB_OUTPUT``."""
+
+
+def github_matrix_input_schema(task_names: tuple[str, ...]) -> dict[str, Any]:
+	"""``GithubMatrixRequest``'s JSON Schema with the live task-name ``enum`` spliced into ``task``.
+
+	>>> schema = github_matrix_input_schema(("lint", "matrix"))
+	>>> next(b["enum"] for b in schema["properties"]["task"]["anyOf"] if b.get("type") == "string")
+	['lint', 'matrix']
+	>>> schema["additionalProperties"]
+	False
+	"""
+	return _splice_task_enum(GithubMatrixRequest.model_json_schema(), task_names)
