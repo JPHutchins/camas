@@ -1115,9 +1115,9 @@ def init_text(resp: wire.InitResponse) -> str:
 def with_warning(session: Session, text: str) -> str:
 	"""``text`` with the version-mismatch warning prepended, or ``text`` unchanged.
 
-	Applied on every tool's success output (not just ``camas_list``/``camas_docs``) so an
-	agent driving ``camas_run``/``camas_check``/``camas_gate``/``camas_fix`` sees the skew
-	at the moment it changes behavior — the {paths} semantics the warning exists to flag.
+	Applied on every tool's success output — not just the read-only ``camas_list``/``camas_docs``
+	but the mutating and behavior-affecting tools too — so an agent sees the skew the moment it
+	changes behavior (the {paths} semantics the warning exists to flag).
 	"""
 	if session.version_warning is None:
 		return text
