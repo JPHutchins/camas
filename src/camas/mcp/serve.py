@@ -711,13 +711,18 @@ def scope_to_paths(node: TaskNode, paths: list[str], base: Path) -> TaskNode | N
 	return scope_to_changed(expand_matrix(node), changed)
 
 
+def empty_run_response() -> wire.RunResponse:
+	"""A successful run of nothing — no leaves executed."""
+	return wire.RunResponse(
+		returncode=0, elapsed=0.0, passed=0, failed=0, skipped=0, interrupt_count=0, leaves=()
+	)
+
+
 def nothing_covered_result(session: Session, paths: list[str]) -> types.CallToolResult:
 	"""The ``camas_run`` success for a path scope that matched no leaf — an empty run and a
 	message naming the uncovered paths, mirroring the CLI's ``No task leaf covers …``.
 	"""
-	empty = wire.RunResponse(
-		returncode=0, elapsed=0.0, passed=0, failed=0, skipped=0, interrupt_count=0, leaves=()
-	)
+	empty = empty_run_response()
 	text = f"No task leaf covers {', '.join(paths)} — nothing to run."
 	return success(with_warning(session, text), empty, session.compat)
 
@@ -786,9 +791,7 @@ async def run_budget(
 	plan = plan_under(source, budget_s, timings.load(session.camas_dir))
 	report = to_budget_report(plan)
 	if plan.node is None:
-		empty = wire.RunResponse(
-			returncode=0, elapsed=0.0, passed=0, failed=0, skipped=0, interrupt_count=0, leaves=()
-		)
+		empty = empty_run_response()
 		text = f"{budget_headline(report)}\n\nNothing ran — no leaf fit the budget."
 		return success(with_warning(session, text), attach_budget(empty, report), session.compat)
 	if req.dry_run:
@@ -1377,9 +1380,7 @@ async def fix_for(
 		scoped = scope_to_changed(expanded, changed) if changed else with_default_paths(expanded)
 	empty_cause: str | None
 	if scoped is None:
-		resp = wire.RunResponse(
-			returncode=0, elapsed=0.0, passed=0, failed=0, skipped=0, interrupt_count=0, leaves=()
-		)
+		resp = empty_run_response()
 		empty_cause = (
 			"no fix node registered (Config.agent.fix is None)"
 			if fix_node is None

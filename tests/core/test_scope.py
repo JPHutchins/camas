@@ -5,6 +5,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import pytest
+
 from camas import Parallel, Sequential, Task, by_glob, by_suffix
 from camas.core.matrix import expand_matrix
 from camas.core.scope import scope_to_changed, scope_warnings, to_changed, with_default_paths
@@ -253,6 +255,11 @@ def test_by_glob_star_stays_within_a_segment() -> None:
 def test_by_glob_scoped_no_match_prunes_the_leaf() -> None:
 	mypy = Task("mypy {paths}", name="mypy", paths=by_glob(("homeassistant/**/*.py",)))
 	assert scope_to_changed(mypy, ("tests/t.py",)) is None
+
+
+def test_by_glob_rejects_empty_pattern() -> None:
+	with pytest.raises(ValueError, match="must not be empty"):
+		by_glob(("src/**/*.py", ""))
 
 
 def test_scope_warnings_by_glob_with_default_does_not_warn() -> None:

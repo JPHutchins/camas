@@ -138,19 +138,20 @@ def anonymous_config_field_warnings(scope: Mapping[str, object]) -> tuple[str, .
 		if not name.startswith("_") and isinstance(val, Task | Sequential | Parallel)
 	}
 	agent = config.agent
-	fields: tuple[tuple[str, TaskNode | None], ...] = (
+	base_fields: tuple[tuple[str, TaskNode | None], ...] = (
 		("default_task", config.default_task),
 		("github_task", config.github_task),
-		*(
-			()
-			if agent is None
-			else (
-				("agent.fix", agent.fix),
-				("agent.check", agent.check),
-				("agent.default", agent.default),
-			)
-		),
 	)
+	agent_fields: tuple[tuple[str, TaskNode | None], ...] = (
+		()
+		if agent is None
+		else (
+			("agent.fix", agent.fix),
+			("agent.check", agent.check),
+			("agent.default", agent.default),
+		)
+	)
+	fields = base_fields + agent_fields
 	return tuple(
 		f"Config.{field} is an anonymous {type(node).__name__} — bind it to a variable (or pass "
 		"name=) so camas_list can name it; an unnamed inline composite reports as null, and "

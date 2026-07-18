@@ -93,7 +93,16 @@ def _glob_to_regex(pattern: str) -> re.Pattern[str]:
 	True
 	>>> tuple(bool(_glob_to_regex("v?.txt").fullmatch(c)) for c in ("v1.txt", "v10.txt"))
 	(True, False)
+	>>> _glob_to_regex("")
+	Traceback (most recent call last):
+	ValueError: by_glob pattern must not be empty
+
+	Raises:
+		ValueError: when ``pattern`` is empty — it would compile to a regex matching only the
+			empty string, silently dropping every changed file.
 	"""
+	if not pattern:
+		raise ValueError("by_glob pattern must not be empty")
 	out: list[str] = []
 	i, n = 0, len(pattern)
 	while i < n:

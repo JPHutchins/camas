@@ -226,6 +226,7 @@ def _compose_scope(
 
 	resolved_scope: dict[str, object] = {}
 	namespaces: dict[str, TaskNode] = {}
+	child_naming_warnings: list[str] = []
 	for name, value in scope.items():
 		if isinstance(value, Config):
 			resolved_scope[name] = resolve_config(value)
@@ -238,6 +239,7 @@ def _compose_scope(
 			rel, child = child_view(value)
 			for key, mounted in child.tasks.items():
 				namespaces[f"{name}.{key}"] = rebase_tree(mounted, rel, name, is_root=True)
+			child_naming_warnings.extend(f"{name}: {w}" for w in child.naming_warnings)
 		else:
 			resolved_scope[name] = resolve(value, Field.CONTEXT)
 
@@ -246,7 +248,11 @@ def _compose_scope(
 		source=source,
 		scope_effects=name_scope_effects(resolved_scope),
 		config=name_scope_config(resolved_scope),
-		naming_warnings=redundant_name_warnings(scope) + anonymous_config_field_warnings(scope),
+		naming_warnings=(
+			redundant_name_warnings(scope)
+			+ anonymous_config_field_warnings(scope)
+			+ tuple(child_naming_warnings)
+		),
 	)
 	merged: Final = {**own.tasks, **namespaces}
 	reject_reserved_names(merged)

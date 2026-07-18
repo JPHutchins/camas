@@ -30,6 +30,24 @@ def _leaf(name: str, *, cwd: str | None = None, github: str | None = None) -> st
 	)
 
 
+def test_child_naming_warnings_surface_from_parent_root(tmp_path: Path) -> None:
+	"""A child project's naming advisories (a redundant name=, an anonymous Config field) reach
+	the parent's ``camas --check`` prefixed by the child's binding, so a monorepo checked from the
+	root doesn't silently drop them."""
+	_write(
+		tmp_path / "tasks.py",
+		"from camas import Config, Project\nlibs = Project('libs')\n_ = Config(default_task=libs)\n",
+	)
+	_write(
+		tmp_path / "libs" / "tasks.py",
+		"from camas import Config, Sequential, Task\n"
+		"fix = Sequential(Task('a'), name='fix')\n"
+		"_ = Config(default_task=fix)\n",
+	)
+	warnings = load_scope(tmp_path / "tasks.py").naming_warnings
+	assert any(w.startswith("libs: ") and "name='fix'" in w for w in warnings)
+
+
 def test_project_mounts_child_namespace(tmp_path: Path) -> None:
 	_write(
 		tmp_path / "tasks.py",
