@@ -59,6 +59,9 @@ nix run github:JPHutchins/camas#with-check          # adds ty for `camas --check
 nix run github:JPHutchins/camas#all                 # both extras
 ```
 
+> [!NOTE]
+> camas requires Python ≥ 3.10. Adding it to a project that still supports older interpreters (e.g. `requires-python = ">=3.8"`) makes `uv add camas` / `uv lock` fail to resolve — camas can't install for the sub-3.10 part of the range. Guard the dependency with an environment marker so the lock stays green — `"camas[mcp]==0.1.26 ; python_version >= '3.10'"` — or keep camas out of the project environment entirely and launch it with uvx (`camas mcp init --launcher uvx`). Either way camas orchestrates from its own ≥3.10 interpreter and shells out, so it still drives the sub-floor cells.
+
 Then scaffold a starter `tasks.py` in your project root:
 
 ```
