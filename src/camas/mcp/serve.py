@@ -690,6 +690,18 @@ async def run_for(
 	)
 
 
+def require_task(tasks: Mapping[str, TaskNode], name: str) -> TaskNode:
+	"""The task named ``name``.
+
+	Raises:
+		ValueError: when ``name`` names no task — with a did-you-mean hint and the known names.
+	"""
+	if name not in tasks:
+		known = ", ".join(sorted(tasks)) or "none"
+		raise ValueError(f"no task named {name!r}{did_you_mean(name, tasks)} (known: {known})")
+	return tasks[name]
+
+
 def resolve_run_node(
 	tasks: Mapping[str, TaskNode], req: wire.RunRequest, config: Config | None = None
 ) -> tuple[str, TaskNode]:
@@ -709,13 +721,8 @@ def resolve_run_node(
 		if default is None:
 			raise ValueError(NO_RUN_DEFAULT_MSG)
 		name, node = default.name or "default task", default
-	elif req.task not in tasks:
-		known = ", ".join(sorted(tasks)) or "none"
-		raise ValueError(
-			f"no task named {req.task!r}{did_you_mean(req.task, tasks)} (known: {known})"
-		)
 	else:
-		name, node = req.task, tasks[req.task]
+		name, node = req.task, require_task(tasks, req.task)
 	if req.matrix_overrides:
 		node = override_matrix(node, {k: tuple(v) for k, v in req.matrix_overrides.items()})
 	if req.args:
@@ -783,10 +790,7 @@ def budget_source(
 			default is configured to budget.
 	"""
 	if task is not None:
-		if task not in tasks:
-			known = ", ".join(sorted(tasks)) or "none"
-			raise ValueError(f"no task named {task!r}{did_you_mean(task, tasks)} (known: {known})")
-		return tasks[task]
+		return require_task(tasks, task)
 	default = config.run_default() if config is not None else None
 	if default is None:
 		raise ValueError(NO_RUN_DEFAULT_MSG)
@@ -801,10 +805,7 @@ def gate_source(tasks: Mapping[str, TaskNode], config: Config | None, task: str 
 			(``Config.agent.check`` or ``default_task``) exists.
 	"""
 	if task is not None:
-		if task not in tasks:
-			known = ", ".join(sorted(tasks)) or "none"
-			raise ValueError(f"no task named {task!r}{did_you_mean(task, tasks)} (known: {known})")
-		return tasks[task]
+		return require_task(tasks, task)
 	check = config.gate_check(github=False) if config is not None else None
 	if check is None:
 		raise ValueError(
@@ -1321,15 +1322,16 @@ async def fix_for(
 	except ValidationError as e:
 		return error_result(f"invalid camas_fix arguments:\n{e}")
 	fix_node: TaskNode | None
-	if req.task is not None:
-		if req.task not in tasks:
-			known = ", ".join(sorted(tasks)) or "none"
-			return error_result(
-				f"no task named {req.task!r}{did_you_mean(req.task, tasks)} (known: {known})"
-			)
-		fix_node = tasks[req.task]
-	else:
-		fix_node = config.gate_fix() if config is not None else None
+	try:
+		fix_node = (
+			require_task(tasks, req.task)
+			if req.task is not None
+			else config.gate_fix()
+			if config is not None
+			else None
+		)
+	except ValueError as e:
+		return error_result(str(e))
 	scoped: TaskNode | None = None
 	if fix_node is not None:
 		changed = to_changed(req.paths, base_for(session))
@@ -1409,12 +1411,7 @@ def resolve_github_matrix_node(
 			or an override targets an unknown matrix axis.
 	"""
 	if req.task is not None:
-		if req.task not in tasks:
-			known = ", ".join(sorted(tasks)) or "none"
-			raise ValueError(
-				f"no task named {req.task!r}{did_you_mean(req.task, tasks)} (known: {known})"
-			)
-		name, node = req.task, tasks[req.task]
+		name, node = req.task, require_task(tasks, req.task)
 	else:
 		default = config.bare_task(github=False) if config is not None else None
 		if default is None:
