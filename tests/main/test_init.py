@@ -217,6 +217,7 @@ def test_verbose_starter_loads_with_config(tmp_path: Path) -> None:
 		"docs_build",
 		"fmt",
 		"lint",
+		"typed_lint",
 		"web_lint",
 		"checked",
 		"subproject",

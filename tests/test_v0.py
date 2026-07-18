@@ -30,6 +30,7 @@ HEADLINE: Final = frozenset(
 		"Project",
 		"Sequential",
 		"Task",
+		"by_glob",
 		"by_suffix",
 	}
 )

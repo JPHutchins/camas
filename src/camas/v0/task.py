@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
@@ -73,6 +74,70 @@ def by_suffix(suffixes: tuple[str, ...], default: tuple[str, ...] = (".",)) -> P
 	"""
 	return lambda changed: (
 		default if not changed else tuple(c for c in changed if c.endswith(suffixes))
+	)
+
+
+def _glob_to_regex(pattern: str) -> re.Pattern[str]:
+	"""Compile a shell glob over POSIX paths to a full-match regex: ``**`` spans any directory
+	depth (``**/`` also matching zero directories), ``*`` and ``?`` stay within a single path
+	segment, and every other character is literal.
+
+	>>> rx = _glob_to_regex("homeassistant/**/*.py")
+	>>> bool(rx.fullmatch("homeassistant/core.py")), bool(rx.fullmatch("homeassistant/a/b.py"))
+	(True, True)
+	>>> bool(rx.fullmatch("tests/core.py")), bool(rx.fullmatch("homeassistant/core.pyi"))
+	(False, False)
+	>>> bool(_glob_to_regex("src/*.py").fullmatch("src/a/b.py"))
+	False
+	>>> bool(_glob_to_regex("logs/**").fullmatch("logs/a/b.txt"))
+	True
+	>>> tuple(bool(_glob_to_regex("v?.txt").fullmatch(c)) for c in ("v1.txt", "v10.txt"))
+	(True, False)
+	"""
+	out: list[str] = []
+	i, n = 0, len(pattern)
+	while i < n:
+		if pattern.startswith("**/", i):
+			out.append("(?:.*/)?")
+			i += 3
+		elif pattern.startswith("**", i):
+			out.append(".*")
+			i += 2
+		elif pattern[i] == "*":
+			out.append("[^/]*")
+			i += 1
+		elif pattern[i] == "?":
+			out.append("[^/]")
+			i += 1
+		else:
+			out.append(re.escape(pattern[i]))
+			i += 1
+	return re.compile("".join(out))
+
+
+def by_glob(patterns: tuple[str, ...], default: tuple[str, ...] = (".",)) -> PathScope:
+	r"""A ``PathScope`` that keeps the changed files matching any of ``patterns`` — shell globs
+	over the repo-relative POSIX path, where ``**`` spans any directory depth and ``*``/``?`` stay
+	within a segment — on a scoped run, and returns ``default`` on a full run so a ``{paths}``
+	command never loses its arguments to an empty change set. Ports a pre-commit ``files:`` filter
+	— a directory prefix plus a suffix, e.g. ``^(homeassistant|pylint)/.+\.(py|pyi)$`` — to a
+	single scope, where ``by_suffix`` (suffix-only) can't express the prefix.
+
+	>>> f = by_glob(("homeassistant/**/*.py", "homeassistant/**/*.pyi"), default=("homeassistant",))
+	>>> f(())
+	('homeassistant',)
+	>>> f(("homeassistant/core.py", "homeassistant/x.pyi", "tests/t.py", "README.md"))
+	('homeassistant/core.py', 'homeassistant/x.pyi')
+	>>> f(("homeassistant/components/hue/light.py",))
+	('homeassistant/components/hue/light.py',)
+	>>> f(("README.md",))
+	()
+	"""
+	compiled = tuple(_glob_to_regex(p) for p in patterns)
+	return lambda changed: (
+		default
+		if not changed
+		else tuple(c for c in changed if any(rx.fullmatch(c) for rx in compiled))
 	)
 
 

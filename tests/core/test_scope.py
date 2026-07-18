@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from camas import Parallel, Sequential, Task, by_suffix
+from camas import Parallel, Sequential, Task, by_glob, by_suffix
 from camas.core.matrix import expand_matrix
 from camas.core.scope import scope_to_changed, scope_warnings, to_changed, with_default_paths
 
@@ -232,6 +232,32 @@ def test_by_suffix_scoped_filters_by_suffix() -> None:
 def test_by_suffix_scoped_no_match_prunes_the_leaf() -> None:
 	fmt = Task("clang-format {paths}", name="fmt", paths=by_suffix((".c", ".h")))
 	assert scope_to_changed(fmt, ("b.py",)) is None
+
+
+def test_by_glob_full_run_default() -> None:
+	scope = by_glob(("homeassistant/**/*.py",), default=("homeassistant",))
+	assert scope(()) == ("homeassistant",)
+
+
+def test_by_glob_scoped_matches_prefix_and_suffix_at_any_depth() -> None:
+	scope = by_glob(("homeassistant/**/*.py", "pylint/**/*.pyi"))
+	changed = ("homeassistant/core.py", "homeassistant/a/b/x.py", "pylint/y.pyi", "tests/t.py")
+	assert scope(changed) == ("homeassistant/core.py", "homeassistant/a/b/x.py", "pylint/y.pyi")
+
+
+def test_by_glob_star_stays_within_a_segment() -> None:
+	scope = by_glob(("src/*.py",))
+	assert scope(("src/a.py", "src/sub/b.py")) == ("src/a.py",)
+
+
+def test_by_glob_scoped_no_match_prunes_the_leaf() -> None:
+	mypy = Task("mypy {paths}", name="mypy", paths=by_glob(("homeassistant/**/*.py",)))
+	assert scope_to_changed(mypy, ("tests/t.py",)) is None
+
+
+def test_scope_warnings_by_glob_with_default_does_not_warn() -> None:
+	mypy = Task("mypy {paths}", name="mypy", paths=by_glob(("src/**/*.py",), default=("src",)))
+	assert scope_warnings(mypy) == ()
 
 
 def test_scope_warnings_inert_own_paths() -> None:

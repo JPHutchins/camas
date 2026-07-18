@@ -88,7 +88,8 @@ a directory-prefix string, a tuple of prefixes, or a ``(changed) -> bool``
 callable — so the gate skips it on a scoped run the change doesn't touch,
 and never consults it on a full run; ``by_suffix`` builds a suffix-filtering
 ``paths`` scope for a ``{paths}`` leaf that should still run against the
-whole project on a full run. ``check`` is the node the gate validates
+whole project on a full run, and ``by_glob`` a prefix+suffix (shell-glob,
+``**``-aware) one for porting a pre-commit ``files:`` filter. ``check`` is the node the gate validates
 (``None`` defers to ``default_task``/``github_task``), scoped by ``--paths``
 and time-boxed by ``--under``; the plugin delegates it to a tiered ladder of
 background camas-fixer subagents (lint/format tiers, then a test/coverage
@@ -402,6 +403,7 @@ from .v0 import Parallel as Parallel
 from .v0 import Project as Project
 from .v0 import Sequential as Sequential
 from .v0 import Task as Task
+from .v0 import by_glob as by_glob
 from .v0 import by_suffix as by_suffix
 
 if typing.TYPE_CHECKING:

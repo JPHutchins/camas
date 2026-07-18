@@ -13,6 +13,7 @@ from .task import Parallel as Parallel
 from .task import Project as Project
 from .task import Sequential as Sequential
 from .task import Task as Task
+from .task import by_glob as by_glob
 from .task import by_suffix as by_suffix
 
 if typing.TYPE_CHECKING:
