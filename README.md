@@ -69,6 +69,9 @@ The starter demonstrates leaf tasks, `Sequential`/`Parallel` composition, a matr
 
 `--init` also creates a gitignored `.camas/` directory beside `tasks.py`. Camas writes run logs and a per-leaf timing cache there, so `camas --list` can annotate tasks with an estimated duration; delete the directory to opt out. Rename or relocate it with `Config(camas_dir=...)`.
 
+> [!TIP]
+> A multi-version matrix that builds a per-version environment should point it *into* `.camas/` — `env={"UV_PROJECT_ENVIRONMENT": ".camas/.venv-{PY}", "UV_PYTHON": "{PY}"}` — so the venvs land in the already-gitignored `.camas/` rather than the project root. In the root, a later `.`-scanning tool (a formatter, a linter that isn't gitignore-aware) descends into `.venv-3.13/` and friends; and note that a formatter's default `.venv` exclude often won't match a `.venv-3.13` suffix, so the breakage is tool-inconsistent and only appears *after* a matrix run.
+
 Want to see the whole authoring surface at once instead of growing the short starter? `camas --init --verbose` writes a kitchen-sink `tasks.py` covering every `Task`/`Sequential`/`Parallel`/`Config` option — path scoping, matrix expansion, `agent_format` structured output, `Config(agent=Claude(fix=..., check=..., default=...))`, and a commented recipe for sourcing a matrix axis from your own project's SSOT — each one worked and explained in place. The MCP `camas_init` tool writes this template by default (pass `verbose=false` for the short one).
 
 ## Why camas?
