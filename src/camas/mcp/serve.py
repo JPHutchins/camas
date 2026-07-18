@@ -455,10 +455,13 @@ def tools(task_names: tuple[str, ...], compat: Compat) -> Tools:
 				'-x'] to run and fail-fast on one test); composite tasks reject args, so target
 				a leaf. For a time-boxed inner loop, pass under=<seconds> to run only the leaves
 				whose recorded estimate fits — mutating leaves (formatters) first, then the
-				read-only rest in parallel; omit task to budget the project default. Compact
-				failures-first summary by default; dry_run=true previews the fully-resolved plan
-				without executing. Omit task entirely to run the project's configured default. A
-				non-zero result means a task failed — a normal result, not a tool error.
+				read-only rest in parallel; omit task to budget the project default. For an ad-hoc
+				scoped run of any task, pass paths=[…] (changed files, like the CLI --paths): each
+				{paths} command is narrowed to the files it covers, and it combines with under
+				(scope first, then budget). Compact failures-first summary by default; dry_run=true
+				previews the fully-resolved plan without executing. Omit task entirely to run the
+				project's configured default. A non-zero result means a task failed — a normal
+				result, not a tool error.
 			""").strip(),
 			input_schema=wire.run_input_schema(task_names),
 			output_model=wire.RunResponse,
@@ -670,6 +673,10 @@ async def run_for(
 		name, node = resolve_run_node(tasks, req, config)
 	except ValueError as e:
 		return error_result(str(e))
+	scoped = scope_to_paths(node, req.paths, base_for(session))
+	if scoped is None:
+		return nothing_covered_result(session, req.paths)
+	node = scoped
 	if req.dry_run:
 		return success(
 			with_warning(session, dry_run_text(node)), to_plan_response(node), session.compat
@@ -688,6 +695,31 @@ async def run_for(
 		session.compat,
 		links=failing_log_links(resp, logs),
 	)
+
+
+def scope_to_paths(node: TaskNode, paths: list[str], base: Path) -> TaskNode | None:
+	"""``node`` narrowed to the changed ``paths`` — the MCP counterpart of the CLI ``--paths``.
+
+	``node`` unchanged when ``paths`` is empty (run the whole task); the path-scoped tree when
+	some leaf covers the paths; ``None`` when ``paths`` is non-empty but no leaf covers it.
+	"""
+	if not paths:
+		return node
+	changed = to_changed(paths, base)
+	if not changed:
+		return None
+	return scope_to_changed(expand_matrix(node), changed)
+
+
+def nothing_covered_result(session: Session, paths: list[str]) -> types.CallToolResult:
+	"""The ``camas_run`` success for a path scope that matched no leaf — an empty run and a
+	message naming the uncovered paths, mirroring the CLI's ``No task leaf covers …``.
+	"""
+	empty = wire.RunResponse(
+		returncode=0, elapsed=0.0, passed=0, failed=0, skipped=0, interrupt_count=0, leaves=()
+	)
+	text = f"No task leaf covers {', '.join(paths)} — nothing to run."
+	return success(with_warning(session, text), empty, session.compat)
 
 
 def require_task(tasks: Mapping[str, TaskNode], name: str) -> TaskNode:
@@ -747,6 +779,10 @@ async def run_budget(
 			source = override_matrix(source, {k: tuple(v) for k, v in req.matrix_overrides.items()})
 	except ValueError as e:
 		return error_result(str(e))
+	scoped_source = scope_to_paths(source, req.paths, base_for(session))
+	if scoped_source is None:
+		return nothing_covered_result(session, req.paths)
+	source = scoped_source
 	plan = plan_under(source, budget_s, timings.load(session.camas_dir))
 	report = to_budget_report(plan)
 	if plan.node is None:

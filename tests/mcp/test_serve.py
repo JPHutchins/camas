@@ -373,6 +373,62 @@ async def test_run_call_dry_run_no_task_no_default_errors(tmp_path: Path) -> Non
 	assert "has no task to run" in _text(result)
 
 
+_SCOPED_SRC = Task(("python", "-c", "print('src')", "{paths}"), name="src_lint", paths="src")
+_SCOPED_DOCS = Task(("python", "-c", "print('docs')", "{paths}"), name="docs_lint", paths="docs")
+
+
+async def test_run_call_paths_prunes_leaves_the_scope_misses(tmp_path: Path) -> None:
+	node = Parallel(_SCOPED_SRC, _SCOPED_DOCS, name="all")
+	session = _session({"all": node}, None, tmp_path, rich=True)
+	result = await serve.run_call(session, {"task": "all", "paths": ["src/a.py"]})
+	assert result.isError is False
+	assert result.structuredContent is not None
+	names = [leaf["name"] for leaf in result.structuredContent["leaves"]]
+	assert names == ["src_lint"]
+	assert "src/a.py" in result.structuredContent["leaves"][0]["command"]
+
+
+async def test_run_call_paths_no_leaf_covered_runs_nothing(tmp_path: Path) -> None:
+	session = _session({"lint": _SCOPED_SRC}, None, tmp_path)
+	result = await serve.run_call(session, {"task": "lint", "paths": ["docs/x.md"]})
+	assert result.isError is False
+	assert "No task leaf covers docs/x.md" in _text(result)
+	assert not (tmp_path / ".camas").exists()
+
+
+async def test_run_call_paths_all_outside_repo_runs_nothing(tmp_path: Path) -> None:
+	node = Task(("python", "-c", "print('x')", "{paths}"), name="lint", paths=".")
+	session = _session({"lint": node}, None, tmp_path)
+	result = await serve.run_call(session, {"task": "lint", "paths": ["/etc/passwd"]})
+	assert result.isError is False
+	assert "No task leaf covers" in _text(result)
+
+
+async def test_run_call_paths_dry_run_previews_scoped(tmp_path: Path) -> None:
+	node = Task(("python", "-c", "print('x')", "{paths}"), name="lint", paths=".")
+	session = _session({"lint": node}, None, tmp_path, rich=True)
+	result = await serve.run_call(session, {"task": "lint", "paths": ["src/a.py"], "dry_run": True})
+	assert result.structuredContent is not None
+	assert "src/a.py" in result.structuredContent["leaves"][0]["command"]
+
+
+async def test_run_call_paths_with_under_scopes_then_budgets(tmp_path: Path) -> None:
+	node = Parallel(_SCOPED_SRC, _SCOPED_DOCS, name="all")
+	session = _session({"all": node}, None, tmp_path, rich=True)
+	result = await serve.run_call(session, {"task": "all", "paths": ["src/a.py"], "under": 5.0})
+	assert result.isError is False
+	assert result.structuredContent is not None
+	names = [leaf["name"] for leaf in result.structuredContent["leaves"]]
+	assert names == ["src_lint"]
+
+
+async def test_run_call_paths_with_under_no_leaf_covered_runs_nothing(tmp_path: Path) -> None:
+	session = _session({"lint": _SCOPED_SRC}, None, tmp_path)
+	result = await serve.run_call(session, {"task": "lint", "paths": ["docs/x.md"], "under": 5.0})
+	assert result.isError is False
+	assert "No task leaf covers docs/x.md" in _text(result)
+
+
 async def test_run_call_log_path_in_structured_content_when_rich(tmp_path: Path) -> None:
 	session = _session({"bad": FAIL}, None, tmp_path, rich=True)
 	result = await serve.run_call(session, {"task": "bad"})

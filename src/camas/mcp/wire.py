@@ -234,6 +234,14 @@ class RunRequest(BaseModel):
 		description="Task name to run — one of the names returned by camas_list. Omit to "
 		"run the project's configured default task (also honored by 'under' and 'dry_run').",
 	)
+	paths: list[str] = Field(
+		default_factory=list,
+		description="Changed paths to scope the run to (the MCP counterpart of the CLI --paths) "
+		"— an ad-hoc scoped run of an arbitrary task. Empty runs the whole task; each {paths} "
+		"command is injected with the files it covers (one covering none is dropped), while a "
+		"command without {paths} can't be narrowed and always runs unless its when= excludes the "
+		"changed set. Combines with 'under': the task is scoped first, then budgeted.",
+	)
 	under: float | None = Field(
 		default=None,
 		gt=0,
