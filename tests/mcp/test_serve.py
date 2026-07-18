@@ -653,7 +653,7 @@ def test_check_call_server_version_degrades_when_missing(
 
 def test_check_call_reports_scope_warnings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 	(tmp_path / "tasks.py").write_text(
-		"from camas import Task\ncargo = Task('cargo build', name='cargo', paths='.')\n"
+		"from camas import Task\ncargo = Task('cargo build', paths='.')\n"
 	)
 	monkeypatch.setattr("camas.mcp.result.run_typecheck", _fixed_checker(CheckerOk("ty")))
 	result = serve.check_call(_resolved_session(tmp_path, rich=True))

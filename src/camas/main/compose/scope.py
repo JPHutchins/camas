@@ -25,6 +25,7 @@ from ..tasks import (
 	name_scope_bindings,
 	name_scope_config,
 	name_scope_effects,
+	redundant_name_warnings,
 	reject_reserved_names,
 )
 from .errors import ProjectLoadError
@@ -244,6 +245,7 @@ def _compose_scope(
 		source=source,
 		scope_effects=name_scope_effects(resolved_scope),
 		config=name_scope_config(resolved_scope),
+		naming_warnings=redundant_name_warnings(scope),
 	)
 	merged: Final = {**own.tasks, **namespaces}
 	reject_reserved_names(merged)

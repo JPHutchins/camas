@@ -121,8 +121,8 @@ def to_check_response(state: TasksState) -> wire.CheckResponse:
 			return wire.CheckResponse(
 				status="load_error", source=str(source), diagnostics=trace + checker
 			)
-		case LoadOk(tasks=tasks, source=source):
-			warnings = scope_warning_messages(tasks.values())
+		case LoadOk(tasks=tasks, source=source, naming_warnings=naming_warnings):
+			warnings = scope_warning_messages(tasks.values()) + naming_warnings
 			if source is None:
 				return wire.CheckResponse(status="no_tasks", warnings=warnings)
 			if source.suffix != ".py":

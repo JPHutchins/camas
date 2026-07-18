@@ -39,6 +39,10 @@ class LoadOk(NamedTuple):
 	"""``None`` only when no tasks file exists anywhere up the tree."""
 	scope_effects: Mapping[str, type[Effect[Any]]]
 	config: Config | None = None
+	naming_warnings: tuple[str, ...] = ()
+	"""Advisory task-authoring warnings that only the raw bindings reveal (a redundant ``name=``,
+	an anonymous ``Config`` task field) — surfaced by ``--check`` / ``camas_check`` beside the
+	scope warnings, and, like them, independent of whether the tasks load."""
 
 
 class LoadErr(NamedTuple):

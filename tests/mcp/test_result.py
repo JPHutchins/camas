@@ -345,6 +345,16 @@ def test_to_check_response_clean_tree_has_no_warnings() -> None:
 	assert to_check_response(state).warnings == ()
 
 
+def test_to_check_response_surfaces_naming_warnings() -> None:
+	state = LoadOk(
+		tasks={"cargo": Task("cargo build", name="cargo")},
+		source=_PYPROJECT,
+		scope_effects={},
+		naming_warnings=("task 'fix' passes name='fix', ...",),
+	)
+	assert to_check_response(state).warnings == ("task 'fix' passes name='fix', ...",)
+
+
 def test_to_check_response_dedupes_shared_node() -> None:
 	shared = Task("cargo build", name="cargo", paths=".")
 	state = LoadOk(tasks={"a": shared, "b": shared}, source=_PYPROJECT, scope_effects={})

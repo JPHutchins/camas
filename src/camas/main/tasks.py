@@ -83,6 +83,29 @@ def assign_key_name(node: TaskNode | Ref, key: str) -> TaskNode | Ref:
 			return node
 
 
+def redundant_name_warnings(scope: Mapping[str, object]) -> tuple[str, ...]:
+	"""Advisory warnings for a top-level binding that passes ``name=`` equal to its own variable
+	name: the binding name already *is* the task name (:func:`assign_key_name`), so the ``name=``
+	is redundant. Read from the raw scope, where an explicit ``name=`` is still distinguishable
+	from the one :func:`assign_key_name` would supply.
+
+	>>> redundant_name_warnings({"fix": Sequential(Task("a"), name="fix")})[0].startswith("task 'fix'")
+	True
+	>>> redundant_name_warnings({"fix": Sequential(Task("a"))})
+	()
+	>>> redundant_name_warnings({"checks": Parallel(Task("a"), name="ci")})
+	()
+	"""
+	return tuple(
+		f"task {name!r} passes name={name!r}, which just repeats its binding name; the binding "
+		"name is already the task name, so drop the redundant name="
+		for name, val in scope.items()
+		if not name.startswith("_")
+		and isinstance(val, Task | Sequential | Parallel)
+		and val.name == name
+	)
+
+
 RESERVED_TASK_NAMES: Final = frozenset({"mcp"})
 
 
