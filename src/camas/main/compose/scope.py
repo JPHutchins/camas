@@ -22,6 +22,7 @@ from ...v0.task import Group, Parallel, ProjectRef, Sequential, Task
 from ..effects import running_under_agent
 from ..state import LoadErr, LoadOk
 from ..tasks import (
+	anonymous_config_field_warnings,
 	name_scope_bindings,
 	name_scope_config,
 	name_scope_effects,
@@ -245,7 +246,7 @@ def _compose_scope(
 		source=source,
 		scope_effects=name_scope_effects(resolved_scope),
 		config=name_scope_config(resolved_scope),
-		naming_warnings=redundant_name_warnings(scope),
+		naming_warnings=redundant_name_warnings(scope) + anonymous_config_field_warnings(scope),
 	)
 	merged: Final = {**own.tasks, **namespaces}
 	reject_reserved_names(merged)

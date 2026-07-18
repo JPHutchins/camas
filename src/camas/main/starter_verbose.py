@@ -251,9 +251,13 @@ ci = Sequential(
 # (None would defer to default_task/github_task, scoped by --paths and time-boxed by --under);
 # default is what a no-task `camas_run` runs (None would defer to check, then
 # github_task/default_task).
+# Bind the CI-only extension to a name so camas_list reports it as the github default; an
+# anonymous inline composite in a Config task field would surface as null (camas --check flags it).
+github_ci = Sequential(ci, "python -c \"print('extra check only under GitHub Actions')\"")
+
 _ = Config(
 	default_task=ci,
-	github_task=Sequential(ci, "python -c \"print('extra check only under GitHub Actions')\""),
+	github_task=github_ci,
 	default_effects=None,
 	default_github_effects=None,
 	camas_dir=".camas",

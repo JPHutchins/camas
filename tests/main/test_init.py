@@ -226,6 +226,7 @@ def test_verbose_starter_loads_with_config(tmp_path: Path) -> None:
 		"frontend",
 		"versions",
 		"ci",
+		"github_ci",
 	}
 	assert set(loaded.scope_effects) == {"Announce"}
 	assert loaded.config is not None

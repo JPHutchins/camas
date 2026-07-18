@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 import pytest
 
-from camas import Sequential, Task
+from camas import Config, Parallel, Sequential, Task
 from camas.main import check as check_mod
 from camas.main.check import (
 	CHECKER_PRIORITY,
@@ -515,6 +515,23 @@ def test_dispatch_check_prints_redundant_name_warning(
 	err = capsys.readouterr().err
 	assert "name='fix'" in err
 	assert "redundant" in err
+
+
+def test_dispatch_check_warns_on_anonymous_config_composite(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	from camas.main.dispatch import run_cli
+
+	scope: dict[str, object] = {
+		"__file__": str(tmp_path / "tasks.py"),
+		"_": Config(github_task=Parallel(Task("a"))),
+	}
+	monkeypatch.setattr(check_mod, "run_typecheck", _stub_ok)
+	with pytest.raises(SystemExit, match="0"), patch("sys.argv", ["tasks.py", "--check"]):
+		run_cli(scope)
+	err = capsys.readouterr().err
+	assert "Config.github_task" in err
+	assert "anonymous" in err
 
 
 def test_dispatch_check_with_load_error_runs_report_eval_error(

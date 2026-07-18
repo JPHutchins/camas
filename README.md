@@ -271,14 +271,18 @@ libs = Project("libs")            # camas libs, camas libs.search.lint, ...
 api  = Project("services/api")    # name the handle whatever you like
 
 _ = Config(
-    default_task=Parallel(libs, api),          # each child's default_task, in parallel
-    github_task=Parallel(libs, api),           # each child's github_task
+    default_task=Parallel(libs, api, name="all"),      # each child's default_task, in parallel
+    github_task=Parallel(libs, api, name="ci"),        # each child's github_task
     agent=Claude(
-        fix=Parallel(libs, api),               # each child's fix node
-        check=Parallel(libs, api),             # each child's check node
+        fix=Parallel(libs, api, name="fix"),           # each child's fix node
+        check=Parallel(libs, api, name="check"),       # each child's check node
     ),
 )
 ```
+
+Name each composite (or bind it to a variable) so `camas_list` can report it as the default — an
+anonymous inline `Parallel`/`Sequential` in a `Config` task field surfaces as `null`, and `camas
+--check` flags that papercut.
 
 A reference composes the child's **matching field**: the same bare `libs` grabs the child's `default_task` in `default_task`, its `github_task` in `github_task`, its fix node in `agent.fix`, its check node in `agent.check` — the slot the reference sits in selects which field of the child's own `Config` it contributes. So a `Parallel` of references in any slot is that slot composed across the monorepo, each child contributing its own. A binding name resolves by context instead — `camas libs` runs whatever a bare `camas` runs in that directory (its default locally, its `github_task` under CI, its agent default under an agent). `camas libs.search.lint` reaches a task the child exposes (because `libs/tasks.py` itself did `search = Project("search")`), and expressions compose across namespaces (`camas '{libs.search.lint, api.deploy}'`).
 
