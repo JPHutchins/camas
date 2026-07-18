@@ -155,6 +155,18 @@ The downside is that fork PRs get a read-only `GITHUB_TOKEN` from GitHub and can
 
 Fan out across N runners *without* giving up SSOT. `camas <task> --github-matrix` emits the task's axes as the object-of-arrays GHA's `strategy.matrix` consumes, so a `discover` job can source the fan-out from `tasks.py` and downstream jobs read it with `fromJSON` — the matrix lives in one place. Values come from the task's real run-set, so the object expands to exactly the leaves camas runs; a run-set with no clean cross-product (heterogeneous nested matrices, or independent fan-outs in one tree) is rejected rather than silently widened. YAML-side axes like `os` — which a shell command can't change from inside a job anyway — stay in the workflow and compose with `${{ fromJSON(...).PY }}`. This repo dogfoods it: see the [`discover` and `check` jobs](https://github.com/JPHutchins/camas/blob/main/.github/workflows/ci.yaml) fanning out over `.python-version`.
 
+> [!NOTE]
+> If your test matrix includes Python **below camas's floor** (camas needs ≥3.10; a library might test 3.8+), the sub-floor cells can't `uv run camas` — camas isn't installable there. Naively switching to `uvx` doesn't help either: `setup-uv`'s `python-version` (and any job-level `UV_PYTHON`) also pin a `uvx camas` invocation onto the sub-floor interpreter. Decouple camas's interpreter from the cell's by scoping `UV_PYTHON` to the sync step only:
+> ```yaml
+> - uses: astral-sh/setup-uv@...             # no python-version -> no job-wide UV_PYTHON
+> - run: uv sync
+>   env:
+>     UV_PYTHON: ${{ matrix.python-version }}    # step-scoped: builds the cell's .venv
+> - run: uvx camas==0.1.26 <task>            # camas gets its own >=3.10 interpreter;
+>                                             # its leaves' `uv run` reuse the synced .venv
+> ```
+> The `discover` job still emits the matrix from `tasks.py`, so SSOT is preserved — only the per-cell launcher changes.
+
 ### Machine-readable report (`Ctrf`)
 
 For a CI artifact or input to an AI code review, add the `Ctrf` effect (opt-in extra: `camas[ctrf]`). It writes the run as a [CTRF](https://ctrf.io) JSON report — each leaf a test with status, duration, output, command, and exit code. `path=` writes a file; the default is stdout.
