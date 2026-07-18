@@ -341,8 +341,10 @@ async def test_run_call_dry_run_structured_when_rich(tmp_path: Path) -> None:
 	result = await serve.run_call(session, {"task": "lint", "dry_run": True})
 	assert result.structuredContent is not None
 	assert result.structuredContent["returncode"] == 0
-	assert result.structuredContent["skipped"] == 1
+	assert result.structuredContent["skipped"] == 0
+	assert result.structuredContent["planned"] == 1
 	assert result.structuredContent["leaves"][0]["name"] == "lint"
+	assert result.structuredContent["leaves"][0]["completion"]["type"] == "planned"
 
 
 async def test_run_call_dry_run_names_anonymous_leaf_by_command(tmp_path: Path) -> None:
@@ -1123,6 +1125,11 @@ def test_leaf_lines_covers_errored_status() -> None:
 	)
 	lines = serve.leaf_lines(leaf, None)
 	assert lines == ["ERROR  ghost (exit 127): no such file or directory: does-not-exist"]
+
+
+def test_leaf_lines_covers_planned_status() -> None:
+	leaf = wire.LeafReport(name="lint", command="ruff check .", completion=wire.Planned())
+	assert serve.leaf_lines(leaf, None) == ["PLAN   lint"]
 
 
 def test_run_text_covers_every_status() -> None:

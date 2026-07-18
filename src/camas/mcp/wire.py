@@ -44,8 +44,23 @@ class Errored(BaseModel):
 	message: str
 
 
-Completion = Annotated[Finished | Skipped | Stopped | Errored, Field(discriminator="type")]
-"""Tagged union mirroring ``camas.v0.completion.Completion``."""
+class Planned(BaseModel):
+	"""A leaf a ``dry_run`` resolved but did not execute — part of the plan a real run would
+	run. Distinct from ``skipped`` (a leaf a real run pruned), so an all-``planned`` preview
+	reads as "these leaves would run", not as a green "nothing to do".
+	"""
+
+	type: Literal["planned"] = "planned"
+	returncode: int = 0
+	"""Always ``0`` — a planned leaf never ran; the field exists so a planned leaf is uniformly
+	a non-failure alongside the other never-ran outcomes."""
+
+
+Completion = Annotated[
+	Finished | Skipped | Stopped | Errored | Planned, Field(discriminator="type")
+]
+"""Tagged union of run outcomes: the four mirroring ``camas.v0.completion.Completion`` plus the
+dry-run-only ``Planned`` (a leaf previewed, never executed)."""
 
 
 class LeafReport(BaseModel):
@@ -91,6 +106,8 @@ class RunResponse(BaseModel):
 	passed: int
 	failed: int
 	skipped: int
+	planned: int = 0
+	"""Leaves previewed by a ``dry_run`` (would run, never executed); ``0`` for a real run."""
 	interrupt_count: int
 	leaves: tuple[LeafReport, ...]
 	truncated: bool = False

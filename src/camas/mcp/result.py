@@ -71,17 +71,20 @@ def to_run_response(
 
 
 def to_plan_response(node: TaskNode) -> wire.RunResponse:
-	"""A ``RunResponse`` for a dry run: every resolved leaf, none executed.
+	"""A ``RunResponse`` for a dry run: every resolved leaf marked ``planned`` (would run,
+	none executed) — the plan a real ``camas_run`` of the same node executes.
 
-	Lets ``camas_run dry_run=true`` satisfy the advertised ``outputSchema`` — the
-	structured counterpart of the rendered plan, with each leaf reported as skipped.
+	Lets ``camas_run dry_run=true`` satisfy the advertised ``outputSchema`` — the structured
+	counterpart of the rendered plan. ``planned`` is distinct from ``skipped`` (a leaf a real
+	run pruned), so an all-``planned`` preview reads as "these leaves would run", not as a
+	green "nothing to do".
 	"""
 	leaves = tuple(
 		wire.LeafReport(
 			name=info.task.name if info.task.name is not None else command_of(info.task),
 			command=command_of(info.task),
 			cwd=str(info.task.cwd) if info.task.cwd is not None else None,
-			completion=wire.Skipped(returncode=0, blocked_by=None),
+			completion=wire.Planned(),
 		)
 		for info in flatten_leaves(expand_matrix(node))
 	)
@@ -90,7 +93,8 @@ def to_plan_response(node: TaskNode) -> wire.RunResponse:
 		elapsed=0.0,
 		passed=0,
 		failed=0,
-		skipped=len(leaves),
+		skipped=0,
+		planned=len(leaves),
 		interrupt_count=0,
 		leaves=leaves,
 	)

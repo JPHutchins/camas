@@ -1262,6 +1262,8 @@ def leaf_lines(leaf: wire.LeafReport, log: Path | None) -> list[str]:
 			return [f"SKIP   {leaf.name}{blame}"]
 		case wire.Errored(returncode=rc, message=message):
 			return [f"ERROR  {leaf.name} (exit {rc}): {message}"]
+		case wire.Planned():
+			return [f"PLAN   {leaf.name}"]
 		case _:
 			assert_never(leaf.completion)
 
