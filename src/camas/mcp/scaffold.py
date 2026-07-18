@@ -319,6 +319,13 @@ def write_hooks(argv: list[str], *, quiet: bool = False, launcher: Launcher | No
 	and an async check that nudges the main agent to launch the fixer ladder) into
 	``.claude/settings.json``.
 
+	The fix hook trails ``|| exit 0`` so a best-effort, zero-token autofix can never block the
+	turn: a launcher/env/config failure degrades to a no-op instead of a hard stop, the same
+	fail-safe the Stop gate already applies. ``exit 0`` over ``true`` for portability — it holds
+	across the shells Claude Code runs hooks in (``sh``/Git Bash, and PowerShell, which has no
+	``true``); the failure's stderr still reaches the ``--debug`` log. The nudge hook keeps its
+	exit code — it is the signal that surfaces a residual.
+
 	``quiet`` suppresses the success message — set when called from ``write_claude``, which
 	emits its own consolidated summary so the user sees one reload line, not two.
 	"""
@@ -343,7 +350,8 @@ def write_hooks(argv: list[str], *, quiet: bool = False, launcher: Launcher | No
 	if launch_str is None:
 		print(no_launcher_error("portable hooks", launcher), file=sys.stderr)
 		return 2
-	fix_hook: dict[str, Any] = {"type": "command", "command": f"{launch_str} fix"}
+	fix_command = f"{launch_str} fix || exit 0"
+	fix_hook: dict[str, Any] = {"type": "command", "command": fix_command}
 	nudge_command = f"{launch_str} gate --under {STOP_NUDGE_UNDER} --nudge"
 	nudge_hook: dict[str, Any] = {
 		"type": "command",
@@ -369,8 +377,8 @@ def write_hooks(argv: list[str], *, quiet: bool = False, launcher: Launcher | No
 	if not quiet:
 		print(
 			f"Wrote the camas autofix and Stop hooks to {settings_path}\n"
-			f"  PostToolBatch:      {launch_str} fix\n"
-			f"  Stop (fix):         {launch_str} fix\n"
+			f"  PostToolBatch:      {fix_command}\n"
+			f"  Stop (fix):         {fix_command}\n"
 			f"  Stop (async nudge): {nudge_command}\n"
 			f"\nReload Claude Code for the hooks to take effect."
 		)

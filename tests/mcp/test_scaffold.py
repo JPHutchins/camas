@@ -455,7 +455,7 @@ def test_write_hooks_writes_settings_json(
 	settings = json.loads((tmp_path / ".claude" / "settings.json").read_text())
 	post_tool_batch = settings["hooks"]["PostToolBatch"][0]["hooks"][0]
 	assert post_tool_batch["type"] == "command"
-	assert post_tool_batch["command"] == "camas mcp fix"
+	assert post_tool_batch["command"] == "camas mcp fix || exit 0"
 	assert "FileChanged" not in settings["hooks"]
 	assert "Wrote the camas autofix and Stop hooks" in capsys.readouterr().out
 
@@ -472,15 +472,31 @@ def test_write_hooks_writes_stop_fix_and_async_nudge_hooks(
 	settings = json.loads((tmp_path / ".claude" / "settings.json").read_text())
 	stop_hooks = settings["hooks"]["Stop"][0]["hooks"]
 	fix_hook, nudge_hook = stop_hooks
-	assert fix_hook == {"type": "command", "command": "camas mcp fix"}
+	assert fix_hook == {"type": "command", "command": "camas mcp fix || exit 0"}
 	assert nudge_hook["type"] == "command"
 	assert nudge_hook["command"] == "camas mcp gate --under 5s --nudge"
 	assert nudge_hook["async"] is True
 	assert nudge_hook["asyncRewake"] is True
-	assert settings["hooks"]["PostToolBatch"][0]["hooks"][0]["command"] == "camas mcp fix"
+	assert settings["hooks"]["PostToolBatch"][0]["hooks"][0]["command"] == "camas mcp fix || exit 0"
 	out = capsys.readouterr().out
-	assert "Stop (fix):         camas mcp fix" in out
+	assert "Stop (fix):         camas mcp fix || exit 0" in out
 	assert "Stop (async nudge): camas mcp gate --under 5s --nudge" in out
+
+
+def test_write_hooks_fix_hook_is_fail_safe_but_nudge_is_not(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	"""#221: the best-effort autofix hook trails ``|| exit 0`` so a launcher/env failure degrades to
+	a no-op instead of blocking the turn; the nudge hook keeps its exit code — it is the signal."""
+	monkeypatch.chdir(tmp_path)
+	monkeypatch.setattr("shutil.which", _which("camas"))
+	assert write_hooks([]) == 0
+	hooks = json.loads((tmp_path / ".claude" / "settings.json").read_text())["hooks"]
+	post = hooks["PostToolBatch"][0]["hooks"][0]["command"]
+	stop_fix, stop_nudge = (h["command"] for h in hooks["Stop"][0]["hooks"])
+	assert post.endswith("|| exit 0")
+	assert stop_fix.endswith("|| exit 0")
+	assert "|| exit 0" not in stop_nudge
 
 
 def test_write_hooks_stop_hooks_are_idempotent(
@@ -525,7 +541,7 @@ def test_write_hooks_sweeps_stale_stop_hook_preserving_user_stop_hooks(
 	stop_commands = [h["command"] for g in hooks["Stop"] for h in g["hooks"]]
 	assert "echo done" in stop_commands
 	assert "camas mcp gate --nudge" not in stop_commands
-	assert "camas mcp fix" in stop_commands
+	assert "camas mcp fix || exit 0" in stop_commands
 	assert "camas mcp gate --under 5s --nudge" in stop_commands
 
 
@@ -712,7 +728,7 @@ def test_write_hooks_preserves_matcher_empty_string(
 	assert len(ptb) == 2
 	echo_group = next(g for g in ptb if any("echo hi" in h["command"] for h in g["hooks"]))
 	assert echo_group.get("matcher") == ""
-	assert any(h["command"] == "camas mcp fix" for g in ptb for h in g["hooks"])
+	assert any(h["command"] == "camas mcp fix || exit 0" for g in ptb for h in g["hooks"])
 
 
 def test_write_hooks_preserves_extra_hook_command_fields(
@@ -754,7 +770,7 @@ def test_write_hooks_preserves_extra_hook_command_fields(
 	)
 	assert echo["statusMessage"] == "linting"
 	assert any(
-		h["command"] == "camas mcp fix"
+		h["command"] == "camas mcp fix || exit 0"
 		for g in settings["hooks"]["PostToolBatch"]
 		for h in g["hooks"]
 	)
@@ -784,7 +800,7 @@ def test_write_hooks_preserves_key_order_and_omits_matcher(
 	assert "matcher" not in settings["hooks"]["PreToolUse"][0]
 	assert "matcher" not in settings["hooks"]["PostToolBatch"][0]
 	assert "matcher" not in settings["hooks"]["Stop"][0]
-	assert settings["hooks"]["PostToolBatch"][0]["hooks"][0]["command"] == "camas mcp fix"
+	assert settings["hooks"]["PostToolBatch"][0]["hooks"][0]["command"] == "camas mcp fix || exit 0"
 
 
 def test_write_hooks_removes_camas_only_groups(
@@ -806,7 +822,7 @@ def test_write_hooks_removes_camas_only_groups(
 	settings = json.loads((tmp_path / ".claude" / "settings.json").read_text())
 	ptb = settings["hooks"]["PostToolBatch"]
 	assert len(ptb) == 1
-	assert ptb[0]["hooks"][0]["command"] == "camas mcp fix"
+	assert ptb[0]["hooks"][0]["command"] == "camas mcp fix || exit 0"
 
 
 def _sweep_survivors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: str) -> set[str]:
@@ -1288,7 +1304,7 @@ def test_write_hooks_launcher_matches_chosen_command(
 	assert "camas mcp fix" in out
 	settings = json.loads((tmp_path / ".claude" / "settings.json").read_text())
 	command = settings["hooks"]["PostToolBatch"][0]["hooks"][0]["command"]
-	assert command == "camas mcp fix"
+	assert command == "camas mcp fix || exit 0"
 
 
 def test_resolve_pin_no_tasks_py(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
