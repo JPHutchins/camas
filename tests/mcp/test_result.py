@@ -16,6 +16,7 @@ from camas.mcp.result import (
 	has_failing_leaf_without_agent_format,
 	to_agent_envelope,
 	to_check_response,
+	to_plan_response,
 	to_run_response,
 )
 from camas.v0.completion import Errored, Finished, Skipped, Stopped
@@ -29,6 +30,20 @@ async def _resp(
 	node: TaskNode, *, verbosity: Verbosity = "failures", tail: int = 50
 ) -> wire.RunResponse:
 	return to_run_response(node, await run(node, interactive=False), verbosity=verbosity, tail=tail)
+
+
+def test_to_plan_response_marks_every_leaf_planned() -> None:
+	node = Parallel(Task("a", name="a"), Task("b", name="b"), name="grp")
+	resp = to_plan_response(node)
+	assert (resp.returncode, resp.passed, resp.failed, resp.skipped, resp.planned) == (
+		0,
+		0,
+		0,
+		0,
+		2,
+	)
+	assert [leaf.name for leaf in resp.leaves] == ["a", "b"]
+	assert all(isinstance(leaf.completion, wire.Planned) for leaf in resp.leaves)
 
 
 async def test_counts_and_blocked_by() -> None:
@@ -328,6 +343,16 @@ def test_to_check_response_clean_tree_has_no_warnings() -> None:
 		tasks={"cargo": Task("cargo build", name="cargo")}, source=_PYPROJECT, scope_effects={}
 	)
 	assert to_check_response(state).warnings == ()
+
+
+def test_to_check_response_surfaces_naming_warnings() -> None:
+	state = LoadOk(
+		tasks={"cargo": Task("cargo build", name="cargo")},
+		source=_PYPROJECT,
+		scope_effects={},
+		naming_warnings=("task 'fix' passes name='fix', ...",),
+	)
+	assert to_check_response(state).warnings == ("task 'fix' passes name='fix', ...",)
 
 
 def test_to_check_response_dedupes_shared_node() -> None:

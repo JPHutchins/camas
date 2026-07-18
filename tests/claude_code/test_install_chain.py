@@ -159,6 +159,6 @@ def test_shipped_hook_command_uses_the_portable_launcher_and_fix_subcommand(
 	assert hook_command.startswith(launcher), (
 		f"shipped hook must use the same portable launcher ({launcher!r}) as .mcp.json: {hook_command!r}"
 	)
-	assert hook_command.endswith("fix"), (
-		f"shipped hook must invoke the fix subcommand: {hook_command!r}"
+	assert hook_command.endswith("fix || exit 0"), (
+		f"shipped hook must invoke the fix subcommand, fail-safe with '|| exit 0': {hook_command!r}"
 	)

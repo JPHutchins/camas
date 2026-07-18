@@ -34,6 +34,7 @@ from camas import (
 	Parallel,
 	Sequential,
 	Task,
+	by_glob,
 	by_suffix,
 	run_cli,
 )
@@ -105,6 +106,12 @@ fmt = Task('python -c "" {paths}', mutates=True, paths=".")
 # above). A command with no {paths} token can't be narrowed at all — its paths= is then a
 # no-op and it always runs, which is why paths= always pairs with a {paths} placeholder.
 lint = Task('python -c "" {paths}', paths=by_suffix((".py",), default=(".",)))
+
+# by_glob(patterns, default=...) is by_suffix's prefix-aware sibling: it keeps the changed files
+# matching any shell-glob pattern (** spans any directory depth, * stays within a segment), so a
+# pre-commit files: filter that is a directory prefix plus a suffix ports to one scope instead of
+# a hand-written callable.
+typed_lint = Task('python -c "" {paths}', paths=by_glob(("src/**/*.py",), default=("src",)))
 
 # The hand-written callable from above, wired to a leaf the same way.
 web_lint = Task('python -c "" {paths}', paths=web_paths)
@@ -227,7 +234,7 @@ ci = Sequential(
 	frontend,
 	# name= on a *nested*, anonymous group (no binding of its own) is the other half of the
 	# lesson at the top: it has no dispatch key at all, only this display label.
-	Sequential(fmt, lint, web_lint, checked, subproject, name="checks"),
+	Sequential(fmt, lint, typed_lint, web_lint, checked, subproject, name="checks"),
 	name="ci",
 )
 
@@ -244,9 +251,13 @@ ci = Sequential(
 # (None would defer to default_task/github_task, scoped by --paths and time-boxed by --under);
 # default is what a no-task `camas_run` runs (None would defer to check, then
 # github_task/default_task).
+# Bind the CI-only extension to a name so camas_list reports it as the github default; an
+# anonymous inline composite in a Config task field would surface as null (camas --check flags it).
+github_ci = Sequential(ci, "python -c \"print('extra check only under GitHub Actions')\"")
+
 _ = Config(
 	default_task=ci,
-	github_task=Sequential(ci, "python -c \"print('extra check only under GitHub Actions')\""),
+	github_task=github_ci,
 	default_effects=None,
 	default_github_effects=None,
 	camas_dir=".camas",

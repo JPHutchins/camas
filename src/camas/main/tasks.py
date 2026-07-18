@@ -83,6 +83,84 @@ def assign_key_name(node: TaskNode | Ref, key: str) -> TaskNode | Ref:
 			return node
 
 
+def redundant_name_warnings(scope: Mapping[str, object]) -> tuple[str, ...]:
+	"""Advisory warnings for a top-level binding that passes ``name=`` equal to its own variable
+	name: the binding name already *is* the task name (:func:`assign_key_name`), so the ``name=``
+	is redundant. Read from the raw scope, where an explicit ``name=`` is still distinguishable
+	from the one :func:`assign_key_name` would supply.
+
+	>>> redundant_name_warnings({"fix": Sequential(Task("a"), name="fix")})[0].startswith("task 'fix'")
+	True
+	>>> redundant_name_warnings({"fix": Sequential(Task("a"))})
+	()
+	>>> redundant_name_warnings({"checks": Parallel(Task("a"), name="ci")})
+	()
+	"""
+	return tuple(
+		f"task {name!r} passes name={name!r}, which just repeats its binding name; the binding "
+		"name is already the task name, so drop the redundant name="
+		for name, val in scope.items()
+		if not name.startswith("_")
+		and isinstance(val, Task | Sequential | Parallel)
+		and val.name == name
+	)
+
+
+def anonymous_config_field_warnings(scope: Mapping[str, object]) -> tuple[str, ...]:
+	"""Advisory warnings for a ``Config`` task field bound to an anonymous inline composite: a
+	``Sequential``/``Parallel`` that has no ``name=`` and is not a top-level binding either.
+	``task_name`` then has nothing to report, so ``camas_list`` shows that default as ``null`` —
+	reading as *no task declared* when one is — leaving it unrunnable by ``camas_run`` / the
+	pre-push hook. Bind the node (or pass ``name=``); a bound or named composite is fine — a
+	binding is excluded by identity, so ``Config`` fields still resolve correctly across a
+	monorepo where ``Project`` composition drops the wrapper's name.
+
+	>>> anonymous_config_field_warnings({"_": Config(github_task=Parallel(Task("a")))})[0].startswith("Config.github_task")
+	True
+	>>> ci = Parallel(Task("a"))
+	>>> anonymous_config_field_warnings({"ci": ci, "_": Config(github_task=ci)})
+	()
+	>>> anonymous_config_field_warnings({"_": Config(github_task=Parallel(Task("a"), name="ci"))})
+	()
+	>>> anonymous_config_field_warnings({"_": Config(default_task=Task("a"))})
+	()
+	>>> anonymous_config_field_warnings({"_": Config(agent=Claude(fix=Parallel(Task("a"))))})[0].startswith("Config.agent.fix")
+	True
+	>>> anonymous_config_field_warnings({})
+	()
+	"""
+	config = next((val for val in scope.values() if isinstance(val, Config)), None)
+	if config is None:
+		return ()
+	bound_ids = {
+		id(val)
+		for name, val in scope.items()
+		if not name.startswith("_") and isinstance(val, Task | Sequential | Parallel)
+	}
+	agent = config.agent
+	base_fields: tuple[tuple[str, TaskNode | None], ...] = (
+		("default_task", config.default_task),
+		("github_task", config.github_task),
+	)
+	agent_fields: tuple[tuple[str, TaskNode | None], ...] = (
+		()
+		if agent is None
+		else (
+			("agent.fix", agent.fix),
+			("agent.check", agent.check),
+			("agent.default", agent.default),
+		)
+	)
+	fields = base_fields + agent_fields
+	return tuple(
+		f"Config.{field} is an anonymous {type(node).__name__} — bind it to a variable (or pass "
+		"name=) so camas_list can name it; an unnamed inline composite reports as null, and "
+		"camas_run and the pre-push hook resolve tasks by name"
+		for field, node in fields
+		if isinstance(node, Group) and node.name is None and id(node) not in bound_ids
+	)
+
+
 RESERVED_TASK_NAMES: Final = frozenset({"mcp"})
 
 

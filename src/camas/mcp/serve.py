@@ -455,10 +455,13 @@ def tools(task_names: tuple[str, ...], compat: Compat) -> Tools:
 				'-x'] to run and fail-fast on one test); composite tasks reject args, so target
 				a leaf. For a time-boxed inner loop, pass under=<seconds> to run only the leaves
 				whose recorded estimate fits — mutating leaves (formatters) first, then the
-				read-only rest in parallel; omit task to budget the project default. Compact
-				failures-first summary by default; dry_run=true previews the fully-resolved plan
-				without executing. Omit task entirely to run the project's configured default. A
-				non-zero result means a task failed — a normal result, not a tool error.
+				read-only rest in parallel; omit task to budget the project default. For an ad-hoc
+				scoped run of any task, pass paths=[…] (changed files, like the CLI --paths): each
+				{paths} command is narrowed to the files it covers, and it combines with under
+				(scope first, then budget). Compact failures-first summary by default; dry_run=true
+				previews the fully-resolved plan without executing. Omit task entirely to run the
+				project's configured default. A non-zero result means a task failed — a normal
+				result, not a tool error.
 			""").strip(),
 			input_schema=wire.run_input_schema(task_names),
 			output_model=wire.RunResponse,
@@ -670,6 +673,10 @@ async def run_for(
 		name, node = resolve_run_node(tasks, req, config)
 	except ValueError as e:
 		return error_result(str(e))
+	scoped = scope_to_paths(node, req.paths, base_for(session))
+	if scoped is None:
+		return nothing_covered_result(session, req.paths)
+	node = scoped
 	if req.dry_run:
 		return success(
 			with_warning(session, dry_run_text(node)), to_plan_response(node), session.compat
@@ -688,6 +695,48 @@ async def run_for(
 		session.compat,
 		links=failing_log_links(resp, logs),
 	)
+
+
+def scope_to_paths(node: TaskNode, paths: list[str], base: Path) -> TaskNode | None:
+	"""``node`` narrowed to the changed ``paths`` — the MCP counterpart of the CLI ``--paths``.
+
+	``node`` unchanged when ``paths`` is empty (run the whole task); the path-scoped tree when
+	some leaf covers the paths; ``None`` when ``paths`` is non-empty but no leaf covers it.
+	"""
+	if not paths:
+		return node
+	changed = to_changed(paths, base)
+	if not changed:
+		return None
+	return scope_to_changed(expand_matrix(node), changed)
+
+
+def empty_run_response() -> wire.RunResponse:
+	"""A successful run of nothing — no leaves executed."""
+	return wire.RunResponse(
+		returncode=0, elapsed=0.0, passed=0, failed=0, skipped=0, interrupt_count=0, leaves=()
+	)
+
+
+def nothing_covered_result(session: Session, paths: list[str]) -> types.CallToolResult:
+	"""The ``camas_run`` success for a path scope that matched no leaf — an empty run and a
+	message naming the uncovered paths, mirroring the CLI's ``No task leaf covers …``.
+	"""
+	empty = empty_run_response()
+	text = f"No task leaf covers {', '.join(paths)} — nothing to run."
+	return success(with_warning(session, text), empty, session.compat)
+
+
+def require_task(tasks: Mapping[str, TaskNode], name: str) -> TaskNode:
+	"""The task named ``name``.
+
+	Raises:
+		ValueError: when ``name`` names no task — with a did-you-mean hint and the known names.
+	"""
+	if name not in tasks:
+		known = ", ".join(sorted(tasks)) or "none"
+		raise ValueError(f"no task named {name!r}{did_you_mean(name, tasks)} (known: {known})")
+	return tasks[name]
 
 
 def resolve_run_node(
@@ -709,13 +758,8 @@ def resolve_run_node(
 		if default is None:
 			raise ValueError(NO_RUN_DEFAULT_MSG)
 		name, node = default.name or "default task", default
-	elif req.task not in tasks:
-		known = ", ".join(sorted(tasks)) or "none"
-		raise ValueError(
-			f"no task named {req.task!r}{did_you_mean(req.task, tasks)} (known: {known})"
-		)
 	else:
-		name, node = req.task, tasks[req.task]
+		name, node = req.task, require_task(tasks, req.task)
 	if req.matrix_overrides:
 		node = override_matrix(node, {k: tuple(v) for k, v in req.matrix_overrides.items()})
 	if req.args:
@@ -740,12 +784,14 @@ async def run_budget(
 			source = override_matrix(source, {k: tuple(v) for k, v in req.matrix_overrides.items()})
 	except ValueError as e:
 		return error_result(str(e))
+	scoped_source = scope_to_paths(source, req.paths, base_for(session))
+	if scoped_source is None:
+		return nothing_covered_result(session, req.paths)
+	source = scoped_source
 	plan = plan_under(source, budget_s, timings.load(session.camas_dir))
 	report = to_budget_report(plan)
 	if plan.node is None:
-		empty = wire.RunResponse(
-			returncode=0, elapsed=0.0, passed=0, failed=0, skipped=0, interrupt_count=0, leaves=()
-		)
+		empty = empty_run_response()
 		text = f"{budget_headline(report)}\n\nNothing ran — no leaf fit the budget."
 		return success(with_warning(session, text), attach_budget(empty, report), session.compat)
 	if req.dry_run:
@@ -783,10 +829,7 @@ def budget_source(
 			default is configured to budget.
 	"""
 	if task is not None:
-		if task not in tasks:
-			known = ", ".join(sorted(tasks)) or "none"
-			raise ValueError(f"no task named {task!r}{did_you_mean(task, tasks)} (known: {known})")
-		return tasks[task]
+		return require_task(tasks, task)
 	default = config.run_default() if config is not None else None
 	if default is None:
 		raise ValueError(NO_RUN_DEFAULT_MSG)
@@ -801,10 +844,7 @@ def gate_source(tasks: Mapping[str, TaskNode], config: Config | None, task: str 
 			(``Config.agent.check`` or ``default_task``) exists.
 	"""
 	if task is not None:
-		if task not in tasks:
-			known = ", ".join(sorted(tasks)) or "none"
-			raise ValueError(f"no task named {task!r}{did_you_mean(task, tasks)} (known: {known})")
-		return tasks[task]
+		return require_task(tasks, task)
 	check = config.gate_check(github=False) if config is not None else None
 	if check is None:
 		raise ValueError(
@@ -1225,6 +1265,8 @@ def leaf_lines(leaf: wire.LeafReport, log: Path | None) -> list[str]:
 			return [f"SKIP   {leaf.name}{blame}"]
 		case wire.Errored(returncode=rc, message=message):
 			return [f"ERROR  {leaf.name} (exit {rc}): {message}"]
+		case wire.Planned():
+			return [f"PLAN   {leaf.name}"]
 		case _:
 			assert_never(leaf.completion)
 
@@ -1321,15 +1363,16 @@ async def fix_for(
 	except ValidationError as e:
 		return error_result(f"invalid camas_fix arguments:\n{e}")
 	fix_node: TaskNode | None
-	if req.task is not None:
-		if req.task not in tasks:
-			known = ", ".join(sorted(tasks)) or "none"
-			return error_result(
-				f"no task named {req.task!r}{did_you_mean(req.task, tasks)} (known: {known})"
-			)
-		fix_node = tasks[req.task]
-	else:
-		fix_node = config.gate_fix() if config is not None else None
+	try:
+		fix_node = (
+			require_task(tasks, req.task)
+			if req.task is not None
+			else config.gate_fix()
+			if config is not None
+			else None
+		)
+	except ValueError as e:
+		return error_result(str(e))
 	scoped: TaskNode | None = None
 	if fix_node is not None:
 		changed = to_changed(req.paths, base_for(session))
@@ -1337,9 +1380,7 @@ async def fix_for(
 		scoped = scope_to_changed(expanded, changed) if changed else with_default_paths(expanded)
 	empty_cause: str | None
 	if scoped is None:
-		resp = wire.RunResponse(
-			returncode=0, elapsed=0.0, passed=0, failed=0, skipped=0, interrupt_count=0, leaves=()
-		)
+		resp = empty_run_response()
 		empty_cause = (
 			"no fix node registered (Config.agent.fix is None)"
 			if fix_node is None
@@ -1409,12 +1450,7 @@ def resolve_github_matrix_node(
 			or an override targets an unknown matrix axis.
 	"""
 	if req.task is not None:
-		if req.task not in tasks:
-			known = ", ".join(sorted(tasks)) or "none"
-			raise ValueError(
-				f"no task named {req.task!r}{did_you_mean(req.task, tasks)} (known: {known})"
-			)
-		name, node = req.task, tasks[req.task]
+		name, node = req.task, require_task(tasks, req.task)
 	else:
 		default = config.bare_task(github=False) if config is not None else None
 		if default is None:

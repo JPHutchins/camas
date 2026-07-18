@@ -36,7 +36,7 @@ gate = Parallel(format_check, lint, actionlint, typecheck, coverage)
 matrix = Sequential(
 	Task("uv sync"),
 	check,
-	env={"UV_PROJECT_ENVIRONMENT": ".venv-{PY}", "UV_PYTHON": "{PY}"},
+	env={"UV_PROJECT_ENVIRONMENT": ".camas/.venv-{PY}", "UV_PYTHON": "{PY}"},
 	matrix={
 		"PY": tuple(
 			stripped

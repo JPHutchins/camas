@@ -308,7 +308,13 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 				sys.exit(0)
 			exit_for_load_err(err)
 
-		case LoadOk(tasks=tasks, source=source, scope_effects=scope_effects, config=config):
+		case LoadOk(
+			tasks=tasks,
+			source=source,
+			scope_effects=scope_effects,
+			config=config,
+			naming_warnings=naming_warnings,
+		):
 			args, _leftover = parser.parse_known_args(split.head)
 			in_github: Final = os.environ.get("GITHUB_ACTIONS") == "true"
 			in_agent: Final = running_under_agent()
@@ -354,7 +360,9 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 			if args.check:
 				from .check import run_typecheck_only
 
-				warnings = format_scope_warnings(tasks)
+				warnings = "\n".join(
+					w for w in (format_scope_warnings(tasks), *naming_warnings) if w
+				)
 				if warnings:
 					print(warnings, file=sys.stderr)
 				sys.exit(run_typecheck_only(source))

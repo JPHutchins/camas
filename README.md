@@ -59,6 +59,9 @@ nix run github:JPHutchins/camas#with-check          # adds ty for `camas --check
 nix run github:JPHutchins/camas#all                 # both extras
 ```
 
+> [!NOTE]
+> camas requires Python ≥ 3.10. Adding it to a project that still supports older interpreters (e.g. `requires-python = ">=3.8"`) makes `uv add camas` / `uv lock` fail to resolve — camas can't install for the sub-3.10 part of the range. Guard the dependency with an environment marker so the lock stays green — `"camas[mcp]==0.1.26 ; python_version >= '3.10'"` — or keep camas out of the project environment entirely and launch it with uvx (`camas mcp init --launcher uvx`). Either way camas orchestrates from its own ≥3.10 interpreter and shells out, so it still drives the sub-floor cells.
+
 Then scaffold a starter `tasks.py` in your project root:
 
 ```
@@ -68,6 +71,9 @@ camas --init
 The starter demonstrates leaf tasks, `Sequential`/`Parallel` composition, a matrix, a [`Config`](#config) default task, and the optional [PEP 723 standalone block](#standalone-taskspy-pep-723) — cross-platform placeholder commands ready to be swapped for your real ones.
 
 `--init` also creates a gitignored `.camas/` directory beside `tasks.py`. Camas writes run logs and a per-leaf timing cache there, so `camas --list` can annotate tasks with an estimated duration; delete the directory to opt out. Rename or relocate it with `Config(camas_dir=...)`.
+
+> [!TIP]
+> A multi-version matrix that builds a per-version environment should point it *into* `.camas/` — `env={"UV_PROJECT_ENVIRONMENT": ".camas/.venv-{PY}", "UV_PYTHON": "{PY}"}` — so the venvs land in the already-gitignored `.camas/` rather than the project root. In the root, a later `.`-scanning tool (a formatter, a linter that isn't gitignore-aware) descends into `.venv-3.13/` and friends; and note that a formatter's default `.venv` exclude often won't match a `.venv-3.13` suffix, so the breakage is tool-inconsistent and only appears *after* a matrix run.
 
 Want to see the whole authoring surface at once instead of growing the short starter? `camas --init --verbose` writes a kitchen-sink `tasks.py` covering every `Task`/`Sequential`/`Parallel`/`Config` option — path scoping, matrix expansion, `agent_format` structured output, `Config(agent=Claude(fix=..., check=..., default=...))`, and a commented recipe for sourcing a matrix axis from your own project's SSOT — each one worked and explained in place. The MCP `camas_init` tool writes this template by default (pass `verbose=false` for the short one).
 
@@ -148,6 +154,18 @@ The downside is that fork PRs get a read-only `GITHUB_TOKEN` from GitHub and can
 ### GitHub Actions matrix (`--github-matrix`)
 
 Fan out across N runners *without* giving up SSOT. `camas <task> --github-matrix` emits the task's axes as the object-of-arrays GHA's `strategy.matrix` consumes, so a `discover` job can source the fan-out from `tasks.py` and downstream jobs read it with `fromJSON` — the matrix lives in one place. Values come from the task's real run-set, so the object expands to exactly the leaves camas runs; a run-set with no clean cross-product (heterogeneous nested matrices, or independent fan-outs in one tree) is rejected rather than silently widened. YAML-side axes like `os` — which a shell command can't change from inside a job anyway — stay in the workflow and compose with `${{ fromJSON(...).PY }}`. This repo dogfoods it: see the [`discover` and `check` jobs](https://github.com/JPHutchins/camas/blob/main/.github/workflows/ci.yaml) fanning out over `.python-version`.
+
+> [!NOTE]
+> If your test matrix includes Python **below camas's floor** (camas needs ≥3.10; a library might test 3.8+), the sub-floor cells can't `uv run camas` — camas isn't installable there. Naively switching to `uvx` doesn't help either: `setup-uv`'s `python-version` (and any job-level `UV_PYTHON`) also pin a `uvx camas` invocation onto the sub-floor interpreter. Decouple camas's interpreter from the cell's by scoping `UV_PYTHON` to the sync step only:
+> ```yaml
+> - uses: astral-sh/setup-uv@...             # no python-version -> no job-wide UV_PYTHON
+> - run: uv sync
+>   env:
+>     UV_PYTHON: ${{ matrix.python-version }}    # step-scoped: builds the cell's .venv
+> - run: uvx camas==0.1.26 <task>            # camas gets its own >=3.10 interpreter;
+>                                             # its leaves' `uv run` reuse the synced .venv
+> ```
+> The `discover` job still emits the matrix from `tasks.py`, so SSOT is preserved — only the per-cell launcher changes.
 
 ### Machine-readable report (`Ctrf`)
 
@@ -271,14 +289,18 @@ libs = Project("libs")            # camas libs, camas libs.search.lint, ...
 api  = Project("services/api")    # name the handle whatever you like
 
 _ = Config(
-    default_task=Parallel(libs, api),          # each child's default_task, in parallel
-    github_task=Parallel(libs, api),           # each child's github_task
+    default_task=Parallel(libs, api, name="all"),      # each child's default_task, in parallel
+    github_task=Parallel(libs, api, name="ci"),        # each child's github_task
     agent=Claude(
-        fix=Parallel(libs, api),               # each child's fix node
-        check=Parallel(libs, api),             # each child's check node
+        fix=Parallel(libs, api, name="fix"),           # each child's fix node
+        check=Parallel(libs, api, name="check"),       # each child's check node
     ),
 )
 ```
+
+Name each composite (or bind it to a variable) so `camas_list` can report it as the default — an
+anonymous inline `Parallel`/`Sequential` in a `Config` task field surfaces as `null`, and `camas
+--check` flags that papercut.
 
 A reference composes the child's **matching field**: the same bare `libs` grabs the child's `default_task` in `default_task`, its `github_task` in `github_task`, its fix node in `agent.fix`, its check node in `agent.check` — the slot the reference sits in selects which field of the child's own `Config` it contributes. So a `Parallel` of references in any slot is that slot composed across the monorepo, each child contributing its own. A binding name resolves by context instead — `camas libs` runs whatever a bare `camas` runs in that directory (its default locally, its `github_task` under CI, its agent default under an agent). `camas libs.search.lint` reaches a task the child exposes (because `libs/tasks.py` itself did `search = Project("search")`), and expressions compose across namespaces (`camas '{libs.search.lint, api.deploy}'`).
 
