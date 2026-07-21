@@ -13,7 +13,7 @@ import time
 from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime
-from subprocess import STDOUT
+from subprocess import DEVNULL, STDOUT
 from typing import TYPE_CHECKING, Any, Final, NamedTuple, Protocol, TypeAlias
 
 if sys.version_info >= (3, 11):
@@ -78,6 +78,12 @@ class RunContext(NamedTuple):
 	"""The frame a leaf's ``cwd`` is spawned relative to (:func:`spawn_cwd`); ``None`` when the
 	tasks source has no on-disk location to anchor to (a scope run without a ``__file__``),
 	leaving a relative ``cwd`` to resolve against the process working directory."""
+	child_stdin: int | None
+	"""Why a served run denies leaves the parent's stdin instead of inheriting it: under the MCP
+	stdio server that stdin is a pipe the transport's reader thread holds open, and on Windows an
+	inherited copy stalls the Proactor loop's read of the leaf's *own* stdout, so EOF never
+	arrives and the run hangs (#253). A leaf is a batch command with no terminal to want, so
+	``DEVNULL`` also turns a stray stdin read into immediate EOF rather than a block."""
 
 
 if sys.platform != "win32":
@@ -213,6 +219,7 @@ async def run_cmd(task: Task, leaf_index: int, ctx: RunContext) -> TaskResult:
 		try:
 			proc: Final = await asyncio.create_subprocess_exec(
 				*argv,
+				stdin=ctx.child_stdin,
 				stdout=asyncio.subprocess.PIPE,
 				stderr=STDOUT,
 				env=subprocess_env({**os.environ, **task.env}),
@@ -343,7 +350,16 @@ async def run(
 			slot[effect_idx] = effect_ctx
 
 	interrupts: Final = Interrupts(procs={})
-	ctx: Final = RunContext(dispatch, leaves, index_map, limiter, interrupts, states, base)
+	ctx: Final = RunContext(
+		dispatch,
+		leaves,
+		index_map,
+		limiter,
+		interrupts,
+		states,
+		base,
+		None if interactive else DEVNULL,
+	)
 	loop: Final = asyncio.get_running_loop()
 
 	def on_sigint() -> None:
