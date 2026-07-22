@@ -90,6 +90,59 @@ def resolve_pin() -> str | None:
 	return with_mcp_extra(req)
 
 
+PRINT_WIDTH: Final = 80
+"""Prettier's default ``printWidth`` — the column past which an inline array breaks."""
+
+
+def dumps_prettier(value: object, *, level: int = 0, col: int = 0) -> str:
+	"""Serialize ``value`` to 2-space JSON a default Prettier leaves unchanged, so a generated
+	``.mcp.json`` / ``.claude/settings.json`` survives a ``treefmt`` / ``prettier --check`` on the
+	same "adopt camas, then run your formatter" path. Objects always break onto their own lines; a
+	scalar-only array stays inline while it fits Prettier's print width — measured from ``col``, the
+	column its first character sits at — and breaks one element per line otherwise; an array holding
+	any object or array always breaks. ``json.dumps(..., indent=2)`` differs only by expanding every
+	array, which is what fails the check.
+
+	>>> print(dumps_prettier({"command": "uvx", "args": ["camas[mcp]==0.1.27", "mcp"]}))
+	{
+	  "command": "uvx",
+	  "args": ["camas[mcp]==0.1.27", "mcp"]
+	}
+	>>> print(dumps_prettier({"hooks": [{"command": "camas mcp fix"}]}))
+	{
+	  "hooks": [
+	    {
+	      "command": "camas mcp fix"
+	    }
+	  ]
+	}
+	>>> dumps_prettier({})
+	'{}'
+	"""
+	if isinstance(value, dict):
+		mapping = cast("dict[str, object]", value)
+		if not mapping:
+			return "{}"
+		pad = "  " * (level + 1)
+		body = ",\n".join(
+			f"{pad}{json.dumps(k)}: "
+			f"{dumps_prettier(v, level=level + 1, col=len(pad) + len(json.dumps(k)) + 2)}"
+			for k, v in mapping.items()
+		)
+		return "{\n" + body + "\n" + "  " * level + "}"
+	if isinstance(value, list):
+		items = cast("list[object]", value)
+		if not items:
+			return "[]"
+		inline = json.dumps(items)
+		if all(not isinstance(e, (dict, list)) for e in items) and col + len(inline) <= PRINT_WIDTH:
+			return inline
+		pad = "  " * (level + 1)
+		body = ",\n".join(f"{pad}{dumps_prettier(e, level=level + 1, col=len(pad))}" for e in items)
+		return "[\n" + body + "\n" + "  " * level + "]"
+	return json.dumps(value)
+
+
 def write_mcp_json(argv: list[str], *, launcher: Launcher | None = None) -> int:
 	"""Merge a camas ``stdio`` server into ``./.mcp.json``; return 0, or 2 if it is malformed."""
 	mcp_json_path: Final = Path.cwd() / ".mcp.json"
@@ -118,7 +171,7 @@ def write_mcp_json(argv: list[str], *, launcher: Launcher | None = None) -> int:
 		ensure_camas_dir(camas_dir)
 	except OSError as exc:
 		print(f"warning: cannot create {camas_dir}: {exc}", file=sys.stderr)
-	mcp_json_path.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
+	mcp_json_path.write_text(dumps_prettier(existing) + "\n", encoding="utf-8")
 	print(
 		f"Wrote the {SERVER_NAME!r} MCP server to {mcp_json_path}\n"
 		f"  command: {command} {' '.join(args)}\n"
@@ -361,15 +414,14 @@ def write_hooks(argv: list[str], *, quiet: bool = False, launcher: Launcher | No
 	}
 	settings_path.parent.mkdir(parents=True, exist_ok=True)
 	settings_path.write_text(
-		json.dumps(
+		dumps_prettier(
 			_with_camas_hooks(
 				cast("dict[str, Any]", raw),
 				{
 					"PostToolBatch": [{"hooks": [fix_hook]}],
 					"Stop": [{"hooks": [fix_hook, nudge_hook]}],
 				},
-			),
-			indent=2,
+			)
 		)
 		+ "\n",
 		encoding="utf-8",
