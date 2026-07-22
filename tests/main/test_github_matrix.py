@@ -13,6 +13,7 @@ import pytest
 from camas import Parallel, Sequential, Task
 from camas.main.dispatch import dispatch
 from camas.main.github_matrix import (
+	distinct_combinations,
 	emit,
 	format_matrix_json,
 	is_cross_product,
@@ -114,6 +115,17 @@ def test_matrix_combinations_ignores_leaf_outside_any_matrix() -> None:
 		Task("lint"),
 	)
 	assert matrix_combinations(task) == ({"PY": "3.12"}, {"PY": "3.13"})
+
+
+def test_distinct_combinations_drops_leaf_under_no_axis() -> None:
+	"""The extracted dedup core drops a leaf carrying none of the axes (an empty binding); the
+	coverage of such a leaf is `to_matrix_object`'s concern, so this stays a pure binding dedup."""
+	from camas.core.matrix import expand_matrix
+	from camas.core.traversal import flatten_leaves
+
+	tree = Parallel(Parallel(Task("t"), matrix={"PY": ("3.12",)}), Task("plain"))
+	leaves = flatten_leaves(expand_matrix(tree))
+	assert distinct_combinations(leaves, ("PY",)) == ({"PY": "3.12"},)
 
 
 def test_is_cross_product_single_axis() -> None:

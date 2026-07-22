@@ -45,6 +45,7 @@ from ..core.traversal import flatten_leaves
 if TYPE_CHECKING:
 	from collections.abc import Mapping
 
+	from ..core.leaf_state import LeafInfo
 	from ..v0.task import TaskNode
 
 
@@ -70,10 +71,22 @@ def matrix_combinations(
 	({'PROFILE': 'release', 'PY': '3.13'}, {'PROFILE': 'debug', 'PY': '3.12'}, {'PROFILE': 'debug', 'PY': '3.13'})
 	"""
 	resolved: Final = tuple(matrix_axes(task)) if axes is None else axes
+	return distinct_combinations(flatten_leaves(expand_matrix(task)), resolved)
+
+
+def distinct_combinations(
+	leaves: tuple[LeafInfo, ...], axes: tuple[str, ...]
+) -> tuple[dict[str, str], ...]:
+	"""The distinct axis bindings across ``leaves``, in first-seen order — the dedup core of
+	:func:`matrix_combinations`, factored out so :func:`to_matrix_object` derives combos from the
+	same expansion it checks for coverage instead of expanding the tree a second time. A leaf
+	carrying none of ``axes`` yields an empty binding and contributes nothing (the coverage of
+	such leaves is the caller's concern, checked in :func:`to_matrix_object`).
+	"""
 	combos: list[dict[str, str]] = []
 	seen: set[tuple[tuple[str, str], ...]] = set()
-	for info in flatten_leaves(expand_matrix(task)):
-		combo = {a: info.task.env[a] for a in resolved if a in info.task.env}
+	for info in leaves:
+		combo = {a: info.task.env[a] for a in axes if a in info.task.env}
 		key = tuple(sorted(combo.items()))
 		if combo and key not in seen:
 			seen.add(key)
@@ -152,10 +165,9 @@ def to_matrix_object(task: TaskNode) -> dict[str, list[str]]:
 		if not values:
 			raise ValueError(f"matrix axis {name!r} has no values")
 	axes: Final = tuple(axes_map)
+	leaves: Final = flatten_leaves(expand_matrix(task))
 	uncovered: Final = tuple(
-		task_label(info.task)
-		for info in flatten_leaves(expand_matrix(task))
-		if not any(a in info.task.env for a in axes)
+		task_label(info.task) for info in leaves if not any(a in info.task.env for a in axes)
 	)
 	if uncovered:
 		raise ValueError(
@@ -163,7 +175,7 @@ def to_matrix_object(task: TaskNode) -> dict[str, list[str]]:
 			"no matrix axis cannot be represented in a GitHub Actions object-of-arrays — mixing "
 			"matrixed and plain leaves under one --github-matrix task is unsupported"
 		)
-	combos: Final = matrix_combinations(task, axes)
+	combos: Final = distinct_combinations(leaves, axes)
 	if not is_cross_product(combos, axes):
 		raise ValueError(
 			"matrix is not a clean cross-product; object-of-arrays cannot represent a "
