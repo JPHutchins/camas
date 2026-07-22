@@ -39,6 +39,7 @@ import math
 from typing import TYPE_CHECKING, Final
 
 from ..core.matrix import expand_matrix, matrix_axes
+from ..core.task import task_label
 from ..core.traversal import flatten_leaves
 
 if TYPE_CHECKING:
@@ -111,9 +112,10 @@ def to_matrix_object(task: TaskNode) -> dict[str, list[str]]:
 	expands — under GHA's cross-product semantics — to exactly the jobs camas runs.
 
 	Raises:
-		ValueError: when ``task`` has no matrix axes, an axis has no values, or the run-set is
-			not a clean cross-product (heterogeneous nested matrices, or independent fan-outs)
-			and so has no faithful object-of-arrays.
+		ValueError: when ``task`` has no matrix axes, an axis has no values, a leaf runs under no
+			matrix axis (a plain leaf beside matrixed siblings), or the run-set is not a clean
+			cross-product (heterogeneous nested matrices, or independent fan-outs) — none of which
+			has a faithful object-of-arrays.
 
 	>>> from camas import Parallel, Task
 	>>> to_matrix_object(Parallel(Task("test"), matrix={"PY": ("3.12", "3.13")}))
@@ -135,6 +137,13 @@ def to_matrix_object(task: TaskNode) -> dict[str, list[str]]:
 	Traceback (most recent call last):
 	    ...
 	ValueError: matrix is not a clean cross-product; object-of-arrays cannot represent a heterogeneous fan-out
+	>>> to_matrix_object(Parallel(
+	...     Parallel(Task("echo {X}"), matrix={"X": ("a", "b")}, name="matrixed"),
+	...     Task("echo plain", name="plain"),
+	... ))
+	Traceback (most recent call last):
+	    ...
+	ValueError: matrix does not cover every leaf (plain): a leaf that runs under no matrix axis cannot be represented in a GitHub Actions object-of-arrays — mixing matrixed and plain leaves under one --github-matrix task is unsupported
 	"""
 	axes_map: Final = matrix_axes(task)
 	if not axes_map:
@@ -143,6 +152,17 @@ def to_matrix_object(task: TaskNode) -> dict[str, list[str]]:
 		if not values:
 			raise ValueError(f"matrix axis {name!r} has no values")
 	axes: Final = tuple(axes_map)
+	uncovered: Final = tuple(
+		task_label(info.task)
+		for info in flatten_leaves(expand_matrix(task))
+		if not any(a in info.task.env for a in axes)
+	)
+	if uncovered:
+		raise ValueError(
+			f"matrix does not cover every leaf ({', '.join(uncovered)}): a leaf that runs under "
+			"no matrix axis cannot be represented in a GitHub Actions object-of-arrays — mixing "
+			"matrixed and plain leaves under one --github-matrix task is unsupported"
+		)
 	combos: Final = matrix_combinations(task, axes)
 	if not is_cross_product(combos, axes):
 		raise ValueError(

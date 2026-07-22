@@ -191,6 +191,33 @@ def test_to_matrix_object_independent_fanouts_error() -> None:
 		to_matrix_object(task)
 
 
+def test_to_matrix_object_plain_leaf_beside_matrix_errors() -> None:
+	"""The #237 repro: a plain leaf beside a matrixed one in a Parallel is not covered by the
+	emitted axes, so emitting would drop or duplicate it — reject instead of exiting 0.
+	"""
+	matrixed = Parallel(Task("echo {X}"), matrix={"X": ("a", "b")}, name="matrixed")
+	mixed = Parallel(matrixed, Task("echo plain", name="plain"), name="mixed")
+	with pytest.raises(ValueError, match=r"does not cover every leaf \(plain\)"):
+		to_matrix_object(mixed)
+
+
+def test_to_matrix_object_sequential_sibling_plain_leaf_errors() -> None:
+	"""Same gap in a Sequential: a lint step beside a matrixed Parallel runs once, not per-axis,
+	so the emitted PY axis cannot represent it.
+	"""
+	task = Sequential(Parallel(Task("test"), matrix={"PY": ("3.12", "3.13")}), Task("lint"))
+	with pytest.raises(ValueError, match="does not cover every leaf"):
+		to_matrix_object(task)
+
+
+def test_to_matrix_object_outer_matrix_covers_all_leaves() -> None:
+	"""A matrix on the outer node bakes the axis into every leaf, including plain steps, so the
+	whole run-set is a clean cross-product and emits — the shape the project's own CI emits from.
+	"""
+	task = Sequential(Task("uv sync"), Task("test"), matrix={"PY": ("3.12", "3.13")})
+	assert to_matrix_object(task) == {"PY": ["3.12", "3.13"]}
+
+
 def test_format_compact_has_no_spaces() -> None:
 	assert format_matrix_json({"PY": ["3.12", "3.13"]}, pretty=False) == '{"PY":["3.12","3.13"]}'
 
@@ -331,6 +358,17 @@ def test_cli_github_matrix_heterogeneous_errors(capsys: pytest.CaptureFixture[st
 	with pytest.raises(SystemExit, match="2"):
 		dispatch(_state({"check": task}), ["check", "--github-matrix"])
 	assert "not a clean cross-product" in capsys.readouterr().err
+
+
+def test_cli_github_matrix_mixed_leaf_errors(capsys: pytest.CaptureFixture[str]) -> None:
+	"""The #237 repro end-to-end: `camas mixed --github-matrix` exits 2 with a naming error
+	instead of emitting a partial axis and exiting 0.
+	"""
+	matrixed = Parallel(Task("echo {X}"), matrix={"X": ("a", "b")}, name="matrixed")
+	mixed = Parallel(matrixed, Task("echo plain", name="plain"), name="mixed")
+	with pytest.raises(SystemExit, match="2"):
+		dispatch(_state({"mixed": mixed}), ["mixed", "--github-matrix"])
+	assert "does not cover every leaf" in capsys.readouterr().err
 
 
 def test_cli_dry_run_and_github_matrix_mutually_exclusive(
