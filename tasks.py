@@ -24,9 +24,11 @@ coverage = Task(
 
 nix = Task("nix flake check --all-systems --print-build-logs")
 
-release = Task(
-	"uv run .github/scripts/release.py",
-	help="assert clean synced main, bump VERSION, commit, tag (camas release -- X.Y.Z)",
+release = Sequential(
+	"uv run .github/scripts/release.py {version}",
+	"git push origin main {version}",
+	matrix={"version": ("0.0.0",)},
+	help="assert clean synced main, bump VERSION, commit, tag, and push release",
 )
 
 all = Sequential(fix, Parallel(actionlint, typecheck, coverage))
