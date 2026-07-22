@@ -10,6 +10,7 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
+from subprocess import DEVNULL
 from typing import TYPE_CHECKING
 
 import pytest
@@ -32,6 +33,7 @@ from camas.v0.task_event import CompletedEvent
 
 if TYPE_CHECKING:
 	from collections.abc import Sequence
+	from typing import Any
 
 	from camas.core.completion import RunResult, TaskResult
 	from camas.v0.task import TaskNode
@@ -327,6 +329,22 @@ def test_interactive_flag_gates_terminal_setup(monkeypatch: pytest.MonkeyPatch) 
 	assert asyncio.run(run(Task(("python", "-c", "pass")), interactive=True)).returncode == 0
 	assert asyncio.run(run(Task(("python", "-c", "pass")), interactive=False)).returncode == 0
 	assert calls == [1]
+
+
+@pytest.mark.parametrize(("interactive", "expected_stdin"), [(False, DEVNULL), (True, None)])
+def test_leaf_stdin_follows_interactive(
+	monkeypatch: pytest.MonkeyPatch, interactive: bool, expected_stdin: int | None
+) -> None:
+	captured: list[int | None] = []
+	real = asyncio.create_subprocess_exec
+
+	async def spy(*args: Any, **kwargs: Any) -> asyncio.subprocess.Process:
+		captured.append(kwargs.get("stdin"))
+		return await real(*args, **kwargs)
+
+	monkeypatch.setattr(asyncio, "create_subprocess_exec", spy)
+	assert asyncio.run(run(Task(("python", "-c", "pass")), interactive=interactive)).returncode == 0
+	assert captured == [expected_stdin]
 
 
 def test_matrix_nested_sequential_in_parallel() -> None:
