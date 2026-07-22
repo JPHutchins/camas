@@ -1504,6 +1504,16 @@ async def test_gate_call_block_when_check_fails(tmp_path: Path) -> None:
 	assert "bad" in text
 
 
+async def test_gate_call_unfilled_required_axis_errors(tmp_path: Path) -> None:
+	"""A gated check node with an empty-value matrix axis would expand to zero leaves and
+	false-green; the gate errors instead of reporting CONTINUE on nothing having run."""
+	node = Parallel(Task("echo {version}"), matrix={"version": ()}, name="check")
+	session = _session({"check": node}, Config(default_task=node), tmp_path)
+	result = await serve.call(session, "camas_gate", {"task": "check"})
+	assert result.isError
+	assert "required but unset" in _text(result)
+
+
 async def test_gate_call_nudges_when_failing_leaf_has_no_agent_format(tmp_path: Path) -> None:
 	node = Parallel(GATE_FIX, FAIL)
 	session = _session({"all": node}, Config(default_task=node), tmp_path)
@@ -1742,6 +1752,20 @@ async def test_fix_call_scoped_none_returns_empty_run(tmp_path: Path) -> None:
 	assert "nothing to fix" in text
 	assert "no fix leaf covers the paths" in text
 	assert "no fix node registered" not in text
+
+
+async def test_fix_call_unfilled_required_axis_reports_cause(tmp_path: Path) -> None:
+	"""A fix node with an empty-value matrix axis expands to zero leaves; the cause names the
+	required axis, not the misleading 'no fix leaf covers the paths'."""
+	fix_node = Parallel(Task("echo {version}"), matrix={"version": ()}, name="fmt")
+	cfg = Config(agent=Claude(fix=fix_node))
+	session = _session({"fmt": fix_node}, cfg, tmp_path)
+	result = await serve.call(session, "camas_fix", {})
+	assert not result.isError
+	text = _text(result)
+	assert "nothing to fix" in text
+	assert "required but unset" in text
+	assert "no fix leaf covers the paths" not in text
 
 
 async def test_github_matrix_call_dispatches_via_call(tmp_path: Path) -> None:

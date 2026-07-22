@@ -186,11 +186,13 @@ def matrix_axes(task: TaskNode) -> dict[str, tuple[str, ...]]:
 
 
 def unfilled_required_axes(task: TaskNode) -> tuple[str, ...]:
-	"""The names of matrix axes declared with no values — required inputs a run must fill.
+	"""Every matrix axis declared with no values anywhere in ``task``'s tree, in first-seen order.
 
-	An empty-value axis (``matrix={"version": ()}``) is a required input: its cartesian product
-	is empty, so a run that leaves it unset expands to zero leaves and silently does nothing.
-	Callers treat a non-empty result as an error and tell the user to supply the value.
+	An empty-value axis (``matrix={"version": ()}``) is a required input: its cartesian product is
+	empty, so the node it sits on expands to zero leaves and that branch silently does nothing.
+	Every node's own matrix is inspected — unlike :func:`matrix_axes`, whose outermost-wins merge
+	would mask an inner empty axis behind an outer filled one of the same name — so callers can
+	reject a run before it expands to nothing.
 
 	>>> unfilled_required_axes(Task("hi"))
 	()
@@ -198,8 +200,18 @@ def unfilled_required_axes(task: TaskNode) -> tuple[str, ...]:
 	('version',)
 	>>> unfilled_required_axes(Sequential(Task("t"), matrix={"PY": ("3.13",), "version": ()}))
 	('version',)
+	>>> unfilled_required_axes(Sequential(Parallel(Task("t"), matrix={"PY": ()}), matrix={"PY": ("3.13",)}))
+	('PY',)
 	"""
-	return tuple(name for name, values in matrix_axes(task).items() if not values)
+	match task:
+		case Task():
+			return ()
+		case Sequential(tasks=tasks, matrix=matrix) | Parallel(tasks=tasks, matrix=matrix):
+			here = tuple(name for name, values in (matrix or {}).items() if not values)
+			nested = tuple(a for child in tasks for a in unfilled_required_axes(child))
+			return tuple(dict.fromkeys((*here, *nested)))
+		case _:
+			assert_never(task)
 
 
 def override_matrix(task: TaskNode, overrides: Mapping[str, tuple[str, ...]]) -> TaskNode:

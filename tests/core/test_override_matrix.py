@@ -59,6 +59,13 @@ def test_unfilled_required_axes_empty_after_override_fills_it() -> None:
 	assert unfilled_required_axes(override_matrix(t, {"version": ("1.2.3",)})) == ()
 
 
+def test_unfilled_required_axes_finds_inner_axis_masked_by_outer() -> None:
+	"""matrix_axes' outermost-wins merge would hide the inner empty PY behind the outer filled
+	PY, but the inner node still expands to zero leaves — the whole-tree walk catches it."""
+	t = Sequential(Parallel(Task("t"), matrix={"PY": ()}), matrix={"PY": ("3.13",)})
+	assert unfilled_required_axes(t) == ("PY",)
+
+
 def test_override_matrix_replaces_top_level() -> None:
 	t = Parallel(Task("x"), matrix={"PY": ("3.12", "3.13", "3.14")})
 	result = override_matrix(t, {"PY": ("3.13",)})
