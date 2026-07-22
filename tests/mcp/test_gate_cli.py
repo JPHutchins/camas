@@ -113,6 +113,22 @@ def test_gate_cli_block_prints_residual_to_stderr(
 	assert "Re-gate this scope: camas mcp gate" in captured.err
 
 
+def test_gate_cli_unfilled_required_axis_blocks(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	"""A check node with an empty-value matrix axis would expand to zero leaves and false-green;
+	the gate errors to stderr and blocks (exit 2) rather than reporting a green continue."""
+	monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+	monkeypatch.chdir(tmp_path)
+	(tmp_path / "tasks.py").write_text(
+		"from camas import Config, Parallel, Task\n"
+		'check = Parallel(Task("echo {version}"), matrix={"version": ()}, name="check")\n'
+		"_ = Config(default_task=check)\n"
+	)
+	assert serve.gate_cli(["--paths", "sample.py"]) == 2
+	assert "required but unset" in capsys.readouterr().err
+
+
 def test_gate_cli_nudge_green_is_silent(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

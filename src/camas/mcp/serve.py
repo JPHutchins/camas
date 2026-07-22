@@ -33,7 +33,7 @@ from ..core.budget import plan_under
 from ..core.execution import run
 from ..core.gate import STALE_TEMP_MAX_AGE_S, run_gate
 from ..core.hook_event import NO_EVENT, HookEvent, event_from_stdin
-from ..core.matrix import expand_matrix, override_matrix
+from ..core.matrix import expand_matrix, override_matrix, unfilled_required_axes
 from ..core.render import render_tree_lines, strip_ansi
 from ..core.scope import scope_to_changed, to_changed, with_default_paths
 from ..core.task import did_you_mean, task_label
@@ -739,6 +739,30 @@ def require_task(tasks: Mapping[str, TaskNode], name: str) -> TaskNode:
 	return tasks[name]
 
 
+def required_axes_message(names: tuple[str, ...]) -> str:
+	"""The camas_run / camas_gate / camas_fix message for matrix axes left unfilled — an
+	empty-value axis is a required input a run supplies via ``matrix_overrides``.
+	"""
+	plural = len(names) > 1
+	overrides = ", ".join(f'"{n}": ["VALUE"]' for n in names)
+	return (
+		f"matrix {'axes' if plural else 'axis'} {', '.join(repr(n) for n in names)} "
+		f"{'are' if plural else 'is'} required but unset — supply matrix_overrides={{{overrides}}}"
+	)
+
+
+def require_filled_axes(node: TaskNode) -> None:
+	"""Raise when ``node`` has a matrix axis left unfilled — an empty-value axis is a required
+	input a run supplies via ``matrix_overrides`` rather than silently expanding to zero leaves.
+
+	Raises:
+		ValueError: naming each unfilled axis and the ``matrix_overrides`` that fills it.
+	"""
+	required = unfilled_required_axes(node)
+	if required:
+		raise ValueError(required_axes_message(required))
+
+
 def resolve_run_node(
 	tasks: Mapping[str, TaskNode], req: wire.RunRequest, config: Config | None = None
 ) -> tuple[str, TaskNode]:
@@ -764,6 +788,7 @@ def resolve_run_node(
 		node = override_matrix(node, {k: tuple(v) for k, v in req.matrix_overrides.items()})
 	if req.args:
 		node = apply_passthrough(node, tuple(req.args))
+	require_filled_axes(node)
 	return name, node
 
 
@@ -782,6 +807,7 @@ async def run_budget(
 		label = req.task or source.name or "default task"
 		if req.matrix_overrides:
 			source = override_matrix(source, {k: tuple(v) for k, v in req.matrix_overrides.items()})
+		require_filled_axes(source)
 	except ValueError as e:
 		return error_result(str(e))
 	scoped_source = scope_to_paths(source, req.paths, base_for(session))
@@ -1315,6 +1341,7 @@ async def gate_for(
 		return error_result(f"invalid camas_gate arguments:\n{e}")
 	try:
 		node = gate_source(tasks, config, req.task)
+		require_filled_axes(node)
 	except ValueError as e:
 		return error_result(str(e))
 	changed = to_changed(req.paths, base_for(session))
@@ -1374,7 +1401,8 @@ async def fix_for(
 	except ValueError as e:
 		return error_result(str(e))
 	scoped: TaskNode | None = None
-	if fix_node is not None:
+	unfilled = unfilled_required_axes(fix_node) if fix_node is not None else ()
+	if fix_node is not None and not unfilled:
 		changed = to_changed(req.paths, base_for(session))
 		expanded = expand_matrix(fix_node)
 		scoped = scope_to_changed(expanded, changed) if changed else with_default_paths(expanded)
@@ -1384,6 +1412,8 @@ async def fix_for(
 		empty_cause = (
 			"no fix node registered (Config.agent.fix is None)"
 			if fix_node is None
+			else required_axes_message(unfilled)
+			if unfilled
 			else "no fix leaf covers the paths"
 		)
 	else:
@@ -1696,6 +1726,7 @@ def run_gate_cli(
 	"""Resolve the check node, run the gate over the changed paths, emit the verdict."""
 	try:
 		node = gate_source(tasks, config, args.task)
+		require_filled_axes(node)
 	except ValueError as e:
 		print(f"camas mcp gate: {e}", file=sys.stderr)
 		return 0 if args.nudge else 2

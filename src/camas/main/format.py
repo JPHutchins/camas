@@ -79,14 +79,45 @@ def task_summary(node: TaskNode, names: frozenset[str], is_root: bool = True) ->
 
 
 def format_axis(name: str, values: tuple[str, ...]) -> str:
-	"""Render a matrix axis for the listing annotation (``PY=3.13`` or ``PY×6 (lo..hi)``).
+	"""Render a matrix axis for the listing annotation (``PY=3.13``, ``PY×6 (lo..hi)``, or
+	``version=required`` for an unfilled required axis — an empty value tuple).
 
 	>>> format_axis("PY", ("3.10", "3.11", "3.12", "3.13", "3.14", "3.15"))
 	'PY×6 (3.10..3.15)'
+	>>> format_axis("version", ())
+	'version=required'
 	"""
+	if not values:
+		return f"{name}=required"
 	if len(values) == 1:
 		return f"{name}={values[0]}"
 	return f"{name}×{len(values)} ({values[0]}..{values[-1]})"
+
+
+def format_required_axes_error(names: tuple[str, ...]) -> str:
+	"""The stderr line for matrix axes left unfilled at run time — an empty-value axis
+	(``matrix={"version": ()}``) is a required input, so a run supplies it with ``--AXIS VALUE``
+	(``--matrix AXIS=VALUE`` for a reserved axis like ``version``) rather than silently expanding
+	to zero leaves.
+
+	>>> format_required_axes_error(("PY",))
+	"matrix axis 'PY' is required but unset — provide it with --PY VALUE"
+	>>> format_required_axes_error(("version",))
+	"matrix axis 'version' is required but unset — provide it with --matrix version=VALUE"
+	>>> format_required_axes_error(("a", "b"))
+	"matrix axes 'a', 'b' are required but unset — provide them with --a VALUE --b VALUE"
+	"""
+	from .parser import is_reserved_axis
+
+	def hint(name: str) -> str:
+		return f"--matrix {name}=VALUE" if is_reserved_axis(name) else f"--{name} VALUE"
+
+	plural = len(names) > 1
+	return (
+		f"matrix {'axes' if plural else 'axis'} {', '.join(repr(n) for n in names)} "
+		f"{'are' if plural else 'is'} required but unset — "
+		f"{'provide them with' if plural else 'provide it with'} {' '.join(hint(n) for n in names)}"
+	)
 
 
 def colorize_summary(body: str, color: bool) -> str:
