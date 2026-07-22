@@ -68,6 +68,47 @@ def test_dispatch_matrix_flag_overrides(capsys: pytest.CaptureFixture[str]) -> N
 	assert "[PY=3.12]" not in out
 
 
+def test_dispatch_unfilled_required_axis_errors(capsys: pytest.CaptureFixture[str]) -> None:
+	task = Parallel(Task("echo {PY}"), matrix={"PY": ()})
+	with pytest.raises(SystemExit, match="2"):
+		dispatch(_state({"build": task}), ["build"])
+	err = capsys.readouterr().err
+	assert "matrix axis 'PY' is required but unset" in err
+	assert "--PY VALUE" in err
+
+
+def test_dispatch_reserved_required_axis_hints_matrix_flag(
+	capsys: pytest.CaptureFixture[str],
+) -> None:
+	task = Sequential(Task("echo {version}"), matrix={"version": ()})
+	with pytest.raises(SystemExit, match="2"):
+		dispatch(_state({"release": task}), ["release"])
+	err = capsys.readouterr().err
+	assert "matrix axis 'version' is required but unset" in err
+	assert "--matrix version=VALUE" in err
+
+
+def test_dispatch_required_axis_filled_by_override_runs(capsys: pytest.CaptureFixture[str]) -> None:
+	task = Parallel(Task("echo {PY}"), matrix={"PY": ()})
+	with pytest.raises(SystemExit, match="0"):
+		dispatch(_state({"build": task}), ["--dry-run", "build", "--PY", "3.13"])
+	assert "[PY=3.13]" in capsys.readouterr().out
+
+
+def test_dispatch_required_axis_errors_before_dry_run(capsys: pytest.CaptureFixture[str]) -> None:
+	task = Parallel(Task("echo {PY}"), matrix={"PY": ()})
+	with pytest.raises(SystemExit, match="2"):
+		dispatch(_state({"build": task}), ["--dry-run", "build"])
+	assert "required but unset" in capsys.readouterr().err
+
+
+def test_dispatch_github_matrix_empty_axis_still_errors(capsys: pytest.CaptureFixture[str]) -> None:
+	task = Parallel(Task("echo {PY}"), matrix={"PY": ()})
+	with pytest.raises(SystemExit, match="2"):
+		dispatch(_state({"build": task}), ["build", "--github-matrix"])
+	assert "no values" in capsys.readouterr().err
+
+
 def test_dispatch_matrix_flag_bad_syntax_errors(capsys: pytest.CaptureFixture[str]) -> None:
 	task = Parallel(Task("echo {PY}"), matrix={"PY": ("3.12",)})
 	with pytest.raises(SystemExit, match="2"):

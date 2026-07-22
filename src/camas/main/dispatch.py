@@ -23,7 +23,7 @@ from ..core import timings
 from ..core.budget import plan_under
 from ..core.execution import run
 from ..core.hook_event import stdin_changed
-from ..core.matrix import expand_matrix, matrix_axes, override_matrix
+from ..core.matrix import expand_matrix, matrix_axes, override_matrix, unfilled_required_axes
 from ..core.render import print_tree, render_tree_lines
 from ..core.scope import scope_to_changed, to_changed, with_default_paths
 from ..core.task import did_you_mean, task_label
@@ -34,6 +34,7 @@ from .effects import default_effect_names, resolve_effects, running_under_agent
 from .expression import parse_expression
 from .format import (
 	format_load_error_hint,
+	format_required_axes_error,
 	format_scope_warnings,
 	print_available_effects,
 	print_task_help,
@@ -420,6 +421,11 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 					print(f"error: {e}", file=sys.stderr)
 					sys.exit(2)
 				sys.exit(0)
+
+			required_axes: Final = unfilled_required_axes(resolved)
+			if required_axes:
+				print(f"error: {format_required_axes_error(required_axes)}", file=sys.stderr)
+				sys.exit(2)
 
 			try:
 				effects: Final = resolve_effects(

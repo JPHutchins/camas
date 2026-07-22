@@ -6,7 +6,7 @@ from __future__ import annotations
 import pytest
 
 from camas import Parallel, Sequential, Task
-from camas.core.matrix import matrix_axes, override_matrix
+from camas.core.matrix import matrix_axes, override_matrix, unfilled_required_axes
 from camas.main.argv import parse_matrix_kv
 
 
@@ -35,6 +35,28 @@ def test_matrix_axes_outermost_wins_on_duplicate_key() -> None:
 		matrix={"PY": ("3.13", "3.14")},
 	)
 	assert matrix_axes(t) == {"PY": ("3.13", "3.14")}
+
+
+def test_unfilled_required_axes_none_for_task() -> None:
+	assert unfilled_required_axes(Task("hi")) == ()
+
+
+def test_unfilled_required_axes_none_when_filled() -> None:
+	assert unfilled_required_axes(Parallel(Task("t"), matrix={"PY": ("3.13",)})) == ()
+
+
+def test_unfilled_required_axes_reports_empty_axis() -> None:
+	assert unfilled_required_axes(Parallel(Task("t"), matrix={"version": ()})) == ("version",)
+
+
+def test_unfilled_required_axes_mixed_filled_and_empty() -> None:
+	t = Sequential(Task("t"), matrix={"PY": ("3.13",), "version": ()})
+	assert unfilled_required_axes(t) == ("version",)
+
+
+def test_unfilled_required_axes_empty_after_override_fills_it() -> None:
+	t = Parallel(Task("t"), matrix={"version": ()})
+	assert unfilled_required_axes(override_matrix(t, {"version": ("1.2.3",)})) == ()
 
 
 def test_override_matrix_replaces_top_level() -> None:

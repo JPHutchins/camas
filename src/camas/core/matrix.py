@@ -185,6 +185,23 @@ def matrix_axes(task: TaskNode) -> dict[str, tuple[str, ...]]:
 			assert_never(task)
 
 
+def unfilled_required_axes(task: TaskNode) -> tuple[str, ...]:
+	"""The names of matrix axes declared with no values — required inputs a run must fill.
+
+	An empty-value axis (``matrix={"version": ()}``) is a required input: its cartesian product
+	is empty, so a run that leaves it unset expands to zero leaves and silently does nothing.
+	Callers treat a non-empty result as an error and tell the user to supply the value.
+
+	>>> unfilled_required_axes(Task("hi"))
+	()
+	>>> unfilled_required_axes(Parallel(Task("t"), matrix={"version": ()}))
+	('version',)
+	>>> unfilled_required_axes(Sequential(Task("t"), matrix={"PY": ("3.13",), "version": ()}))
+	('version',)
+	"""
+	return tuple(name for name, values in matrix_axes(task).items() if not values)
+
+
 def override_matrix(task: TaskNode, overrides: Mapping[str, tuple[str, ...]]) -> TaskNode:
 	"""Replace each ``matrix[k]`` with ``overrides[k]`` wherever the key appears.
 

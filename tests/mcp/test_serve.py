@@ -327,6 +327,32 @@ async def test_run_call_skipped_reports_blocker(tmp_path: Path) -> None:
 	assert "blocked by 'bad'" in text
 
 
+async def test_run_call_unfilled_required_axis_errors(tmp_path: Path) -> None:
+	task = Parallel(Task("echo {PY}"), matrix={"PY": ()}, name="build")
+	session = _session({"build": task}, None, tmp_path)
+	result = await serve.run_call(session, {"task": "build"})
+	assert result.isError is True
+	text = _text(result)
+	assert "matrix axis 'PY' is required but unset" in text
+	assert 'matrix_overrides={"PY": ["VALUE"]}' in text
+
+
+async def test_run_call_required_axis_filled_by_override_runs(tmp_path: Path) -> None:
+	task = Parallel(Task(("python", "-c", "print('ok')")), matrix={"PY": ()}, name="build")
+	session = _session({"build": task}, None, tmp_path)
+	result = await serve.run_call(session, {"task": "build", "matrix_overrides": {"PY": ["3.13"]}})
+	assert result.isError is False
+	assert "PASSED" in _text(result)
+
+
+async def test_run_budget_unfilled_required_axis_errors(tmp_path: Path) -> None:
+	task = Parallel(Task("echo {PY}"), matrix={"PY": ()}, name="build")
+	session = _session({"build": task}, None, tmp_path)
+	result = await serve.run_call(session, {"task": "build", "under": 5.0})
+	assert result.isError is True
+	assert "required but unset" in _text(result)
+
+
 async def test_run_call_dry_run_executes_nothing(tmp_path: Path) -> None:
 	session = _session({"lint": PASS}, None, tmp_path)
 	result = await serve.run_call(session, {"task": "lint", "dry_run": True})
