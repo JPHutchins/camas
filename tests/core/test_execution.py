@@ -29,11 +29,11 @@ from camas.core.execution import (
 from camas.core.leaf_state import KILL_PRESSES
 from camas.v0.completion import INTERRUPT_RC, NOT_FOUND_RC, Errored, Finished, Skipped, Stopped
 from camas.v0.leaf_state import Interrupting, LeafState, Running
-from camas.v0.task_event import CompletedEvent
+from camas.v0.task_event import CompletedEvent, OutputEvent
 
 if TYPE_CHECKING:
 	from collections.abc import Sequence
-	from typing import Any
+	from typing import Any, Final
 
 	from camas.core.completion import RunResult, TaskResult
 	from camas.v0.task import TaskNode
@@ -464,19 +464,44 @@ def test_fourth_press_cancels_run_and_await_run_returns_empty() -> None:
 	assert results == ()
 
 
-def _raise_sigint() -> None:
-	os.kill(os.getpid(), signal.SIGINT)
+class _SignalAfterOutputs:
+	"""Fire SIGINT once ``count`` distinct leaves have emitted output — a deterministic replacement
+	for a fixed wall-clock timer. A leaf's output arrives only after its subprocess is spawned *and*
+	registered for interruption (its ``StartedEvent`` fires before the spawn), so a slow CI runner
+	can't deliver the signal while a child is still unstarted and unkillable — the macOS-ARM SIGINT
+	race fixed for a sibling test in #156/#161, applied here to the other two.
+	"""
+
+	def __init__(self, count: int) -> None:
+		self.count = count
+		self.started: set[int] = set()
+
+	async def setup(self, task: TaskNode) -> None:
+		return None
+
+	async def on_event(self, event: TaskEvent, states: Sequence[LeafState], ctx: None) -> None:
+		if isinstance(event, OutputEvent) and len(self.started) < self.count:
+			self.started.add(event.leaf_index)
+			if len(self.started) == self.count:
+				os.kill(os.getpid(), signal.SIGINT)
+
+	async def teardown(self, ctxs: tuple[None, ...]) -> None:
+		return None
+
+
+_PRINT_THEN_SLEEP: Final = "print('up', flush=True); import time; time.sleep(5)"
+"""Emit a line (so an ``OutputEvent`` marks the subprocess registered), then sleep long enough to
+be interrupted while running."""
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal handling only")
 def test_ctrl_c_forwards_sigint_and_exits_130() -> None:
 	async def scenario() -> RunResult:
-		asyncio.get_running_loop().call_later(0.3, _raise_sigint)
 		task = Parallel(
-			Task(("python", "-c", "import time; time.sleep(5)"), name="a"),
-			Task(("python", "-c", "import time; time.sleep(5)"), name="b"),
+			Task(("python", "-c", _PRINT_THEN_SLEEP), name="a"),
+			Task(("python", "-c", _PRINT_THEN_SLEEP), name="b"),
 		)
-		return await run(task)
+		return await run(task, effects=(_SignalAfterOutputs(2),))
 
 	result = asyncio.run(scenario())
 	assert result.returncode == INTERRUPT_RC
@@ -487,11 +512,10 @@ def test_ctrl_c_forwards_sigint_and_exits_130() -> None:
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal handling only")
 def test_ctrl_c_resolves_jobs_queued_leaves_as_stopped() -> None:
 	async def scenario() -> RunResult:
-		asyncio.get_running_loop().call_later(0.3, _raise_sigint)
 		task = Parallel(
-			*(Task(("python", "-c", "import time; time.sleep(5)"), name=f"t{i}") for i in range(4))
+			*(Task(("python", "-c", _PRINT_THEN_SLEEP), name=f"t{i}") for i in range(4))
 		)
-		return await run(task, jobs=1)
+		return await run(task, jobs=1, effects=(_SignalAfterOutputs(1),))
 
 	result = asyncio.run(scenario())
 	assert result.returncode == INTERRUPT_RC
