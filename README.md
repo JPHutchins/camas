@@ -349,6 +349,31 @@ pipx run tasks.py test
 
 The header owns version pinning (`dependencies = ["camas>=0.1.8"]`) and the interpreter floor (`requires-python`); it's inert to `camas --check` and to auto-discovery, which read the module the same way with or without it.
 
+## Dhall (`tasks.dhall`)
+
+For a typed, importable configuration surface, define tasks in a [Dhall](https://dhall-lang.org) `tasks.dhall` instead of a `tasks.py` (opt-in extra: `camas[dhall]`). camas discovers `tasks.dhall` the same way it discovers `tasks.py` — walking up from the working directory, `tasks.py` first, then `tasks.dhall`, then `[tool.camas.tasks]` — and composes it through the same engine, so matrix expansion, `Config`, `Project` monorepos, and `--paths` scoping all behave identically.
+
+Import the packaged prelude for the constructor schemas and author the tree by name. Dhall has no recursive types, so a group lists its children by name (`refs`) — the same by-name model as `[tool.camas.tasks]` — and camas resolves them:
+
+```dhall
+let camas = ./camas.dhall  -- copy of the packaged prelude (camas.main.dhall.prelude_path())
+
+let format = camas.Task::{ cmd = "ruff format {paths}", mutates = True, paths = "." }
+let lint = camas.Task::{ cmd = "ruff check {paths}", paths = "." }
+let typecheck = camas.Parallel::{ refs = [ "mypy", "pyright" ] }
+let mypy = camas.Task::{ cmd = "mypy ." }
+let pyright = camas.Task::{ cmd = "pyright src tests" }
+let check = camas.Parallel::{ refs = [ "lint", "typecheck" ] }
+let matrix =
+      camas.Sequential::{ refs = [ "check" ], matrix = toMap { PY = [ "3.13", "3.14", "3.15" ] } }
+
+in  { tasks = { format, lint, mypy, pyright, typecheck, check, matrix }
+    , config = camas.Config::{ default_task = "check" }
+    }
+```
+
+> The `dhall` binding ([s-zeng/dhall-python](https://github.com/s-zeng/dhall-python)) ships wheels through cp311 only; on newer interpreters `pip install 'camas[dhall]'` builds the Rust sdist and needs a toolchain. Effect plugins and callable `paths`/`when` scopes are Python-only — Dhall covers the declarative subset. The [dhall-monorepo fixture](https://github.com/JPHutchins/camas/tree/main/tests/fixtures/dhall-monorepo) exercises leaves, groups, matrix, a `Config` agent, and a `Project` child.
+
 ## Reference
 
 - **[examples/](https://github.com/JPHutchins/camas/tree/main/tests/fixtures)** — full project layouts under test coverage. The canonical reference for how to structure `tasks.py`, use `[tool.camas.tasks]` in `pyproject.toml`, drive a matrix from `.python-version`, or scope a 2-axis matrix from the CLI.

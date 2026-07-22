@@ -29,7 +29,7 @@ from ..core.scope import scope_to_changed, to_changed, with_default_paths
 from ..core.task import did_you_mean, task_label
 from ..v0.config import Config
 from .argv import apply_passthrough, parse_axis_values, parse_matrix_kv, split_passthrough
-from .compose import load_py_tasks_state, state_from_scope
+from .compose import load_dhall_tasks_state, load_py_tasks_state, state_from_scope
 from .effects import default_effect_names, resolve_effects, running_under_agent
 from .expression import parse_expression
 from .format import (
@@ -510,27 +510,35 @@ def _load_py(path: Path) -> TasksState:
 	return load_py_tasks_state(path)
 
 
+def _load_source(path: Path) -> TasksState:
+	"""Load an explicit tasks-file ``path``, dispatched by suffix (``.dhall`` vs Python)."""
+	return load_dhall_tasks_state(path) if path.suffix == ".dhall" else _load_py(path)
+
+
 def resolve_tasks_source(argv: list[str]) -> tuple[TasksState, list[str]]:
 	"""Locate the tasks source and return ``(state, remaining_argv)``.
 
-	If ``argv[0]`` ends in ``.py`` it is consumed as an explicit file path.
-	Otherwise walks upward from cwd: ``tasks.py`` wins over ``pyproject.toml``
-	at the same level; a ``pyproject.toml`` without ``[tool.camas.tasks]`` keeps
-	the walk going. A ``tasks.py`` whose evaluation raises returns
-	:class:`LoadErr` so meta operations (``--help``, ``--list``) still work.
+	If ``argv[0]`` ends in ``.py`` or ``.dhall`` it is consumed as an explicit file path.
+	Otherwise walks upward from cwd: at each level ``tasks.py`` wins over ``tasks.dhall``,
+	which wins over ``pyproject.toml``; a ``pyproject.toml`` without ``[tool.camas.tasks]``
+	keeps the walk going. A tasks file whose evaluation raises returns :class:`LoadErr` so
+	meta operations (``--help``, ``--list``) still work.
 	"""
-	if argv and argv[0].endswith(".py"):
+	if argv and (argv[0].endswith(".py") or argv[0].endswith(".dhall")):
 		path = Path(argv[0])
 		if not path.is_file():
 			print(f"error: {path}: no such file", file=sys.stderr)
 			sys.exit(2)
-		return _load_py(path), argv[1:]
+		return _load_source(path), argv[1:]
 
 	start: Final = Path.cwd()
 	for candidate in (start, *start.parents):
 		tasks_py = candidate / "tasks.py"
 		if tasks_py.is_file():
 			return _load_py(tasks_py), argv
+		tasks_dhall = candidate / "tasks.dhall"
+		if tasks_dhall.is_file():
+			return load_dhall_tasks_state(tasks_dhall), argv
 		pyproject = candidate / "pyproject.toml"
 		if pyproject.is_file():
 			try:

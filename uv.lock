@@ -77,6 +77,9 @@ check = [
 ctrf = [
     { name = "msgspec" },
 ]
+dhall = [
+    { name = "dhall" },
+]
 github-checks = [
     { name = "httpx" },
 ]
@@ -113,6 +116,7 @@ lint = [
 requires-dist = [
     { name = "camas", extras = ["check"], marker = "extra == 'mcp'" },
     { name = "camas", extras = ["check", "ctrf", "github-checks", "mcp"], marker = "extra == 'all'" },
+    { name = "dhall", marker = "extra == 'dhall'", specifier = ">=0.1.16,<1" },
     { name = "exceptiongroup", marker = "python_full_version < '3.11'", specifier = ">=1.2,<2" },
     { name = "httpx", marker = "extra == 'github-checks'", specifier = ">=0.28,<1" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.24,<2" },
@@ -122,7 +126,7 @@ requires-dist = [
     { name = "ty", marker = "extra == 'check'", specifier = ">=0.0.31,<1" },
     { name = "typing-extensions", marker = "python_full_version < '3.11'", specifier = ">=4.12,<5" },
 ]
-provides-extras = ["github-checks", "ctrf", "check", "mcp", "all"]
+provides-extras = ["github-checks", "ctrf", "check", "mcp", "dhall", "all"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -448,6 +452,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/f9/fa/eff8f1abae783bade9b5e9bafafd0040d4dbf51988f9384bfdc0326ba1fc/cyclopts-4.11.0.tar.gz", hash = "sha256:1ffcb9990dbd56b90da19980d31596de9e99019980a215a5d76cf88fe452e94d", size = 170690, upload-time = "2026-04-23T00:23:36.858Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/7c/37/197db187c260d24d4be1f09d427f59f3fb9a89bcf1354e23865c7bff7607/cyclopts-4.11.0-py3-none-any.whl", hash = "sha256:34318e3823b44b5baa754a5e37ec70a5c17dc81c65e4295ed70e17bc1aeae50d", size = 208494, upload-time = "2026-04-23T00:23:34.948Z" },
+]
+
+[[package]]
+name = "dhall"
+version = "0.1.16"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/4b/d6/ee644e18a2bf0d44a97bb18bbdce11179d7a130eb106636074a3aab1d1ae/dhall-0.1.16.tar.gz", hash = "sha256:a7adb3c7e8324e0ea2d2a76cf7161fb4202b6c1f2f33593f4c8a0a1ce219eabc", size = 31997, upload-time = "2024-11-26T18:20:24.056Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4b/85/69126c8b28cf763d7c4b33968252720c578fc7067f08211f461311e9f7e4/dhall-0.1.16-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:88af7fe97a60144e7126ce3d480975fe7d6f84b82bf701d1ab034dbf531b04fd", size = 1916460, upload-time = "2024-11-26T18:20:22.161Z" },
 ]
 
 [[package]]
