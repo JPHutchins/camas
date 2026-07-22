@@ -10,6 +10,7 @@ import pytest
 
 from camas.mcp.scaffold import (
 	AGENT_TEMPLATES,
+	dumps_prettier,
 	installed_version_spec,
 	launch_command,
 	launch_command_str,
@@ -341,6 +342,45 @@ def test_uv_without_lock_or_uvx_falls_through_to_camas(
 	entry = json.loads((tmp_path / ".mcp.json").read_text())["mcpServers"]["camas"]
 	assert entry["command"] == "camas"
 	assert entry["args"] == ["mcp"]
+
+
+def test_dumps_prettier_inlines_short_scalar_array() -> None:
+	value = {"mcpServers": {"camas": {"command": "uv", "args": ["run", "camas", "mcp"]}}}
+	assert dumps_prettier(value) == (
+		'{\n  "mcpServers": {\n    "camas": {\n      "command": "uv",\n'
+		'      "args": ["run", "camas", "mcp"]\n    }\n  }\n}'
+	)
+
+
+def test_dumps_prettier_breaks_long_scalar_array() -> None:
+	long = "camas[mcp] @ git+https://github.com/JPHutchins/camas.git@0123456789abcdef0123"
+	out = dumps_prettier({"args": [long, "mcp"]})
+	assert out == f'{{\n  "args": [\n    "{long}",\n    "mcp"\n  ]\n}}'
+
+
+def test_dumps_prettier_breaks_array_of_objects() -> None:
+	out = dumps_prettier({"hooks": [{"command": "camas mcp fix"}]})
+	assert out == '{\n  "hooks": [\n    {\n      "command": "camas mcp fix"\n    }\n  ]\n}'
+
+
+def test_dumps_prettier_empty_containers() -> None:
+	assert dumps_prettier({}) == "{}"
+	assert dumps_prettier({"a": []}) == '{\n  "a": []\n}'
+
+
+def test_mcp_json_args_written_inline_for_prettier(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	"""#229: the generated ``.mcp.json`` keeps ``args`` on one line, so a default prettier /
+	treefmt leaves it unchanged instead of failing the check on arrival.
+	"""
+	monkeypatch.chdir(tmp_path)
+	(tmp_path / "uv.lock").write_text("")
+	monkeypatch.setattr("shutil.which", _which("uv", "camas"))
+	assert write_mcp_json([]) == 0
+	text = (tmp_path / ".mcp.json").read_text(encoding="utf-8")
+	assert '"args": ["run", "camas", "mcp"]' in text
+	assert '"run",\n' not in text
 
 
 def test_rich_no_longer_appended(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
