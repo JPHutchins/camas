@@ -123,9 +123,7 @@
               };
               # Resolve every nix-buildable extra (nixExtras drops `dhall`, which has no
               # python3Packages attr — see the nixExtras definition above).
-              realResolved = lib.genAttrs nixExtras (
-                extra: resolveNames realExtras pkgs.python3Packages extra
-              );
+              realResolved = lib.genAttrs nixExtras (extra: resolveNames realExtras pkgs.python3Packages extra);
               realResolves = (forced realResolved).success;
               cyclicFails =
                 !(forced (
