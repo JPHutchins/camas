@@ -3,29 +3,28 @@
 
 """Load task definitions from a ``tasks.dhall`` scope (requires the ``camas[dhall]`` extra).
 
-Dhall has no recursive types, so a group names its children (``refs``) instead of nesting
-them — the same by-name model as ``[tool.camas.tasks]``. :func:`build_scope` turns the marshalled
-record into the very binding scope a ``tasks.py`` would produce (names → ``Task``/``Sequential``/
+A ``tasks.dhall`` imports the camas prelude and ends in ``camas.export { tasks = …, config = … }``,
+which renders the document to a JSON string. Groups nest their children *inline* (real Dhall values,
+composed with ``let`` bindings) rather than by name — Dhall has no recursive types, so the prelude's
+constructors build the fixed ``Text``-JSON carrier and ``export`` folds it. :func:`build_scope` turns
+the parsed JSON into the binding scope a ``tasks.py`` would produce (names → ``Task``/``Sequential``/
 ``Parallel``/``ProjectRef``, plus a ``Config``), which :func:`camas.main.compose.scope._compose_scope`
-then composes exactly as it does a Python scope — matrix expansion and monorepo ``Project`` mounting
-included. Marshalling returns ``Any``; every value is validated back to a concrete type here so no
-``Any`` escapes, mirroring the ``tomllib`` boundary in :mod:`camas.main.tasks`.
+then composes exactly as it does a Python scope. Every value is validated to a concrete type here so
+no ``Any`` escapes, mirroring the ``tomllib`` boundary in :mod:`camas.main.tasks`.
 """
 
 from __future__ import annotations
 
 import importlib
+import json
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Final, TypeGuard, cast
+from typing import TYPE_CHECKING, Any, TypeGuard, cast
 
 from ..v0.config import Claude, Config
 from ..v0.task import AgentFormat, Parallel, Project, Sequential, Task
 
 if TYPE_CHECKING:
 	from ..v0.task import OutputKind, TaskNode
-
-
-_OUTPUT_KINDS: Final[frozenset[str]] = frozenset({"sarif", "rdjson", "lsp", "junit", "tap", "raw"})
 
 
 def _is_str_dict(value: Any) -> TypeGuard[dict[str, Any]]:
@@ -79,7 +78,7 @@ def _bool(rec: dict[str, Any], key: str, ctx: str) -> bool:
 
 
 def _str_map(rec: dict[str, Any], key: str, ctx: str) -> dict[str, str]:
-	"""A ``Map Text`` field (marshalled to a dict), defaulting to ``{}``.
+	"""A ``Map Text`` field (rendered to a JSON object), defaulting to ``{}``.
 
 	Raises:
 		ValueError: when the field is not a text→text mapping.
@@ -99,10 +98,6 @@ def _str_list(value: Any, ctx: str) -> tuple[str, ...]:
 	if isinstance(value, list) and all(isinstance(v, str) for v in cast("list[object]", value)):
 		return tuple(cast("list[str]", value))
 	raise ValueError(f"{ctx}: expected a list of text, got {value!r}")
-
-
-def _refs(rec: dict[str, Any], ctx: str) -> tuple[str, ...]:
-	return _str_list(rec.get("refs", []), f"{ctx}.refs")
 
 
 def _when(rec: dict[str, Any], ctx: str) -> tuple[str, ...] | None:
@@ -125,7 +120,7 @@ def _matrix(rec: dict[str, Any], ctx: str) -> dict[str, tuple[str, ...]] | None:
 
 
 def _agent_format(rec: dict[str, Any], ctx: str) -> AgentFormat | None:
-	"""An optional ``AgentFormat`` record (marshalled to a dict or ``None``).
+	"""An optional ``AgentFormat`` record (rendered to a JSON object or ``null``).
 
 	Raises:
 		ValueError: when ``kind`` is not one of the supported output kinds.
@@ -156,10 +151,13 @@ def _limit(af: dict[str, Any], ctx: str) -> int:
 	return value
 
 
-def _leaf(rec: dict[str, Any], ctx: str) -> Task:
+_OUTPUT_KINDS = frozenset({"sarif", "rdjson", "lsp", "junit", "tap", "raw"})
+
+
+def _leaf(rec: dict[str, Any], ctx: str, name: str | None) -> Task:
 	return Task(
 		cmd=_str(rec, "cmd", ctx),
-		name=_opt_str(rec, "name", ctx),
+		name=name,
 		env=_str_map(rec, "env", ctx),
 		cwd=_opt_str(rec, "cwd", ctx),
 		help=_opt_str(rec, "help", ctx),
@@ -170,11 +168,13 @@ def _leaf(rec: dict[str, Any], ctx: str) -> Task:
 	)
 
 
-def _group(rec: dict[str, Any], kind: str, children: tuple[TaskNode, ...], ctx: str) -> TaskNode:
+def _group(
+	rec: dict[str, Any], kind: str, children: tuple[TaskNode, ...], name: str | None, ctx: str
+) -> TaskNode:
 	ctor = Sequential if kind == "sequential" else Parallel
 	return ctor(
 		*children,
-		name=_opt_str(rec, "name", ctx),
+		name=name,
 		matrix=_matrix(rec, ctx),
 		env=_str_map(rec, "env", ctx),
 		cwd=_opt_str(rec, "cwd", ctx),
@@ -184,65 +184,70 @@ def _group(rec: dict[str, Any], kind: str, children: tuple[TaskNode, ...], ctx: 
 	)
 
 
+def _build_node(rec: dict[str, Any], ctx: str, key: str | None = None) -> TaskNode:
+	"""One rendered node built into its ``TaskNode``; ``key`` (a top-level task's map key) names an
+	otherwise-unnamed node, matching the ``tasks.py`` binding-name convention.
+
+	Raises:
+		ValueError: on an unknown ``kind`` or a malformed ``children`` list.
+	"""
+	kind = _str(rec, "kind", ctx)
+	explicit = _opt_str(rec, "name", ctx)
+	name = explicit if explicit is not None else key
+	match kind:
+		case "task":
+			return _leaf(rec, ctx, name)
+		case "project":
+			return Project(_str(rec, "path", ctx))
+		case "sequential" | "parallel":
+			raw = rec.get("children", [])
+			if not isinstance(raw, list):
+				raise ValueError(f"{ctx}.children: expected a list, got {raw!r}")
+			children = tuple(
+				_build_node(_rec(child, f"{ctx}.children[{i}]"), f"{ctx}.children[{i}]")
+				for i, child in enumerate(cast("list[object]", raw))
+			)
+			return _group(rec, kind, children, name, ctx)
+		case _:
+			raise ValueError(f"{ctx}: unknown kind {kind!r}")
+
+
 def build_scope(data: object, path: Path) -> dict[str, object]:
-	"""The marshalled ``tasks.dhall`` record as a camas binding scope.
+	"""The parsed ``tasks.dhall`` document as a camas binding scope.
 
 	Each ``tasks`` entry becomes a ``Task``/``Sequential``/``Parallel``/``ProjectRef`` bound under
-	its key; group ``refs`` are resolved by name to the *same* interned instances (so downstream
-	name propagation and identity checks behave as they do for a ``tasks.py``). The ``config``
-	record, when present, is bound under ``_``. A malformed record, an unknown ref, or a ref cycle
-	raises ``ValueError`` (from the field validators and ref resolution).
+	its key (children nest inline), and the ``config`` record, when present, is bound under ``_`` with
+	its task fields resolved by name to the top-level bindings. A malformed record, an unknown
+	``kind``, or a ``config`` reference to a missing task raises ``ValueError``.
 	"""
 	root = _rec(data, str(path))
-	specs = _rec(root.get("tasks", {}), f"{path}: tasks")
-	memo: dict[str, TaskNode] = {}
-
-	def resolve(name: str, visiting: frozenset[str]) -> TaskNode:
-		if name in memo:
-			return memo[name]
-		if name in visiting:
-			raise ValueError(f"cycle in task refs: {' -> '.join([*sorted(visiting), name])}")
-		if name not in specs:
-			known = ", ".join(sorted(specs)) or "none"
-			raise ValueError(f"unknown task ref {name!r} (known: {known})")
-		rec = _rec(specs[name], f"{path}: task {name!r}")
-		kind = _str(rec, "kind", name)
-		match kind:
-			case "task":
-				node: TaskNode = _leaf(rec, name)
-			case "project":
-				node = Project(_str(rec, "path", name))
-			case "sequential" | "parallel":
-				children = tuple(resolve(ref, visiting | {name}) for ref in _refs(rec, name))
-				node = _group(rec, kind, children, name)
-			case _:
-				raise ValueError(f"task {name!r}: unknown kind {kind!r}")
-		memo[name] = node
-		return node
-
-	scope: dict[str, object] = {name: resolve(name, frozenset()) for name in specs}
+	tasks_raw = _rec(root.get("tasks", {}), f"{path}: tasks")
+	scope: dict[str, object] = {
+		key: _build_node(_rec(node, f"{path}: task {key!r}"), f"task {key!r}", key)
+		for key, node in tasks_raw.items()
+	}
 	config_raw = root.get("config")
 	if config_raw is not None:
-		scope["_"] = _build_config(config_raw, memo, str(path))
+		scope["_"] = _build_config(config_raw, scope, str(path))
 	return scope
 
 
-def _config_ref(memo: dict[str, TaskNode], name: str, ctx: str) -> TaskNode | None:
-	"""A ``Config`` field's task reference resolved to its binding; ``""`` means unset.
+def _config_ref(scope: dict[str, object], name: str, ctx: str) -> TaskNode | None:
+	"""A ``Config`` field's task selection resolved to its top-level binding; ``""`` means unset.
 
 	Raises:
-		ValueError: when the referenced task does not exist.
+		ValueError: when the named task does not exist.
 	"""
 	if not name:
 		return None
-	if name not in memo:
-		known = ", ".join(sorted(memo)) or "none"
+	if name not in scope:
+		known = ", ".join(sorted(scope)) or "none"
 		raise ValueError(f"{ctx} references unknown task {name!r} (known: {known})")
-	return memo[name]
+	return cast("TaskNode", scope[name])
 
 
-def _build_config(raw: object, memo: dict[str, TaskNode], path: str) -> Config:
-	"""A ``Config`` (and optional ``Claude`` agent) from the marshalled ``config`` record.
+def _build_config(raw: object, scope: dict[str, object], path: str) -> Config:
+	"""A ``Config`` (and optional ``Claude`` agent) from the rendered ``config`` record.
 
 	Raises:
 		ValueError: when the record shape is wrong or ``agent.fix`` is missing.
@@ -252,26 +257,27 @@ def _build_config(raw: object, memo: dict[str, TaskNode], path: str) -> Config:
 	agent: Claude | None = None
 	if agent_raw is not None:
 		arec = _rec(agent_raw, f"{path}: config.agent")
-		fix = _config_ref(memo, _str(arec, "fix", "config.agent"), "config.agent.fix")
+		fix = _config_ref(scope, _str(arec, "fix", "config.agent"), "config.agent.fix")
 		if fix is None:
 			raise ValueError(f"{path}: config.agent.fix is required")
 		agent = Claude(
 			fix=fix,
-			check=_config_ref(memo, _str(arec, "check", "config.agent"), "config.agent.check"),
+			check=_config_ref(scope, _str(arec, "check", "config.agent"), "config.agent.check"),
 			default=_config_ref(
-				memo, _str(arec, "default", "config.agent"), "config.agent.default"
+				scope, _str(arec, "default", "config.agent"), "config.agent.default"
 			),
 		)
 	return Config(
-		default_task=_config_ref(memo, _str(rec, "default_task", "config"), "config.default_task"),
-		github_task=_config_ref(memo, _str(rec, "github_task", "config"), "config.github_task"),
+		default_task=_config_ref(scope, _str(rec, "default_task", "config"), "config.default_task"),
+		github_task=_config_ref(scope, _str(rec, "github_task", "config"), "config.github_task"),
 		camas_dir=_str(rec, "camas_dir", "config") or ".camas",
 		agent=agent,
 	)
 
 
 def evaluate_dhall(path: Path) -> object:
-	"""``path`` evaluated to native Python data by the ``dhall`` binding.
+	"""``path`` evaluated by the ``dhall`` binding and parsed: a ``tasks.dhall`` ends in
+	``camas.export`` (a JSON string), so the rendered text is decoded to native data here.
 
 	Raises:
 		RuntimeError: when the ``camas[dhall]`` extra is not installed.
@@ -283,11 +289,16 @@ def evaluate_dhall(path: Path) -> object:
 			"tasks.dhall requires the 'camas[dhall]' extra (pip install 'camas[dhall]')"
 		) from e
 	with path.open() as handle:
-		return cast("object", module.load(handle))
+		rendered = module.load(handle)
+	return (
+		cast("object", json.loads(rendered))
+		if isinstance(rendered, str)
+		else cast("object", rendered)
+	)
 
 
 def prelude_path() -> Path:
 	"""Filesystem path to the packaged Dhall prelude — the ``camas`` schema a ``tasks.dhall``
-	imports (``let camas = <this file>``).
+	imports. Also the source published as a release asset for the remote import form.
 	"""
 	return Path(__file__).resolve().parent.parent / "data" / "prelude.dhall"

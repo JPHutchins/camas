@@ -353,26 +353,29 @@ The header owns version pinning (`dependencies = ["camas>=0.1.8"]`) and the inte
 
 For a typed, importable configuration surface, define tasks in a [Dhall](https://dhall-lang.org) `tasks.dhall` instead of a `tasks.py` (opt-in extra: `camas[dhall]`). camas discovers `tasks.dhall` the same way it discovers `tasks.py` — walking up from the working directory, `tasks.py` first, then `tasks.dhall`, then `[tool.camas.tasks]` — and composes it through the same engine, so matrix expansion, `Config`, `Project` monorepos, and `--paths` scoping all behave identically.
 
-Import the packaged prelude for the constructor schemas and author the tree by name. Dhall has no recursive types, so a group lists its children by name (`refs`) — the same by-name model as `[tool.camas.tasks]` — and camas resolves them:
+Import the prelude for the constructor schemas, then compose tasks the way you would in Python — groups nest **real values** inline (a mistyped reference is a Dhall error, not a deferred one), and `export` renders the document to the JSON camas reads. `camas.leaf` is the bare-command shorthand; `camas.task`/`camas.par`/`camas.seq` take an options record; enums like `OutputKind` are type-checked by Dhall:
 
 ```dhall
-let camas = ./camas.dhall  -- copy of the packaged prelude (camas.main.dhall.prelude_path())
+let camas =
+      https://github.com/JPHutchins/camas/releases/download/v0.1.27/prelude.dhall
+        sha256:… -- pin for integrity; Dhall caches the fetch after first use
 
-let format = camas.Task::{ cmd = "ruff format {paths}", mutates = True, paths = "." }
-let lint = camas.Task::{ cmd = "ruff check {paths}", paths = "." }
-let typecheck = camas.Parallel::{ refs = [ "mypy", "pyright" ] }
-let mypy = camas.Task::{ cmd = "mypy ." }
-let pyright = camas.Task::{ cmd = "pyright src tests" }
-let check = camas.Parallel::{ refs = [ "lint", "typecheck" ] }
+let format = camas.task camas.Task::{ cmd = "ruff format {paths}", mutates = True, paths = "." }
+let mypy = camas.leaf "mypy ."
+let typecheck = camas.parallel [ mypy, camas.leaf "pyright src tests" ]
+let check = camas.parallel [ camas.leaf "ruff check .", typecheck, camas.leaf "pytest" ]
 let matrix =
-      camas.Sequential::{ refs = [ "check" ], matrix = toMap { PY = [ "3.13", "3.14", "3.15" ] } }
+      camas.par camas.Group::{ children = [ check ], matrix = toMap { PY = [ "3.13", "3.14", "3.15" ] } }
 
-in  { tasks = { format, lint, mypy, pyright, typecheck, check, matrix }
-    , config = camas.Config::{ default_task = "check" }
-    }
+in  camas.export
+      { tasks = toMap { format, mypy, typecheck, check, matrix }
+      , config = camas.Config::{ default_task = "check" }
+      }
 ```
 
-> The `dhall` binding ([s-zeng/dhall-python](https://github.com/s-zeng/dhall-python)) ships wheels through cp311 only; on newer interpreters `pip install 'camas[dhall]'` builds the Rust sdist and needs a toolchain. Effect plugins and callable `paths`/`when` scopes are Python-only — Dhall covers the declarative subset. The [dhall-monorepo fixture](https://github.com/JPHutchins/camas/tree/main/tests/fixtures/dhall-monorepo) exercises leaves, groups, matrix, a `Config` agent, and a `Project` child.
+The top-level `tasks` map keys are the dispatchable names (`camas check`); inner nodes are labeled by their command unless you pass `name`. A `Config` field selects a top-level task by name (`default_task = "check"`), and a `libs = camas.project "./libs"` entry mounts a child project — matrix expansion, monorepo composition, and `--paths` scoping all behave exactly as in a `tasks.py`.
+
+> The `dhall` binding ([s-zeng/dhall-python](https://github.com/s-zeng/dhall-python)) ships wheels through cp311 only; on newer interpreters `pip install 'camas[dhall]'` builds the Rust sdist and needs a toolchain. Effect plugins and callable `paths`/`when` scopes are Python-only — Dhall covers the declarative subset. The [dhall-monorepo fixture](https://github.com/JPHutchins/camas/tree/main/tests/fixtures/dhall-monorepo) exercises leaves, groups, matrix, a `Config` agent, and a `Project` child (it imports a local prelude copy so the test stays offline).
 
 ## Reference
 

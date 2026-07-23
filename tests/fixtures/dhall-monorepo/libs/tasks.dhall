@@ -2,12 +2,13 @@
 -- `libs.*` and composes each parent Config field from the child's matching field.
 let camas = ../camas.dhall
 
-let lint = camas.Task::{ cmd = "ruff check {paths}", paths = "." }
+let lint = camas.leaf "ruff check ."
 
-let test = camas.Task::{ cmd = "pytest libs {paths}", paths = "." }
+let test = camas.leaf "pytest libs {paths}"
 
-let check = camas.Parallel::{ refs = [ "lint", "test" ] }
+let check = camas.parallel [ lint, test ]
 
-in  { tasks = { lint, test, check }
-    , config = camas.Config::{ default_task = "check", github_task = "check" }
-    }
+in  camas.export
+      { tasks = toMap { lint, test, check }
+      , config = camas.Config::{ default_task = "check", github_task = "check" }
+      }
