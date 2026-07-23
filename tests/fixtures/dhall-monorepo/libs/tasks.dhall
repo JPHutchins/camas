@@ -1,10 +1,10 @@
 -- Child project of the dhall-monorepo fixture. Its own Config; camas mounts its tasks under
 -- `libs.*` and composes each parent Config field from the child's matching field.
-let camas = ../camas.dhall
+let camas = ../../../../src/camas/data/prelude.dhall
 
-let lint = camas.leaf "ruff check ."
+let lint = camas.task "ruff check ."
 
-let test = camas.leaf "pytest libs {paths}"
+let test = camas.task "pytest libs {paths}"
 
 let check = camas.parallel [ lint, test ]
 

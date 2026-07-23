@@ -1,30 +1,31 @@
 -- Root tasks.dhall for the dhall-monorepo fixture, in the inline (value-composed) style.
--- Groups nest real values (no string refs); `export` renders the document to JSON. The fixture
--- imports a local prelude copy so the test is hermetic; real projects import the hosted prelude.
-let camas = ./camas.dhall
+-- Groups nest real values (no string refs); `export` renders the document to JSON. The test
+-- imports the shipped prelude by relative path so it stays offline; real projects import the
+-- hosted prelude by URL.
+let camas = ../../../src/camas/data/prelude.dhall
 
-let format = camas.task camas.Task::{ cmd = "ruff format {paths}", mutates = True, paths = "." }
+let format = camas.taskWith camas.Task::{ cmd = "ruff format {paths}", mutates = True, paths = "." }
 
-let lint = camas.leaf "ruff check ."
+let lint = camas.task "ruff check ."
 
-let mypy = camas.leaf "mypy ."
+let mypy = camas.task "mypy ."
 
-let typecheck = camas.parallel [ mypy, camas.leaf "pyright src tests" ]
+let typecheck = camas.parallel [ mypy, camas.task "pyright src tests" ]
 
-let test = camas.leaf "pytest -m 'not slow'"
+let test = camas.task "pytest -m 'not slow'"
 
-let coverage = camas.leaf "pytest --cov"
+let coverage = camas.task "pytest --cov"
 
 let check = camas.parallel [ lint, typecheck, test ]
 
 let gate = camas.parallel [ lint, typecheck, coverage ]
 
-let fix = camas.sequential [ camas.leaf "ruff check --fix .", format ]
+let fix = camas.sequential [ camas.task "ruff check --fix .", format ]
 
 let all = camas.sequential [ fix, gate ]
 
 let matrix =
-      camas.par
+      camas.parallelWith
         camas.Group::{
         , children = [ check ]
         , env = toMap { UV_PROJECT_ENVIRONMENT = ".camas/.venv-{PY}", UV_PYTHON = "{PY}" }

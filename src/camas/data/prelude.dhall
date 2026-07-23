@@ -127,7 +127,7 @@ let Task =
         }
       }
 
-let task =
+let taskWith =
       \(o : Task.Type) ->
         obj
           [ field "kind" (esc "task")
@@ -142,7 +142,7 @@ let task =
           , field "agent_format" (formatJSON o.format)
           ]
 
-let leaf = \(cmd : Text) -> task Task::{ cmd }
+let task = \(cmd : Text) -> taskWith Task::{ cmd }
 
 let Group =
       { Type =
@@ -181,13 +181,13 @@ let groupObj =
           , field "matrix" (matrixObj o.matrix)
           ]
 
-let parallel = \(children : List Text) -> groupObj "parallel" Group::{ children }
+let parallelWith = groupObj "parallel"
 
-let sequential = \(children : List Text) -> groupObj "sequential" Group::{ children }
+let sequentialWith = groupObj "sequential"
 
-let par = groupObj "parallel"
+let parallel = \(children : List Text) -> parallelWith Group::{ children }
 
-let seq = groupObj "sequential"
+let sequential = \(children : List Text) -> sequentialWith Group::{ children }
 
 let project = \(path : Text) -> obj [ field "kind" (esc "project"), field "path" (esc path) ]
 
@@ -260,11 +260,11 @@ in  { OutputKind
     , Claude
     , Config
     , task
-    , leaf
+    , taskWith
     , parallel
+    , parallelWith
     , sequential
-    , par
-    , seq
+    , sequentialWith
     , project
     , export
     }
