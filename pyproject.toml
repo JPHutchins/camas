@@ -46,6 +46,10 @@ github_checks = ["httpx>=0.28,<1"]
 ctrf = ["msgspec>=0.19,<1"]
 check = ["ty>=0.0.31,<1"]
 mcp = ["mcp>=1.24,<2", "camas[check]"]
+# dhall is deliberately outside `all` (and the dev group): its only binding, s-zeng/dhall-python,
+# ships wheels through cp311 only, so on newer interpreters `pip install 'camas[dhall]'` builds the
+# Rust sdist and needs a toolchain — kept opt-in so the default install/sync never requires Rust.
+dhall = ["dhall>=0.1.16,<1"]
 all = ["camas[github_checks,ctrf,check,mcp]"]
 
 [project.scripts]
@@ -67,7 +71,7 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
-camas = ["py.typed"]
+camas = ["py.typed", "data/*.dhall"]
 
 [tool.setuptools_scm]
 
@@ -227,7 +231,12 @@ project-excludes = [
 [tool.coverage.run]
 source = ["camas", "tests"]
 branch = true
-omit = ["tests/test_demos.py", "tests/claude_code/*", "src/camas/__main__.py"]
+omit = [
+	"tests/test_demos.py",
+	"tests/test_dhall_fixture.py",
+	"tests/claude_code/*",
+	"src/camas/__main__.py",
+]
 
 [tool.coverage.report]
 fail_under = 100

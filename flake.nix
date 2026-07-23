@@ -17,7 +17,11 @@
       forAllSystems = lib.genAttrs systems;
 
       extraNames = builtins.attrNames (lib.importTOML ./pyproject.toml).project.optional-dependencies;
-      perExtra = builtins.filter (extra: extra != "all") extraNames;
+      # `dhall`'s only binding (s-zeng/dhall-python) is absent from nixpkgs' python3Packages, so it
+      # can't be resolved by nix/resolve-extras.nix; drop it from the nix extra matrix (it is not in
+      # `all` either). The camas[dhall] path is exercised on CPython, where the wheel/sdist builds.
+      nixExtras = builtins.filter (extra: extra != "dhall") extraNames;
+      perExtra = builtins.filter (extra: extra != "all") nixExtras;
       withExtraName = extra: "with-${lib.replaceStrings [ "_" ] [ "-" ] extra}";
 
       # VERSION holds the released version; CI's version-gate asserts it matches
@@ -117,9 +121,9 @@
                   name = "msgspec";
                 };
               };
-              realResolved = builtins.mapAttrs (
-                extra: _: resolveNames realExtras pkgs.python3Packages extra
-              ) realExtras;
+              # Resolve every nix-buildable extra (nixExtras drops `dhall`, which has no
+              # python3Packages attr — see the nixExtras definition above).
+              realResolved = lib.genAttrs nixExtras (extra: resolveNames realExtras pkgs.python3Packages extra);
               realResolves = (forced realResolved).success;
               cyclicFails =
                 !(forced (

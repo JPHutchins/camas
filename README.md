@@ -349,6 +349,35 @@ pipx run tasks.py test
 
 The header owns version pinning (`dependencies = ["camas>=0.1.8"]`) and the interpreter floor (`requires-python`); it's inert to `camas --check` and to auto-discovery, which read the module the same way with or without it.
 
+## Dhall (`tasks.dhall`)
+
+For a typed, importable configuration surface, define tasks in a [Dhall](https://dhall-lang.org) `tasks.dhall` instead of a `tasks.py` (opt-in extra: `camas[dhall]`). camas discovers `tasks.dhall` the same way it discovers `tasks.py` — walking up from the working directory, `tasks.py` first, then `tasks.dhall`, then `[tool.camas.tasks]` — and composes it through the same engine, so matrix expansion, `Config`, `Project` monorepos, and `--paths` scoping all behave identically.
+
+Import the prelude by URL — camas publishes it as a release asset, so nothing sits beside your file — then compose tasks the way you would in Python: groups nest **real values** inline (a mistyped reference is a Dhall error, not a deferred one), and `export` renders the document to the JSON camas reads. `camas.task`/`camas.parallel`/`camas.sequential` are the bare constructors (`…With` variants take an options record); enums like `OutputKind` are type-checked by Dhall:
+
+```dhall
+let camas =
+      https://github.com/JPHutchins/camas/releases/download/v0.1.27/prelude.dhall
+        sha256:… -- pin for integrity; Dhall caches the fetch after first use
+
+let mypy = camas.task "mypy ."
+let typecheck = camas.parallel [ mypy, camas.task "pyright src tests" ]
+let check = camas.parallel [ camas.task "ruff check .", typecheck, camas.task "pytest" ]
+let format = camas.taskWith camas.Task::{ cmd = "ruff format {paths}", mutates = True, paths = "." }
+let matrix =
+      camas.parallelWith
+        camas.Group::{ children = [ check ], matrix = toMap { PY = [ "3.13", "3.14", "3.15" ] } }
+
+in  camas.export
+      { tasks = toMap { mypy, typecheck, check, format, matrix }
+      , config = camas.Config::{ default_task = "check" }
+      }
+```
+
+The top-level `tasks` map keys are the dispatchable names (`camas check`); inner nodes are labeled by their command unless you pass `name`. A `Config` field selects a top-level task by name (`default_task = "check"`), and a `libs = camas.project "./libs"` entry mounts a child project — matrix expansion, monorepo composition, and `--paths` scoping all behave exactly as in a `tasks.py`.
+
+> The `dhall` binding ([s-zeng/dhall-python](https://github.com/s-zeng/dhall-python)) ships wheels through cp311 only; on newer interpreters `pip install 'camas[dhall]'` builds the Rust sdist and needs a toolchain. Effect plugins and callable `paths`/`when` scopes are Python-only — Dhall covers the declarative subset. The [dhall-monorepo fixture](https://github.com/JPHutchins/camas/tree/main/tests/fixtures/dhall-monorepo) exercises the constructors, matrix, a `Config` agent, and a `Project` child (it imports the shipped prelude by relative path so the test stays offline).
+
 ## Reference
 
 - **[examples/](https://github.com/JPHutchins/camas/tree/main/tests/fixtures)** — full project layouts under test coverage. The canonical reference for how to structure `tasks.py`, use `[tool.camas.tasks]` in `pyproject.toml`, drive a matrix from `.python-version`, or scope a 2-axis matrix from the CLI.

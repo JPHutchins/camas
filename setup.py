@@ -31,7 +31,17 @@ if use_mypyc:
 	# create_module, before the import machinery sets __path__, so its eager
 	# ``from .entrypoint import …`` chain reaches the interpreted ``.check``
 	# sibling while camas.main is not yet a package (mypy >= 1.20).
-	_main_excluded = {"__init__.py", "check.py", "state.py", "starter.py", "starter_verbose.py"}
+	# dhall.py stays interpreted: the optional tasks.dhall loader is a cold path (task discovery,
+	# not execution), so compiling it buys nothing, and keeping it interpreted avoids running the
+	# pinned build-time mypy's mypyc codegen over its match statements.
+	_main_excluded = {
+		"__init__.py",
+		"check.py",
+		"dhall.py",
+		"state.py",
+		"starter.py",
+		"starter_verbose.py",
+	}
 	_effect_excluded = {"github_checks.py", "ctrf.py"}
 	ext_modules = mypycify(
 		[

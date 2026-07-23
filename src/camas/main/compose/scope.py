@@ -33,7 +33,7 @@ from .errors import ProjectLoadError
 from .rebase import rebase_tree
 
 if TYPE_CHECKING:
-	from collections.abc import Mapping
+	from collections.abc import Callable, Mapping
 
 	from ...v0.task import TaskNode
 	from ..state import TasksState
@@ -140,26 +140,26 @@ def _compose_scope(
 
 	def child_view(marker: ProjectRef) -> tuple[PurePosixPath, LoadOk]:
 		if base_dir is None:
-			raise ValueError(f"Project({marker.path!r}) requires a file-backed tasks.py")
+			raise ValueError(f"Project({marker.path!r}) requires a file-backed tasks source")
 		root = base_dir.resolve()
 		target = (root / marker.path).resolve()
-		tasks_py = target / "tasks.py" if target.is_dir() else target
-		if not tasks_py.is_file():
-			raise ValueError(f"Project({marker.path!r}): no tasks.py at {tasks_py}")
-		if not tasks_py.parent.is_relative_to(root):
+		tasks_file = child_tasks_file(target)
+		if tasks_file is None:
+			raise ValueError(f"Project({marker.path!r}): no tasks.py or tasks.dhall at {target}")
+		if not tasks_file.parent.is_relative_to(root):
 			raise ValueError(f"Project({marker.path!r}) escapes the project root {root}")
-		if tasks_py in seen:
-			raise ValueError(f"circular Project reference at {tasks_py}")
-		if tasks_py not in child_cache:
-			rel = PurePosixPath(tasks_py.parent.relative_to(root).as_posix())
+		if tasks_file in seen:
+			raise ValueError(f"circular Project reference at {tasks_file}")
+		if tasks_file not in child_cache:
+			rel = PurePosixPath(tasks_file.parent.relative_to(root).as_posix())
 			try:
-				child = load_scope(tasks_py, seen=seen | {tasks_py})
+				child = load_project(tasks_file, seen=seen | {tasks_file})
 			except ProjectLoadError:
 				raise
 			except Exception as e:
-				raise ProjectLoadError(tasks_py, e) from e
-			child_cache[tasks_py] = (rel, child)
-		return child_cache[tasks_py]
+				raise ProjectLoadError(tasks_file, e) from e
+			child_cache[tasks_file] = (rel, child)
+		return child_cache[tasks_file]
 
 	def project_node(marker: ProjectRef, field: Field) -> TaskNode:
 		rel, child = child_view(marker)
@@ -259,28 +259,66 @@ def _compose_scope(
 	return own._replace(tasks=merged)
 
 
-def load_scope(path: Path, *, seen: frozenset[Path] = frozenset()) -> LoadOk:
-	"""``path`` executed and its ``Project`` references resolved (:func:`_compose_scope`)."""
-	return _compose_scope(
-		runpy.run_path(str(path)),
-		path,
-		path.parent,
-		seen=seen or frozenset({path.resolve()}),
+def child_tasks_file(target: Path) -> Path | None:
+	"""The tasks source a ``Project`` points at: ``target`` itself when a file, else the
+	``tasks.py`` (preferred) or ``tasks.dhall`` inside it, or ``None`` when neither exists.
+	"""
+	if target.is_file():
+		return target
+	return next(
+		(
+			candidate
+			for name in ("tasks.py", "tasks.dhall")
+			if (candidate := target / name).is_file()
+		),
+		None,
 	)
 
 
-def load_py_tasks_state(path: Path) -> TasksState:
-	"""``path`` loaded (:func:`load_scope`) as a :class:`~camas.main.state.TasksState`, any failure
-	captured as a :class:`~camas.main.state.LoadErr` attributed to the file that raised — this
-	file, or, via :class:`~camas.main.compose.errors.ProjectLoadError`, the child ``Project`` that
-	failed.
+def load_project(path: Path, *, seen: frozenset[Path]) -> LoadOk:
+	"""A tasks source composed into a :class:`LoadOk`, dispatched by suffix: ``.dhall`` via the
+	``camas[dhall]`` loader, anything else executed as Python (:func:`runpy.run_path`).
+	"""
+	if path.suffix == ".dhall":
+		from ..dhall import build_scope, evaluate_dhall
+
+		scope: Mapping[str, object] = build_scope(evaluate_dhall(path), path)
+	else:
+		scope = runpy.run_path(str(path))
+	return _compose_scope(scope, path, path.parent, seen=seen)
+
+
+def load_scope(path: Path, *, seen: frozenset[Path] = frozenset()) -> LoadOk:
+	"""``path`` executed and its ``Project`` references resolved (:func:`_compose_scope`)."""
+	return load_project(path, seen=seen or frozenset({path.resolve()}))
+
+
+def load_dhall_scope(path: Path, *, seen: frozenset[Path] = frozenset()) -> LoadOk:
+	"""A ``tasks.dhall`` evaluated and its ``Project`` references resolved (:func:`load_project`)."""
+	return load_project(path, seen=seen or frozenset({path.resolve()}))
+
+
+def _capture(load: Callable[[Path], LoadOk], path: Path) -> TasksState:
+	"""``load(path)`` as a :class:`~camas.main.state.TasksState`, any failure captured as a
+	:class:`~camas.main.state.LoadErr` attributed to the file that raised — this file, or, via
+	:class:`~camas.main.compose.errors.ProjectLoadError`, the child ``Project`` that failed.
 	"""
 	try:
-		return load_scope(path)
+		return load(path)
 	except ProjectLoadError as e:
 		return LoadErr(source=e.source, exception=e.cause)
 	except Exception as e:
 		return LoadErr(source=path, exception=e)
+
+
+def load_py_tasks_state(path: Path) -> TasksState:
+	"""A ``tasks.py`` loaded (:func:`load_scope`) as a :class:`~camas.main.state.TasksState`."""
+	return _capture(load_scope, path)
+
+
+def load_dhall_tasks_state(path: Path) -> TasksState:
+	"""A ``tasks.dhall`` loaded (:func:`load_dhall_scope`) as a :class:`~camas.main.state.TasksState`."""
+	return _capture(load_dhall_scope, path)
 
 
 def state_from_scope(scope: Mapping[str, object]) -> TasksState:
