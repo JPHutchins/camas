@@ -539,10 +539,32 @@ def test_sibling_axes_disagreeing_on_values_are_rejected() -> None:
 
 def test_duplicate_axis_value_is_rejected() -> None:
 	"""A repeated axis value (a duplicated line in a .python-version) runs the leaf twice locally
-	but dedupes to one job, so the fan-out is not faithful.
+	but dedupes to one job, so the fan-out is not faithful — named directly rather than left to
+	the job-counting fallback.
 	"""
 	task = Parallel(Task("t {PY}"), matrix={"PY": ("3.13", "3.13")})
-	with pytest.raises(ValueError, match=r"would run in 1 of the 1 emitted job\(s\)"):
+	with pytest.raises(ValueError, match=r"axis 'PY' repeats a value"):
+		to_matrix_object(task)
+
+
+def test_duplicate_variant_still_emits_because_the_override_filters() -> None:
+	"""The asymmetry with a duplicated axis value: pinning a variants key *filters*, so the one
+	emitted job still runs both copies — the run-set is preserved and the emission is faithful,
+	where replacing a duplicated axis value would have dropped one.
+	"""
+	task = Parallel(Task("t {b}"), variants=({"b": "x"}, {"b": "x"}))
+	assert to_matrix_object(task) == {"include": [{"b": "x"}]}
+
+
+def test_axis_shadowed_by_an_outer_of_the_same_name_is_rejected() -> None:
+	"""A nested axis whose values differ from the outer axis shadowing it: the merged axis emits
+	one cell, but pinning it narrows the inner fan-out too, so a leaf would go unrun.
+	"""
+	task = Sequential(
+		Parallel(Task("t {PY}"), matrix={"PY": ("3.13", "3.14")}),
+		matrix={"PY": ("3.13",)},
+	)
+	with pytest.raises(ValueError, match=r"would run in 0 of the 1 emitted job\(s\)"):
 		to_matrix_object(task)
 
 

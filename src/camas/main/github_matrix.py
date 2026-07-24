@@ -131,13 +131,16 @@ Emission: TypeAlias = Axes | Variants | Jobs
 def merge_cells(
 	left: tuple[dict[str, str], ...], right: tuple[dict[str, str], ...]
 ) -> tuple[dict[str, str], ...]:
-	"""``left`` then the cells of ``right`` it doesn't already contain, in first-seen order.
+	"""``left`` and ``right`` as one run of distinct cells, in first-seen order — deduplicated
+	*within* each side too, so a node whose own bindings collapse onto one cell (an axis shadowed
+	by an outer one of the same name) doesn't leave a repeat behind.
 
 	>>> merge_cells(({"PY": "3.13"},), ({"PY": "3.13"}, {"PY": "3.14"}))
 	({'PY': '3.13'}, {'PY': '3.14'})
+	>>> merge_cells((), ({"PY": "3.13"}, {"PY": "3.13"}))
+	({'PY': '3.13'},)
 	"""
-	seen: Final = {tuple(sorted(cell.items())) for cell in left}
-	return (*left, *(c for c in right if tuple(sorted(c.items())) not in seen))
+	return tuple({tuple(sorted(c.items())): c for c in (*left, *right)}.values())
 
 
 def bound_cells(
@@ -340,6 +343,13 @@ def axes_emission(task: TaskNode) -> Axes:
 			)
 		)
 	reject_unsatisfiable(task)
+	repeated: Final = tuple(a for a, v in axes_map.items() if len(dict.fromkeys(v)) != len(v))
+	if repeated:
+		raise ValueError(
+			f"matrix axis {repeated[0]!r} repeats a value, so it runs that cell more than once "
+			"but emits it as one job — deduplicate the axis (a version file with a duplicated "
+			"line is the usual cause)"
+		)
 	fanout: Final = declared_cells(task)
 	reject_uncovered(fanout)
 	axes: Final = tuple(axes_map)
