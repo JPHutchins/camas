@@ -367,10 +367,16 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 				sys.exit(0)
 
 			if args.check:
-				from .check import run_typecheck_only
+				from .check import run_typecheck_only, unresolved_dispatch_warnings
 
 				warnings = "\n".join(
-					w for w in (format_scope_warnings(tasks), *naming_warnings) if w
+					w
+					for w in (
+						format_scope_warnings(tasks),
+						*unresolved_dispatch_warnings(tasks),
+						*naming_warnings,
+					)
+					if w
 				)
 				if warnings:
 					print(warnings, file=sys.stderr)

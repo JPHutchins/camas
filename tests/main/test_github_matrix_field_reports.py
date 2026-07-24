@@ -294,3 +294,19 @@ def test_239_crate_jobs_cross_an_os_axis_in_yaml() -> None:
 	crates = tuple(_crate(f"crate-{i}", "check") for i in range(11))
 	tasks: dict[str, TaskNode] = {f"crate_{i}": c for i, c in enumerate(crates)}
 	assert to_matrix_object(Parallel(*crates), tasks) == {"task": list(tasks)}
+
+
+def test_239_check_warns_when_a_fanned_out_name_does_not_dispatch(
+	capsys: pytest.CaptureFixture[str],
+) -> None:
+	"""#239's residual guard, for anyone keeping the recursive-dispatch pattern: a matrix whose
+	values are dispatched as `camas {crate}` is checked at author time, not at CI runtime.
+	"""
+	from camas.main.check import unresolved_dispatch_warnings
+
+	core = _crate("cosmwasm-core", "check")
+	fan = Parallel(Task("camas {crate}"), matrix={"crate": ("core", "cosmwasm-core")})
+	warnings = unresolved_dispatch_warnings({"core": core, "fan": fan})
+	assert len(warnings) == 1
+	assert "camas cosmwasm-core" in warnings[0]
+	assert "no task named 'cosmwasm-core'" in warnings[0]

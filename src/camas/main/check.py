@@ -16,15 +16,53 @@ import subprocess
 import sys
 import traceback
 from pathlib import Path
-from typing import Final, Literal, NamedTuple, TypeAlias
+from typing import TYPE_CHECKING, Final, Literal, NamedTuple, TypeAlias
 
 if sys.version_info >= (3, 11):
 	from typing import assert_never
 else:  # pragma: no cover
 	from typing_extensions import assert_never
 
+if TYPE_CHECKING:
+	from collections.abc import Mapping
+
+	from ..v0.task import TaskNode
+
 
 CheckerName: TypeAlias = Literal["ty", "mypy"]
+
+
+def unresolved_dispatch_warnings(tasks: Mapping[str, TaskNode]) -> tuple[str, ...]:
+	"""One warning per leaf command that re-enters camas with a task name nothing resolves —
+	the fan-out that "passes locally, 404s in CI", where a matrix axis or a hand-written command
+	names a task that isn't dispatchable. Deduplicated, preserving order.
+
+	>>> from camas import Parallel, Task
+	>>> fan = Parallel(Task("camas {crate}"), matrix={"crate": ("core", "gone")})
+	>>> unresolved_dispatch_warnings({"fan": fan, "core": Task("cargo test -p core")})
+	("task 'fan' runs `camas gone`, but no task named 'gone' exists (known: core, fan) — that command fails wherever it runs, CI included",)
+	>>> unresolved_dispatch_warnings({"core": Task("camas core")})
+	()
+	"""
+	from ..core.matrix import expand_matrix
+	from ..core.task import did_you_mean
+	from ..core.traversal import flatten_leaves
+	from .argv import camas_task_arg
+
+	def resolves(arg: str) -> bool:
+		return arg in tasks or arg.replace("-", "_") in tasks
+
+	known: Final = ", ".join(sorted(tasks)) or "none"
+	return tuple(
+		dict.fromkeys(
+			f"task {name!r} runs `camas {arg}`, but no task named {arg!r} exists"
+			f"{did_you_mean(arg, tasks)} (known: {known}) — that command fails wherever it runs, "
+			"CI included"
+			for name, node in tasks.items()
+			for info in flatten_leaves(expand_matrix(node))
+			if (arg := camas_task_arg(info.task.cmd)) is not None and not resolves(arg)
+		)
+	)
 
 
 class FoundChecker(NamedTuple):

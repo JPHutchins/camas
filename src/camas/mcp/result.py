@@ -27,6 +27,7 @@ from ..main.check import (
 	format_checker_output,
 	format_minimal_trace,
 	run_typecheck,
+	unresolved_dispatch_warnings,
 )
 from ..main.github_matrix import (
 	Axes,
@@ -175,7 +176,11 @@ def to_check_response(state: TasksState) -> wire.CheckResponse:
 				status="load_error", source=str(source), diagnostics=trace + checker
 			)
 		case LoadOk(tasks=tasks, source=source, naming_warnings=naming_warnings):
-			warnings = scope_warning_messages(tasks.values()) + naming_warnings
+			warnings = (
+				scope_warning_messages(tasks.values())
+				+ unresolved_dispatch_warnings(tasks)
+				+ naming_warnings
+			)
 			if source is None:
 				return wire.CheckResponse(status="no_tasks", warnings=warnings)
 			if source.suffix != ".py":
