@@ -9,6 +9,11 @@ import shlex
 import sys
 from typing import TYPE_CHECKING, Literal, NamedTuple
 
+if sys.version_info >= (3, 11):
+	from typing import assert_never
+else:  # pragma: no cover
+	from typing_extensions import assert_never
+
 from ..core.gate import decision_of
 from ..core.matrix import expand_matrix
 from ..core.render import strip_ansi
@@ -23,7 +28,15 @@ from ..main.check import (
 	format_minimal_trace,
 	run_typecheck,
 )
-from ..main.github_matrix import to_matrix_object
+from ..main.github_matrix import (
+	Axes,
+	Emission,
+	Jobs,
+	ShapeName,
+	Variants,
+	resolve_emission,
+	to_json_object,
+)
 from ..main.state import LoadErr, LoadOk
 from ..v0.completion import Errored, Finished, Skipped, Stopped
 from . import wire
@@ -34,7 +47,7 @@ else:  # pragma: no cover
 	from typing_extensions import assert_never
 
 if TYPE_CHECKING:
-	from collections.abc import Sequence
+	from collections.abc import Mapping, Sequence
 	from pathlib import Path
 
 	from ..core.completion import RunResult, TaskResult
@@ -100,12 +113,52 @@ def to_plan_response(node: TaskNode) -> wire.RunResponse:
 	)
 
 
-def to_github_matrix_response(name: str, node: TaskNode) -> wire.GithubMatrixResponse:
-	"""The wire ``GithubMatrixResponse`` for ``node`` — its faithful GHA object-of-arrays, or the
-	``ValueError`` :func:`camas.main.github_matrix.to_matrix_object` raises for a task with no
-	matrix or a non-cross-product run-set (the handler surfaces it as a tool error).
+def to_github_matrix_response(
+	name: str,
+	node: TaskNode,
+	tasks: Mapping[str, TaskNode] = {},
+	shape: ShapeName = "auto",
+) -> wire.GithubMatrixResponse:
+	"""The wire ``GithubMatrixResponse`` for ``node`` — its fan-out in the shape GHA consumes,
+	with the shape that was emitted and how to consume it, or the ``ValueError``
+	:func:`camas.main.github_matrix.resolve_emission` raises for a fan-out with no faithful
+	projection (the handler surfaces it as a tool error).
 	"""
-	return wire.GithubMatrixResponse(task=name, matrix=to_matrix_object(node))
+	emission = resolve_emission(node, tasks, shape)
+	return wire.GithubMatrixResponse(
+		task=name,
+		shape=emitted_shape(emission),
+		matrix=to_json_object(emission),
+		job_command=job_command(emission),
+	)
+
+
+def emitted_shape(emission: Emission) -> Literal["axes", "variants", "tasks"]:
+	"""Which projection ``emission`` is — the ``shape`` an agent should pin in the workflow."""
+	match emission:
+		case Axes():
+			return "axes"
+		case Variants():
+			return "variants"
+		case Jobs():
+			return "tasks"
+		case _:
+			assert_never(emission)
+
+
+def job_command(emission: Emission) -> str:
+	"""The ``run:`` line a job consuming ``emission`` uses — a template, not a task camas runs."""
+	match emission:
+		case Axes(axes=axes):
+			pins = " ".join(f"--{a} ${{{{ matrix.{a} }}}}" for a in axes)
+			return f"camas <task> {pins}"
+		case Variants(cells=cells):
+			pins = " ".join(f"--{k} ${{{{ matrix.{k} }}}}" for k in cells[0])
+			return f"camas <task> {pins}"
+		case Jobs():
+			return "camas ${{ matrix.task }}"
+		case _:
+			assert_never(emission)
 
 
 def to_check_response(state: TasksState) -> wire.CheckResponse:

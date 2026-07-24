@@ -339,7 +339,8 @@ def print_task_help(name: str, task: TaskNode) -> None:
 	axes = overridable_axes(task)
 	overridable = {k: v for k, v in axes.items() if not is_reserved_axis(k)}
 	axis_flags = "".join(f" [--{k} VAL[,VAL...]]" for k in overridable)
-	preview = "[--dry-run | --github-matrix]" if axes else "[--dry-run]"
+	emittable = bool(axes) or isinstance(task, Parallel)
+	preview = "[--dry-run | --github-matrix [SHAPE]]" if emittable else "[--dry-run]"
 	print(f"usage: camas {name} [-h] {preview} [--effects EFFECTS]{axis_flags}")
 	if task.help is not None:
 		print()

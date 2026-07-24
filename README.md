@@ -488,7 +488,7 @@ $ camas build --help
 <summary>output</summary>
 
 ```
-usage: camas build [-h] [--dry-run | --github-matrix] [--effects EFFECTS] [--FLAG VAL[,VAL...]]
+usage: camas build [-h] [--dry-run | --github-matrix [SHAPE]] [--effects EFFECTS] [--FLAG VAL[,VAL...]]
 
 Debug and release builds (FLAG='-- --debug' debug, FLAG='' release)
 

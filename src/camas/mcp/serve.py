@@ -575,16 +575,21 @@ def tools(task_names: tuple[str, ...], compat: Compat) -> Tools:
 			compat,
 			name=ToolName.GITHUB_MATRIX.value,
 			description=textwrap.dedent("""\
-				Emit a task's matrix as GitHub Actions strategy.matrix JSON (object-of-arrays) — the
-				MCP mirror of `camas --github-matrix`, for authoring or updating a CI workflow. The
-				axis values come from the task's actual run-set (the leaves camas expands), so the
-				object expands under GHA's cross-product semantics to exactly the jobs camas runs:
-				consume the whole object with fromJSON(...), or one axis at a time composed with
-				YAML-side axes a job can't set for itself (a runner's os). Pass task=<name> (pick one
-				whose camas_list matrix_axes is non-empty); omit to use the project default. Pin axes
-				with matrix_overrides (like camas_run), e.g. {"PY": ["3.13"]}. A task with no matrix,
-				or a run-set that is not a clean cross-product (a heterogeneous fan-out has no faithful
-				object-of-arrays), is a tool error, not a run failure. Read-only; runs nothing.
+				Emit a task's fan-out as GitHub Actions strategy.matrix JSON — the MCP mirror of
+				`camas --github-matrix`, for authoring or updating a CI workflow. Three shapes, from
+				how tasks.py fans out: 'axes' projects a matrix= cross product as object-of-arrays,
+				'variants' enumerates coupled variants= cells as GHA include: entries, and 'tasks'
+				emits one job per child of a Parallel ({"task": [...]}, run as
+				`camas ${{ matrix.task }}`) — the common CI shape with no version matrix at all.
+				Omit shape to derive it; the response echoes the shape that was emitted plus a
+				job_command template, and pinning that shape in the workflow makes a later tasks.py
+				refactor fail loudly instead of silently reshaping the matrix. Pass task=<name>;
+				omit to use the project default. Pin axes with matrix_overrides (like camas_run),
+				e.g. {"PY": ["3.13"]} — a variants= key filters to the bundles binding it. Every
+                                emission is verified against the real run-set: each job must run exactly its own
+				cell's leaves, and the jobs together every leaf exactly once, so a fan-out with no
+				faithful projection (independent fan-outs in one tree, a plain leaf beside matrixed
+				siblings) is a tool error, not a run failure. Read-only; runs nothing.
 			""").strip(),
 			input_schema=wire.github_matrix_input_schema(task_names),
 			output_model=wire.GithubMatrixResponse,
@@ -1487,7 +1492,7 @@ def github_matrix_for(
 		return error_result(f"invalid camas_github_matrix arguments:\n{e}")
 	try:
 		name, node = resolve_github_matrix_node(tasks, config, req)
-		resp = to_github_matrix_response(name, node)
+		resp = to_github_matrix_response(name, node, tasks, req.shape)
 	except ValueError as e:
 		return error_result(str(e))
 	return success(with_warning(session, github_matrix_text(resp)), resp, session.compat)
@@ -1519,17 +1524,28 @@ def resolve_github_matrix_node(
 
 
 def github_matrix_text(resp: wire.GithubMatrixResponse) -> str:
-	"""The load-bearing agent-facing summary for ``camas_github_matrix`` — the compact JSON for
-	``$GITHUB_OUTPUT``, the indented form for reading, and how to consume it in a workflow.
+	"""The load-bearing agent-facing summary for ``camas_github_matrix`` — the emitted shape, the
+	compact JSON for ``$GITHUB_OUTPUT``, the indented form for reading, the job command it pairs
+	with, and how to consume it in a workflow.
 	"""
 	compact = format_matrix_json(resp.matrix, pretty=False)
 	pretty = format_matrix_json(resp.matrix, pretty=True)
+	consume = (
+		"Consume the whole object with fromJSON(...) — an include: list has no per-axis arrays "
+		"to read individually."
+		if resp.shape == "variants"
+		else "Consume the whole object with fromJSON(...), or one axis at a time, e.g. "
+		f"fromJSON(needs.discover.outputs.matrix).{next(iter(resp.matrix))}."
+	)
 	return (
-		f"camas_github_matrix {resp.task!r}: GitHub Actions strategy.matrix\n\n"
+		f"camas_github_matrix {resp.task!r}: GitHub Actions strategy.matrix "
+		f"(shape={resp.shape})\n\n"
 		f"{pretty}\n\n"
 		f"Compact (for $GITHUB_OUTPUT): {compact}\n"
-		"Consume the whole object with fromJSON(...), or one axis at a time, e.g. "
-		"fromJSON(needs.discover.outputs.matrix).PY."
+		f"Job command: {resp.job_command}\n"
+		f"{consume}\n"
+		f"Pin the shape to keep it stable: camas <task> --github-matrix={resp.shape} "
+		f"(or shape={resp.shape!r} here)."
 	)
 
 

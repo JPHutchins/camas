@@ -212,6 +212,33 @@ def variant_axes(task: TaskNode) -> dict[str, tuple[str, ...]]:
 			assert_never(task)
 
 
+def declared_variants(task: TaskNode) -> tuple[dict[str, str], ...] | None:
+	"""The outermost ``variants`` declaration in ``task``'s tree, or ``None`` when it declares
+	none — the coupled bundles a catalog shows beside the axes, so a list of axis values is not
+	mistaken for a cross product.
+
+	>>> declared_variants(Task("hi")) is None
+	True
+	>>> declared_variants(Sequential(Parallel(Task("t"), variants=({"b": "x"},))))
+	({'b': 'x'},)
+	"""
+	match task:
+		case Task():
+			return None
+		case (
+			Sequential(tasks=children, variants=variants)
+			| Parallel(tasks=children, variants=variants)
+		):
+			if variants is not None:
+				return variants
+			return next(
+				(found for child in children if (found := declared_variants(child)) is not None),
+				None,
+			)
+		case _:
+			assert_never(task)
+
+
 def overridable_axes(task: TaskNode) -> dict[str, tuple[str, ...]]:
 	"""Every axis a CLI override can target: the ``matrix`` axes — whose values an override
 	*replaces* — then the ``variants`` keys, which an override *filters* to the bundles binding it.

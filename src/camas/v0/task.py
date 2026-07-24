@@ -177,9 +177,7 @@ def _check_variants(
 	if not variants:
 		return
 	first: Final = tuple(sorted(variants[0]))
-	if not first:
-		raise ValueError("variants: variant 0 binds no keys")
-	for i, variant in enumerate(variants[1:], start=1):
+	for i, variant in enumerate(variants):
 		keys = tuple(sorted(variant))
 		if not keys:
 			raise ValueError(f"variants: variant {i} binds no keys")

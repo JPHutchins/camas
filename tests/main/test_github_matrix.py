@@ -13,14 +13,19 @@ import pytest
 from camas import Parallel, Sequential, Task
 from camas.main.dispatch import dispatch
 from camas.main.github_matrix import (
-	distinct_combinations,
+	Fanout,
+	declared_cells,
 	emit,
 	format_matrix_json,
 	is_cross_product,
-	matrix_combinations,
 	to_matrix_object,
 )
-from camas.main.parser import RESERVED_DESTS, RESERVED_FLAGS, build_parser
+from camas.main.parser import (
+	RESERVED_DESTS,
+	RESERVED_FLAGS,
+	build_parser,
+	normalize_github_matrix,
+)
 from camas.main.state import LoadOk
 
 if TYPE_CHECKING:
@@ -57,18 +62,18 @@ def _state(tasks: Mapping[str, TaskNode], config: Config | None = None) -> LoadO
 	return LoadOk(tasks=dict(tasks), source=None, scope_effects=effects, config=config)
 
 
-def test_matrix_combinations_single_axis() -> None:
+def test_declared_cells_single_axis() -> None:
 	task = Parallel(Task("t"), matrix={"PY": ("3.12", "3.13")})
-	assert matrix_combinations(task) == ({"PY": "3.12"}, {"PY": "3.13"})
+	assert declared_cells(task).cells == ({"PY": "3.12"}, {"PY": "3.13"})
 
 
-def test_matrix_combinations_no_matrix_is_empty() -> None:
-	assert matrix_combinations(Task("t")) == ()
+def test_declared_cells_no_matrix_is_the_uncovered_leaf() -> None:
+	assert declared_cells(Task("t")) == Fanout((), ("t",))
 
 
-def test_matrix_combinations_full_two_axis_product() -> None:
+def test_declared_cells_full_two_axis_product() -> None:
 	task = Parallel(Task("t"), matrix={"PY": ("3.12", "3.13"), "PROFILE": ("debug", "release")})
-	assert matrix_combinations(task) == (
+	assert declared_cells(task).cells == (
 		{"PY": "3.12", "PROFILE": "debug"},
 		{"PY": "3.12", "PROFILE": "release"},
 		{"PY": "3.13", "PROFILE": "debug"},
@@ -76,12 +81,12 @@ def test_matrix_combinations_full_two_axis_product() -> None:
 	)
 
 
-def test_matrix_combinations_nested_distinct_axes_is_rectangular() -> None:
+def test_declared_cells_nested_distinct_axes_is_rectangular() -> None:
 	task = Sequential(
 		Parallel(Task("t"), matrix={"PROFILE": ("debug", "release")}),
 		matrix={"PY": ("3.12", "3.13")},
 	)
-	assert matrix_combinations(task) == (
+	assert declared_cells(task).cells == (
 		{"PY": "3.12", "PROFILE": "debug"},
 		{"PY": "3.12", "PROFILE": "release"},
 		{"PY": "3.13", "PROFILE": "debug"},
@@ -89,43 +94,42 @@ def test_matrix_combinations_nested_distinct_axes_is_rectangular() -> None:
 	)
 
 
-def test_matrix_combinations_heterogeneous_keeps_only_real_runs() -> None:
+def test_declared_cells_heterogeneous_keeps_only_declared_cells() -> None:
 	task = Parallel(
 		Parallel(Task("t"), matrix={"PROFILE": ("release",), "PY": ("3.13",)}),
 		Parallel(Task("t"), matrix={"PROFILE": ("debug",), "PY": ("3.12", "3.13")}),
 	)
-	assert matrix_combinations(task) == (
+	assert declared_cells(task).cells == (
 		{"PROFILE": "release", "PY": "3.13"},
 		{"PROFILE": "debug", "PY": "3.12"},
 		{"PROFILE": "debug", "PY": "3.13"},
 	)
 
 
-def test_matrix_combinations_dedupes_identical_runs() -> None:
+def test_declared_cells_dedupes_identical_cells() -> None:
 	task = Parallel(
 		Parallel(Task("a"), matrix={"PY": ("3.13",)}),
 		Parallel(Task("b"), matrix={"PY": ("3.13",)}),
 	)
-	assert matrix_combinations(task) == ({"PY": "3.13"},)
+	assert declared_cells(task).cells == ({"PY": "3.13"},)
 
 
-def test_matrix_combinations_ignores_leaf_outside_any_matrix() -> None:
+def test_declared_cells_reports_a_leaf_outside_any_matrix() -> None:
 	task = Sequential(
 		Parallel(Task("test"), matrix={"PY": ("3.12", "3.13")}),
 		Task("lint"),
 	)
-	assert matrix_combinations(task) == ({"PY": "3.12"}, {"PY": "3.13"})
+	assert declared_cells(task) == Fanout(({"PY": "3.12"}, {"PY": "3.13"}), ("lint",))
 
 
-def test_distinct_combinations_drops_leaf_under_no_axis() -> None:
-	"""The extracted dedup core drops a leaf carrying none of the axes (an empty binding); the
-	coverage of such a leaf is `to_matrix_object`'s concern, so this stays a pure binding dedup."""
-	from camas.core.matrix import expand_matrix
-	from camas.core.traversal import flatten_leaves
-
-	tree = Parallel(Parallel(Task("t"), matrix={"PY": ("3.12",)}), Task("plain"))
-	leaves = flatten_leaves(expand_matrix(tree))
-	assert distinct_combinations(leaves, ("PY",)) == ({"PY": "3.12"},)
+def test_declared_cells_ignores_a_user_env_key_named_like_an_axis() -> None:
+	"""The #266 root fix: cells come from the declarations, never from a leaf's env, so a
+	hand-set env={"PY": ...} cannot contribute a phantom axis value."""
+	task = Parallel(
+		Parallel(Task("test"), matrix={"PY": ("3.12",)}),
+		Parallel(Task("lint"), env={"PY": "hand-set"}, matrix={"PY": ("3.12",)}),
+	)
+	assert declared_cells(task).cells == ({"PY": "3.12"},)
 
 
 def test_is_cross_product_single_axis() -> None:
@@ -414,9 +418,24 @@ def test_cli_github_matrix_emits_before_effects_resolution(
 
 
 def test_parser_github_matrix_flag() -> None:
-	args = build_parser().parse_args(["--github-matrix", "check"])
-	assert args.github_matrix is True
+	"""The bare flag before the task keeps the task: dispatch normalizes the optional value so
+	argparse cannot swallow ``check`` as a shape (:func:`normalize_github_matrix`)."""
+	args = build_parser().parse_args(normalize_github_matrix(["--github-matrix", "check"]))
+	assert args.github_matrix == "auto"
+	assert args.expression == "check"
 	assert args.dry_run is False
+
+
+def test_parser_github_matrix_pins_a_shape() -> None:
+	for spelling in (["--github-matrix", "tasks"], ["--github-matrix=tasks"]):
+		args = build_parser().parse_args(normalize_github_matrix(spelling))
+		assert args.github_matrix == "tasks"
+		assert args.expression is None
+
+
+def test_parser_github_matrix_rejects_an_unknown_shape() -> None:
+	with pytest.raises(SystemExit, match="2"):
+		build_parser().parse_args(normalize_github_matrix(["--github-matrix=bogus"]))
 
 
 def test_parser_github_matrix_in_reserved_flags() -> None:
@@ -432,7 +451,9 @@ def test_reserved_dests_covers_flag_dests_and_positional() -> None:
 
 def test_parser_mutex_dry_run_and_github_matrix(capsys: pytest.CaptureFixture[str]) -> None:
 	with pytest.raises(SystemExit, match="2"):
-		build_parser().parse_args(["--dry-run", "--github-matrix", "check"])
+		build_parser().parse_args(
+			normalize_github_matrix(["--dry-run", "--github-matrix", "check"])
+		)
 	assert "not allowed" in capsys.readouterr().err.lower()
 
 
@@ -454,7 +475,7 @@ def test_task_help_shows_mutex_when_axes_exist(capsys: pytest.CaptureFixture[str
 	task = Parallel(Task("echo {PY}"), matrix={"PY": ("3.12", "3.13")})
 	with pytest.raises(SystemExit, match="0"):
 		dispatch(_state({"check": task}), ["check", "--help"])
-	assert "[--dry-run | --github-matrix]" in capsys.readouterr().out
+	assert "[--dry-run | --github-matrix [SHAPE]]" in capsys.readouterr().out
 
 
 def test_task_help_omits_github_matrix_when_no_axes(capsys: pytest.CaptureFixture[str]) -> None:
@@ -479,3 +500,118 @@ def test_task_help_filters_reserved_axis_from_flags_and_block(
 	assert "--dry_run" not in out
 	assert "[--PY VAL[,VAL...]]" in out
 	assert "Matrix axes" in out
+
+
+def test_shape_variants_on_a_matrix_enumerates_cells_as_include() -> None:
+	"""A pinned shape wins over the derived one: an axes-only task can still emit include cells."""
+	task = Parallel(Task("t {PY}"), matrix={"PY": ("3.13", "3.14")})
+	assert to_matrix_object(task, {}, "variants") == {"include": [{"PY": "3.13"}, {"PY": "3.14"}]}
+
+
+def test_shape_axes_on_a_variants_task_points_at_the_variants_shape() -> None:
+	task = Parallel(Task("t {b}"), variants=({"b": "x"},))
+	with pytest.raises(ValueError, match="--github-matrix=variants"):
+		to_matrix_object(task, {}, "axes")
+
+
+def test_shape_variants_on_a_plain_task_errors() -> None:
+	with pytest.raises(ValueError, match="no matrix axes or variants"):
+		to_matrix_object(Task("hi"), {}, "variants")
+
+
+def test_empty_variants_emission_errors() -> None:
+	with pytest.raises(ValueError, match="declares no variant"):
+		to_matrix_object(Parallel(Task("t"), variants=(), name="qemu"))
+
+
+def test_sibling_axes_disagreeing_on_values_are_rejected() -> None:
+	"""Both siblings declare PY, with different values: object-of-arrays looks clean (the axis
+	merges outermost-first), but pinning PY=3.12 would drag the 3.13-only sibling along — the
+	latent unfaithfulness the run-set check now catches.
+	"""
+	task = Parallel(
+		Parallel(Task("test {PY}"), matrix={"PY": ("3.12", "3.13")}),
+		Parallel(Task("lint {PY}"), matrix={"PY": ("3.13",)}),
+	)
+	with pytest.raises(ValueError, match=r"not a faithful fan-out.*never runs it"):
+		to_matrix_object(task)
+
+
+def test_duplicate_axis_value_is_rejected() -> None:
+	"""A repeated axis value (a duplicated line in a .python-version) runs the leaf twice locally
+	but dedupes to one job, so the fan-out is not faithful.
+	"""
+	task = Parallel(Task("t {PY}"), matrix={"PY": ("3.13", "3.13")})
+	with pytest.raises(ValueError, match=r"would run in 1 of the 1 emitted job\(s\)"):
+		to_matrix_object(task)
+
+
+def test_variants_beside_an_independent_axis_is_rejected() -> None:
+	"""A variants node beside a matrixed sibling: each cell pins only its own node, so every cell
+	would also run the other sibling's leaves.
+	"""
+	task = Parallel(
+		Parallel(Task("build {b}"), variants=({"b": "x"},)),
+		Parallel(Task("test {PY}"), matrix={"PY": ("3.13",)}),
+	)
+	with pytest.raises(ValueError, match="not a faithful fan-out"):
+		to_matrix_object(task)
+
+
+def test_cell_that_cannot_be_pinned_alone_is_rejected() -> None:
+	"""Two nodes declaring the same coupled key with different bundles: pinning b=y filters the
+	second node to nothing, so no single job can run that cell.
+	"""
+	task = Parallel(
+		Parallel(Task("build {b}"), variants=({"b": "x"}, {"b": "y"})),
+		Parallel(Task("test {b}"), variants=({"b": "x"},)),
+	)
+	with pytest.raises(ValueError, match="cannot be pinned on its own"):
+		to_matrix_object(task)
+
+
+def test_dispatch_name_falls_back_to_value_equality() -> None:
+	"""A child rebuilt by composition (a Project rebase, an override pass) is value-equal to its
+	binding rather than identical — it still dispatches, so it still emits.
+	"""
+	build = Task("make build")
+	twin = Task("make build")
+	assert to_matrix_object(Parallel(twin), {"build": build}) == {"task": ["build"]}
+
+
+def test_cli_pins_a_shape(capsys: pytest.CaptureFixture[str]) -> None:
+	task = Parallel(Task("t {b}"), variants=({"b": "x"}, {"b": "y"}))
+	with pytest.raises(SystemExit, match="0"):
+		dispatch(_state({"port": task}), ["port", "--github-matrix=variants"])
+	assert capsys.readouterr().out.strip() == '{"include":[{"b":"x"},{"b":"y"}]}'
+
+
+def test_cli_empty_variants_run_errors(capsys: pytest.CaptureFixture[str]) -> None:
+	task = Parallel(Task("t"), variants=(), name="qemu")
+	with pytest.raises(SystemExit, match="2"):
+		dispatch(_state({"qemu": task}), ["qemu"])
+	assert "declares no variant" in capsys.readouterr().err
+
+
+def test_task_help_offers_github_matrix_for_a_matrixless_parallel(
+	capsys: pytest.CaptureFixture[str],
+) -> None:
+	build = Task("make build")
+	with pytest.raises(SystemExit, match="0"):
+		dispatch(_state({"build": build, "ci": Parallel(build)}), ["ci", "--help"])
+	assert "--github-matrix" in capsys.readouterr().out
+
+
+def test_emitted_variants_json_validates_against_schema(
+	jsonschema: ModuleType, matrix_schema: Mapping[str, Any]
+) -> None:
+	emitted = json.loads(emit(Parallel(Task("t {b}"), variants=({"b": "x"},)), pretty=False))
+	jsonschema.validate(emitted, matrix_schema)
+
+
+def test_emitted_jobs_json_validates_against_schema(
+	jsonschema: ModuleType, matrix_schema: Mapping[str, Any]
+) -> None:
+	build = Task("make build")
+	emitted = json.loads(emit(Parallel(build), {"build": build}, pretty=False))
+	jsonschema.validate(emitted, matrix_schema)

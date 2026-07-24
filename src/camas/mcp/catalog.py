@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ..core.matrix import expand_matrix, matrix_axes
+from ..core.matrix import declared_variants, expand_matrix, overridable_axes
 from ..core.timings import estimate
 from ..main.expression import to_expression
 from . import wire
@@ -71,7 +71,10 @@ def task_info(
 		name=name,
 		help=node.help,
 		command_preview=to_expression(expand_matrix(node) if expand else node),
-		matrix_axes={axis: list(values) for axis, values in matrix_axes(node).items()},
+		matrix_axes={axis: list(values) for axis, values in overridable_axes(node).items()},
+		variants=None
+		if (bundles := declared_variants(node)) is None
+		else [dict(b) for b in bundles],
 		is_default=is_default,
 		is_github_default=is_github_default,
 	)
