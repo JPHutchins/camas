@@ -33,13 +33,22 @@ from ..core.budget import plan_under
 from ..core.execution import run
 from ..core.gate import STALE_TEMP_MAX_AGE_S, run_gate
 from ..core.hook_event import NO_EVENT, HookEvent, event_from_stdin
-from ..core.matrix import expand_matrix, override_matrix, unfilled_required_axes
+from ..core.matrix import (
+	empty_variant_labels,
+	expand_matrix,
+	override_matrix,
+	unfilled_required_axes,
+)
 from ..core.render import render_tree_lines, strip_ansi
 from ..core.scope import scope_to_changed, to_changed, with_default_paths
 from ..core.task import did_you_mean, task_label
 from ..main.argv import apply_passthrough
 from ..main.compose import load_py_tasks_state
-from ..main.format import format_load_error_hint, format_version_skew_hint
+from ..main.format import (
+	format_empty_variants_error,
+	format_load_error_hint,
+	format_version_skew_hint,
+)
 from ..main.github_matrix import format_matrix_json
 from ..main.init import create_starter_tasks_py, starter_text
 from ..main.parser import parse_duration
@@ -751,16 +760,31 @@ def required_axes_message(names: tuple[str, ...]) -> str:
 	)
 
 
-def require_filled_axes(node: TaskNode) -> None:
-	"""Raise when ``node`` has a matrix axis left unfilled — an empty-value axis is a required
-	input a run supplies via ``matrix_overrides`` rather than silently expanding to zero leaves.
-
-	Raises:
-		ValueError: naming each unfilled axis and the ``matrix_overrides`` that fills it.
+def unsatisfiable_message(node: TaskNode) -> str | None:
+	"""Why ``node`` would expand to no leaves — a required matrix axis left unfilled, or a
+	``variants=()`` that declares no bundle — or ``None`` when it is runnable.
 	"""
 	required = unfilled_required_axes(node)
 	if required:
-		raise ValueError(required_axes_message(required))
+		return required_axes_message(required)
+	empty = empty_variant_labels(node)
+	if empty:
+		return format_empty_variants_error(empty)
+	return None
+
+
+def require_filled_axes(node: TaskNode) -> None:
+	"""Raise when ``node`` would expand to nothing — an empty-value axis is a required input a
+	run supplies via ``matrix_overrides``, and an empty ``variants`` is a declaration to fix in
+	``tasks.py``, rather than either silently expanding to zero leaves.
+
+	Raises:
+		ValueError: naming each unfilled axis and the ``matrix_overrides`` that fills it, or each
+			node whose ``variants`` is empty.
+	"""
+	blocked = unsatisfiable_message(node)
+	if blocked is not None:
+		raise ValueError(blocked)
 
 
 def resolve_run_node(
@@ -1401,8 +1425,8 @@ async def fix_for(
 	except ValueError as e:
 		return error_result(str(e))
 	scoped: TaskNode | None = None
-	unfilled = unfilled_required_axes(fix_node) if fix_node is not None else ()
-	if fix_node is not None and not unfilled:
+	blocked = unsatisfiable_message(fix_node) if fix_node is not None else None
+	if fix_node is not None and blocked is None:
 		changed = to_changed(req.paths, base_for(session))
 		expanded = expand_matrix(fix_node)
 		scoped = scope_to_changed(expanded, changed) if changed else with_default_paths(expanded)
@@ -1412,8 +1436,8 @@ async def fix_for(
 		empty_cause = (
 			"no fix node registered (Config.agent.fix is None)"
 			if fix_node is None
-			else required_axes_message(unfilled)
-			if unfilled
+			else blocked
+			if blocked is not None
 			else "no fix leaf covers the paths"
 		)
 	else:

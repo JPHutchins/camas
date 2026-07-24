@@ -155,6 +155,21 @@ meet = Parallel(
 	help="cross a two-axis matrix",
 )
 
+# variants= is the coupled form of matrix=: a tuple of bundles whose values only make sense
+# together (a target with its runner), so it fans out over the listed bundles rather than a
+# cross-product. It composes with matrix= on the same node — the run-set is the axes crossed
+# with the variants — and every variant must bind the same keys. Pinning a variants key from
+# the CLI filters to the bundles that bind it: camas port --TARGET wasm
+port = Parallel(
+	Task("python -c \"print('build {TARGET} with {TOOLCHAIN} ({PROFILE})')\""),
+	variants=(
+		{"TARGET": "wasm", "TOOLCHAIN": "emscripten"},
+		{"TARGET": "native", "TOOLCHAIN": "clang"},
+	),
+	matrix={"PROFILE": ("debug", "release")},
+	help="two coupled targets × two profiles = four cells, not eight",
+)
+
 # cwd=/env=/paths=/when= set on a Sequential or Parallel — not just a Task — are the default
 # for any descendant leaf that sets none of its own, the same propagation as matrix= above.
 # Sequential runs its children in order, short-circuiting on the first failure; Parallel runs
@@ -230,7 +245,7 @@ class Announce(Effect[None]):
 ci = Sequential(
 	hello,
 	Parallel(compile_step, documented, native, flake, docs_build, "python --version"),
-	Parallel(greet, meet, versions),
+	Parallel(greet, meet, versions, port),
 	frontend,
 	# name= on a *nested*, anonymous group (no binding of its own) is the other half of the
 	# lesson at the top: it has no dispatch key at all, only this display label.

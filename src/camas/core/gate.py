@@ -171,6 +171,7 @@ def with_agent_format(node: TaskNode, report_dir: Path) -> FormattedNode:
 					*(f.node for f in formatted),
 					name=group.name,
 					matrix=group.matrix,
+					variants=group.variants,
 					env=group.env,
 					cwd=group.cwd,
 					help=group.help,

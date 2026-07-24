@@ -185,6 +185,72 @@ def matrix_axes(task: TaskNode) -> dict[str, tuple[str, ...]]:
 			assert_never(task)
 
 
+def variant_axes(task: TaskNode) -> dict[str, tuple[str, ...]]:
+	"""Walk a task tree and collect every ``variants`` key with the distinct values it binds,
+	in first-seen order. On a name collision the outermost declaration wins, as in
+	:func:`matrix_axes`.
+
+	>>> variant_axes(Task("hi"))
+	{}
+	>>> variant_axes(Parallel(Task("t"), variants=({"b": "x", "t": "1"}, {"b": "y", "t": "1"})))
+	{'b': ('x', 'y'), 't': ('1',)}
+	"""
+	match task:
+		case Task():
+			return {}
+		case Sequential(tasks=tasks, variants=variants) | Parallel(tasks=tasks, variants=variants):
+			result: dict[str, tuple[str, ...]] = (
+				{key: tuple(dict.fromkeys(v[key] for v in variants)) for key in variants[0]}
+				if variants
+				else {}
+			)
+			for child in tasks:
+				for k, v in variant_axes(child).items():
+					result.setdefault(k, v)
+			return result
+		case _:
+			assert_never(task)
+
+
+def overridable_axes(task: TaskNode) -> dict[str, tuple[str, ...]]:
+	"""Every axis a CLI override can target: the ``matrix`` axes — whose values an override
+	*replaces* — then the ``variants`` keys, which an override *filters* to the bundles binding it.
+
+	>>> overridable_axes(Parallel(Task("t"), matrix={"P": ("d",)}, variants=({"b": "x"},)))
+	{'P': ('d',), 'b': ('x',)}
+	"""
+	axes: Final = matrix_axes(task)
+	return {**axes, **{k: v for k, v in variant_axes(task).items() if k not in axes}}
+
+
+def empty_variant_labels(task: TaskNode) -> tuple[str, ...]:
+	"""The label of every node in ``task``'s tree declaring ``variants=()``, in first-seen order.
+
+	Zero variants is the coupled counterpart of an empty matrix axis: the node expands to no
+	leaves, so that branch silently does nothing — realistically reached by a variant tuple built
+	from a comprehension that filtered everything out.
+
+	>>> empty_variant_labels(Task("hi"))
+	()
+	>>> empty_variant_labels(Parallel(Task("t"), variants=(), name="qemu"))
+	('qemu',)
+	>>> empty_variant_labels(Sequential(Parallel(Task("t"), variants=())))
+	('<unnamed group>',)
+	"""
+	match task:
+		case Task():
+			return ()
+		case Sequential(tasks=tasks, variants=variants) | Parallel(tasks=tasks, variants=variants):
+			here: Final = (
+				(task.name if task.name is not None else "<unnamed group>",)
+				if variants is not None and not variants
+				else ()
+			)
+			return (*here, *(label for child in tasks for label in empty_variant_labels(child)))
+		case _:
+			assert_never(task)
+
+
 def unfilled_required_axes(task: TaskNode) -> tuple[str, ...]:
 	"""Every matrix axis declared with no values anywhere in ``task``'s tree, in first-seen order.
 
@@ -215,13 +281,17 @@ def unfilled_required_axes(task: TaskNode) -> tuple[str, ...]:
 
 
 def override_matrix(task: TaskNode, overrides: Mapping[str, tuple[str, ...]]) -> TaskNode:
-	"""Replace each ``matrix[k]`` with ``overrides[k]`` wherever the key appears.
+	"""Replace each ``matrix[k]`` with ``overrides[k]``, and keep only the ``variants`` binding
+	one of ``overrides[k]``, wherever the key appears.
 
 	Strict on keys (every override must match an axis in the tree), permissive on
-	values (any tuple is accepted).
+	values for a ``matrix`` axis (any tuple is accepted) — a ``variants`` key instead selects
+	among the declared bundles, since replacing one key of a coupled bundle would fabricate a
+	combination the project never declared.
 
 	Raises:
-		ValueError: if an override key matches no matrix axis in the tree.
+		ValueError: if an override key matches no axis in the tree, or if it leaves a node with
+			no variant.
 
 	>>> override_matrix(Parallel(Task("t"), matrix={"PY": ("3.12", "3.13")}), {"PY": ("3.13",)}).matrix  # type: ignore[union-attr]
 	{'PY': ('3.13',)}
@@ -229,10 +299,17 @@ def override_matrix(task: TaskNode, overrides: Mapping[str, tuple[str, ...]]) ->
 	Traceback (most recent call last):
 	    ...
 	ValueError: unknown matrix axis 'XX' (known: PY)
+	>>> node = Parallel(Task("t"), variants=({"b": "x", "t": "1"}, {"b": "y", "t": "2"}))
+	>>> override_matrix(node, {"b": ("y",)}).variants  # type: ignore[union-attr]
+	({'b': 'y', 't': '2'},)
+	>>> override_matrix(node, {"b": ("z",)})
+	Traceback (most recent call last):
+	    ...
+	ValueError: no variant matches b=z; the declared variants bind b: x, y
 	"""
 	if not overrides:
 		return task
-	axes: Final = matrix_axes(task)
+	axes: Final = overridable_axes(task)
 	for key in overrides:
 		if key not in axes:
 			known = ", ".join(sorted(axes)) or "none"
@@ -240,11 +317,37 @@ def override_matrix(task: TaskNode, overrides: Mapping[str, tuple[str, ...]]) ->
 	return apply_overrides(task, overrides)
 
 
+def no_variant_message(
+	variants: tuple[dict[str, str], ...], overrides: Mapping[str, tuple[str, ...]]
+) -> str:
+	"""The error for an override that filters a node's variants down to nothing.
+
+	>>> no_variant_message(({"b": "x"}, {"b": "y"}), {"b": ("z",)})
+	'no variant matches b=z; the declared variants bind b: x, y'
+	"""
+	relevant: Final = {k: v for k, v in overrides.items() if k in variants[0]}
+	pinned: Final = ", ".join(f"{k}={'|'.join(v)}" for k, v in relevant.items())
+	declared: Final = "; ".join(
+		f"{k}: {', '.join(dict.fromkeys(v[k] for v in variants))}" for k in relevant
+	)
+	return f"no variant matches {pinned}; the declared variants bind {declared}"
+
+
 def apply_overrides(task: TaskNode, overrides: Mapping[str, tuple[str, ...]]) -> TaskNode:
 	def applied(matrix: dict[str, tuple[str, ...]] | None) -> dict[str, tuple[str, ...]] | None:
 		if matrix is None:
 			return None
 		return {k: overrides.get(k, v) for k, v in matrix.items()}
+
+	def kept(variants: tuple[dict[str, str], ...] | None) -> tuple[dict[str, str], ...] | None:
+		if not variants:
+			return variants
+		matched = tuple(
+			v for v in variants if all(v[k] in vals for k, vals in overrides.items() if k in v)
+		)
+		if not matched:
+			raise ValueError(no_variant_message(variants, overrides))
+		return matched
 
 	match task:
 		case Task():
@@ -254,6 +357,7 @@ def apply_overrides(task: TaskNode, overrides: Mapping[str, tuple[str, ...]]) ->
 				*(apply_overrides(t, overrides) for t in group.tasks),
 				name=group.name,
 				matrix=applied(group.matrix),
+				variants=kept(group.variants),
 				env=group.env,
 				cwd=group.cwd,
 				help=group.help,
@@ -277,6 +381,38 @@ def matrix_bindings(matrix: dict[str, tuple[str, ...]]) -> tuple[MatrixBinding, 
 	)
 
 
+def variant_bindings(variants: tuple[dict[str, str], ...]) -> tuple[MatrixBinding, ...]:
+	"""Each coupled variant bundle as one binding.
+
+	>>> variant_bindings(({"backend": "thumbv7", "target": "thumbv7m-none-eabi"},))
+	((VarBinding(name='backend', value='thumbv7'), VarBinding(name='target', value='thumbv7m-none-eabi')),)
+	"""
+	return tuple(tuple(VarBinding(k, v) for k, v in variant.items()) for variant in variants)
+
+
+def node_bindings(
+	matrix: dict[str, tuple[str, ...]] | None, variants: tuple[dict[str, str], ...] | None
+) -> tuple[MatrixBinding, ...]:
+	"""Every binding a node fans out over: its ``matrix`` cross product × its ``variants``.
+
+	An absent declaration is the identity — one empty binding — while a declared-but-empty one
+	(``matrix={"PY": ()}``, ``variants=()``) yields no bindings at all, so the node expands to
+	nothing; the required-axis and empty-variant checks reject that before a run.
+
+	>>> node_bindings({"PY": ("3.13",)}, None) == matrix_bindings({"PY": ("3.13",)})
+	True
+	>>> node_bindings(None, ({"b": "x"}, {"b": "y"}))
+	((VarBinding(name='b', value='x'),), (VarBinding(name='b', value='y'),))
+	>>> node_bindings({"P": ("d", "r")}, ({"b": "x"},))
+	((VarBinding(name='P', value='d'), VarBinding(name='b', value='x')), (VarBinding(name='P', value='r'), VarBinding(name='b', value='x')))
+	>>> node_bindings(None, ()), node_bindings({"PY": ()}, None)
+	((), ())
+	"""
+	axes: Final = matrix_bindings(matrix) if matrix is not None else ((),)
+	bundles: Final = variant_bindings(variants) if variants is not None else ((),)
+	return tuple((*a, *b) for a in axes for b in bundles)
+
+
 def binding_suffix(binding: MatrixBinding) -> str:
 	"""Format a matrix binding as a bracketed ``[name=value, ...]`` suffix."""
 	return "[" + ", ".join(f"{vb.name}={vb.value}" for vb in binding) + "]"
@@ -284,7 +420,7 @@ def binding_suffix(binding: MatrixBinding) -> str:
 
 def expand_sequential_matrix(
 	children: tuple[TaskNode, ...],
-	matrix: dict[str, tuple[str, ...]],
+	bindings: tuple[MatrixBinding, ...],
 	name: str | None,
 	container_env: dict[str, str],
 	container_cwd: Path | None,
@@ -296,7 +432,8 @@ def expand_sequential_matrix(
 	matrix values substituted, plus the binding itself) so the display can show
 	it once at the group header instead of on every leaf.
 
-	>>> result = expand_sequential_matrix((Task("build"), Task("test")), {"X": ("1", "2")}, "ci", {}, None, None)
+	>>> bindings = node_bindings({"X": ("1", "2")}, None)
+	>>> result = expand_sequential_matrix((Task("build"), Task("test")), bindings, "ci", {}, None, None)
 	>>> len(result.tasks)
 	2
 	>>> all(isinstance(t, Sequential) for t in result.tasks)
@@ -314,7 +451,7 @@ def expand_sequential_matrix(
 				cwd=substitute_cwd(container_cwd, binding),
 				help=substitute_help(help, binding),
 			)
-			for binding in matrix_bindings(matrix)
+			for binding in bindings
 		),
 		name=name,
 		help=help,
@@ -323,7 +460,7 @@ def expand_sequential_matrix(
 
 def expand_parallel_matrix(
 	children: tuple[TaskNode, ...],
-	matrix: dict[str, tuple[str, ...]],
+	bindings: tuple[MatrixBinding, ...],
 	name: str | None,
 	container_env: dict[str, str],
 	container_cwd: Path | None,
@@ -335,14 +472,15 @@ def expand_parallel_matrix(
 	same value across every binding; per-binding pieces land on the individual
 	specialized leaves via ``specialize_node``.
 
-	>>> result = expand_parallel_matrix((Task("test"),), {"PY": ("3.12", "3.13")}, None, {}, None, None)
+	>>> bindings = node_bindings({"PY": ("3.12", "3.13")}, None)
+	>>> result = expand_parallel_matrix((Task("test"),), bindings, None, {}, None, None)
 	>>> len(result.tasks)
 	2
 	"""
 	return Parallel(
 		*(
 			specialize_node(child, binding, binding_suffix(binding))
-			for binding in matrix_bindings(matrix)
+			for binding in bindings
 			for child in children
 		),
 		name=name,
@@ -387,6 +525,9 @@ def expand_matrix(
 	>>> result = expand_matrix(Parallel(Task("test"), matrix={"X": ("1", "2")}))
 	>>> len(result.tasks)  # type: ignore[union-attr]
 	2
+	>>> coupled = expand_matrix(Parallel(Task("go {b}"), variants=({"b": "x"}, {"b": "y"})))
+	>>> [t.cmd for t in coupled.tasks]  # type: ignore[union-attr]
+	['go x', 'go y']
 	>>> expand_matrix(Parallel(Task("hi"), env={"K": "v"})).tasks[0].env  # type: ignore[union-attr]
 	{'K': 'v'}
 	>>> expand_matrix(Parallel(Task("hi"), cwd=Path("w"))).tasks[0].cwd == Path("w")  # type: ignore[union-attr]
@@ -416,7 +557,9 @@ def expand_matrix(
 				when=leaf_when if leaf_when is not None else _when_from_cwd(leaf_cwd),
 				agent_format=task.agent_format,
 			)
-		case Sequential(tasks=tasks, matrix=matrix, env=env, cwd=cwd, paths=paths, when=when):
+		case Sequential(
+			tasks=tasks, matrix=matrix, variants=variants, env=env, cwd=cwd, paths=paths, when=when
+		):
 			seq_env: Final = parent_env | env
 			seq_cwd: Final = cwd if cwd is not None else ancestor_cwd
 			seq_paths: Final = paths if paths is not None else ancestor_paths
@@ -424,7 +567,7 @@ def expand_matrix(
 			seq_expanded: Final = tuple(
 				expand_matrix(t, seq_env, seq_cwd, seq_paths, seq_when) for t in tasks
 			)
-			if matrix is None:
+			if matrix is None and variants is None:
 				return Sequential(
 					*seq_expanded,
 					name=task.name,
@@ -434,8 +577,12 @@ def expand_matrix(
 					paths=paths,
 					when=when,
 				)
-			return expand_sequential_matrix(seq_expanded, matrix, task.name, env, cwd, task.help)
-		case Parallel(tasks=tasks, matrix=matrix, env=env, cwd=cwd, paths=paths, when=when):
+			return expand_sequential_matrix(
+				seq_expanded, node_bindings(matrix, variants), task.name, env, cwd, task.help
+			)
+		case Parallel(
+			tasks=tasks, matrix=matrix, variants=variants, env=env, cwd=cwd, paths=paths, when=when
+		):
 			par_env: Final = parent_env | env
 			par_cwd: Final = cwd if cwd is not None else ancestor_cwd
 			par_paths: Final = paths if paths is not None else ancestor_paths
@@ -443,7 +590,7 @@ def expand_matrix(
 			par_expanded: Final = tuple(
 				expand_matrix(t, par_env, par_cwd, par_paths, par_when) for t in tasks
 			)
-			if matrix is None:
+			if matrix is None and variants is None:
 				return Parallel(
 					*par_expanded,
 					name=task.name,
@@ -453,6 +600,8 @@ def expand_matrix(
 					paths=paths,
 					when=when,
 				)
-			return expand_parallel_matrix(par_expanded, matrix, task.name, env, cwd, task.help)
+			return expand_parallel_matrix(
+				par_expanded, node_bindings(matrix, variants), task.name, env, cwd, task.help
+			)
 		case _:
 			assert_never(task)

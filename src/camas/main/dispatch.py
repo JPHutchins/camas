@@ -23,7 +23,13 @@ from ..core import timings
 from ..core.budget import plan_under
 from ..core.execution import run
 from ..core.hook_event import stdin_changed
-from ..core.matrix import expand_matrix, matrix_axes, override_matrix, unfilled_required_axes
+from ..core.matrix import (
+	empty_variant_labels,
+	expand_matrix,
+	overridable_axes,
+	override_matrix,
+	unfilled_required_axes,
+)
 from ..core.render import print_tree, render_tree_lines
 from ..core.scope import scope_to_changed, to_changed, with_default_paths
 from ..core.task import did_you_mean, task_label
@@ -33,6 +39,7 @@ from .compose import load_py_tasks_state, state_from_scope
 from .effects import default_effect_names, resolve_effects, running_under_agent
 from .expression import parse_expression
 from .format import (
+	format_empty_variants_error,
 	format_load_error_hint,
 	format_required_axes_error,
 	format_scope_warnings,
@@ -331,7 +338,7 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 			)
 			augmented_axes: dict[str, tuple[str, ...]] = {}
 			if axis_node is not None:
-				for name, values in matrix_axes(axis_node).items():
+				for name, values in overridable_axes(axis_node).items():
 					if is_reserved_axis(name):
 						continue
 					parser.add_argument(
@@ -425,6 +432,11 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 			required_axes: Final = unfilled_required_axes(resolved)
 			if required_axes:
 				print(f"error: {format_required_axes_error(required_axes)}", file=sys.stderr)
+				sys.exit(2)
+
+			empty_variants: Final = empty_variant_labels(resolved)
+			if empty_variants:
+				print(f"error: {format_empty_variants_error(empty_variants)}", file=sys.stderr)
 				sys.exit(2)
 
 			try:

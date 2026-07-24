@@ -190,6 +190,7 @@ def test_eval_node_threads_every_public_constructor_kwarg() -> None:
 		"help": ("help='h'", "help", "h"),
 		"mutates": ("mutates=True", "mutates", True),
 		"matrix": ("matrix={'X': ('1',)}", "matrix", {"X": ("1",)}),
+		"variants": ("variants=({'V': '1'},)", "variants", ({"V": "1"},)),
 		"paths": ("paths='.'", "paths", "."),
 		"when": ("when='src'", "when", "src"),
 		"agent_format": (
