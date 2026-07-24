@@ -637,3 +637,31 @@ def test_emitted_jobs_json_validates_against_schema(
 	build = Task("make build")
 	emitted = json.loads(emit(Parallel(build), {"build": build}, pretty=False))
 	jsonschema.validate(emitted, matrix_schema)
+
+
+def test_job_state_fields_cover_every_group_field_a_job_cannot_inherit() -> None:
+	"""Drift guard: a new ``Group`` field must be classified — either state a per-child job would
+	not inherit (so the tasks shape refuses to emit past it) or display-only. Without this, a field
+	added later is silently dropped from every emitted job graph, which is how the ``variants``
+	propagation bug would have shipped.
+	"""
+	import inspect
+
+	from camas.main.github_matrix import JOB_STATE_FIELDS
+	from camas.v0.task import Group
+
+	display_only = {"self", "tasks", "name", "help"}
+	declared = set(inspect.signature(Group.__init__).parameters) - display_only
+	assert declared == set(JOB_STATE_FIELDS)
+
+
+def test_no_tasks_default_is_immutable() -> None:
+	"""The shared default for ``tasks`` is read-only, so it cannot become cross-call state — the
+	same guarantee ``Task.env``'s ``_EMPTY_ENV`` gives. The ``Mapping`` annotation is the static
+	half of that promise (every checker rejects the write below without the cast); this covers the
+	runtime half, for a caller that isn't type-checked.
+	"""
+	from camas.main.github_matrix import NO_TASKS
+
+	with pytest.raises(TypeError):
+		cast("dict[str, TaskNode]", NO_TASKS)["x"] = Task("boom")

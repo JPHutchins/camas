@@ -30,6 +30,7 @@ from ..main.check import (
 	unresolved_dispatch_warnings,
 )
 from ..main.github_matrix import (
+	NO_TASKS,
 	Axes,
 	Emission,
 	Jobs,
@@ -117,7 +118,7 @@ def to_plan_response(node: TaskNode) -> wire.RunResponse:
 def to_github_matrix_response(
 	name: str,
 	node: TaskNode,
-	tasks: Mapping[str, TaskNode] = {},
+	tasks: Mapping[str, TaskNode] = NO_TASKS,
 	shape: ShapeName = "auto",
 ) -> wire.GithubMatrixResponse:
 	"""The wire ``GithubMatrixResponse`` for ``node`` — its fan-out in the shape GHA consumes,

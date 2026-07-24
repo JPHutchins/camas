@@ -141,6 +141,10 @@ def specialize_task(task: Task, binding: MatrixBinding, suffix: str) -> Task:
 def specialize_node(task: TaskNode, binding: MatrixBinding, suffix: str) -> TaskNode:
 	"""Recursively specialize an entire task tree with concrete variable values.
 
+	Runs on a subtree :func:`expand_matrix` has already expanded, where no node carries a ``matrix``
+	or ``variants`` any more — so the rebuilt groups pass neither, and a caller handing it an
+	unexpanded tree would silently lose them.
+
 	>>> specialize_node(Task("test {X}"), (VarBinding("X", "1"),), "[X=1]")
 	Task(cmd='test 1', name='test 1 [X=1]', env={'X': '1'}, cwd=None)
 	"""
@@ -340,12 +344,12 @@ def override_matrix(task: TaskNode, overrides: Mapping[str, tuple[str, ...]]) ->
 	return apply_overrides(task, overrides)
 
 
-def no_variant_message(
+def _no_variant_message(
 	variants: tuple[dict[str, str], ...], overrides: Mapping[str, tuple[str, ...]]
 ) -> str:
 	"""The error for an override that filters a node's variants down to nothing.
 
-	>>> no_variant_message(({"b": "x"}, {"b": "y"}), {"b": ("z",)})
+	>>> _no_variant_message(({"b": "x"}, {"b": "y"}), {"b": ("z",)})
 	'no variant matches b=z; the declared variants bind b: x, y'
 	"""
 	relevant: Final = {k: v for k, v in overrides.items() if k in variants[0]}
@@ -369,7 +373,7 @@ def apply_overrides(task: TaskNode, overrides: Mapping[str, tuple[str, ...]]) ->
 			v for v in variants if all(v[k] in vals for k, vals in overrides.items() if k in v)
 		)
 		if not matched:
-			raise ValueError(no_variant_message(variants, overrides))
+			raise ValueError(_no_variant_message(variants, overrides))
 		return matched
 
 	match task:

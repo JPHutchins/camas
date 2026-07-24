@@ -112,17 +112,26 @@ def format_fanout(node: TaskNode) -> str:
 	"""A task's listing annotation: its ``matrix`` axes then its ``variants``, or ``""`` for a
 	node that declares neither.
 
+	The ``matrix:`` prefix appears only when a matrix axis does: a ``variants`` token labels itself,
+	and calling a coupled fan-out a matrix is the conflation ``variants=`` exists to avoid.
+
 	>>> from camas import Parallel, Task
 	>>> format_fanout(Task("hi"))
 	''
 	>>> format_fanout(Parallel(Task("t"), matrix={"PY": ("3.13",)}, variants=({"b": "x"},)))
 	'  [matrix: PY=3.13 variants×1 (b)]'
+	>>> format_fanout(Parallel(Task("t"), variants=({"b": "x"}, {"b": "y"})))
+	'  [variants×2 (b)]'
+	>>> format_fanout(Parallel(Task("t"), matrix={}))
+	''
+	>>> format_fanout(Parallel(Task("t"), variants=()))
+	'  [variants=required]'
 	"""
-	if isinstance(node, Task) or (node.matrix is None and node.variants is None):
+	if isinstance(node, Task) or (not node.matrix and node.variants is None):
 		return ""
 	axes = tuple(format_axis(k, v) for k, v in (node.matrix or {}).items())
 	coupled = () if node.variants is None else (format_variants(node.variants),)
-	return f"  [matrix: {' '.join((*axes, *coupled))}]"
+	return f"  [{'matrix: ' if axes else ''}{' '.join((*axes, *coupled))}]"
 
 
 def format_required_axes_error(names: tuple[str, ...]) -> str:

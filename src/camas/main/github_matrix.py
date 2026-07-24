@@ -61,6 +61,7 @@ import json
 import math
 import sys
 from collections import Counter
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Final, Literal, NamedTuple, TypeAlias
 
 if sys.version_info >= (3, 11):
@@ -96,6 +97,18 @@ SHAPE_NAMES: Final = ("auto", "axes", "variants", "tasks")
 
 JOB_AXIS: Final = "task"
 """The axis name the ``tasks`` shape emits, consumed as ``${{ matrix.task }}``."""
+
+NO_TASKS: Final[Mapping[str, TaskNode]] = MappingProxyType({})
+"""Read-only stand-in for "no task mapping given" — the shapes that don't resolve bindings pass
+nothing. Immutable (as :data:`camas.v0.task._EMPTY_ENV` is) so a shared default can't be mutated
+into cross-call state.
+"""
+
+JOB_STATE_FIELDS: Final = ("matrix", "variants", "env", "cwd", "paths", "when")
+"""Every ``Group`` field a per-child ``camas <child>`` job would *not* inherit, so the ``tasks``
+shape refuses to emit past one that is set. ``name``/``help`` are display-only and don't count; a
+new ``Group`` field has to be classified one way or the other, which a drift test enforces.
+"""
 
 
 class Fanout(NamedTuple):
@@ -434,16 +447,7 @@ def jobs_emission(task: TaskNode, tasks: Mapping[str, TaskNode]) -> Jobs:
 			)
 		case Parallel(tasks=children) as group:
 			blocking = tuple(
-				field
-				for field, value in (
-					("matrix", group.matrix),
-					("variants", group.variants),
-					("env", group.env or None),
-					("cwd", group.cwd),
-					("paths", group.paths),
-					("when", group.when),
-				)
-				if value is not None
+				field for field in JOB_STATE_FIELDS if getattr(group, field) not in (None, {})
 			)
 			if blocking:
 				raise ValueError(
@@ -536,7 +540,7 @@ def to_json_object(emission: Emission) -> dict[str, Any]:
 
 
 def to_matrix_object(
-	task: TaskNode, tasks: Mapping[str, TaskNode] = {}, shape: ShapeName = "auto"
+	task: TaskNode, tasks: Mapping[str, TaskNode] = NO_TASKS, shape: ShapeName = "auto"
 ) -> dict[str, Any]:
 	"""Project ``task``'s fan-out into the object ``strategy.matrix`` consumes.
 
@@ -603,7 +607,7 @@ def format_matrix_json(matrix: Mapping[str, Any], *, pretty: bool) -> str:
 
 def emit(
 	task: TaskNode,
-	tasks: Mapping[str, TaskNode] = {},
+	tasks: Mapping[str, TaskNode] = NO_TASKS,
 	shape: ShapeName = "auto",
 	*,
 	pretty: bool,

@@ -71,3 +71,21 @@ def test_apply_passthrough_rejects_sequential() -> None:
 def test_apply_passthrough_rejects_parallel() -> None:
 	with pytest.raises(ValueError, match="only apply to Task, got Parallel"):
 		apply_passthrough(Parallel(Task("a"), Task("b")), ("-v",))
+
+
+def test_camas_task_arg_accepts_uvx_and_launcher_flags() -> None:
+	"""The launcher forms camas's own docs recommend: `uvx camas <task>` for a sub-floor cell, and
+	a launcher carrying its own flags before the binary.
+	"""
+	from camas.main.argv import camas_task_arg
+
+	assert camas_task_arg("uvx camas lint") == "lint"
+	assert camas_task_arg("uv run --frozen camas lint") == "lint"
+	assert camas_task_arg("nix develop -c camas test-all") == "test-all"
+
+
+def test_camas_task_arg_ignores_camas_as_a_bare_argument() -> None:
+	from camas.main.argv import camas_task_arg
+
+	assert camas_task_arg("echo camas lint") is None
+	assert camas_task_arg("grep camas src/") is None

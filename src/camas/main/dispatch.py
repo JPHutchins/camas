@@ -9,7 +9,6 @@ import argparse
 import asyncio
 import importlib
 import os
-import re
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, cast
@@ -34,7 +33,13 @@ from ..core.render import print_tree, render_tree_lines
 from ..core.scope import scope_to_changed, to_changed, with_default_paths
 from ..core.task import did_you_mean, task_label
 from ..v0.config import Config
-from .argv import apply_passthrough, parse_axis_values, parse_matrix_kv, split_passthrough
+from .argv import (
+	NAME_LIKE,
+	apply_passthrough,
+	parse_axis_values,
+	parse_matrix_kv,
+	split_passthrough,
+)
 from .compose import load_py_tasks_state, state_from_scope
 from .effects import default_effect_names, resolve_effects, running_under_agent
 from .expression import parse_expression
@@ -64,12 +69,6 @@ if TYPE_CHECKING:
 	from ..v0.task import TaskNode
 
 
-_NAME_LIKE: Final = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*(?:\.[A-Za-z_][A-Za-z0-9_-]*)*$")
-"""A bare task name, hyphens and dotted namespace segments allowed — distinct
-from a camas expression, which carries parens, quotes, or braces. A ``-`` is
-taken as part of the name (the convention alias), never as subtraction."""
-
-
 def dispatch_arg(arg: str, tasks: Mapping[str, TaskNode]) -> TaskNode:
 	"""Interpret a CLI arg: task name ⇒ lookup, else inline expression.
 
@@ -81,7 +80,7 @@ def dispatch_arg(arg: str, tasks: Mapping[str, TaskNode]) -> TaskNode:
 	for candidate in (arg, arg.replace("-", "_")):
 		if candidate in tasks:
 			return tasks[candidate]
-	if _NAME_LIKE.match(arg):
+	if NAME_LIKE.match(arg):
 		known = ", ".join(sorted(tasks)) or "none"
 		print(
 			f"error: no task named {arg!r}{did_you_mean(arg, tasks)} (known: {known})",
