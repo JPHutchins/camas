@@ -26,10 +26,9 @@ Three shapes, one per way a ``tasks.py`` fans out — picked automatically, or p
 	    {"task": ["build", "lint", "test"]}
 
 	Values are the children's *binding* names, the same names ``camas <task>`` dispatches on,
-	so every emitted value resolves to a real task. A ``Project()`` child emits its mounted
-	name (``web.build``) for *this* invocation's context, so a child project whose CI task
-	differs from its local default emits different names locally than in the ``discover`` job —
-	each correct for where it ran.
+	so every emitted value resolves to a real task — a ``Project()`` child included, which emits
+	its own binding (``web``) when that binding runs what the parent composed, else the mounted
+	binding of the node it did compose (``web.build``).
 
 Consume the whole object as the matrix::
 
@@ -57,6 +56,7 @@ Output is TTY-aware: indented for interactive preview, compact one-line for pipe
 
 from __future__ import annotations
 
+import functools
 import json
 import math
 import sys
@@ -77,7 +77,7 @@ from ..core.matrix import (
 	unfilled_required_axes,
 	variant_axes,
 )
-from ..core.task import task_label
+from ..core.task import node_label, task_label
 from ..core.traversal import flatten_leaves
 from ..v0.task import Parallel, Sequential, Task
 from .format import format_empty_variants_error
@@ -153,16 +153,23 @@ def bound_cells(
 	>>> bound_cells(((("PY", "3.13"),), (("PY", "3.14"),)), ())
 	({'PY': '3.13'}, {'PY': '3.14'})
 	"""
-	out: tuple[dict[str, str], ...] = ()
-	for binding in bindings:
+
+	def crossed(binding: tuple[tuple[str, str], ...]) -> tuple[dict[str, str], ...]:
 		outer = dict(binding)
-		crossed = (
-			tuple({**outer, **{k: v for k, v in cell.items() if k not in outer}} for cell in inner)
-			if inner
-			else (outer,)
-		)
-		out = merge_cells(out, crossed)
-	return out
+		if not inner:
+			return (outer,)
+		return tuple({**outer, **{k: v for k, v in c.items() if k not in outer}} for c in inner)
+
+	return functools.reduce(merge_cells, map(crossed, bindings), ())
+
+
+def merge_fanouts(left: Fanout, right: Fanout) -> Fanout:
+	"""Two subtrees' fan-outs as one: their cells deduplicated, their uncovered leaves appended.
+
+	>>> merge_fanouts(Fanout(({"PY": "3.13"},), ()), Fanout(({"PY": "3.13"},), ("lint",)))
+	Fanout(cells=({'PY': '3.13'},), uncovered=('lint',))
+	"""
+	return Fanout(merge_cells(left.cells, right.cells), (*left.uncovered, *right.uncovered))
 
 
 def declared_cells(task: TaskNode) -> Fanout:
@@ -188,13 +195,9 @@ def declared_cells(task: TaskNode) -> Fanout:
 			Sequential(tasks=children, matrix=matrix, variants=variants)
 			| Parallel(tasks=children, matrix=matrix, variants=variants)
 		):
-			inner: Fanout = Fanout((), ())
-			for child in children:
-				child_fanout = declared_cells(child)
-				inner = Fanout(
-					merge_cells(inner.cells, child_fanout.cells),
-					(*inner.uncovered, *child_fanout.uncovered),
-				)
+			inner: Final = functools.reduce(
+				merge_fanouts, map(declared_cells, children), Fanout((), ())
+			)
 			if matrix is None and variants is None:
 				return inner
 			return Fanout(bound_cells(node_bindings(matrix, variants), inner.cells), ())
@@ -239,9 +242,7 @@ def unfaithful(task: TaskNode, selected: tuple[TaskNode, ...]) -> str | None:
 	job graph against the run-set rather than trusting the projection that produced it.
 	"""
 	full: Final = leaf_counts(task)
-	emitted: Counter[Task] = Counter()
-	for node in selected:
-		emitted.update(leaf_counts(node))
+	emitted: Final = sum(map(leaf_counts, selected), Counter[Task]())
 	if emitted == full:
 		return None
 	jobs: Final = len(selected)
@@ -436,13 +437,13 @@ def jobs_emission(task: TaskNode, tasks: Mapping[str, TaskNode]) -> Jobs:
 			)
 			if blocking:
 				raise ValueError(
-					f"{task_label_of(group)} declares {', '.join(blocking)}, which a per-child "
+					f"{node_label(group)} declares {', '.join(blocking)}, which a per-child "
 					"`camas <child>` job would not inherit — move it onto the children, or emit "
 					"the axes shape"
 				)
 			names = tuple(dispatch_name(child, tasks) for child in children)
 			missing = tuple(
-				task_label_of(child)
+				node_label(child)
 				for child, name in zip(children, names, strict=True)
 				if name is None
 			)
@@ -463,24 +464,6 @@ def jobs_emission(task: TaskNode, tasks: Mapping[str, TaskNode]) -> Jobs:
 			return Jobs(tuple(name for name in names if name is not None))
 		case _:
 			assert_never(task)
-
-
-def task_label_of(node: TaskNode) -> str:
-	"""A node's label for an error message: a leaf's own label, else a group's name.
-
-	>>> from camas import Parallel, Task
-	>>> task_label_of(Task("ruff check .")), task_label_of(Parallel(Task("t"), name="ci"))
-	('ruff check .', 'ci')
-	>>> task_label_of(Parallel(Task("t")))
-	'<unnamed group>'
-	"""
-	match node:
-		case Task():
-			return task_label(node)
-		case Sequential(name=name) | Parallel(name=name):
-			return name if name is not None else "<unnamed group>"
-		case _:
-			assert_never(node)
 
 
 def auto_shape(task: TaskNode) -> ShapeName:

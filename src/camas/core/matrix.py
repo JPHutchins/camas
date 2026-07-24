@@ -18,7 +18,7 @@ else:  # pragma: no cover
 	from typing_extensions import assert_never
 
 from ..v0.task import Group, Parallel, Sequential, Task, TaskNode
-from .task import MatrixBinding, VarBinding, task_label
+from .task import MatrixBinding, VarBinding, node_label, task_label
 
 if TYPE_CHECKING:
 	from collections.abc import Mapping
@@ -268,11 +268,7 @@ def empty_variant_labels(task: TaskNode) -> tuple[str, ...]:
 		case Task():
 			return ()
 		case Sequential(tasks=tasks, variants=variants) | Parallel(tasks=tasks, variants=variants):
-			here: Final = (
-				(task.name if task.name is not None else "<unnamed group>",)
-				if variants is not None and not variants
-				else ()
-			)
+			here: Final = (node_label(task),) if variants is not None and not variants else ()
 			return (*here, *(label for child in tasks for label in empty_variant_labels(child)))
 		case _:
 			assert_never(task)
