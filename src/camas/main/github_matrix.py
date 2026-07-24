@@ -62,7 +62,7 @@ import math
 import sys
 from collections import Counter
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Final, Literal, NamedTuple, TypeAlias
+from typing import TYPE_CHECKING, Any, Final, Literal, NamedTuple, TypeAlias, cast
 
 if sys.version_info >= (3, 11):
 	from typing import assert_never
@@ -469,13 +469,14 @@ def jobs_emission(task: TaskNode, tasks: Mapping[str, TaskNode]) -> Jobs:
 					"resolves to that project's node for that field, so name it in that project's "
 					"tasks.py to give the job something to dispatch"
 				)
-			resolved = tuple(tasks[name] for name in names if name is not None)
+			named: Final = cast("tuple[str, ...]", names)
+			resolved = tuple(tasks[name] for name in named)
 			reject_unfaithful(
 				task,
 				resolved,
 				"a child runs something different on its own than it does under this task",
 			)
-			return Jobs(tuple(name for name in names if name is not None))
+			return Jobs(named)
 		case _:
 			assert_never(task)
 

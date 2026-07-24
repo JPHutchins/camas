@@ -321,3 +321,20 @@ def test_234_monorepo_child_without_a_binding_is_rejected() -> None:
 	anonymous = Parallel(Task("echo build"), Task("echo test"))
 	with pytest.raises(ValueError, match="<unnamed group>: not reachable"):
 		to_matrix_object(Parallel(anonymous), {})
+
+
+def test_check_warns_when_variants_declares_no_bundle(
+	capsys: pytest.CaptureFixture[str],
+) -> None:
+	"""A comprehension-built variants tuple that filters to nothing is an authoring error, and
+	--check is where an author finds out — not at run time on a branch that quietly did nothing.
+	An empty matrix axis is excluded on purpose: that is #255's required-input form.
+	"""
+	from camas.main.check import unsatisfiable_declaration_warnings
+
+	empty = Parallel(Task("cargo run -b {backend}"), variants=(), name="qemu")
+	required = Parallel(Task("release {version}"), matrix={"version": ()}, name="release")
+	warnings = unsatisfiable_declaration_warnings({"qemu": empty, "release": required})
+	assert len(warnings) == 1
+	assert "variants=()" in warnings[0]
+	assert "qemu" in warnings[0]

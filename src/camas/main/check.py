@@ -32,6 +32,33 @@ if TYPE_CHECKING:
 CheckerName: TypeAlias = Literal["ty", "mypy"]
 
 
+def unsatisfiable_declaration_warnings(tasks: Mapping[str, TaskNode]) -> tuple[str, ...]:
+	"""One warning per task declaring ``variants=()`` — zero coupled bundles, so that branch expands
+	to no leaves and silently does nothing. Deduplicated, preserving order.
+
+	An empty *matrix axis* is deliberately not warned about: ``matrix={"version": ()}`` is the
+	documented required-input form, filled per run with ``--AXIS VALUE``, so flagging it would
+	report an intentional pattern as a mistake. ``variants=()`` has no such filling — no CLI
+	override can supply a whole bundle — so it is always an authoring error.
+
+	>>> from camas import Parallel, Task
+	>>> unsatisfiable_declaration_warnings({"qemu": Parallel(Task("t"), variants=(), name="qemu")})
+	("task 'qemu' declares variants=() on 'qemu' — that branch expands to no leaves, so it silently does nothing; give it at least one variant",)
+	>>> unsatisfiable_declaration_warnings({"release": Parallel(Task("t"), matrix={"version": ()})})
+	()
+	"""
+	from ..core.matrix import empty_variant_labels
+
+	return tuple(
+		dict.fromkeys(
+			f"task {name!r} declares variants=() on {label!r} — that branch expands to no leaves, "
+			"so it silently does nothing; give it at least one variant"
+			for name, node in tasks.items()
+			for label in empty_variant_labels(node)
+		)
+	)
+
+
 def unresolved_dispatch_warnings(tasks: Mapping[str, TaskNode]) -> tuple[str, ...]:
 	"""One warning per leaf command that re-enters camas with a task name nothing resolves —
 	the fan-out that "passes locally, 404s in CI", where a matrix axis or a hand-written command

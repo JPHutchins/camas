@@ -28,6 +28,7 @@ from ..main.check import (
 	format_minimal_trace,
 	run_typecheck,
 	unresolved_dispatch_warnings,
+	unsatisfiable_declaration_warnings,
 )
 from ..main.github_matrix import (
 	NO_TASKS,
@@ -180,6 +181,7 @@ def to_check_response(state: TasksState) -> wire.CheckResponse:
 			warnings = (
 				scope_warning_messages(tasks.values())
 				+ unresolved_dispatch_warnings(tasks)
+				+ unsatisfiable_declaration_warnings(tasks)
 				+ naming_warnings
 			)
 			if source is None:
