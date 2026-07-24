@@ -26,7 +26,10 @@ Three shapes, one per way a ``tasks.py`` fans out — picked automatically, or p
 	    {"task": ["build", "lint", "test"]}
 
 	Values are the children's *binding* names, the same names ``camas <task>`` dispatches on,
-	so every emitted value resolves to a real task.
+	so every emitted value resolves to a real task. A ``Project()`` child emits its mounted
+	name (``web.build``) for *this* invocation's context, so a child project whose CI task
+	differs from its local default emits different names locally than in the ``discover`` job —
+	each correct for where it ran.
 
 Consume the whole object as the matrix::
 
@@ -447,10 +450,9 @@ def jobs_emission(task: TaskNode, tasks: Mapping[str, TaskNode]) -> Jobs:
 				raise ValueError(
 					f"{', '.join(missing)}: not reachable as `camas <name>`, so a job cannot run "
 					"it — bind every child at module scope in tasks.py (build = Task(...); "
-					"ci = Parallel(build, ...)). A Project() child composed into github_task= "
-					"resolves to that project's github task, which `camas <name>` only matches "
-					"under GITHUB_ACTIONS=true — emit from the CI job, or give that project one "
-					"task for both contexts"
+					"ci = Parallel(build, ...)). A Project() child composed into a Config field "
+					"resolves to that project's node for that field, so name it in that project's "
+					"tasks.py to give the job something to dispatch"
 				)
 			resolved = tuple(tasks[name] for name in names if name is not None)
 			reject_unfaithful(

@@ -310,3 +310,14 @@ def test_239_check_warns_when_a_fanned_out_name_does_not_dispatch(
 	assert len(warnings) == 1
 	assert "camas cosmwasm-core" in warnings[0]
 	assert "no task named 'cosmwasm-core'" in warnings[0]
+
+
+def test_234_monorepo_child_without_a_binding_is_rejected() -> None:
+	"""A Project()-composed child resolves to that project's node for the Config field it fills;
+	when that node is an anonymous composite it has no name for a job to dispatch. The named case
+	works because the child's own bindings mount under the namespace (`web.build`), which is what
+	makes the per-child shape usable across a monorepo at all.
+	"""
+	anonymous = Parallel(Task("echo build"), Task("echo test"))
+	with pytest.raises(ValueError, match="<unnamed group>: not reachable"):
+		to_matrix_object(Parallel(anonymous), {})
