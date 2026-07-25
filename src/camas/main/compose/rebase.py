@@ -225,6 +225,7 @@ def rebase_tree(node: TaskNode, rel: PurePosixPath, namespace: str, *, is_root: 
 				*(rebase_tree(child, rel, namespace, is_root=False) for child in group.tasks),
 				name=qualify(group.name, namespace),
 				matrix=group.matrix,
+				variants=group.variants,
 				env=group.env,
 				cwd=rebase_cwd(group.cwd, rel, is_root=is_root),
 				help=group.help,

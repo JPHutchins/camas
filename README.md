@@ -88,6 +88,7 @@ camas is **not a build system**. camas is for the specific job of running struct
 | Inline anonymous parallel groups | No | No | No (must be a named task) | No | **Yes** |
 | Parallel execution | poe yes; Invoke / taskipy no | `[parallel]` attr | `deps:` (parallel) | `mg.Deps(...)` | **`Parallel(...)`** |
 | Matrix expansion | No | No | `for:` + `parallel:true` | Go loops | **`matrix=`** |
+| Coupled (non-cross-product) fan-out | No | No | No | Go loops | **`variants=`** |
 | CLI matrix override (e.g. `--PY 3.13`) | No | No | No | No | **Yes** |
 | Live tree output | No | No | `prefixed` / `group` modes | No | **`Termtree` (default)** |
 | Pluggable output renderers | No | No | 3 built-ins | No | **`--effects`** |
@@ -153,7 +154,26 @@ The downside is that fork PRs get a read-only `GITHUB_TOKEN` from GitHub and can
 
 ### GitHub Actions matrix (`--github-matrix`)
 
-Fan out across N runners *without* giving up SSOT. `camas <task> --github-matrix` emits the task's axes as the object-of-arrays GHA's `strategy.matrix` consumes, so a `discover` job can source the fan-out from `tasks.py` and downstream jobs read it with `fromJSON` — the matrix lives in one place. Values come from the task's real run-set, so the object expands to exactly the leaves camas runs; a run-set with no clean cross-product (heterogeneous nested matrices, or independent fan-outs in one tree) is rejected rather than silently widened. YAML-side axes like `os` — which a shell command can't change from inside a job anyway — stay in the workflow and compose with `${{ fromJSON(...).PY }}`. This repo dogfoods it: see the [`discover` and `check` jobs](https://github.com/JPHutchins/camas/blob/main/.github/workflows/ci.yaml) fanning out over `.python-version`.
+Fan out across N runners *without* giving up SSOT. `camas <task> --github-matrix` emits the task's fan-out as the JSON GHA's `strategy.matrix` consumes, so a `discover` job can source it from `tasks.py` and downstream jobs read it with `fromJSON` — the fan-out lives in one place. This repo dogfoods it: see the [`discover` and `check` jobs](https://github.com/JPHutchins/camas/blob/main/.github/workflows/ci.yaml) fanning out over `.python-version`.
+
+Three shapes, one per way a `tasks.py` fans out:
+
+| `tasks.py` | emitted | job runs |
+|---|---|---|
+| `matrix={"PY": (...)}` — a cross product | `{"PY": ["3.13", "3.14"]}` | `camas <task>` with the cell's axes pinned (flags, or job `env`) |
+| `variants=({...}, {...})` — coupled bundles | `{"include": [{...}, {...}]}` | same, pinning the cell's keys |
+| a `Parallel` of named tasks, no axes | `{"task": ["build", "lint", "test"]}` | `camas ${{ matrix.task }}` |
+
+The last one is the common CI shape — N independent jobs, no version matrix — and its values are the *binding* names `camas <task>` dispatches on, so an emitted job can't 404 in CI. Compose a YAML-side axis (`os`, which a shell command can't change from inside a job anyway) with either object-of-arrays form:
+
+```yaml
+strategy:
+  matrix:
+    os: [ubuntu-latest, macos-latest]
+    task: ${{ fromJSON(needs.discover.outputs.matrix).task }}
+```
+
+`--github-matrix=axes|variants|tasks` pins the shape; pin it in your `discover` step so a later `tasks.py` refactor fails there instead of quietly handing the workflow a differently-shaped object. Whatever the shape, camas checks the emitted object against the task's real run-set — each job must run exactly its own cell's leaves, and the jobs together every leaf exactly once — so a fan-out with no faithful projection (independent fan-outs in one tree, a plain leaf beside matrixed siblings) is rejected rather than silently widened or narrowed.
 
 > [!NOTE]
 > If your test matrix includes Python **below camas's floor** (camas needs ≥3.10; a library might test 3.8+), the sub-floor cells can't `uv run camas` — camas isn't installable there. Naively switching to `uvx` doesn't help either: `setup-uv`'s `python-version` (and any job-level `UV_PYTHON`) also pin a `uvx camas` invocation onto the sub-floor interpreter. Decouple camas's interpreter from the cell's by scoping `UV_PYTHON` to the sync step only:
@@ -488,7 +508,7 @@ $ camas build --help
 <summary>output</summary>
 
 ```
-usage: camas build [-h] [--dry-run | --github-matrix] [--effects EFFECTS] [--FLAG VAL[,VAL...]]
+usage: camas build [-h] [--dry-run | --github-matrix [SHAPE]] [--effects EFFECTS] [--FLAG VAL[,VAL...]]
 
 Debug and release builds (FLAG='-- --debug' debug, FLAG='' release)
 

@@ -223,6 +223,7 @@ def test_verbose_starter_loads_with_config(tmp_path: Path) -> None:
 		"subproject",
 		"greet",
 		"meet",
+		"port",
 		"frontend",
 		"versions",
 		"ci",

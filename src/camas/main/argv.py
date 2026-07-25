@@ -5,8 +5,10 @@
 
 from __future__ import annotations
 
+import re
 import shlex
 import sys
+from pathlib import PurePath
 from typing import TYPE_CHECKING, Final, NamedTuple
 
 if sys.version_info >= (3, 11):
@@ -14,6 +16,7 @@ if sys.version_info >= (3, 11):
 else:  # pragma: no cover
 	from typing_extensions import assert_never
 
+from ..core.matrix import resolve_cmd
 from ..v0.task import Parallel, Sequential, Task, TaskNode
 
 if TYPE_CHECKING:
@@ -126,3 +129,69 @@ def parse_axis_values(raw: str) -> tuple[str, ...]:
 	()
 	"""
 	return tuple(s for v in raw.split(",") if (s := v.strip()))
+
+
+NAME_LIKE: Final = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*(?:\.[A-Za-z_][A-Za-z0-9_-]*)*$")
+"""A bare task name, hyphens and dotted namespace segments allowed — distinct from a camas
+expression, which carries parens, quotes, or braces. A ``-`` is taken as part of the name (the
+convention alias), never as subtraction."""
+
+_LAUNCHERS: Final = frozenset({"run", "exec", "tool", "uvx", "-m", "-c", "--"})
+"""Tokens a camas invocation may sit behind: ``uv run camas``, ``uvx camas``, ``nix develop -c
+camas``, ``python -m camas``. Anything else with ``camas`` as a mere argument (``echo camas``) is
+not an invocation."""
+
+
+def _invoked_at(tokens: tuple[str, ...], index: int) -> bool:
+	"""Whether the token at ``index`` is camas being *invoked* rather than merely named: it is the
+	command itself, or sits behind a launcher — skipping that launcher's own flags, so
+	``uv run --frozen camas lint`` still counts.
+
+	>>> _invoked_at(("camas", "lint"), 0), _invoked_at(("uv", "run", "--frozen", "camas"), 3)
+	(True, True)
+	>>> _invoked_at(("echo", "camas"), 1)
+	False
+	"""
+	for token in reversed(tokens[:index]):
+		if token in _LAUNCHERS:
+			return True
+		if not token.startswith("-"):
+			return False
+	return index == 0
+
+
+def camas_task_arg(cmd: str | tuple[str, ...]) -> str | None:
+	"""The task name a leaf command re-enters camas with — ``camas lint``, ``uv run camas lint``,
+	``python -m camas lint`` — or ``None`` when the command does not invoke camas with a bare task
+	name. A flag, an inline expression, and the ``mcp`` subcommand are not task lookups.
+
+	A heuristic, deliberately narrow: it exists so ``--check`` can warn about a fan-out that
+	dispatches a name nothing resolves ("passes locally, 404s in CI"), and a false negative
+	(``uv run tasks.py lint``) only means no warning.
+
+	>>> camas_task_arg("camas lint")
+	'lint'
+	>>> camas_task_arg("uv run camas libs.build")
+	'libs.build'
+	>>> camas_task_arg("nix develop -c camas test-all")
+	'test-all'
+	>>> camas_task_arg("uvx camas==0.1.28 lint") is None   # a pinned uvx spec is not the camas binary
+	True
+	>>> camas_task_arg("uvx camas lint"), camas_task_arg("uv run --frozen camas lint")
+	('lint', 'lint')
+	>>> camas_task_arg("camas --list") is None
+	True
+	>>> camas_task_arg("camas mcp fix") is None
+	True
+	>>> camas_task_arg("echo camas lint") is None
+	True
+	>>> camas_task_arg(("camas", "check"))
+	'check'
+	"""
+	tokens: Final = resolve_cmd(cmd)
+	for i, token in enumerate(tokens):
+		if PurePath(token).stem != "camas" or not _invoked_at(tokens, i):
+			continue
+		arg = tokens[i + 1] if i + 1 < len(tokens) else ""
+		return arg if arg != "mcp" and NAME_LIKE.match(arg) else None
+	return None

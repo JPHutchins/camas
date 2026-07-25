@@ -195,6 +195,7 @@ def _compose_scope(
 					*children,
 					name=group.name,
 					matrix=group.matrix,
+					variants=group.variants,
 					env=group.env,
 					cwd=group.cwd,
 					help=group.help,

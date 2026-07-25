@@ -121,7 +121,21 @@ class TaskInfo(BaseModel):
 	name: str
 	help: str | None = None
 	command_preview: str
-	matrix_axes: dict[str, list[str]] = Field(default_factory=dict)
+	matrix_axes: dict[str, list[str]] = Field(
+		default_factory=dict,
+		description=(
+			"Every axis a run can override, axis name -> its values: a matrix= axis (whose values "
+			"an override replaces) or a variants= key (whose values an override filters to). Read "
+			"`variants` before assuming a cross product."
+		),
+	)
+	variants: list[dict[str, str]] | None = Field(
+		default=None,
+		description=(
+			"The coupled bundles this task declares with variants=, if any — the run-set is the "
+			"matrix axes crossed with these, NOT the cross product of every key in matrix_axes."
+		),
+	)
 	is_default: bool = False
 	is_github_default: bool = False
 	estimated_s: float | None = None
@@ -446,24 +460,39 @@ class GithubMatrixRequest(BaseModel):
 
 	task: str | None = Field(
 		default=None,
-		description="Task whose matrix to emit — one of the names from camas_list (pick one whose "
-		"matrix_axes is non-empty). Omit to use the project's default task.",
+		description="Task whose fan-out to emit — one of the names from camas_list. Omit to use "
+		"the project's default task.",
 	)
 	matrix_overrides: dict[str, list[str]] = Field(
 		default_factory=dict,
 		description="Pin matrix axes by name before emitting, e.g. {'PY': ['3.13']}; axis names "
-		"must exist. Mirrors the CLI's --PY/--matrix overrides.",
+		"must exist. A variants= key filters to the bundles binding those values. Mirrors the "
+		"CLI's --PY/--matrix overrides.",
+	)
+	shape: Literal["auto", "axes", "variants", "tasks"] = Field(
+		default="auto",
+		description="Which projection to emit: 'axes' (a matrix= cross product as "
+		"object-of-arrays), 'variants' (coupled cells as GHA include: entries), 'tasks' (one job "
+		"per child of a Parallel, dispatched by binding name), or 'auto' (derive it from the "
+		"task). Pin the shape in the workflow's discover step so a later tasks.py refactor fails "
+		"loudly instead of silently reshaping the matrix.",
 	)
 
 
 class GithubMatrixResponse(BaseModel):
-	"""A task's matrix as a GitHub Actions ``strategy.matrix`` object-of-arrays."""
+	"""A task's fan-out as a GitHub Actions ``strategy.matrix`` object."""
 
 	task: str
 	"""The task the matrix was emitted for."""
-	matrix: dict[str, list[str]]
-	"""Axis name → its distinct values in first-seen order; expands under GHA cross-product
-	semantics to exactly the jobs camas runs. Serialize compact for ``$GITHUB_OUTPUT``."""
+	shape: Literal["axes", "variants", "tasks"]
+	"""Which projection this is — pass it back as ``shape`` (or ``--github-matrix=<shape>``) to
+	pin it, so a later ``tasks.py`` change cannot silently reshape the workflow's matrix."""
+	matrix: dict[str, list[str] | list[dict[str, str]]]
+	"""The ``strategy.matrix`` object, verified to expand to exactly the jobs camas runs: axis
+	name → its distinct values in first-seen order for ``axes``/``tasks``, or
+	``{"include": [cell, ...]}`` for ``variants``. Serialize compact for ``$GITHUB_OUTPUT``."""
+	job_command: str
+	"""The ``run:`` line a consuming job uses, as a template to adapt — not a task camas runs."""
 
 
 def github_matrix_input_schema(task_names: tuple[str, ...]) -> dict[str, Any]:

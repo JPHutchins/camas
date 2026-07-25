@@ -17,7 +17,7 @@ else:  # pragma: no cover
 
 from ..core import timings
 from ..core.color import BOLD_CYAN, CAMAS_LIGHT_PINK, CAMAS_VIOLET, GREY, RESET
-from ..core.matrix import matrix_axes
+from ..core.matrix import overridable_axes
 from ..core.render import color_on, print_tree
 from ..core.scope import scope_warning_messages
 from ..v0.task import Parallel, Sequential, Task, TaskNode
@@ -94,6 +94,46 @@ def format_axis(name: str, values: tuple[str, ...]) -> str:
 	return f"{name}×{len(values)} ({values[0]}..{values[-1]})"
 
 
+def format_variants(variants: tuple[dict[str, str], ...]) -> str:
+	"""Render a ``variants`` declaration for the listing annotation: how many coupled bundles and
+	which keys each binds — never a cross product, so the axes are named, not multiplied.
+
+	>>> format_variants(({"backend": "thumbv7", "target": "eabi"}, {"backend": "esp", "target": "elf"}))
+	'variants×2 (backend, target)'
+	>>> format_variants(())
+	'variants=required'
+	"""
+	if not variants:
+		return "variants=required"
+	return f"variants×{len(variants)} ({', '.join(variants[0])})"
+
+
+def format_fanout(node: TaskNode) -> str:
+	"""A task's listing annotation: its ``matrix`` axes then its ``variants``, or ``""`` for a
+	node that declares neither.
+
+	The ``matrix:`` prefix appears only when a matrix axis does: a ``variants`` token labels itself,
+	and calling a coupled fan-out a matrix is the conflation ``variants=`` exists to avoid.
+
+	>>> from camas import Parallel, Task
+	>>> format_fanout(Task("hi"))
+	''
+	>>> format_fanout(Parallel(Task("t"), matrix={"PY": ("3.13",)}, variants=({"b": "x"},)))
+	'  [matrix: PY=3.13 variants×1 (b)]'
+	>>> format_fanout(Parallel(Task("t"), variants=({"b": "x"}, {"b": "y"})))
+	'  [variants×2 (b)]'
+	>>> format_fanout(Parallel(Task("t"), matrix={}))
+	''
+	>>> format_fanout(Parallel(Task("t"), variants=()))
+	'  [variants=required]'
+	"""
+	if isinstance(node, Task) or (not node.matrix and node.variants is None):
+		return ""
+	axes = tuple(format_axis(k, v) for k, v in (node.matrix or {}).items())
+	coupled = () if node.variants is None else (format_variants(node.variants),)
+	return f"  [{'matrix: ' if axes else ''}{' '.join((*axes, *coupled))}]"
+
+
 def format_required_axes_error(names: tuple[str, ...]) -> str:
 	"""The stderr line for matrix axes left unfilled at run time — an empty-value axis
 	(``matrix={"version": ()}``) is a required input, so a run supplies it with ``--AXIS VALUE``
@@ -117,6 +157,22 @@ def format_required_axes_error(names: tuple[str, ...]) -> str:
 		f"matrix {'axes' if plural else 'axis'} {', '.join(repr(n) for n in names)} "
 		f"{'are' if plural else 'is'} required but unset — "
 		f"{'provide them with' if plural else 'provide it with'} {' '.join(hint(n) for n in names)}"
+	)
+
+
+def format_empty_variants_error(labels: tuple[str, ...]) -> str:
+	"""The error line for a node whose ``variants=()`` leaves it nothing to run — the coupled
+	counterpart of an unfilled required axis (:func:`format_required_axes_error`), and just as
+	silent if unreported. No axis name to fill, so there is no ``--AXIS`` hint to give.
+
+	>>> format_empty_variants_error(("qemu",))
+	"variants=() on 'qemu' declares no variant — that branch would expand to nothing"
+	>>> format_empty_variants_error(("a", "b"))
+	"variants=() on 'a', 'b' declares no variant — those branches would expand to nothing"
+	"""
+	return (
+		f"variants=() on {', '.join(repr(label) for label in labels)} declares no variant — "
+		f"{'those branches' if len(labels) > 1 else 'that branch'} would expand to nothing"
 	)
 
 
@@ -205,11 +261,7 @@ def format_task_summary_listing(
 			if node.help is not None
 			else colorize_summary(task_summary(node, names), color)
 		)
-		annotation = (
-			""
-			if isinstance(node, Task) or node.matrix is None
-			else f"  [matrix: {' '.join(format_axis(k, v) for k, v in node.matrix.items())}]"
-		)
+		annotation = format_fanout(node)
 		est = timings.estimate(node, observed)
 		timing = timing_note(est, color) if est is not None else ""
 		marked = name == default_task_name
@@ -293,10 +345,11 @@ def print_task_help(name: str, task: TaskNode) -> None:
 	"""
 	from .parser import is_reserved_axis
 
-	axes = matrix_axes(task)
+	axes = overridable_axes(task)
 	overridable = {k: v for k, v in axes.items() if not is_reserved_axis(k)}
 	axis_flags = "".join(f" [--{k} VAL[,VAL...]]" for k in overridable)
-	preview = "[--dry-run | --github-matrix]" if axes else "[--dry-run]"
+	emittable = bool(axes) or isinstance(task, Parallel)
+	preview = "[--dry-run | --github-matrix [SHAPE]]" if emittable else "[--dry-run]"
 	print(f"usage: camas {name} [-h] {preview} [--effects EFFECTS]{axis_flags}")
 	if task.help is not None:
 		print()

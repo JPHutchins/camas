@@ -241,6 +241,7 @@ def scope_to_changed(node: TaskNode, changed: tuple[str, ...]) -> TaskNode | Non
 					*kept,
 					name=group.name,
 					matrix=group.matrix,
+					variants=group.variants,
 					env=group.env,
 					cwd=group.cwd,
 					help=group.help,

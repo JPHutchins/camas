@@ -36,10 +36,11 @@ from .format import (
 	format_try_hint,
 	task_summary,
 )
+from .github_matrix import SHAPE_NAMES
 from .state import EMPTY_STATE, LoadErr, LoadOk, TasksState
 
 if TYPE_CHECKING:
-	from collections.abc import Mapping
+	from collections.abc import Mapping, Sequence
 
 	from ..v0.effect import Effect
 	from ..v0.task import TaskNode
@@ -264,9 +265,17 @@ def build_parser(state: TasksState = EMPTY_STATE) -> argparse.ArgumentParser:
 	)
 	preview.add_argument(
 		"--github-matrix",
-		action="store_true",
-		help="emit the task's matrix as GitHub Actions strategy.matrix JSON and exit "
-		"(consume via fromJSON; ignores --paths/--under/--jobs/--effects)",
+		nargs="?",
+		const="auto",
+		default=None,
+		choices=SHAPE_NAMES,
+		metavar="SHAPE",
+		help="emit the task's fan-out as GitHub Actions strategy.matrix JSON and exit "
+		"(consume via fromJSON; ignores --paths/--under/--jobs/--effects). SHAPE is auto "
+		"(default), axes (a matrix= cross product as object-of-arrays), variants (coupled "
+		"cells as include: entries), or tasks (one job per child of a Parallel, dispatched "
+		"by binding name) — pin it in the CI discover job so a tasks.py refactor that "
+		"changes the emitted shape fails loudly instead of silently reshaping the matrix",
 	)
 	parser.add_argument(
 		"--list",
@@ -368,6 +377,36 @@ RESERVED_DESTS: Final = frozenset(f.replace("-", "_") for f in RESERVED_FLAGS) |
 positional ``expression``. A matrix axis whose normalized name collides with one of these is
 skipped when synthesizing ``--AXIS`` overrides — an axis named ``github_matrix`` would otherwise
 overwrite ``args.github_matrix``, and one named ``dry_run`` would shadow ``--dry-run``."""
+
+
+def normalize_github_matrix(argv: Sequence[str]) -> list[str]:
+	"""``argv`` with a bare ``--github-matrix`` spelled ``--github-matrix=auto`` whenever what
+	follows it is not a shape name.
+
+	``--github-matrix``'s optional value would otherwise swallow the next token, so
+	``camas --github-matrix check`` — the flag written before the task — would read ``check`` as a
+	shape and reject it. Pinning the value keeps the task where the user put it; a task named
+	after a shape has to be written before the flag.
+
+	>>> normalize_github_matrix(["--github-matrix", "check"])
+	['--github-matrix=auto', 'check']
+	>>> normalize_github_matrix(["--github-matrix", "tasks"])
+	['--github-matrix', 'tasks']
+	>>> normalize_github_matrix(["check", "--github-matrix"])
+	['check', '--github-matrix=auto']
+	>>> normalize_github_matrix(["--github-matrix=axes"])
+	['--github-matrix=axes']
+	"""
+
+	def pinned(index: int, arg: str) -> str:
+		follows = argv[index + 1] if index + 1 < len(argv) else ""
+		return (
+			"--github-matrix=auto"
+			if arg == "--github-matrix" and follows not in SHAPE_NAMES
+			else arg
+		)
+
+	return [pinned(i, arg) for i, arg in enumerate(argv)]
 
 
 def is_reserved_axis(name: str) -> bool:

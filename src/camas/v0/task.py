@@ -9,7 +9,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Literal, NamedTuple, TypeAlias, cast
+from typing import TYPE_CHECKING, Final, Literal, NamedTuple, TypeAlias, cast
 
 if TYPE_CHECKING:
 	from collections.abc import Callable, Mapping
@@ -148,6 +148,47 @@ def by_glob(patterns: tuple[str, ...], default: tuple[str, ...] = (".",)) -> Pat
 		if not changed
 		else tuple(c for c in changed if any(rx.fullmatch(c) for rx in compiled))
 	)
+
+
+def _check_variants(
+	variants: tuple[dict[str, str], ...] | None, matrix: dict[str, tuple[str, ...]] | None
+) -> None:
+	"""Validate a ``variants`` declaration against its node's ``matrix``.
+
+	Raises:
+		ValueError: when a variant binds no keys, when the variants disagree on which keys they
+			bind — a ragged bundle would leave a ``{placeholder}`` unsubstituted in some cells —
+			or when a key is declared in both ``matrix`` and ``variants``.
+
+	>>> _check_variants(({"target": "a"}, {"target": "b"}), {"PROFILE": ("debug",)})
+	>>> _check_variants(({"target": "a"}, {}), None)
+	Traceback (most recent call last):
+	    ...
+	ValueError: variants: variant 1 binds no keys
+	>>> _check_variants(({"target": "a"}, {"target": "b", "cpu": "m4"}), None)
+	Traceback (most recent call last):
+	    ...
+	ValueError: variants: variant 1 binds 'cpu', 'target' but variant 0 binds 'target'; every variant must bind the same keys
+	>>> _check_variants(({"PY": "3.13"},), {"PY": ("3.13",)})
+	Traceback (most recent call last):
+	    ...
+	ValueError: variants: 'PY' is declared in both matrix= and variants=
+	"""
+	if not variants:
+		return
+	first: Final = tuple(sorted(variants[0]))
+	for i, variant in enumerate(variants):
+		keys = tuple(sorted(variant))
+		if not keys:
+			raise ValueError(f"variants: variant {i} binds no keys")
+		if keys != first:
+			raise ValueError(
+				f"variants: variant {i} binds {', '.join(repr(k) for k in keys)} but variant 0 "
+				f"binds {', '.join(repr(k) for k in first)}; every variant must bind the same keys"
+			)
+	for key in first:
+		if matrix is not None and key in matrix:
+			raise ValueError(f"variants: {key!r} is declared in both matrix= and variants=")
 
 
 OutputKind: TypeAlias = Literal["sarif", "rdjson", "lsp", "junit", "tap", "raw"]
@@ -336,17 +377,31 @@ class Group:
 	leaves that set none — baked into leaves by :func:`camas.core.matrix.expand_matrix`,
 	the same way ``paths``/``env``/``cwd`` propagate.
 
+	``matrix`` is a cross product: each axis varies independently, and the node expands to
+	one cell per combination. ``variants`` is the *coupled* form — a tuple of bundles, each
+	binding the same keys to values that only make sense together (a backend with its
+	platform and rustup target). The two compose: the run-set is the ``matrix`` cross
+	product × the ``variants``. Overriding a ``matrix`` axis from the CLI *replaces* its
+	values; overriding a ``variants`` key *filters* to the variants that bind it, since a
+	replacement would fabricate a bundle the project never declared. Every variant must
+	bind the same keys, and a key belongs to ``matrix`` or ``variants``, not both.
+	``variants=()`` declares zero variants — a run rejects it rather than silently doing
+	nothing, exactly as ``matrix={"axis": ()}`` does.
+
 	>>> isinstance(Sequential("a"), Group) and isinstance(Parallel("a"), Group)
 	True
 	>>> hash(Sequential("a")) == hash(Sequential("a"))
 	True
 	>>> Parallel(Task("ruff {paths}"), paths=".").paths
 	'.'
+	>>> Parallel(Task("cargo build -b {backend}"), variants=({"backend": "thumbv7"},)).variants
+	({'backend': 'thumbv7'},)
 	"""
 
 	tasks: tuple[TaskNode, ...]
 	name: str | None
 	matrix: dict[str, tuple[str, ...]] | None
+	variants: tuple[dict[str, str], ...] | None
 	env: dict[str, str]
 	cwd: Path | None
 	help: str | None
@@ -358,16 +413,19 @@ class Group:
 		*tasks: TaskNode | str,
 		name: str | None = None,
 		matrix: dict[str, tuple[str, ...]] | None = None,
+		variants: tuple[dict[str, str], ...] | None = None,
 		env: dict[str, str] | None = None,
 		cwd: str | Path | None = None,
 		help: str | None = None,
 		paths: str | PathScope | None = None,
 		when: str | Path | tuple[str | Path, ...] | WhenPredicate | None = None,
 	) -> None:
+		_check_variants(variants, matrix)
 		put = object.__setattr__
 		put(self, "tasks", tuple(Task(cmd=t) if isinstance(t, str) else t for t in tasks))
 		put(self, "name", name)
 		put(self, "matrix", matrix)
+		put(self, "variants", variants)
 		put(self, "env", env if env is not None else {})
 		put(self, "cwd", Path(cwd) if isinstance(cwd, str) else cwd)
 		put(self, "help", help)
@@ -376,11 +434,17 @@ class Group:
 
 	def __hash__(self) -> int:
 		matrix_key = None if self.matrix is None else tuple(sorted(self.matrix.items()))
+		variants_key = (
+			None
+			if self.variants is None
+			else tuple(tuple(sorted(v.items())) for v in self.variants)
+		)
 		return hash(
 			(
 				self.tasks,
 				self.name,
 				matrix_key,
+				variants_key,
 				tuple(sorted(self.env.items())),
 				self.cwd,
 				self.help,
@@ -394,6 +458,7 @@ class Group:
 			f"tasks={self.tasks!r}",
 			f"name={self.name!r}",
 			f"matrix={self.matrix!r}",
+			*([f"variants={self.variants!r}"] if self.variants is not None else []),
 			f"env={self.env!r}",
 			f"cwd={self.cwd!r}",
 			*([f"help={self.help!r}"] if self.help is not None else []),

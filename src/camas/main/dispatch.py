@@ -9,7 +9,6 @@ import argparse
 import asyncio
 import importlib
 import os
-import re
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, cast
@@ -23,16 +22,29 @@ from ..core import timings
 from ..core.budget import plan_under
 from ..core.execution import run
 from ..core.hook_event import stdin_changed
-from ..core.matrix import expand_matrix, matrix_axes, override_matrix, unfilled_required_axes
+from ..core.matrix import (
+	empty_variant_labels,
+	expand_matrix,
+	overridable_axes,
+	override_matrix,
+	unfilled_required_axes,
+)
 from ..core.render import print_tree, render_tree_lines
 from ..core.scope import scope_to_changed, to_changed, with_default_paths
 from ..core.task import did_you_mean, task_label
 from ..v0.config import Config
-from .argv import apply_passthrough, parse_axis_values, parse_matrix_kv, split_passthrough
+from .argv import (
+	NAME_LIKE,
+	apply_passthrough,
+	parse_axis_values,
+	parse_matrix_kv,
+	split_passthrough,
+)
 from .compose import load_py_tasks_state, state_from_scope
 from .effects import default_effect_names, resolve_effects, running_under_agent
 from .expression import parse_expression
 from .format import (
+	format_empty_variants_error,
 	format_load_error_hint,
 	format_required_axes_error,
 	format_scope_warnings,
@@ -43,7 +55,7 @@ from .format import (
 )
 from .github_matrix import emit as emit_github_matrix
 from .init import write_starter_tasks_py
-from .parser import build_parser, is_reserved_axis, resolve_jobs
+from .parser import build_parser, is_reserved_axis, normalize_github_matrix, resolve_jobs
 from .state import EMPTY_STATE, LoadErr, LoadOk, TasksState
 from .tasks import load_tasks
 
@@ -57,12 +69,6 @@ if TYPE_CHECKING:
 	from ..v0.task import TaskNode
 
 
-_NAME_LIKE: Final = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*(?:\.[A-Za-z_][A-Za-z0-9_-]*)*$")
-"""A bare task name, hyphens and dotted namespace segments allowed — distinct
-from a camas expression, which carries parens, quotes, or braces. A ``-`` is
-taken as part of the name (the convention alias), never as subtraction."""
-
-
 def dispatch_arg(arg: str, tasks: Mapping[str, TaskNode]) -> TaskNode:
 	"""Interpret a CLI arg: task name ⇒ lookup, else inline expression.
 
@@ -74,7 +80,7 @@ def dispatch_arg(arg: str, tasks: Mapping[str, TaskNode]) -> TaskNode:
 	for candidate in (arg, arg.replace("-", "_")):
 		if candidate in tasks:
 			return tasks[candidate]
-	if _NAME_LIKE.match(arg):
+	if NAME_LIKE.match(arg):
 		known = ", ".join(sorted(tasks)) or "none"
 		print(
 			f"error: no task named {arg!r}{did_you_mean(arg, tasks)} (known: {known})",
@@ -261,6 +267,7 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 	  ``--init``) still work; everything else delegates to :func:`exit_for_load_err`.
 	"""
 	split: Final = split_passthrough(sys.argv[1:] if argv is None else argv)
+	head: Final = normalize_github_matrix(split.head)
 	tasks: Mapping[str, TaskNode] = state.tasks if isinstance(state, LoadOk) else {}
 
 	if running_under_agent() and not os.environ.get("CAMAS_NO_MCP_HINT"):
@@ -280,9 +287,9 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 	# either state, ahead of the match. ``parse_known_args`` tolerates the per-task matrix axis
 	# flags a normal run passes (added inside the LoadOk arm); on the ``--init`` path there are no
 	# such flags, so it re-parses strictly first, surfacing an unknown-flag typo before scaffolding.
-	init_args: Final = parser.parse_known_args(split.head)[0]
+	init_args: Final = parser.parse_known_args(head)[0]
 	if init_args.init:
-		strict = parser.parse_args(split.head)
+		strict = parser.parse_args(head)
 		sys.exit(write_starter_tasks_py(Path.cwd(), verbose=strict.verbose))
 	if init_args.verbose:
 		print(
@@ -293,7 +300,7 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 		case LoadErr() as err:
 			# No per-task matrix axes to augment; parse strictly so typos in
 			# flags surface instead of being silently consumed.
-			args = parser.parse_args(split.head)
+			args = parser.parse_args(head)
 			if args.list or args.tree:
 				print(format_load_error_hint(err.source, err.exception))
 				sys.exit(0)
@@ -316,7 +323,7 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 			config=config,
 			naming_warnings=naming_warnings,
 		):
-			args, _leftover = parser.parse_known_args(split.head)
+			args, _leftover = parser.parse_known_args(head)
 			in_github: Final = os.environ.get("GITHUB_ACTIONS") == "true"
 			in_agent: Final = running_under_agent()
 			effective_config: Final = config if config is not None else Config()
@@ -331,7 +338,7 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 			)
 			augmented_axes: dict[str, tuple[str, ...]] = {}
 			if axis_node is not None:
-				for name, values in matrix_axes(axis_node).items():
+				for name, values in overridable_axes(axis_node).items():
 					if is_reserved_axis(name):
 						continue
 					parser.add_argument(
@@ -343,7 +350,7 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 						help=f"override matrix axis {name!r} (current: {', '.join(values)})",
 					)
 					augmented_axes[name] = values
-			args = parser.parse_args(split.head)
+			args = parser.parse_args(head)
 
 			if args.list:
 				print_task_summary_listing(
@@ -359,10 +366,21 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 				sys.exit(0)
 
 			if args.check:
-				from .check import run_typecheck_only
+				from .check import (
+					run_typecheck_only,
+					unresolved_dispatch_warnings,
+					unsatisfiable_declaration_warnings,
+				)
 
 				warnings = "\n".join(
-					w for w in (format_scope_warnings(tasks), *naming_warnings) if w
+					w
+					for w in (
+						format_scope_warnings(tasks),
+						*unresolved_dispatch_warnings(tasks),
+						*unsatisfiable_declaration_warnings(tasks),
+						*naming_warnings,
+					)
+					if w
 				)
 				if warnings:
 					print(warnings, file=sys.stderr)
@@ -416,7 +434,11 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 
 			if args.github_matrix:
 				try:
-					print(emit_github_matrix(resolved, pretty=sys.stdout.isatty()))
+					print(
+						emit_github_matrix(
+							resolved, tasks, args.github_matrix, pretty=sys.stdout.isatty()
+						)
+					)
 				except ValueError as e:
 					print(f"error: {e}", file=sys.stderr)
 					sys.exit(2)
@@ -425,6 +447,11 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 			required_axes: Final = unfilled_required_axes(resolved)
 			if required_axes:
 				print(f"error: {format_required_axes_error(required_axes)}", file=sys.stderr)
+				sys.exit(2)
+
+			empty_variants: Final = empty_variant_labels(resolved)
+			if empty_variants:
+				print(f"error: {format_empty_variants_error(empty_variants)}", file=sys.stderr)
 				sys.exit(2)
 
 			try:

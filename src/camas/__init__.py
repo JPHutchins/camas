@@ -9,9 +9,11 @@ available output renderers, ``camas --tree`` prints every task's full
 expansion, ``camas --init`` scaffolds a commented starter ``tasks.py``
 when none exists (``--verbose`` for a kitchen-sink template covering every
 option instead of the minimal one), and ``--AXIS VAL`` overrides a matrix
-axis from the CLI. ``camas <matrix-task> --github-matrix`` emits that task's
-axes as GitHub Actions ``strategy.matrix`` JSON, so a CI ``discover`` job
-sources its fan-out from ``tasks.py`` rather than duplicating it in YAML.
+axis from the CLI. ``camas <task> --github-matrix`` emits that task's fan-out as
+GitHub Actions ``strategy.matrix`` JSON — a ``matrix=`` cross product as
+object-of-arrays, coupled ``variants=`` as ``include:`` entries, or a
+matrix-less ``Parallel`` as one job per child — so a CI ``discover`` job sources
+its fan-out from ``tasks.py`` rather than duplicating it in YAML.
 
 A leaf is *any* shell command. The doctests below all run
 ``python -c ...`` snippets only because every CI environment has
@@ -323,6 +325,38 @@ axes:
 	True
 	>>> "--NAME1" in axes.stdout and "--NAME2" in axes.stdout
 	True
+
+A coupled fan-out — values that only make sense together, like a target and
+its toolchain — is ``variants=`` rather than a cross product: it runs the
+listed bundles, not their product. Pinning one of a bundle's keys from the CLI
+filters to the bundles that bind it (a replacement would fabricate a pairing
+the project never declared), and ``--github-matrix`` emits it as GitHub
+Actions ``include:`` entries:
+
+	>>> with tempfile.TemporaryDirectory() as tmp:
+	...     camas = make_camas(tmp)
+	...     _ = (Path(tmp) / "tasks.py").write_text(dedent('''\
+	...         from camas import Parallel, Task
+	...         port = Parallel(
+	...             Task(("python", "-c", "print('build {TARGET} with {TOOL}')")),
+	...             variants=(
+	...                 {"TARGET": "wasm", "TOOL": "emcc"},
+	...                 {"TARGET": "native", "TOOL": "clang"},
+	...             ),
+	...             name="port",
+	...         )
+	...     '''))
+	...     full = camas("--effects=(Summary(show_passing=True),)", "port")
+	...     pinned = camas("--effects=(Summary(show_passing=True),)", "port", "--TARGET=wasm")
+	...     emitted = camas("port", "--github-matrix")
+	>>> [r.returncode for r in (full, pinned, emitted)]
+	[0, 0, 0]
+	>>> all(s in full.stdout for s in ("build wasm with emcc", "build native with clang"))
+	True
+	>>> "clang" not in pinned.stdout
+	True
+	>>> emitted.stdout.strip()
+	'{"include":[{"TARGET":"wasm","TOOL":"emcc"},{"TARGET":"native","TOOL":"clang"}]}'
 
 A custom ``Effect`` defined inline in ``tasks.py`` is discovered
 automatically — ``camas --help`` lists it under *Available Effects*

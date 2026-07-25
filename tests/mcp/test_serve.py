@@ -18,6 +18,7 @@ from camas.core.completion import RunResult, TaskResult
 from camas.main.check import CheckerErr, CheckerNotFound, CheckerOk
 from camas.main.state import LoadErr, LoadOk
 from camas.mcp import serve, wire
+from camas.mcp.catalog import to_list_response
 from camas.mcp.serve import Compat, Session
 from camas.v0.completion import Errored, Finished, Skipped, Stopped
 from camas.v0.config import Claude
@@ -1797,6 +1798,99 @@ def test_github_matrix_call_override_pins_axis(tmp_path: Path) -> None:
 	result = serve.github_matrix_call(session, {"task": "m", "matrix_overrides": {"PY": ["3.14"]}})
 	assert result.structuredContent is not None
 	assert result.structuredContent["matrix"] == {"PY": ["3.14"]}
+
+
+def test_github_matrix_call_reports_the_shape_and_job_command(tmp_path: Path) -> None:
+	"""The response carries which projection was emitted and the run: line it pairs with, so an
+	agent writing the workflow can pin the shape instead of re-deriving it."""
+	session = _session({"m": _MATRIX}, None, tmp_path, rich=True)
+	result = serve.github_matrix_call(session, {"task": "m"})
+	assert result.structuredContent is not None
+	assert result.structuredContent["shape"] == "axes"
+	assert result.structuredContent["job_command"] == "camas <task> --PY ${{ matrix.PY }}"
+	assert "--github-matrix=axes" in _text(result)
+
+
+def test_github_matrix_call_emits_variants_as_include(tmp_path: Path) -> None:
+	coupled = Parallel(
+		Task("build {target}"),
+		variants=({"target": "wasm", "tool": "emcc"}, {"target": "native", "tool": "clang"}),
+		name="port",
+	)
+	session = _session({"port": coupled}, None, tmp_path, rich=True)
+	result = serve.github_matrix_call(session, {"task": "port"})
+	assert result.structuredContent is not None
+	assert result.structuredContent["shape"] == "variants"
+	assert result.structuredContent["matrix"] == {
+		"include": [
+			{"target": "wasm", "tool": "emcc"},
+			{"target": "native", "tool": "clang"},
+		]
+	}
+	assert "--target ${{ matrix.target }}" in result.structuredContent["job_command"]
+	assert "no per-axis arrays" in _text(result)
+
+
+def test_github_matrix_call_emits_one_job_per_child(tmp_path: Path) -> None:
+	build, lint = Task("make build"), Task("make lint")
+	session = _session(
+		{"build": build, "lint": lint, "ci": Parallel(build, lint)}, None, tmp_path, rich=True
+	)
+	result = serve.github_matrix_call(session, {"task": "ci"})
+	assert result.structuredContent is not None
+	assert result.structuredContent["shape"] == "tasks"
+	assert result.structuredContent["matrix"] == {"task": ["build", "lint"]}
+	assert result.structuredContent["job_command"] == "camas ${{ matrix.task }}"
+
+
+def test_github_matrix_call_pinned_shape_that_does_not_fit_is_tool_error(tmp_path: Path) -> None:
+	session = _session({"m": _MATRIX}, None, tmp_path)
+	result = serve.github_matrix_call(session, {"task": "m", "shape": "tasks"})
+	assert result.isError is True
+
+
+def test_github_matrix_call_variants_override_filters_bundles(tmp_path: Path) -> None:
+	coupled = Parallel(
+		Task("build {target}"),
+		variants=({"target": "wasm", "tool": "emcc"}, {"target": "native", "tool": "clang"}),
+		name="port",
+	)
+	session = _session({"port": coupled}, None, tmp_path, rich=True)
+	result = serve.github_matrix_call(
+		session, {"task": "port", "matrix_overrides": {"target": ["wasm"]}}
+	)
+	assert result.structuredContent is not None
+	assert result.structuredContent["matrix"] == {"include": [{"target": "wasm", "tool": "emcc"}]}
+
+
+def test_list_reports_variants_beside_the_axes(tmp_path: Path) -> None:
+	"""camas_list must not present coupled bundles as a cross product."""
+	coupled = Parallel(
+		Task("build {target}"),
+		variants=({"target": "wasm", "tool": "emcc"}, {"target": "native", "tool": "clang"}),
+		matrix={"PROFILE": ("debug",)},
+		name="port",
+	)
+	resp = to_list_response({"port": coupled}, None)
+	info = next(t for t in resp.tasks if t.name == "port")
+	assert info.variants == [
+		{"target": "wasm", "tool": "emcc"},
+		{"target": "native", "tool": "clang"},
+	]
+	assert info.matrix_axes == {
+		"PROFILE": ["debug"],
+		"target": ["wasm", "native"],
+		"tool": ["emcc", "clang"],
+	}
+
+
+async def test_run_call_empty_variants_is_tool_error(tmp_path: Path) -> None:
+	"""variants=() expands to nothing; the MCP run path reports it instead of a silent no-op."""
+	node = Parallel(Task("echo hi"), variants=(), name="qemu")
+	session = _session({"qemu": node}, None, tmp_path)
+	result = await serve.call(session, "camas_run", {"task": "qemu"})
+	assert result.isError is True
+	assert "declares no variant" in _text(result)
 
 
 def test_github_matrix_call_unknown_override_axis_is_tool_error(tmp_path: Path) -> None:

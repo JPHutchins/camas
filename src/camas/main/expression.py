@@ -196,6 +196,24 @@ def eval_env(node: ast.expr | None) -> dict[str, str]:
 			raise ValueError(f"env must be a dict of str→str, got {ast.dump(node)}")
 
 
+def eval_variants(node: ast.expr | None) -> tuple[dict[str, str], ...] | None:
+	match node:
+		case None:
+			return None
+		case ast.Tuple(elts=elts):
+			return tuple(eval_str_dict(e) for e in elts)
+		case _:
+			raise ValueError(f"variants must be a tuple of dict of str→str, got {ast.dump(node)}")
+
+
+def eval_str_dict(node: ast.expr) -> dict[str, str]:
+	match node:
+		case ast.Dict():
+			return eval_env(node)
+		case _:
+			raise ValueError(f"expected a dict of str→str, got {ast.dump(node)}")
+
+
 def eval_str_tuple(node: ast.expr) -> tuple[str, ...]:
 	match node:
 		case ast.Tuple(elts=elts):
@@ -323,6 +341,7 @@ def eval_node(
 						*children(args, allow_refs),
 						name=eval_opt_str(kw.get("name")),
 						matrix=eval_matrix(kw.get("matrix")),
+						variants=eval_variants(kw.get("variants")),
 						env=eval_env(kw.get("env")),
 						cwd=eval_opt_str(kw.get("cwd")),
 						help=eval_opt_str(kw.get("help")),
@@ -451,7 +470,8 @@ def to_expression(node: TaskNode) -> str:
 		case Group() as group:
 			return (
 				f"{type(group).__name__}({render_members(group.tasks)}{name_kwarg(group.name)}"
-				f"{matrix_kwarg(group.matrix)}{env_kwarg(group.env)}{cwd_kwarg(group.cwd)}"
+				f"{matrix_kwarg(group.matrix)}{variants_kwarg(group.variants)}"
+				f"{env_kwarg(group.env)}{cwd_kwarg(group.cwd)}"
 				f"{help_kwarg(group.help)}{paths_kwarg(group.paths)}{when_kwarg(group.when)})"
 			)
 		case _:
@@ -468,6 +488,10 @@ def name_kwarg(name: str | None) -> str:
 
 def matrix_kwarg(matrix: dict[str, tuple[str, ...]] | None) -> str:
 	return f", matrix={matrix!r}" if matrix is not None else ""
+
+
+def variants_kwarg(variants: tuple[dict[str, str], ...] | None) -> str:
+	return f", variants={variants!r}" if variants is not None else ""
 
 
 def env_kwarg(env: Mapping[str, str]) -> str:
@@ -596,6 +620,7 @@ def resolve_refs(
 				*(resolve_refs(t, defs, visiting) for t in group.tasks),
 				name=group.name,
 				matrix=group.matrix,
+				variants=group.variants,
 				env=group.env,
 				cwd=group.cwd,
 				help=group.help,

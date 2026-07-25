@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, NamedTuple, TypeAlias
 if TYPE_CHECKING:
 	from collections.abc import Iterable
 
-	from ..v0.task import Task
+	from ..v0.task import Task, TaskNode
 
 
 class VarBinding(NamedTuple):
@@ -39,6 +39,23 @@ def task_label(task: Task) -> str:
 	if task.name is not None:
 		return task.name
 	return task.cmd if isinstance(task.cmd, str) else " ".join(task.cmd)
+
+
+def node_label(node: TaskNode) -> str:
+	"""Any node's label for a message: a leaf's :func:`task_label`, else a group's ``name`` — or
+	``<unnamed group>`` for a group with none, which has nothing else to identify it by.
+
+	>>> from camas import Parallel, Task
+	>>> node_label(Task("ruff check .")), node_label(Parallel(Task("t"), name="ci"))
+	('ruff check .', 'ci')
+	>>> node_label(Parallel(Task("t")))
+	'<unnamed group>'
+	"""
+	from ..v0.task import Task
+
+	if isinstance(node, Task):
+		return task_label(node)
+	return node.name if node.name is not None else "<unnamed group>"
 
 
 def did_you_mean(name: str, known: Iterable[str]) -> str:
