@@ -9,10 +9,11 @@ import json
 import re
 import shlex
 import shutil
+import subprocess
 import sys
 from importlib.metadata import version
-from pathlib import Path
-from typing import TYPE_CHECKING, Any, Final, Literal, cast
+from pathlib import Path, PurePosixPath
+from typing import TYPE_CHECKING, Any, Final, Literal, NamedTuple, cast
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -20,10 +21,12 @@ from ..core.timings import ensure_camas_dir
 from ..v0.config import DEFAULT_CAMAS_DIR
 
 if TYPE_CHECKING:
-	from collections.abc import Mapping
+	from collections.abc import Mapping, Sequence
 
 SERVER_NAME: Final = "camas"
 SETTINGS_PATH: Final = Path(".claude/settings.json")
+AGENT_DIR: Final = Path(".claude/agents")
+SKILL_PATH: Final = Path(".claude/skills/gate/SKILL.md")
 
 Launcher = Literal["uv", "uvx", "camas"]
 LAUNCHERS: Final[tuple[Launcher, ...]] = ("uv", "uvx", "camas")
@@ -143,6 +146,182 @@ def dumps_prettier(value: object, *, level: int = 0, col: int = 0) -> str:
 	return json.dumps(value)
 
 
+class Excluded(NamedTuple):
+	"""A generated path git excludes, and the exclude rule responsible for it."""
+
+	path: str
+	rule: str
+	"""``<file>:<line>`` of the rule — the repo's own ``.gitignore``, ``.git/info/exclude``, or a
+	global ``core.excludesFile``, which is what separates "teammates are affected too" from "only
+	this clone is"."""
+	pattern: str
+
+
+def parse_check_ignore(stdout: str) -> tuple[Excluded, ...]:
+	r"""The excluded paths in ``git check-ignore -v -z --stdin`` output: NUL-delimited
+	``source, line, pattern, path`` records, an unterminated trailing one dropped. ``-v`` also
+	reports a path matched by a negated pattern, which means it is *not* excluded, so those go too.
+
+	>>> parse_check_ignore("\x00".join((".gitignore", "12", ".claude/", ".claude", "")))
+	(Excluded(path='.claude', rule='.gitignore:12', pattern='.claude/'),)
+	>>> parse_check_ignore("\x00".join((".gitignore", "2", "!.mcp.json", ".mcp.json", "")))
+	()
+	>>> parse_check_ignore("")
+	()
+	"""
+	fields = stdout.split("\0")
+	return tuple(
+		Excluded(path=path, rule=f"{source}:{line}", pattern=pattern)
+		for source, line, pattern, path in zip(
+			fields[0::4], fields[1::4], fields[2::4], fields[3::4], strict=False
+		)
+		if not pattern.startswith("!")
+	)
+
+
+def check_ignore(paths: Sequence[str]) -> tuple[Excluded, ...]:
+	"""Which of ``paths`` git excludes, and why — empty when git is not on PATH, this is not a
+	repository, or nothing is excluded. A tracked path is never reported: ``check-ignore`` consults
+	the index, so a force-added file already counts as committable. A directory-only pattern
+	(``.claude/``) matches a directory only once it exists, which is why the check runs after the
+	files are written rather than before.
+	"""
+	git = shutil.which("git")
+	if git is None:
+		return ()
+	try:
+		proc = subprocess.run(
+			[git, "check-ignore", "-v", "-z", "--stdin"],
+			input="".join(f"{path}\0" for path in paths),
+			capture_output=True,
+			text=True,
+			encoding="utf-8",
+			errors="replace",
+			check=False,
+		)
+	except OSError:
+		return ()
+	return parse_check_ignore(proc.stdout)
+
+
+def ancestry(path: str) -> tuple[str, ...]:
+	"""``path`` and every directory above it, outermost first — the chain along which a single
+	exclude rule anywhere is enough to make ``path`` uncommittable.
+
+	>>> ancestry(".claude/agents/camas-test-fixer.md")
+	('.claude', '.claude/agents', '.claude/agents/camas-test-fixer.md')
+	>>> ancestry(".mcp.json")
+	('.mcp.json',)
+	"""
+	parts = PurePosixPath(path).parts
+	return tuple("/".join(parts[: depth + 1]) for depth in range(len(parts)))
+
+
+def excluded_roots(paths: Sequence[str]) -> tuple[Excluded, ...]:
+	"""The outermost excluded path behind each of ``paths``, deduplicated — one entry for an
+	excluded ``.claude`` rather than one per generated file underneath it.
+	"""
+	found = {
+		excluded.path: excluded
+		for excluded in check_ignore(tuple(dict.fromkeys(a for p in paths for a in ancestry(p))))
+	}
+	return tuple(
+		dict.fromkeys(
+			found[root]
+			for path in paths
+			if (root := next((a for a in ancestry(path) if a in found), None)) is not None
+		)
+	)
+
+
+def child(root: str, path: str) -> str:
+	"""The step just below ``root`` on the way to ``path``, with a trailing ``/`` when it is a
+	directory — the granularity a ``!`` line has to name to re-include ``path``.
+
+	>>> child(".claude", ".claude/agents/camas-test-fixer.md")
+	'.claude/agents/'
+	>>> child(".claude", ".claude/settings.json")
+	'.claude/settings.json'
+	"""
+	depth = len(PurePosixPath(root).parts) + 1
+	parts = PurePosixPath(path).parts
+	return "/".join(parts[:depth]) + ("/" if depth < len(parts) else "")
+
+
+class Unignore(NamedTuple):
+	"""How to make one excluded root committable: what has to change, and the ``.gitignore`` lines
+	that do it.
+	"""
+
+	advice: str
+	lines: tuple[str, ...]
+
+
+def unignore(root: Excluded, paths: Sequence[str]) -> Unignore:
+	"""How to re-include the ``paths`` that ``root`` excludes: a generated file that is itself
+	excluded only needs the rule negated, while an excluded *directory* has to stop being excluded
+	first — git never descends into it, so no ``!`` line underneath can bring anything back.
+
+	>>> unignore(Excluded(".mcp.json", ".gitignore:7", "*.json"), (".mcp.json",)).lines
+	('!.mcp.json',)
+	>>> unignore(
+	...     Excluded(".claude", ".gitignore:12", ".claude/"),
+	...     (".claude/settings.json", ".claude/agents/camas-test-fixer.md"),
+	... ).lines
+	('.claude/*', '!.claude/settings.json', '!.claude/agents/')
+	"""
+	if root.path in paths:
+		return Unignore(advice="drop that rule, or negate it below", lines=(f"!{root.path}",))
+	return Unignore(
+		advice=(
+			"git cannot re-include a path whose parent directory is excluded, so that rule has to "
+			f"stop matching {root.path} itself, e.g."
+		),
+		lines=(
+			f"{root.path}/*",
+			*dict.fromkeys(
+				f"!{child(root.path, path)}" for path in paths if path.startswith(f"{root.path}/")
+			),
+		),
+	)
+
+
+def _root_report(root: Excluded, paths: Sequence[str]) -> tuple[str, ...]:
+	"""One excluded root's lines of the warning: the rule that excludes it, then the fix."""
+	fix = unignore(root, paths)
+	return (
+		f"  {root.path} is excluded by {root.rule} (`{root.pattern}`) — {fix.advice}:",
+		*(f"      {line}" for line in fix.lines),
+	)
+
+
+def gitignore_warning(paths: Sequence[str], *, consequence: str) -> str | None:
+	"""The warning for generated files git will not commit, or ``None`` when every path is
+	committable — or when git cannot say, since a repo-less or git-less checkout has no sharing
+	story to break.
+	"""
+	roots = excluded_roots(paths)
+	if not roots:
+		return None
+	return "\n".join(
+		(
+			f"warning: git will not commit what camas just wrote — {consequence}.",
+			*(line for root in roots for line in _root_report(root, paths)),
+		)
+	)
+
+
+def warn_uncommittable(paths: Sequence[str], *, consequence: str) -> None:
+	"""Report to stderr any of ``paths`` git excludes, so a silently-uncommittable artifact does not
+	pass for a shared one. Flushes stdout first, so the warning still lands under the report it
+	qualifies when the two streams are captured together and stdout is block-buffered.
+	"""
+	warning = gitignore_warning(paths, consequence=consequence)
+	if warning is not None:
+		sys.stdout.flush()
+		print(warning, file=sys.stderr)
+
+
 def write_mcp_json(argv: list[str], *, launcher: Launcher | None = None) -> int:
 	"""Merge a camas ``stdio`` server into ``./.mcp.json``; return 0, or 2 if it is malformed."""
 	mcp_json_path: Final = Path.cwd() / ".mcp.json"
@@ -178,6 +357,10 @@ def write_mcp_json(argv: list[str], *, launcher: Launcher | None = None) -> int:
 		f"{camas_note}"
 		f"\n{portability_note(command)} Reload Claude Code, approve the server, "
 		"then ask it to call camas_list."
+	)
+	warn_uncommittable(
+		[mcp_json_path.name],
+		consequence="a teammate who clones this repo will not get the camas MCP server entry",
 	)
 	return 0
 
@@ -445,19 +628,27 @@ AGENT_TEMPLATES: Final = (
 """The tiered camas-fixer agent templates, ``(source in src/camas/main/, dest in .claude/agents/)``."""
 
 
+CLAUDE_TARGETS: Final = (
+	SETTINGS_PATH.as_posix(),
+	*(f"{AGENT_DIR.as_posix()}/{dest}" for _, dest in AGENT_TEMPLATES),
+	SKILL_PATH.as_posix(),
+)
+"""Every file ``--claude`` writes under ``.claude/``, repo-relative, for the gitignore check."""
+
+
 def write_agent_skill_templates() -> None:
 	"""Write camas's Claude Code agent and skill templates into ``.claude/``; idempotent."""
 	cwd = Path.cwd()
-	agent_dir = cwd / ".claude" / "agents"
-	skill_dir = cwd / ".claude" / "skills" / "gate"
+	agent_dir = cwd / AGENT_DIR
+	skill_path = cwd / SKILL_PATH
 	agent_dir.mkdir(parents=True, exist_ok=True)
-	skill_dir.mkdir(parents=True, exist_ok=True)
+	skill_path.parent.mkdir(parents=True, exist_ok=True)
 	templates_dir = Path(__file__).parent.parent / "main"
 	for source, dest in AGENT_TEMPLATES:
 		(agent_dir / dest).write_text(
 			(templates_dir / source).read_text(encoding="utf-8"), encoding="utf-8"
 		)
-	(skill_dir / "SKILL.md").write_text(
+	skill_path.write_text(
 		(templates_dir / "claude_gate_skill.md").read_text(encoding="utf-8"), encoding="utf-8"
 	)
 
@@ -475,11 +666,19 @@ def write_claude(argv: list[str], *, launcher: Launcher | None = None) -> int:
 		return rc
 	write_agent_skill_templates()
 	cwd = Path.cwd()
-	agent_dir = cwd / ".claude" / "agents"
-	agent_lines = "\n".join(f"Wrote {dest} to {agent_dir / dest}" for _, dest in AGENT_TEMPLATES)
+	agent_lines = "\n".join(
+		f"Wrote {dest} to {cwd / AGENT_DIR / dest}" for _, dest in AGENT_TEMPLATES
+	)
 	print(
 		f"{agent_lines}\n"
-		f"Wrote gate skill to {cwd / '.claude' / 'skills' / 'gate' / 'SKILL.md'}\n"
+		f"Wrote gate skill to {cwd / SKILL_PATH}\n"
 		f"\nClaude Code is configured. Reload for changes to take effect."
+	)
+	warn_uncommittable(
+		CLAUDE_TARGETS,
+		consequence=(
+			"a teammate who clones this repo will not get the camas hooks, fixer agents, or gate "
+			"skill, so the autofix/gate loop stays per-developer"
+		),
 	)
 	return 0
