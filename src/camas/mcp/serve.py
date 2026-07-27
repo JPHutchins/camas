@@ -670,6 +670,11 @@ async def run_call(session: Session, arguments: dict[str, Any]) -> types.CallToo
 			assert_never(session.project)
 
 
+def leaf_color_of(config: Config | None) -> bool:
+	"""Whether leaves get camas's forced color, defaulting when the project declares no ``Config``."""
+	return (config if config is not None else Config()).leaf_color
+
+
 async def run_for(
 	session: Session,
 	tasks: Mapping[str, TaskNode],
@@ -695,7 +700,13 @@ async def run_for(
 		return success(
 			with_warning(session, dry_run_text(node)), to_plan_response(node), session.compat
 		)
-	result = await run(node, jobs=req.jobs, interactive=False, base=base_for(session))
+	result = await run(
+		node,
+		jobs=req.jobs,
+		interactive=False,
+		base=base_for(session),
+		leaf_color=leaf_color_of(config),
+	)
 	logs = write_logs(create_run_log_dir(session.camas_dir, name, session.reserve_run()), result)
 	timings.record_run(session.camas_dir, result)
 	resp = attach_logs(to_run_response(node, result, verbosity=req.verbosity), logs)
@@ -856,7 +867,13 @@ async def run_budget(
 			resp,
 			session.compat,
 		)
-	result = await run(plan.node, jobs=req.jobs, interactive=False, base=base_for(session))
+	result = await run(
+		plan.node,
+		jobs=req.jobs,
+		interactive=False,
+		base=base_for(session),
+		leaf_color=leaf_color_of(config),
+	)
 	logs = write_logs(create_run_log_dir(session.camas_dir, label, session.reserve_run()), result)
 	timings.record_run(session.camas_dir, result)
 	resp = attach_budget(
@@ -1381,6 +1398,7 @@ async def gate_for(
 		jobs=req.jobs,
 		base=base_for(session),
 		timings=timings.load(session.camas_dir),
+		leaf_color=leaf_color_of(config),
 	)
 	budget = to_budget_report(outcome.budget) if outcome.budget is not None else None
 	rerun = wire.GateRerun(task=req.task, paths=changed, under=req.under)
@@ -1446,7 +1464,13 @@ async def fix_for(
 			else "no fix leaf covers the paths"
 		)
 	else:
-		result = await run(scoped, jobs=req.jobs, interactive=False, base=base_for(session))
+		result = await run(
+			scoped,
+			jobs=req.jobs,
+			interactive=False,
+			base=base_for(session),
+			leaf_color=leaf_color_of(config),
+		)
 		resp = to_run_response(scoped, result)
 		empty_cause = None
 	return success(
@@ -1798,6 +1822,7 @@ def run_gate_cli(
 			jobs=args.jobs,
 			base=base,
 			timings=timings.load(camas_dir),
+			leaf_color=leaf_color_of(config),
 		)
 	)
 	budget = to_budget_report(outcome.budget) if outcome.budget is not None else None

@@ -234,6 +234,7 @@ async def run_gate(
 	jobs: int | None = None,
 	base: Path | None = None,
 	timings: Mapping[TaskLabel, TaskTiming] | None = None,
+	leaf_color: bool = True,
 ) -> GateOutcome:
 	"""Run the check ``node`` over the ``changed`` paths and classify the residual.
 
@@ -263,6 +264,8 @@ async def run_gate(
 	else:
 		report_dir = Path(tempfile.gettempdir())
 	formatted = with_agent_format(scoped, report_dir)
-	checks = await run(formatted.node, jobs=jobs, base=base, interactive=False)
+	checks = await run(
+		formatted.node, jobs=jobs, base=base, interactive=False, leaf_color=leaf_color
+	)
 	residual: ResidualClass = "needs_reasoning" if checks.returncode != 0 else "green"
 	return GateOutcome(residual, formatted.node, checks, plan, formatted.report_paths)

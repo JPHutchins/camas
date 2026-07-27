@@ -123,6 +123,7 @@ def run_under(
 	dry_run: bool,
 	passthrough: tuple[str, ...],
 	base: Path | None = None,
+	leaf_color: bool = True,
 ) -> int:
 	"""Plan and run the leaves of ``source`` that fit ``budget_s``; return the exit code."""
 	if passthrough:
@@ -136,7 +137,9 @@ def run_under(
 	if dry_run:
 		print_tree(with_default_paths(plan.node), show_cmd=True)
 		return 0
-	return finish_run(asyncio.run(run(plan.node, effects=effects, jobs=jobs, base=base)))
+	return finish_run(
+		asyncio.run(run(plan.node, effects=effects, jobs=jobs, base=base, leaf_color=leaf_color))
+	)
 
 
 def finish_run(result: RunResult) -> int:
@@ -193,7 +196,11 @@ def fix_cli(argv: list[str]) -> int:
 		return 0
 	if scoped is None:
 		return 0
-	_ = finish_run(asyncio.run(run(scoped, effects=(), jobs=None, base=base)))
+	_ = finish_run(
+		asyncio.run(
+			run(scoped, effects=(), jobs=None, base=base, leaf_color=state.config.leaf_color)
+		)
+	)
 	return 0
 
 
@@ -495,6 +502,7 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 						dry_run=args.dry_run,
 						passthrough=split.passthrough,
 						base=source.parent if source is not None else None,
+						leaf_color=effective_config.leaf_color,
 					)
 				)
 
@@ -523,6 +531,7 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 							effects=effects,
 							jobs=jobs,
 							base=source.parent if source is not None else None,
+							leaf_color=effective_config.leaf_color,
 						)
 					)
 				)

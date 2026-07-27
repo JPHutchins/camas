@@ -261,6 +261,12 @@ ci = Sequential(
 # the .camas/ run-log and timing-cache directory (default shown here); delete that directory
 # any time to reset the cache.
 #
+# leaf_color=True (the default, shown here) forces color on in every leaf's environment, so a
+# tool that would drop color into camas's pipe still colors the tree and an ANSI-rendering CI
+# log. Set it False when a leaf's output is data instead of display — a test asserting on a
+# tool's plain text — because the forcing env is inherited by whatever the leaf spawns too.
+# One leaf opts out on its own with env={"NO_COLOR": "1"}, which wins either way.
+#
 # agent= takes an Agent — today that union is just Claude, wiring the Claude Code plugin: fix
 # is the registered PostToolBatch autofix node (fmt, above); check is what the gate validates
 # (None would defer to default_task/github_task, scoped by --paths and time-boxed by --under);
@@ -276,6 +282,7 @@ _ = Config(
 	default_effects=None,
 	default_github_effects=None,
 	camas_dir=".camas",
+	leaf_color=True,
 	agent=Claude(fix=fmt, check=ci, default=hello),
 )
 

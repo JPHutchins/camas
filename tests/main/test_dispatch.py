@@ -244,7 +244,11 @@ def test_interrupted_run_prints_banner_and_exits_130(
 	capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
 	async def fake_run(
-		task: TaskNode, effects: object = (), jobs: object = None, base: object = None
+		task: TaskNode,
+		effects: object = (),
+		jobs: object = None,
+		base: object = None,
+		leaf_color: bool = True,
 	) -> RunResult:
 		return RunResult(returncode=130, results=(), elapsed=0.0, interrupt_count=3)
 
@@ -338,6 +342,26 @@ _TIDY = (
 	' name="tidy", mutates=True, paths={scope!r})\n'
 	"_ = Config(agent=Claude(fix=tidy))\n"
 )
+
+
+_COLOR_PROBE = Task(
+	("python", "-c", "import os,sys; sys.exit(1 if 'FORCE_COLOR' in os.environ else 0)"),
+	name="probe",
+)
+
+
+def test_dispatch_passes_config_leaf_color_through_to_the_leaf_env(
+	monkeypatch: pytest.MonkeyPatch,
+) -> None:
+	"""``Config(leaf_color=False)`` has to reach the executor, not merely parse."""
+	for name in ("NO_COLOR", "FORCE_COLOR", "CLICOLOR_FORCE"):
+		monkeypatch.delenv(name, raising=False)
+	with pytest.raises(SystemExit, match="1"):
+		dispatch(_state({"probe": _COLOR_PROBE}, Config(default_effects=())), ["probe"])
+	with pytest.raises(SystemExit, match="0"):
+		dispatch(
+			_state({"probe": _COLOR_PROBE}, Config(default_effects=(), leaf_color=False)), ["probe"]
+		)
 
 
 _TIDY_FAILING = (
