@@ -16,17 +16,15 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from camas.mcp.scaffold import (
-	CLAUDE_TARGETS,
+from camas.mcp.gitignore import (
 	Excluded,
 	check_ignore,
 	excluded_roots,
 	gitignore_warning,
 	unignore,
 	warn_uncommittable,
-	write_claude,
-	write_mcp_json,
 )
+from camas.mcp.scaffold import CLAUDE_TARGETS, write_claude, write_mcp_json
 
 if TYPE_CHECKING:
 	from collections.abc import Callable
