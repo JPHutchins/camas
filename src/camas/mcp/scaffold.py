@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 	from collections.abc import Mapping
 
 SERVER_NAME: Final = "camas"
+MCP_JSON_PATH: Final = Path(".mcp.json")
 SETTINGS_PATH: Final = Path(".claude/settings.json")
 AGENT_DIR: Final = Path(".claude/agents")
 SKILL_PATH: Final = Path(".claude/skills/gate/SKILL.md")
@@ -148,7 +149,7 @@ def dumps_prettier(value: object, *, level: int = 0, col: int = 0) -> str:
 
 def write_mcp_json(argv: list[str], *, launcher: Launcher | None = None) -> int:
 	"""Merge a camas ``stdio`` server into ``./.mcp.json``; return 0, or 2 if it is malformed."""
-	mcp_json_path: Final = Path.cwd() / ".mcp.json"
+	mcp_json_path: Final = Path.cwd() / MCP_JSON_PATH
 	existing = parse_json_object(mcp_json_path) if mcp_json_path.exists() else {}
 	if existing is None:
 		print(f"error: {mcp_json_path} is not a readable JSON object", file=sys.stderr)
@@ -183,7 +184,7 @@ def write_mcp_json(argv: list[str], *, launcher: Launcher | None = None) -> int:
 		"then ask it to call camas_list."
 	)
 	warn_uncommittable(
-		[mcp_json_path.name],
+		(MCP_JSON_PATH.as_posix(),),
 		consequence="a teammate who clones this repo will not get the camas MCP server entry",
 	)
 	return 0

@@ -11,11 +11,12 @@ from __future__ import annotations
 import shutil
 import subprocess
 import sys
+from contextlib import suppress
 from pathlib import PurePosixPath, PureWindowsPath
 from typing import TYPE_CHECKING, NamedTuple
 
 if TYPE_CHECKING:
-	from collections.abc import Sequence
+	from collections.abc import Mapping, Sequence
 
 
 class Excluded(NamedTuple):
@@ -91,20 +92,28 @@ def ancestry(path: str) -> tuple[str, ...]:
 	return tuple("/".join(parts[: depth + 1]) for depth in range(len(parts)))
 
 
+def outermost(path: str, found: Mapping[str, Excluded]) -> Excluded | None:
+	"""The shallowest exclusion on ``path``'s chain — the one to report and to undo, since
+	re-including anything below it is what git refuses. ``None`` when nothing on the chain is
+	excluded.
+
+	>>> claude = Excluded(".claude", ".gitignore", "1", ".claude/")
+	>>> outermost(".claude/agents/x.md", {".claude": claude, ".claude/agents": claude})
+	Excluded(path='.claude', source='.gitignore', line='1', pattern='.claude/')
+	>>> outermost(".mcp.json", {".claude": claude}) is None
+	True
+	"""
+	return next((found[step] for step in ancestry(path) if step in found), None)
+
+
 def excluded_roots(paths: Sequence[str]) -> tuple[Excluded, ...]:
 	"""The outermost excluded path behind each of ``paths``, deduplicated — one entry for an
 	excluded ``.claude`` rather than one per generated file underneath it.
 	"""
-	found = {
-		excluded.path: excluded
-		for excluded in check_ignore(tuple(dict.fromkeys(a for p in paths for a in ancestry(p))))
-	}
+	chains = tuple(dict.fromkeys(step for path in paths for step in ancestry(path)))
+	found = {excluded.path: excluded for excluded in check_ignore(chains)}
 	return tuple(
-		dict.fromkeys(
-			found[root]
-			for path in paths
-			if (root := next((a for a in ancestry(path) if a in found), None)) is not None
-		)
+		dict.fromkeys(root for path in paths if (root := outermost(path, found)) is not None)
 	)
 
 
@@ -234,9 +243,12 @@ def gitignore_warning(paths: Sequence[str], *, consequence: str) -> str | None:
 def warn_uncommittable(paths: Sequence[str], *, consequence: str) -> None:
 	"""Report to stderr any of ``paths`` git excludes, so a silently-uncommittable artifact does not
 	pass for a shared one. Flushes stdout first, so the warning still lands under the report it
-	qualifies when the two streams are captured together and stdout is block-buffered.
+	qualifies when the two streams are captured together and stdout is block-buffered — but a
+	stdout nobody is reading any more (``camas mcp init | head``) must not swallow the warning,
+	which is the one stream that still has a reader.
 	"""
 	warning = gitignore_warning(paths, consequence=consequence)
 	if warning is not None:
-		sys.stdout.flush()
+		with suppress(BrokenPipeError):
+			sys.stdout.flush()
 		print(warning, file=sys.stderr)

@@ -258,6 +258,25 @@ def test_warn_uncommittable_reports_to_stderr(
 	)
 
 
+class _ClosedStdout:
+	"""A stdout whose reader is gone — ``camas mcp init | head``."""
+
+	def flush(self) -> None:
+		raise BrokenPipeError
+
+
+@requires_git
+def test_warn_uncommittable_still_warns_when_stdout_has_no_reader(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	"""The flush that orders the two streams must not cost the warning the one stream still read."""
+	_repo(tmp_path, ".mcp.json\n")
+	monkeypatch.chdir(tmp_path)
+	monkeypatch.setattr("sys.stdout", _ClosedStdout())
+	warn_uncommittable((".mcp.json",), consequence="nobody else gets the server entry")
+	assert "!.mcp.json" in capsys.readouterr().err
+
+
 def test_warn_uncommittable_is_silent_when_committable(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
