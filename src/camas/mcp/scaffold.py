@@ -18,12 +18,16 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from ..core.timings import ensure_camas_dir
 from ..v0.config import DEFAULT_CAMAS_DIR
+from .gitignore import warn_uncommittable
 
 if TYPE_CHECKING:
 	from collections.abc import Mapping
 
 SERVER_NAME: Final = "camas"
+MCP_JSON_PATH: Final = Path(".mcp.json")
 SETTINGS_PATH: Final = Path(".claude/settings.json")
+AGENT_DIR: Final = Path(".claude/agents")
+SKILL_PATH: Final = Path(".claude/skills/gate/SKILL.md")
 
 Launcher = Literal["uv", "uvx", "camas"]
 LAUNCHERS: Final[tuple[Launcher, ...]] = ("uv", "uvx", "camas")
@@ -145,7 +149,7 @@ def dumps_prettier(value: object, *, level: int = 0, col: int = 0) -> str:
 
 def write_mcp_json(argv: list[str], *, launcher: Launcher | None = None) -> int:
 	"""Merge a camas ``stdio`` server into ``./.mcp.json``; return 0, or 2 if it is malformed."""
-	mcp_json_path: Final = Path.cwd() / ".mcp.json"
+	mcp_json_path: Final = Path.cwd() / MCP_JSON_PATH
 	existing = parse_json_object(mcp_json_path) if mcp_json_path.exists() else {}
 	if existing is None:
 		print(f"error: {mcp_json_path} is not a readable JSON object", file=sys.stderr)
@@ -178,6 +182,10 @@ def write_mcp_json(argv: list[str], *, launcher: Launcher | None = None) -> int:
 		f"{camas_note}"
 		f"\n{portability_note(command)} Reload Claude Code, approve the server, "
 		"then ask it to call camas_list."
+	)
+	warn_uncommittable(
+		(MCP_JSON_PATH.as_posix(),),
+		consequence="a teammate who clones this repo will not get the camas MCP server entry",
 	)
 	return 0
 
@@ -445,19 +453,27 @@ AGENT_TEMPLATES: Final = (
 """The tiered camas-fixer agent templates, ``(source in src/camas/main/, dest in .claude/agents/)``."""
 
 
+CLAUDE_TARGETS: Final = (
+	SETTINGS_PATH.as_posix(),
+	*((AGENT_DIR / dest).as_posix() for _, dest in AGENT_TEMPLATES),
+	SKILL_PATH.as_posix(),
+)
+"""Every file ``--claude`` writes under ``.claude/``, repo-relative, for the gitignore check."""
+
+
 def write_agent_skill_templates() -> None:
 	"""Write camas's Claude Code agent and skill templates into ``.claude/``; idempotent."""
 	cwd = Path.cwd()
-	agent_dir = cwd / ".claude" / "agents"
-	skill_dir = cwd / ".claude" / "skills" / "gate"
+	agent_dir = cwd / AGENT_DIR
+	skill_path = cwd / SKILL_PATH
 	agent_dir.mkdir(parents=True, exist_ok=True)
-	skill_dir.mkdir(parents=True, exist_ok=True)
+	skill_path.parent.mkdir(parents=True, exist_ok=True)
 	templates_dir = Path(__file__).parent.parent / "main"
 	for source, dest in AGENT_TEMPLATES:
 		(agent_dir / dest).write_text(
 			(templates_dir / source).read_text(encoding="utf-8"), encoding="utf-8"
 		)
-	(skill_dir / "SKILL.md").write_text(
+	skill_path.write_text(
 		(templates_dir / "claude_gate_skill.md").read_text(encoding="utf-8"), encoding="utf-8"
 	)
 
@@ -475,11 +491,19 @@ def write_claude(argv: list[str], *, launcher: Launcher | None = None) -> int:
 		return rc
 	write_agent_skill_templates()
 	cwd = Path.cwd()
-	agent_dir = cwd / ".claude" / "agents"
-	agent_lines = "\n".join(f"Wrote {dest} to {agent_dir / dest}" for _, dest in AGENT_TEMPLATES)
+	agent_lines = "\n".join(
+		f"Wrote {dest} to {cwd / AGENT_DIR / dest}" for _, dest in AGENT_TEMPLATES
+	)
 	print(
 		f"{agent_lines}\n"
-		f"Wrote gate skill to {cwd / '.claude' / 'skills' / 'gate' / 'SKILL.md'}\n"
+		f"Wrote gate skill to {cwd / SKILL_PATH}\n"
 		f"\nClaude Code is configured. Reload for changes to take effect."
+	)
+	warn_uncommittable(
+		CLAUDE_TARGETS,
+		consequence=(
+			"a teammate who clones this repo will not get the camas hooks, fixer agents, or gate "
+			"skill, so the autofix/gate loop stays per-developer"
+		),
 	)
 	return 0
