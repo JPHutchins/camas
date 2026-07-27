@@ -62,6 +62,11 @@ def check_ignore(paths: Sequence[str]) -> tuple[Excluded, ...]:
 	excluded. A tracked path is never reported: ``check-ignore`` consults the index, so a force-added
 	file already counts as committable. A directory-only pattern (``.claude/``) matches a directory
 	only once it exists, which is why the check runs after the files are written rather than before.
+
+	Output is decoded leniently because none of the matching depends on those bytes: git echoes each
+	pathname back exactly as given, and camas only ever asks about its own ASCII literals. A
+	non-UTF-8 ``.gitignore`` pattern — or an excludes file under a non-UTF-8 directory — would
+	otherwise take down an advisory warning over characters that only ever get printed.
 	"""
 	git = shutil.which("git")
 	if git is None:
