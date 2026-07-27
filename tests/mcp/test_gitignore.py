@@ -265,6 +265,13 @@ class _ClosedStdout:
 		raise BrokenPipeError
 
 
+class _ClosedStderr:
+	"""A stderr sharing that dead pipe — ``camas mcp init 2>&1 | head``."""
+
+	def write(self, _text: str) -> int:
+		raise BrokenPipeError
+
+
 @requires_git
 def test_warn_uncommittable_still_warns_when_stdout_has_no_reader(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
@@ -275,6 +282,18 @@ def test_warn_uncommittable_still_warns_when_stdout_has_no_reader(
 	monkeypatch.setattr("sys.stdout", _ClosedStdout())
 	warn_uncommittable((".mcp.json",), consequence="nobody else gets the server entry")
 	assert "!.mcp.json" in capsys.readouterr().err
+
+
+@requires_git
+def test_warn_uncommittable_does_not_raise_when_both_streams_are_gone(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	"""The files are already written by then — an advisory message must not become an exception."""
+	_repo(tmp_path, ".mcp.json\n")
+	monkeypatch.chdir(tmp_path)
+	monkeypatch.setattr("sys.stdout", _ClosedStdout())
+	monkeypatch.setattr("sys.stderr", _ClosedStderr())
+	warn_uncommittable((".mcp.json",), consequence="nobody else gets the server entry")
 
 
 def test_warn_uncommittable_is_silent_when_committable(

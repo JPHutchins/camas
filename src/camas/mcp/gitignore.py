@@ -248,12 +248,16 @@ def gitignore_warning(paths: Sequence[str], *, consequence: str) -> str | None:
 def warn_uncommittable(paths: Sequence[str], *, consequence: str) -> None:
 	"""Report to stderr any of ``paths`` git excludes, so a silently-uncommittable artifact does not
 	pass for a shared one. Flushes stdout first, so the warning still lands under the report it
-	qualifies when the two streams are captured together and stdout is block-buffered — but a
-	stdout nobody is reading any more (``camas mcp init | head``) must not swallow the warning,
-	which is the one stream that still has a reader.
+	qualifies when the two streams are captured together and stdout is block-buffered.
+
+	Neither write may raise: this runs after the files are already on disk, so a reader that walked
+	away (``camas mcp init | head``, or ``2>&1 |`` with both streams on the one pipe) would turn a
+	completed init into an exception over an advisory message. The two guards stay separate because
+	a dead stdout must not cost the warning a stderr that is still being read.
 	"""
 	warning = gitignore_warning(paths, consequence=consequence)
 	if warning is not None:
 		with suppress(BrokenPipeError):
 			sys.stdout.flush()
-		print(warning, file=sys.stderr)
+		with suppress(BrokenPipeError):
+			print(warning, file=sys.stderr)
