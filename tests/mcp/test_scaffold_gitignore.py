@@ -61,8 +61,8 @@ def test_check_ignore_reports_the_excluding_rule(
 	(tmp_path / ".claude").mkdir()
 	monkeypatch.chdir(tmp_path)
 	assert check_ignore((".mcp.json", ".claude", ".claude/settings.json")) == (
-		Excluded(path=".claude", rule=".gitignore:2", pattern=".claude/"),
-		Excluded(path=".claude/settings.json", rule=".gitignore:2", pattern=".claude/"),
+		Excluded(path=".claude", source=".gitignore", line="2", pattern=".claude/"),
+		Excluded(path=".claude/settings.json", source=".gitignore", line="2", pattern=".claude/"),
 	)
 
 
@@ -81,7 +81,7 @@ def test_check_ignore_skips_a_negated_path(tmp_path: Path, monkeypatch: pytest.M
 	_repo(tmp_path, ".claude/*\n!.claude/settings.json\n")
 	monkeypatch.chdir(tmp_path)
 	assert check_ignore((".claude/settings.json", ".claude/agents")) == (
-		Excluded(path=".claude/agents", rule=".gitignore:1", pattern=".claude/*"),
+		Excluded(path=".claude/agents", source=".gitignore", line="1", pattern=".claude/*"),
 	)
 
 
@@ -113,7 +113,7 @@ def test_excluded_roots_reports_the_outermost_directory_once(
 	(tmp_path / ".claude").mkdir()
 	monkeypatch.chdir(tmp_path)
 	assert excluded_roots(CLAUDE_TARGETS) == (
-		Excluded(path=".claude", rule=".gitignore:1", pattern=".claude/"),
+		Excluded(path=".claude", source=".gitignore", line="1", pattern=".claude/"),
 	)
 
 
@@ -125,7 +125,7 @@ def test_excluded_roots_skips_a_committable_path(
 	(tmp_path / ".claude").mkdir()
 	monkeypatch.chdir(tmp_path)
 	assert excluded_roots((".mcp.json", ".claude/settings.json")) == (
-		Excluded(path=".claude", rule=".gitignore:1", pattern=".claude/"),
+		Excluded(path=".claude", source=".gitignore", line="1", pattern=".claude/"),
 	)
 
 
@@ -197,6 +197,49 @@ def test_the_suggested_lines_are_what_makes_the_files_addable(
 	staged = _git(tmp_path, "diff", "--cached", "--name-only").split()
 	assert set(CLAUDE_TARGETS) <= set(staged)
 	assert not [path for path in staged if path.startswith(".camas/")]
+
+
+@requires_git
+def test_a_rule_from_outside_a_gitignore_is_named_as_clone_local(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	_repo(tmp_path, "")
+	(tmp_path / ".git" / "info" / "exclude").write_text(".claude/\n", encoding="utf-8")
+	(tmp_path / ".claude").mkdir()
+	monkeypatch.chdir(tmp_path)
+	(root,) = excluded_roots(CLAUDE_TARGETS)
+	assert root == Excluded(
+		path=".claude", source=".git/info/exclude", line="1", pattern=".claude/"
+	)
+	fix = unignore(root, CLAUDE_TARGETS)
+	assert fix.advice.startswith("that file is local to this clone")
+	assert fix.lines[0] == "!.claude/"
+
+
+@requires_git
+def test_the_suggested_lines_work_for_a_rule_outside_the_repo(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	"""A ``core.excludesFile`` rule cannot be edited into shape — only a ``.gitignore`` outranks it,
+	and it has to re-include the directory before narrowing back down, or git never descends and
+	nothing underneath is reachable. The narrowing still has to leave unrelated ``.claude`` state out.
+	"""
+	_repo(tmp_path, "")
+	excludes = tmp_path / "global-ignore"
+	excludes.write_text(".claude/\n", encoding="utf-8")
+	_git(tmp_path, "config", "core.excludesFile", excludes.as_posix())
+	monkeypatch.chdir(tmp_path)
+	monkeypatch.setattr("shutil.which", _which_git(shutil.which("git"), "camas"))
+	assert write_claude([]) == 0
+	(tmp_path / ".claude" / "settings.local.json").write_text("{}\n", encoding="utf-8")
+	(root,) = excluded_roots(CLAUDE_TARGETS)
+	(tmp_path / ".gitignore").write_text(
+		"\n".join(unignore(root, CLAUDE_TARGETS).lines) + "\n", encoding="utf-8"
+	)
+	_git(tmp_path, "add", "-A")
+	staged = _git(tmp_path, "diff", "--cached", "--name-only").split()
+	assert set(CLAUDE_TARGETS) <= set(staged)
+	assert ".claude/settings.local.json" not in staged
 
 
 @requires_git

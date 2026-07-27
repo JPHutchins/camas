@@ -150,10 +150,12 @@ class Excluded(NamedTuple):
 	"""A generated path git excludes, and the exclude rule responsible for it."""
 
 	path: str
-	rule: str
-	"""``<file>:<line>`` of the rule — the repo's own ``.gitignore``, ``.git/info/exclude``, or a
-	global ``core.excludesFile``, which is what separates "teammates are affected too" from "only
-	this clone is"."""
+	source: str
+	"""The file holding the rule: a per-directory ``.gitignore``, ``.git/info/exclude``, or the
+	absolute ``core.excludesFile`` path. Which one decides both who is affected — the repo or only
+	this clone — and which re-inclusion actually works, since a ``.gitignore`` outranks the other
+	two."""
+	line: str
 	pattern: str
 
 
@@ -163,7 +165,7 @@ def parse_check_ignore(stdout: str) -> tuple[Excluded, ...]:
 	reports a path matched by a negated pattern, which means it is *not* excluded, so those go too.
 
 	>>> parse_check_ignore("\x00".join((".gitignore", "12", ".claude/", ".claude", "")))
-	(Excluded(path='.claude', rule='.gitignore:12', pattern='.claude/'),)
+	(Excluded(path='.claude', source='.gitignore', line='12', pattern='.claude/'),)
 	>>> parse_check_ignore("\x00".join((".gitignore", "2", "!.mcp.json", ".mcp.json", "")))
 	()
 	>>> parse_check_ignore("")
@@ -171,7 +173,7 @@ def parse_check_ignore(stdout: str) -> tuple[Excluded, ...]:
 	"""
 	fields = stdout.split("\0")
 	return tuple(
-		Excluded(path=path, rule=f"{source}:{line}", pattern=pattern)
+		Excluded(path=path, source=source, line=line, pattern=pattern)
 		for source, line, pattern, path in zip(
 			fields[0::4], fields[1::4], fields[2::4], fields[3::4], strict=False
 		)
@@ -180,11 +182,11 @@ def parse_check_ignore(stdout: str) -> tuple[Excluded, ...]:
 
 
 def check_ignore(paths: Sequence[str]) -> tuple[Excluded, ...]:
-	"""Which of ``paths`` git excludes, and why — empty when git is not on PATH, this is not a
-	repository, or nothing is excluded. A tracked path is never reported: ``check-ignore`` consults
-	the index, so a force-added file already counts as committable. A directory-only pattern
-	(``.claude/``) matches a directory only once it exists, which is why the check runs after the
-	files are written rather than before.
+	"""Which of ``paths`` — repo-relative, forward-slashed, the spelling git itself speaks — git
+	excludes, and why. Empty when git is not on PATH, this is not a repository, or nothing is
+	excluded. A tracked path is never reported: ``check-ignore`` consults the index, so a force-added
+	file already counts as committable. A directory-only pattern (``.claude/``) matches a directory
+	only once it exists, which is why the check runs after the files are written rather than before.
 	"""
 	git = shutil.which("git")
 	if git is None:
@@ -257,32 +259,71 @@ class Unignore(NamedTuple):
 	lines: tuple[str, ...]
 
 
+def in_repo_gitignore(source: str) -> bool:
+	"""Whether the excluding rule lives in a per-directory ``.gitignore`` — a file the repo commits,
+	and the highest-precedence source, so the fix is edited in place. The alternatives are local to
+	one clone and are outranked by any ``.gitignore``: ``.git/info/exclude``, and a
+	``core.excludesFile`` (which git reports as an absolute path).
+
+	>>> in_repo_gitignore(".gitignore"), in_repo_gitignore("sub/dir/.gitignore")
+	(True, True)
+	>>> in_repo_gitignore(".git/info/exclude"), in_repo_gitignore("/home/dev/.gitignore")
+	(False, False)
+	"""
+	return Path(source).name == ".gitignore" and not Path(source).is_absolute()
+
+
 def unignore(root: Excluded, paths: Sequence[str]) -> Unignore:
 	"""How to re-include the ``paths`` that ``root`` excludes: a generated file that is itself
 	excluded only needs the rule negated, while an excluded *directory* has to stop being excluded
-	first — git never descends into it, so no ``!`` line underneath can bring anything back.
+	first — git never descends into it, so no ``!`` line underneath can bring anything back. A rule
+	from outside a ``.gitignore`` cannot be edited into shape at all — it is local to the clone, and
+	the ``.gitignore`` that outranks it has to re-include the directory itself before narrowing back
+	down, or nothing under it is reachable.
 
-	>>> unignore(Excluded(".mcp.json", ".gitignore:7", "*.json"), (".mcp.json",)).lines
+	>>> unignore(Excluded(".mcp.json", ".gitignore", "7", "*.json"), (".mcp.json",)).lines
 	('!.mcp.json',)
 	>>> unignore(
-	...     Excluded(".claude", ".gitignore:12", ".claude/"),
+	...     Excluded(".claude", ".gitignore", "12", ".claude/"),
 	...     (".claude/settings.json", ".claude/agents/camas-test-fixer.md"),
 	... ).lines
 	('.claude/*', '!.claude/settings.json', '!.claude/agents/')
+	>>> unignore(
+	...     Excluded(".claude", ".git/info/exclude", "1", ".claude/"),
+	...     (".claude/settings.json",),
+	... ).lines
+	('!.claude/', '.claude/*', '!.claude/settings.json')
 	"""
 	if root.path in paths:
-		return Unignore(advice="drop that rule, or negate it below", lines=(f"!{root.path}",))
+		return Unignore(
+			advice=(
+				"drop that rule, or negate it below"
+				if in_repo_gitignore(root.source)
+				else "that file is local to this clone, so negate it in a .gitignore, which "
+				"outranks it"
+			),
+			lines=(f"!{root.path}",),
+		)
+	narrowed = (
+		f"{root.path}/*",
+		*dict.fromkeys(
+			f"!{child(root.path, path)}" for path in paths if path.startswith(f"{root.path}/")
+		),
+	)
+	if in_repo_gitignore(root.source):
+		return Unignore(
+			advice=(
+				"git cannot re-include a path whose parent directory is excluded, so that rule has "
+				f"to stop matching {root.path} itself, e.g."
+			),
+			lines=narrowed,
+		)
 	return Unignore(
 		advice=(
-			"git cannot re-include a path whose parent directory is excluded, so that rule has to "
-			f"stop matching {root.path} itself, e.g."
+			"that file is local to this clone, so re-include "
+			f"{root.path} in a .gitignore, which outranks it, then narrow back down"
 		),
-		lines=(
-			f"{root.path}/*",
-			*dict.fromkeys(
-				f"!{child(root.path, path)}" for path in paths if path.startswith(f"{root.path}/")
-			),
-		),
+		lines=(f"!{root.path}/", *narrowed),
 	)
 
 
@@ -290,7 +331,7 @@ def _root_report(root: Excluded, paths: Sequence[str]) -> tuple[str, ...]:
 	"""One excluded root's lines of the warning: the rule that excludes it, then the fix."""
 	fix = unignore(root, paths)
 	return (
-		f"  {root.path} is excluded by {root.rule} (`{root.pattern}`) — {fix.advice}:",
+		f"  {root.path} is excluded by {root.source}:{root.line} (`{root.pattern}`) — {fix.advice}:",
 		*(f"      {line}" for line in fix.lines),
 	)
 
