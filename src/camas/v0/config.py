@@ -56,6 +56,12 @@ class Config(NamedTuple):
 	"""Project subdirectory for run logs and the timing cache; delete it to opt out."""
 	agent: Agent | None = None
 	"""The agent integration (the gate's fix and check nodes); ``None`` when unconfigured."""
+	leaf_color: bool = True
+	"""Whether camas forces color on in leaf subprocesses, so a tool that would drop color into
+	camas's pipe still colors for the tree and for CI logs that render ANSI. Set ``False`` when a
+	leaf's output is data rather than display — a test asserting on a tool's plain text, a parsed
+	report — since the forcing env is inherited by the leaf's own children too. A single leaf opts
+	out with ``env={"NO_COLOR": "1"}``, which wins either way."""
 
 	def camas_path(self, base: Path) -> Path:
 		"""The resolved camas directory under ``base``."""

@@ -222,6 +222,19 @@ _ = Config(
 
 `Config` is discovered by type, so the binding's name never matters — `_` by convention. Defining two is an error.
 
+### Leaf color (`leaf_color`)
+
+camas runs every leaf on a pipe, so a tool that probes for a terminal drops its color — and the tree, and any CI log that renders ANSI, lose it. camas therefore forces color on in the leaf environment (`FORCE_COLOR=1`, `CLICOLOR_FORCE=1`), which is why `camas lint` stays colored where a bare `lint | cat` would not.
+
+That environment is inherited, so it also reaches commands your leaf spawns for itself — including one whose output the leaf *captures and asserts on*. A test checking that a CLI prints `Passes: 1, failures: 1` passes when run by hand and fails under camas, because the string arrives wrapped in ANSI. When a leaf's output is data rather than display, turn the forcing off:
+
+```python
+_ = Config(leaf_color=False) # project-wide
+check = Task("cargo test -p mycli", env={"NO_COLOR": "1"}) # or just this leaf
+```
+
+`NO_COLOR` wins over both, per [no-color.org](https://no-color.org). `leaf_color=False` only stops camas from forcing — a leaf that asks for color itself (`env={"FORCE_COLOR": "1"}`, or an exported one) still gets it.
+
 Because `github_task` reproduces CI, running it before a push catches a CI failure locally. If it is a named task, a one-line git hook guards every push:
 
 ```sh

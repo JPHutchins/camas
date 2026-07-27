@@ -40,8 +40,7 @@ if TYPE_CHECKING:
 	from camas.v0.task_event import TaskEvent
 
 
-def test_force_color_injected_in_subprocess(monkeypatch: pytest.MonkeyPatch) -> None:
-	monkeypatch.delenv("NO_COLOR", raising=False)
+def test_force_color_injected_in_subprocess(unforced_color: None) -> None:
 	task = Task(
 		("python", "-c", "import os,sys; sys.exit(0 if os.environ.get('FORCE_COLOR')=='1' else 1)")
 	)
@@ -54,6 +53,55 @@ def test_no_color_suppresses_force_color(monkeypatch: pytest.MonkeyPatch) -> Non
 		("python", "-c", "import os,sys; sys.exit(0 if 'FORCE_COLOR' not in os.environ else 1)")
 	)
 	assert asyncio.run(run(task)).returncode == 0
+
+
+_NESTED_COLOR_PROBE = (
+	"import subprocess, sys; "
+	"child = subprocess.run([sys.executable, '-c', "
+	'\'import os; print(bool({"FORCE_COLOR", "CLICOLOR_FORCE"} & set(os.environ)))\'], '
+	"capture_output=True, text=True); "
+	"sys.exit(0 if child.stdout.strip() == 'False' else 1)"
+)
+"""A leaf that spawns a command and captures its stdout — the shape whose plain-text assertion
+the forced color breaks (a Rust ``assert_cmd`` test, here in python)."""
+
+
+async def test_leaf_color_false_leaves_the_color_decision_to_the_environment(
+	unforced_color: None,
+) -> None:
+	task = Task(
+		(
+			"python",
+			"-c",
+			"import os,sys; sys.exit(0 if not {'FORCE_COLOR', 'CLICOLOR_FORCE'} & set(os.environ)"
+			" else 1)",
+		)
+	)
+	assert (await run(task, leaf_color=False)).returncode == 0
+
+
+async def test_forced_color_reaches_a_command_the_leaf_itself_spawns(
+	unforced_color: None,
+) -> None:
+	"""Why the switch exists: the forcing env is inherited, so it colors a nested command whose
+	stdout the leaf captured for itself, not just the output camas renders.
+	"""
+	task = Task(("python", "-c", _NESTED_COLOR_PROBE))
+	assert (await run(task)).returncode == 1
+	assert (await run(task, leaf_color=False)).returncode == 0
+
+
+async def test_an_explicit_force_survives_leaf_color_false(unforced_color: None) -> None:
+	"""``leaf_color=False`` stops camas forcing; it does not overrule a leaf that asks for color."""
+	task = Task(
+		(
+			"python",
+			"-c",
+			"import os,sys; sys.exit(0 if os.environ.get('FORCE_COLOR') == '1' else 1)",
+		),
+		env={"FORCE_COLOR": "1"},
+	)
+	assert (await run(task, leaf_color=False)).returncode == 0
 
 
 def test_single_cmd_success() -> None:
