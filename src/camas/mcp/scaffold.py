@@ -455,7 +455,7 @@ AGENT_TEMPLATES: Final = (
 
 CLAUDE_TARGETS: Final = (
 	SETTINGS_PATH.as_posix(),
-	*(f"{AGENT_DIR.as_posix()}/{dest}" for _, dest in AGENT_TEMPLATES),
+	*((AGENT_DIR / dest).as_posix() for _, dest in AGENT_TEMPLATES),
 	SKILL_PATH.as_posix(),
 )
 """Every file ``--claude`` writes under ``.claude/``, repo-relative, for the gitignore check."""

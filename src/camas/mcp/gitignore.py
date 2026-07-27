@@ -34,8 +34,10 @@ class Excluded(NamedTuple):
 
 def parse_check_ignore(stdout: str) -> tuple[Excluded, ...]:
 	r"""The excluded paths in ``git check-ignore -v -z --stdin`` output: NUL-delimited
-	``source, line, pattern, path`` records, an unterminated trailing one dropped. ``-v`` also
-	reports a path matched by a negated pattern, which means it is *not* excluded, so those go too.
+	``source, line, pattern, path`` records, an unterminated trailing one dropped — the field
+	slices are uneven by construction, since git's output ends with a NUL, which is why the ``zip``
+	is not ``strict``. ``-v`` also reports a path matched by a negated pattern, which means it is
+	*not* excluded, so those go too.
 
 	>>> parse_check_ignore("\x00".join((".gitignore", "12", ".claude/", ".claude", "")))
 	(Excluded(path='.claude', source='.gitignore', line='12', pattern='.claude/'),)
@@ -112,9 +114,7 @@ def excluded_roots(paths: Sequence[str]) -> tuple[Excluded, ...]:
 	"""
 	chains = tuple(dict.fromkeys(step for path in paths for step in ancestry(path)))
 	found = {excluded.path: excluded for excluded in check_ignore(chains)}
-	return tuple(
-		dict.fromkeys(root for path in paths if (root := outermost(path, found)) is not None)
-	)
+	return tuple(dict.fromkeys(filter(None, (outermost(path, found) for path in paths))))
 
 
 def child(root: str, path: str) -> str:
