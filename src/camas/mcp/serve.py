@@ -671,7 +671,13 @@ async def run_call(session: Session, arguments: dict[str, Any]) -> types.CallToo
 
 
 def leaf_color_of(config: Config | None) -> bool:
-	"""Whether leaves get camas's forced color, defaulting when the project declares no ``Config``."""
+	"""Whether leaves get camas's forced color, defaulting when the project declares no ``Config``.
+
+	Under the stdio server this is currently moot — :func:`serve_stdio` pins ``NO_COLOR=1`` for the
+	process, which outranks the forcing either way — but it is what the two hook entry points in
+	this module (``camas mcp gate``, ``camas mcp fix``) run without, and it keeps a project's
+	setting honored rather than silently dropped if that pin ever moves.
+	"""
 	return (config if config is not None else Config()).leaf_color
 
 

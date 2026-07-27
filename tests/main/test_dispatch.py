@@ -350,12 +350,8 @@ _COLOR_PROBE = Task(
 )
 
 
-def test_dispatch_passes_config_leaf_color_through_to_the_leaf_env(
-	monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_dispatch_passes_config_leaf_color_through_to_the_leaf_env(unforced_color: None) -> None:
 	"""``Config(leaf_color=False)`` has to reach the executor, not merely parse."""
-	for name in ("NO_COLOR", "FORCE_COLOR", "CLICOLOR_FORCE"):
-		monkeypatch.delenv(name, raising=False)
 	with pytest.raises(SystemExit, match="1"):
 		dispatch(_state({"probe": _COLOR_PROBE}, Config(default_effects=())), ["probe"])
 	with pytest.raises(SystemExit, match="0"):

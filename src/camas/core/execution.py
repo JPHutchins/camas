@@ -156,13 +156,20 @@ async def await_run(
 		return ()
 
 
+FORCED_COLOR: Final = {"FORCE_COLOR": "1", "CLICOLOR_FORCE": "1"}
+"""What camas adds so a piped tool still colors, and — by its keys — what it takes back out when
+the environment says no."""
+
+
 def subprocess_env(merged: dict[str, str], *, color: bool = True) -> dict[str, str]:
 	"""Leaf-subprocess env: defaults merged underneath ``merged``. Color is forced by default —
 	camas pipes the leaf, so a tool that probes for a terminal would otherwise drop the color the
 	tree and an ANSI-rendering CI log both want. ``color=False`` (``Config(leaf_color=False)``)
 	leaves that decision to the environment instead, for a leaf whose output something parses or
 	asserts on: the forcing env is inherited by the leaf's own children, so it reaches a nested
-	command whose stdout the leaf itself captured. ``NO_COLOR`` wins over both, per no-color.org.
+	command whose stdout the leaf itself captured. ``NO_COLOR`` wins over both — when non-empty,
+	the reading no-color.org specifies and :func:`camas.core.render.color_on` already applies to
+	camas's own output.
 
 	>>> subprocess_env({})
 	{'FORCE_COLOR': '1', 'CLICOLOR_FORCE': '1', 'PYTHONUNBUFFERED': '1'}
@@ -170,15 +177,17 @@ def subprocess_env(merged: dict[str, str], *, color: bool = True) -> dict[str, s
 	{'PYTHONUNBUFFERED': '1'}
 	>>> subprocess_env({"NO_COLOR": "1", "FORCE_COLOR": "1"})
 	{'PYTHONUNBUFFERED': '1', 'NO_COLOR': '1'}
+	>>> subprocess_env({"NO_COLOR": ""})
+	{'FORCE_COLOR': '1', 'CLICOLOR_FORCE': '1', 'PYTHONUNBUFFERED': '1', 'NO_COLOR': ''}
 	>>> subprocess_env({"FORCE_COLOR": "1"}, color=False)
 	{'PYTHONUNBUFFERED': '1', 'FORCE_COLOR': '1'}
 	"""
 	base = {"PYTHONUNBUFFERED": "1"} | merged
-	if "NO_COLOR" in base:
-		return {k: v for k, v in base.items() if k not in {"FORCE_COLOR", "CLICOLOR_FORCE"}}
+	if base.get("NO_COLOR"):
+		return {k: v for k, v in base.items() if k not in FORCED_COLOR}
 	if not color:
 		return base
-	return {"FORCE_COLOR": "1", "CLICOLOR_FORCE": "1"} | base
+	return FORCED_COLOR | base
 
 
 def spawn_cwd(base: Path | None, cwd: Path | None) -> Path | None:

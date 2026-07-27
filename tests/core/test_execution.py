@@ -58,8 +58,8 @@ def test_no_color_suppresses_force_color(monkeypatch: pytest.MonkeyPatch) -> Non
 
 _NESTED_COLOR_PROBE = (
 	"import subprocess, sys; "
-	"child = subprocess.run("
-	"[sys.executable, '-c', 'import os; print(\"FORCE_COLOR\" in os.environ)'], "
+	"child = subprocess.run([sys.executable, '-c', "
+	'\'import os; print(bool({"FORCE_COLOR", "CLICOLOR_FORCE"} & set(os.environ)))\'], '
 	"capture_output=True, text=True); "
 	"sys.exit(0 if child.stdout.strip() == 'False' else 1)"
 )
@@ -67,15 +67,9 @@ _NESTED_COLOR_PROBE = (
 the forced color breaks (a Rust ``assert_cmd`` test, here in python)."""
 
 
-def _unset_color(monkeypatch: pytest.MonkeyPatch) -> None:
-	for name in ("NO_COLOR", "FORCE_COLOR", "CLICOLOR_FORCE"):
-		monkeypatch.delenv(name, raising=False)
-
-
 async def test_leaf_color_false_leaves_the_color_decision_to_the_environment(
-	monkeypatch: pytest.MonkeyPatch,
+	unforced_color: None,
 ) -> None:
-	_unset_color(monkeypatch)
 	task = Task(
 		(
 			"python",
@@ -88,22 +82,18 @@ async def test_leaf_color_false_leaves_the_color_decision_to_the_environment(
 
 
 async def test_forced_color_reaches_a_command_the_leaf_itself_spawns(
-	monkeypatch: pytest.MonkeyPatch,
+	unforced_color: None,
 ) -> None:
 	"""Why the switch exists: the forcing env is inherited, so it colors a nested command whose
 	stdout the leaf captured for itself, not just the output camas renders.
 	"""
-	_unset_color(monkeypatch)
 	task = Task(("python", "-c", _NESTED_COLOR_PROBE))
 	assert (await run(task)).returncode == 1
 	assert (await run(task, leaf_color=False)).returncode == 0
 
 
-async def test_an_explicit_force_survives_leaf_color_false(
-	monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_an_explicit_force_survives_leaf_color_false(unforced_color: None) -> None:
 	"""``leaf_color=False`` stops camas forcing; it does not overrule a leaf that asks for color."""
-	_unset_color(monkeypatch)
 	task = Task(
 		(
 			"python",
