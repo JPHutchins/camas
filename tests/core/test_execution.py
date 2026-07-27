@@ -40,8 +40,7 @@ if TYPE_CHECKING:
 	from camas.v0.task_event import TaskEvent
 
 
-def test_force_color_injected_in_subprocess(monkeypatch: pytest.MonkeyPatch) -> None:
-	monkeypatch.delenv("NO_COLOR", raising=False)
+def test_force_color_injected_in_subprocess(unforced_color: None) -> None:
 	task = Task(
 		("python", "-c", "import os,sys; sys.exit(0 if os.environ.get('FORCE_COLOR')=='1' else 1)")
 	)

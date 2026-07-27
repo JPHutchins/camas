@@ -345,7 +345,11 @@ _TIDY = (
 
 
 _COLOR_PROBE = Task(
-	("python", "-c", "import os,sys; sys.exit(1 if 'FORCE_COLOR' in os.environ else 0)"),
+	(
+		"python",
+		"-c",
+		"import os,sys; sys.exit(1 if {'FORCE_COLOR', 'CLICOLOR_FORCE'} & set(os.environ) else 0)",
+	),
 	name="probe",
 )
 
