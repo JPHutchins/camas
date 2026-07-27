@@ -367,6 +367,7 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 
 			if args.check:
 				from .check import (
+					pep723_run_cli_warning,
 					run_typecheck_only,
 					unresolved_dispatch_warnings,
 					unsatisfiable_declaration_warnings,
@@ -379,6 +380,7 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 						*unresolved_dispatch_warnings(tasks),
 						*unsatisfiable_declaration_warnings(tasks),
 						*naming_warnings,
+						*pep723_run_cli_warning(source),
 					)
 					if w
 				)

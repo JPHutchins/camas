@@ -59,6 +59,72 @@ def unsatisfiable_declaration_warnings(tasks: Mapping[str, TaskNode]) -> tuple[s
 	)
 
 
+def pep723_run_cli_warning(source: Path | None) -> tuple[str, ...]:
+	r"""Warn when a ``tasks.py`` declares a PEP 723 camas dependency but has no
+	``run_cli(globals())`` guard — the standalone flow (``uv run tasks.py …``)
+	imports and exits without dispatching, so every invocation (including
+	``--check``) silently passes.
+
+	>>> from pathlib import Path
+	>>> import tempfile, os
+	>>> d = tempfile.mkdtemp()
+
+	A file with a PEP 723 camas dep and no guard:
+
+	>>> p = Path(d) / "tasks.py"
+	>>> _ = p.write_text('# /// script\n# dependencies = ["camas"]\n# ///\nfrom camas import Task\n')
+	>>> len(pep723_run_cli_warning(p))
+	1
+
+	Same file with the guard added:
+
+	>>> _ = p.write_text('# /// script\n# dependencies = ["camas"]\n# ///\nfrom camas import Task, run_cli\nif __name__ == "__main__":\n    run_cli(globals())\n')
+	>>> pep723_run_cli_warning(p)
+	()
+
+	No PEP 723 block at all:
+
+	>>> _ = p.write_text('from camas import Task\n')
+	>>> pep723_run_cli_warning(p)
+	()
+
+	PEP 723 block without a camas dependency (``uv run`` would fail with
+	ImportError, not silently pass):
+
+	>>> _ = p.write_text('# /// script\n# dependencies = ["other"]\n# ///\nfrom camas import Task\n')
+	>>> pep723_run_cli_warning(p)
+	()
+
+	Non-.py source or None:
+
+	>>> pep723_run_cli_warning(None)
+	()
+	>>> pep723_run_cli_warning(Path("pyproject.toml"))
+	()
+	"""
+	if source is None or source.suffix.lower() != ".py":
+		return ()
+	try:
+		text = source.read_text(encoding="utf-8")
+	except (OSError, ValueError):
+		return ()
+	from .pep723 import parse_camas_requirement
+
+	if parse_camas_requirement(text) is None:
+		return ()
+	if "run_cli(" in text:
+		return ()
+	return (
+		f"{source.name} has a PEP 723 script header with a camas dependency "
+		"but no run_cli(globals()) guard — `uv run "
+		f"{source.name} …` imports and exits "
+		"without dispatching, so every invocation (including --check) silently "
+		"passes; add:\n"
+		'    if __name__ == "__main__":\n'
+		"        run_cli(globals())",
+	)
+
+
 def unresolved_dispatch_warnings(tasks: Mapping[str, TaskNode]) -> tuple[str, ...]:
 	"""One warning per leaf command that re-enters camas with a task name nothing resolves —
 	the fan-out that "passes locally, 404s in CI", where a matrix axis or a hand-written command
