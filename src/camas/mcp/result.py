@@ -26,6 +26,7 @@ from ..main.check import (
 	CheckerOk,
 	format_checker_output,
 	format_minimal_trace,
+	pep723_run_cli_warning,
 	run_typecheck,
 	unresolved_dispatch_warnings,
 	unsatisfiable_declaration_warnings,
@@ -183,6 +184,7 @@ def to_check_response(state: TasksState) -> wire.CheckResponse:
 				+ unresolved_dispatch_warnings(tasks)
 				+ unsatisfiable_declaration_warnings(tasks)
 				+ naming_warnings
+				+ pep723_run_cli_warning(source)
 			)
 			if source is None:
 				return wire.CheckResponse(status="no_tasks", warnings=warnings)
