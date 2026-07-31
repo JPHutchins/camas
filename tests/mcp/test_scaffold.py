@@ -10,6 +10,7 @@ import pytest
 
 from camas.mcp.scaffold import (
 	AGENT_TEMPLATES,
+	camas_note,
 	dumps_prettier,
 	installed_version_spec,
 	launch_command,
@@ -24,15 +25,25 @@ from camas.mcp.scaffold import (
 )
 
 if TYPE_CHECKING:
-	from collections.abc import Callable
+	from collections.abc import Callable, Mapping
 	from pathlib import Path
+
+	from camas.mcp.environment import LocalEnvironment
+
+
+def which(*found: str) -> Callable[[str], str | None]:
+	"""Resolve each name in ``found`` to a plain system path, everything else to ``None``."""
+	return lambda name: f"/usr/bin/{name}" if name in found else None
+
+
+def which_at(found: Mapping[str, str]) -> Callable[[str], str | None]:
+	"""Resolve each name to a chosen path, for the cases where *where* a tool lives is the thing
+	under test."""
+	return found.get
+
 
 _DEV_VERSION = "0.1.0.dev0+gabc1234"
 _RELEASE_VERSION = "0.1.18"
-
-
-def _which(*found: str) -> Callable[[str], str | None]:
-	return lambda name: f"/usr/bin/{name}" if name in found else None
 
 
 def _pin_installed_version(monkeypatch: pytest.MonkeyPatch, installed: str) -> None:
@@ -48,29 +59,29 @@ def _pin_installed_version(monkeypatch: pytest.MonkeyPatch, installed: str) -> N
 def test_launch_command_uv_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 	monkeypatch.chdir(tmp_path)
 	(tmp_path / "uv.lock").write_text("")
-	monkeypatch.setattr("shutil.which", _which("uv", "camas"))
+	monkeypatch.setattr("shutil.which", which("uv", "camas"))
 	assert launch_command() == ("uv", ["run", "camas", "mcp"])
 
 
 def test_launch_command_uvx(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 	monkeypatch.chdir(tmp_path)
-	monkeypatch.setattr("shutil.which", _which("uvx"))
+	monkeypatch.setattr("shutil.which", which("uvx"))
 	_pin_installed_version(monkeypatch, _DEV_VERSION)
 	assert launch_command() == ("uvx", ["camas[mcp]", "mcp"])
 
 
 def test_launch_command_camas(monkeypatch: pytest.MonkeyPatch) -> None:
-	monkeypatch.setattr("shutil.which", _which("camas"))
+	monkeypatch.setattr("shutil.which", which("camas"))
 	assert launch_command() == ("camas", ["mcp"])
 
 
 def test_launch_command_none(monkeypatch: pytest.MonkeyPatch) -> None:
-	monkeypatch.setattr("shutil.which", _which())
+	monkeypatch.setattr("shutil.which", which())
 	assert launch_command() is None
 
 
 def test_launch_command_uvx_with_pin(monkeypatch: pytest.MonkeyPatch) -> None:
-	monkeypatch.setattr("shutil.which", _which("uvx"))
+	monkeypatch.setattr("shutil.which", which("uvx"))
 	assert launch_command(pin="camas[mcp]>=0.1.8") == ("uvx", ["camas[mcp]>=0.1.8", "mcp"])
 
 
@@ -79,40 +90,40 @@ def test_launch_command_uv_with_lock_ignores_pin(
 ) -> None:
 	monkeypatch.chdir(tmp_path)
 	(tmp_path / "uv.lock").write_text("")
-	monkeypatch.setattr("shutil.which", _which("uv", "camas"))
+	monkeypatch.setattr("shutil.which", which("uv", "camas"))
 	assert launch_command(pin="camas[mcp]>=0.1.8") == ("uv", ["run", "camas", "mcp"])
 
 
 def test_launch_command_camas_ignores_pin(monkeypatch: pytest.MonkeyPatch) -> None:
-	monkeypatch.setattr("shutil.which", _which("camas"))
+	monkeypatch.setattr("shutil.which", which("camas"))
 	assert launch_command(pin="camas[mcp]>=0.1.8") == ("camas", ["mcp"])
 
 
 def test_launch_command_str_camas(monkeypatch: pytest.MonkeyPatch) -> None:
-	monkeypatch.setattr("shutil.which", _which("camas"))
+	monkeypatch.setattr("shutil.which", which("camas"))
 	assert launch_command_str() == "camas mcp"
 
 
 def test_launch_command_str_uv_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 	monkeypatch.chdir(tmp_path)
 	(tmp_path / "uv.lock").write_text("")
-	monkeypatch.setattr("shutil.which", _which("uv", "camas"))
+	monkeypatch.setattr("shutil.which", which("uv", "camas"))
 	assert launch_command_str() == "uv run camas mcp"
 
 
 def test_launch_command_str_uvx(monkeypatch: pytest.MonkeyPatch) -> None:
-	monkeypatch.setattr("shutil.which", _which("uvx"))
+	monkeypatch.setattr("shutil.which", which("uvx"))
 	_pin_installed_version(monkeypatch, _DEV_VERSION)
 	assert launch_command_str() == "uvx 'camas[mcp]' mcp"
 
 
 def test_launch_command_str_uvx_with_pin(monkeypatch: pytest.MonkeyPatch) -> None:
-	monkeypatch.setattr("shutil.which", _which("uvx"))
+	monkeypatch.setattr("shutil.which", which("uvx"))
 	assert launch_command_str(pin="camas[mcp]>=0.1.8") == "uvx 'camas[mcp]>=0.1.8' mcp"
 
 
 def test_launch_command_str_none(monkeypatch: pytest.MonkeyPatch) -> None:
-	monkeypatch.setattr("shutil.which", _which())
+	monkeypatch.setattr("shutil.which", which())
 	assert launch_command_str() is None
 
 
@@ -132,7 +143,7 @@ def test_launch_command_uvx_no_pin_pins_to_installed_release(
 	monkeypatch: pytest.MonkeyPatch,
 ) -> None:
 	"""No PEP 723 pin, but the running camas is a clean release: pin the uvx fallback to it."""
-	monkeypatch.setattr("shutil.which", _which("uvx"))
+	monkeypatch.setattr("shutil.which", which("uvx"))
 	_pin_installed_version(monkeypatch, _RELEASE_VERSION)
 	assert launch_command() == ("uvx", [f"camas[mcp]=={_RELEASE_VERSION}", "mcp"])
 
@@ -141,7 +152,7 @@ def test_launch_command_uvx_no_pin_dev_build_stays_unpinned(
 	monkeypatch: pytest.MonkeyPatch,
 ) -> None:
 	"""No PEP 723 pin, and the running camas is a dev/local build not on PyPI: stay unpinned."""
-	monkeypatch.setattr("shutil.which", _which("uvx"))
+	monkeypatch.setattr("shutil.which", which("uvx"))
 	_pin_installed_version(monkeypatch, _DEV_VERSION)
 	assert launch_command() == ("uvx", ["camas[mcp]", "mcp"])
 
@@ -151,7 +162,7 @@ def test_launch_command_uvx_pep723_pin_wins_over_installed_version(
 ) -> None:
 	"""A PEP 723-derived pin is the project's SSOT — used as-is, even unpinned (bare ``camas``),
 	regardless of the running camas version."""
-	monkeypatch.setattr("shutil.which", _which("uvx"))
+	monkeypatch.setattr("shutil.which", which("uvx"))
 	_pin_installed_version(monkeypatch, _RELEASE_VERSION)
 	assert launch_command(pin="camas[mcp]") == ("uvx", ["camas[mcp]", "mcp"])
 
@@ -163,7 +174,7 @@ def test_launch_command_uv_with_pep723_tasks_py(
 	(tmp_path / "tasks.py").write_text(
 		'# /// script\n# dependencies = ["camas>=0.1.8"]\n# ///\nfrom camas import Task\n'
 	)
-	monkeypatch.setattr("shutil.which", _which("uv"))
+	monkeypatch.setattr("shutil.which", which("uv"))
 	assert launch_command() == ("uv", ["run", "tasks.py", "mcp"])
 	assert launch_command(pin="camas[mcp]>=0.1.8") == ("uv", ["run", "tasks.py", "mcp"])
 
@@ -176,7 +187,7 @@ def test_launch_command_uv_lock_wins_over_pep723_tasks_py(
 	(tmp_path / "tasks.py").write_text(
 		'# /// script\n# dependencies = ["camas>=0.1.8"]\n# ///\nfrom camas import Task\n'
 	)
-	monkeypatch.setattr("shutil.which", _which("uv", "camas"))
+	monkeypatch.setattr("shutil.which", which("uv", "camas"))
 	assert launch_command() == ("uv", ["run", "camas", "mcp"])
 
 
@@ -189,7 +200,7 @@ def test_launch_command_pep723_tasks_py_must_be_in_cwd(
 		'# /// script\n# dependencies = ["camas>=0.1.8"]\n# ///\nfrom camas import Task\n'
 	)
 	monkeypatch.chdir(tmp_path)
-	monkeypatch.setattr("shutil.which", _which("uv"))
+	monkeypatch.setattr("shutil.which", which("uv"))
 	assert launch_command() is None
 
 
@@ -198,7 +209,7 @@ def test_launch_command_tasks_py_without_pep723_header_falls_through(
 ) -> None:
 	monkeypatch.chdir(tmp_path)
 	(tmp_path / "tasks.py").write_text("from camas import Task\nlint = Task('echo')\n")
-	monkeypatch.setattr("shutil.which", _which("uv"))
+	monkeypatch.setattr("shutil.which", which("uv"))
 	assert launch_command() is None
 
 
@@ -207,14 +218,14 @@ def test_launch_command_launcher_uv_forced_uses_lock_project(
 ) -> None:
 	monkeypatch.chdir(tmp_path)
 	(tmp_path / "uv.lock").write_text("")
-	monkeypatch.setattr("shutil.which", _which("uv", "uvx", "camas"))
+	monkeypatch.setattr("shutil.which", which("uv", "uvx", "camas"))
 	assert launch_command(launcher="uv") == ("uv", ["run", "camas", "mcp"])
 
 
 def test_launch_command_launcher_uv_forced_errors_without_uv(
 	monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-	monkeypatch.setattr("shutil.which", _which("uvx", "camas"))
+	monkeypatch.setattr("shutil.which", which("uvx", "camas"))
 	assert launch_command(launcher="uv") is None
 
 
@@ -222,7 +233,7 @@ def test_launch_command_launcher_uv_forced_errors_without_lock_or_pep723(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
 	monkeypatch.chdir(tmp_path)
-	monkeypatch.setattr("shutil.which", _which("uv", "uvx", "camas"))
+	monkeypatch.setattr("shutil.which", which("uv", "uvx", "camas"))
 	assert launch_command(launcher="uv") is None
 
 
@@ -232,13 +243,13 @@ def test_launch_command_launcher_uvx_forced_even_with_uv_lock(
 	"""``--launcher uvx`` forces uvx even though a uv.lock project would normally win."""
 	monkeypatch.chdir(tmp_path)
 	(tmp_path / "uv.lock").write_text("")
-	monkeypatch.setattr("shutil.which", _which("uv", "uvx", "camas"))
+	monkeypatch.setattr("shutil.which", which("uv", "uvx", "camas"))
 	_pin_installed_version(monkeypatch, _DEV_VERSION)
 	assert launch_command(launcher="uvx") == ("uvx", ["camas[mcp]", "mcp"])
 
 
 def test_launch_command_launcher_uvx_forced_uses_pin(monkeypatch: pytest.MonkeyPatch) -> None:
-	monkeypatch.setattr("shutil.which", _which("uvx"))
+	monkeypatch.setattr("shutil.which", which("uvx"))
 	assert launch_command(pin="camas[mcp]>=0.1.8", launcher="uvx") == (
 		"uvx",
 		["camas[mcp]>=0.1.8", "mcp"],
@@ -248,20 +259,109 @@ def test_launch_command_launcher_uvx_forced_uses_pin(monkeypatch: pytest.MonkeyP
 def test_launch_command_launcher_uvx_forced_errors_without_uvx(
 	monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-	monkeypatch.setattr("shutil.which", _which("uv", "camas"))
+	monkeypatch.setattr("shutil.which", which("uv", "camas"))
 	assert launch_command(launcher="uvx") is None
 
 
 def test_launch_command_launcher_camas_forced(monkeypatch: pytest.MonkeyPatch) -> None:
-	monkeypatch.setattr("shutil.which", _which("uv", "uvx", "camas"))
+	monkeypatch.setattr("shutil.which", which("uv", "uvx", "camas"))
 	assert launch_command(launcher="camas") == ("camas", ["mcp"])
 
 
 def test_launch_command_launcher_camas_forced_errors_without_path(
 	monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-	monkeypatch.setattr("shutil.which", _which("uv", "uvx"))
+	monkeypatch.setattr("shutil.which", which("uv", "uvx"))
 	assert launch_command(launcher="camas") is None
+
+
+def test_launch_command_prefers_venv_camas_over_uvx(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, venv_camas: Callable[[Path], Path]
+) -> None:
+	"""#217: a uvx server is isolated from the venv holding the project's tools, so a gate run
+	through it cannot see them — the camas already installed there can.
+	"""
+	monkeypatch.chdir(tmp_path)
+	monkeypatch.setattr(
+		"shutil.which",
+		which_at(
+			{
+				"camas": str(venv_camas(tmp_path / ".venv")),
+				"uv": "/usr/bin/uv",
+				"uvx": "/usr/bin/uvx",
+			}
+		),
+	)
+	assert launch_command() == ("camas", ["mcp"])
+
+
+def test_launch_command_prefers_nix_store_camas_over_uvx(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	"""#242: the flake-provided camas sees the devShell's toolchain, uvx does not."""
+	monkeypatch.chdir(tmp_path)
+	monkeypatch.setattr(
+		"shutil.which",
+		which_at({"camas": "/nix/store/9k1zdwqp-camas-0.1.27/bin/camas", "uvx": "/usr/bin/uvx"}),
+	)
+	assert launch_command() == ("camas", ["mcp"])
+
+
+def test_launch_command_uv_lock_project_still_wins_over_venv_camas(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, venv_camas: Callable[[Path], Path]
+) -> None:
+	"""``uv run`` is inside the project environment too, and provisions it from the lockfile, so a
+	locked project keeps its priority over the venv's camas.
+	"""
+	monkeypatch.chdir(tmp_path)
+	(tmp_path / "uv.lock").write_text("")
+	monkeypatch.setattr(
+		"shutil.which",
+		which_at({"uv": "/usr/bin/uv", "camas": str(venv_camas(tmp_path / ".venv"))}),
+	)
+	assert launch_command() == ("uv", ["run", "camas", "mcp"])
+
+
+def test_launch_command_global_camas_still_loses_to_uvx(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	"""A global install shares no tools with the project, so the pinned uvx entry stays the better
+	one — detection only reorders for a camas that is part of the project's environment.
+
+	The global ``camas`` is placed under ``tmp_path`` rather than ``/usr/bin`` so the verdict rests
+	on a directory this test controls: ``in_virtualenv`` stats the ``pyvenv.cfg`` beside it, and a
+	real system path could in principle have one.
+	"""
+	monkeypatch.chdir(tmp_path)
+	(tmp_path / "global").mkdir()
+	monkeypatch.setattr(
+		"shutil.which",
+		which_at({"uvx": "/usr/bin/uvx", "camas": str(tmp_path / "global" / "camas")}),
+	)
+	_pin_installed_version(monkeypatch, _DEV_VERSION)
+	assert launch_command() == ("uvx", ["camas[mcp]", "mcp"])
+
+
+@pytest.mark.parametrize(
+	("environment", "phrase"),
+	[("venv", "virtual environment"), ("nix", "devShell"), (None, "installs camas on PATH")],
+)
+def test_camas_note_names_what_a_teammate_has_to_reproduce(
+	environment: LocalEnvironment | None, phrase: str
+) -> None:
+	assert phrase in camas_note(environment)
+
+
+def test_mcp_json_note_names_the_venv(
+	tmp_path: Path,
+	monkeypatch: pytest.MonkeyPatch,
+	capsys: pytest.CaptureFixture[str],
+	venv_camas: Callable[[Path], Path],
+) -> None:
+	monkeypatch.chdir(tmp_path)
+	monkeypatch.setattr("shutil.which", which_at({"camas": str(venv_camas(tmp_path / ".venv"))}))
+	assert write_mcp_json([]) == 0
+	assert "virtual environment active here" in capsys.readouterr().out
 
 
 def test_write_mcp_json_uses_uv_run_tasks_py_when_pep723(
@@ -271,7 +371,7 @@ def test_write_mcp_json_uses_uv_run_tasks_py_when_pep723(
 	(tmp_path / "tasks.py").write_text(
 		'# /// script\n# dependencies = ["camas>=0.1.8"]\n# ///\nfrom camas import Task\n'
 	)
-	monkeypatch.setattr("shutil.which", _which("uv"))
+	monkeypatch.setattr("shutil.which", which("uv"))
 	assert write_mcp_json([]) == 0
 	entry = json.loads((tmp_path / ".mcp.json").read_text())["mcpServers"]["camas"]
 	assert (entry["command"], entry["args"]) == ("uv", ["run", "tasks.py", "mcp"])
@@ -284,7 +384,7 @@ def test_write_hooks_uses_uv_run_tasks_py_when_pep723(
 	(tmp_path / "tasks.py").write_text(
 		'# /// script\n# dependencies = ["camas>=0.1.8"]\n# ///\nfrom camas import Task\n'
 	)
-	monkeypatch.setattr("shutil.which", _which("uv"))
+	monkeypatch.setattr("shutil.which", which("uv"))
 	assert write_hooks([]) == 0
 	out = capsys.readouterr().out
 	assert "uv run tasks.py mcp fix" in out
@@ -314,7 +414,7 @@ def test_tasks_py_path_walks_ancestors(tmp_path: Path, monkeypatch: pytest.Monke
 def test_uv_project_emits_portable_uv_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 	monkeypatch.chdir(tmp_path)
 	(tmp_path / "uv.lock").write_text("")
-	monkeypatch.setattr("shutil.which", _which("uv", "camas"))
+	monkeypatch.setattr("shutil.which", which("uv", "camas"))
 	assert write_mcp_json([]) == 0
 	entry = json.loads((tmp_path / ".mcp.json").read_text())["mcpServers"]["camas"]
 	assert entry["type"] == "stdio"
@@ -325,7 +425,7 @@ def test_uv_present_without_lock_resolves_uvx(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
 	monkeypatch.chdir(tmp_path)
-	monkeypatch.setattr("shutil.which", _which("uv", "uvx"))
+	monkeypatch.setattr("shutil.which", which("uv", "uvx"))
 	_pin_installed_version(monkeypatch, _DEV_VERSION)
 	assert write_mcp_json([]) == 0
 	entry = json.loads((tmp_path / ".mcp.json").read_text())["mcpServers"]["camas"]
@@ -337,7 +437,7 @@ def test_uv_without_lock_or_uvx_falls_through_to_camas(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
 	monkeypatch.chdir(tmp_path)
-	monkeypatch.setattr("shutil.which", _which("uv", "camas"))
+	monkeypatch.setattr("shutil.which", which("uv", "camas"))
 	assert write_mcp_json([]) == 0
 	entry = json.loads((tmp_path / ".mcp.json").read_text())["mcpServers"]["camas"]
 	assert entry["command"] == "camas"
@@ -376,7 +476,7 @@ def test_mcp_json_args_written_inline_for_prettier(
 	"""
 	monkeypatch.chdir(tmp_path)
 	(tmp_path / "uv.lock").write_text("")
-	monkeypatch.setattr("shutil.which", _which("uv", "camas"))
+	monkeypatch.setattr("shutil.which", which("uv", "camas"))
 	assert write_mcp_json([]) == 0
 	text = (tmp_path / ".mcp.json").read_text(encoding="utf-8")
 	assert '"args": ["run", "camas", "mcp"]' in text
@@ -386,7 +486,7 @@ def test_mcp_json_args_written_inline_for_prettier(
 def test_rich_no_longer_appended(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 	"""``--rich`` is the server default; the launcher no longer emits it."""
 	monkeypatch.chdir(tmp_path)
-	monkeypatch.setattr("shutil.which", _which("camas"))
+	monkeypatch.setattr("shutil.which", which("camas"))
 	assert write_mcp_json(["--rich"]) == 0
 	entry = json.loads((tmp_path / ".mcp.json").read_text())["mcpServers"]["camas"]
 	assert (entry["command"], entry["args"]) == ("camas", ["mcp"])
@@ -396,7 +496,7 @@ def test_errors_when_no_portable_launcher(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
 	monkeypatch.chdir(tmp_path)
-	monkeypatch.setattr("shutil.which", _which())
+	monkeypatch.setattr("shutil.which", which())
 	assert write_mcp_json([]) == 2
 	err = capsys.readouterr().err
 	assert "not on PATH" in err
@@ -409,7 +509,7 @@ def test_creates_camas_dir_with_gitignore(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
 	monkeypatch.chdir(tmp_path)
-	monkeypatch.setattr("shutil.which", _which("camas"))
+	monkeypatch.setattr("shutil.which", which("camas"))
 	assert write_mcp_json([]) == 0
 	assert (tmp_path / ".camas" / ".gitignore").read_text(encoding="utf-8") == "*\n"
 	assert "created" in capsys.readouterr().out.lower()
@@ -419,7 +519,7 @@ def test_existing_camas_dir_left_intact(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
 	monkeypatch.chdir(tmp_path)
-	monkeypatch.setattr("shutil.which", _which("camas"))
+	monkeypatch.setattr("shutil.which", which("camas"))
 	(tmp_path / ".camas").mkdir()
 	(tmp_path / ".camas" / "timings.txt").write_text("0\n", encoding="utf-8")
 	assert write_mcp_json([]) == 0
@@ -429,7 +529,7 @@ def test_existing_camas_dir_left_intact(
 
 def test_merges_preserving_other_servers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 	monkeypatch.chdir(tmp_path)
-	monkeypatch.setattr("shutil.which", _which("camas"))
+	monkeypatch.setattr("shutil.which", which("camas"))
 	(tmp_path / ".mcp.json").write_text(json.dumps({"mcpServers": {"other": {"command": "x"}}}))
 	assert write_mcp_json([]) == 0
 	servers = json.loads((tmp_path / ".mcp.json").read_text())["mcpServers"]
@@ -475,7 +575,7 @@ def test_write_mcp_json_writes_file_despite_camas_dir_error(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
 	monkeypatch.chdir(tmp_path)
-	monkeypatch.setattr("shutil.which", _which("camas"))
+	monkeypatch.setattr("shutil.which", which("camas"))
 
 	def _raise_oserror(_dir: object) -> None:
 		raise OSError("disk full")
@@ -490,7 +590,7 @@ def test_write_hooks_writes_settings_json(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
 	monkeypatch.chdir(tmp_path)
-	monkeypatch.setattr("shutil.which", _which("camas"))
+	monkeypatch.setattr("shutil.which", which("camas"))
 	assert write_hooks([]) == 0
 	settings = json.loads((tmp_path / ".claude" / "settings.json").read_text())
 	post_tool_batch = settings["hooks"]["PostToolBatch"][0]["hooks"][0]
@@ -507,7 +607,7 @@ def test_write_hooks_writes_stop_fix_and_async_nudge_hooks(
 	``async``/``asyncRewake`` check that nudges the main agent to launch the fixer ladder when
 	the workspace is not green — coexisting with the unrelated PostToolBatch autofix hook."""
 	monkeypatch.chdir(tmp_path)
-	monkeypatch.setattr("shutil.which", _which("camas"))
+	monkeypatch.setattr("shutil.which", which("camas"))
 	assert write_hooks([]) == 0
 	settings = json.loads((tmp_path / ".claude" / "settings.json").read_text())
 	stop_hooks = settings["hooks"]["Stop"][0]["hooks"]
@@ -529,7 +629,7 @@ def test_write_hooks_fix_hook_is_fail_safe_but_nudge_is_not(
 	"""#221: the best-effort autofix hook trails ``|| exit 0`` so a launcher/env failure degrades to
 	a no-op instead of blocking the turn; the nudge hook keeps its exit code — it is the signal."""
 	monkeypatch.chdir(tmp_path)
-	monkeypatch.setattr("shutil.which", _which("camas"))
+	monkeypatch.setattr("shutil.which", which("camas"))
 	assert write_hooks([]) == 0
 	hooks = json.loads((tmp_path / ".claude" / "settings.json").read_text())["hooks"]
 	post = hooks["PostToolBatch"][0]["hooks"][0]["command"]
@@ -543,7 +643,7 @@ def test_write_hooks_stop_hooks_are_idempotent(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
 	monkeypatch.chdir(tmp_path)
-	monkeypatch.setattr("shutil.which", _which("camas"))
+	monkeypatch.setattr("shutil.which", which("camas"))
 	assert write_hooks([]) == 0
 	assert write_hooks([]) == 0
 	settings = json.loads((tmp_path / ".claude" / "settings.json").read_text())
@@ -558,7 +658,7 @@ def test_write_hooks_sweeps_stale_stop_hook_preserving_user_stop_hooks(
 	"""A stale camas ``Stop`` hook (e.g. an older ``--nudge`` flag shape) is replaced on re-init,
 	while a user's own unrelated ``Stop`` hook in the same group is preserved."""
 	monkeypatch.chdir(tmp_path)
-	monkeypatch.setattr("shutil.which", _which("camas"))
+	monkeypatch.setattr("shutil.which", which("camas"))
 	(tmp_path / ".claude").mkdir(parents=True)
 	(tmp_path / ".claude" / "settings.json").write_text(
 		json.dumps(
@@ -589,7 +689,7 @@ def test_write_hooks_errors_when_no_launcher(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
 	monkeypatch.chdir(tmp_path)
-	monkeypatch.setattr("shutil.which", _which())
+	monkeypatch.setattr("shutil.which", which())
 	assert write_hooks([]) == 2
 	err = capsys.readouterr().err
 	assert "not on PATH" in err
@@ -601,7 +701,7 @@ def test_write_hooks_errors_on_malformed_settings(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
 	monkeypatch.chdir(tmp_path)
-	monkeypatch.setattr("shutil.which", _which("camas"))
+	monkeypatch.setattr("shutil.which", which("camas"))
 	(tmp_path / ".claude").mkdir(parents=True)
 	(tmp_path / ".claude" / "settings.json").write_bytes(b"\x00not json")
 	assert write_hooks([]) == 2
@@ -611,7 +711,7 @@ def test_write_hooks_errors_on_invalid_utf8_settings(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
 	monkeypatch.chdir(tmp_path)
-	monkeypatch.setattr("shutil.which", _which("camas"))
+	monkeypatch.setattr("shutil.which", which("camas"))
 	(tmp_path / ".claude").mkdir(parents=True)
 	(tmp_path / ".claude" / "settings.json").write_bytes(b"\xff\xfe")
 	assert write_hooks([]) == 2
@@ -622,7 +722,7 @@ def test_write_hooks_errors_on_non_object_root(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
 	monkeypatch.chdir(tmp_path)
-	monkeypatch.setattr("shutil.which", _which("camas"))
+	monkeypatch.setattr("shutil.which", which("camas"))
 	(tmp_path / ".claude").mkdir(parents=True)
 	(tmp_path / ".claude" / "settings.json").write_text("[]")
 	assert write_hooks([]) == 2
@@ -632,7 +732,7 @@ def test_write_hooks_errors_on_non_object_hooks(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
 	monkeypatch.chdir(tmp_path)
-	monkeypatch.setattr("shutil.which", _which("camas"))
+	monkeypatch.setattr("shutil.which", which("camas"))
 	(tmp_path / ".claude").mkdir(parents=True)
 	(tmp_path / ".claude" / "settings.json").write_text(json.dumps({"hooks": "not an object"}))
 	assert write_hooks([]) == 2
@@ -642,7 +742,7 @@ def test_write_hooks_merges_existing_settings(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
 	monkeypatch.chdir(tmp_path)
-	monkeypatch.setattr("shutil.which", _which("camas"))
+	monkeypatch.setattr("shutil.which", which("camas"))
 	(tmp_path / ".claude").mkdir(parents=True)
 	(tmp_path / ".claude" / "settings.json").write_text(
 		json.dumps({"other_key": "value", "hooks": {}})
@@ -661,7 +761,7 @@ def test_write_hooks_sweeps_stale_hooks_from_all_events(
 	init --claude: an event holding only the stale camas hook is dropped, a non-camas hook in another
 	event is preserved, and the current hook lands under PostToolBatch."""
 	monkeypatch.chdir(tmp_path)
-	monkeypatch.setattr("shutil.which", _which("camas"))
+	monkeypatch.setattr("shutil.which", which("camas"))
 	(tmp_path / ".claude").mkdir(parents=True)
 	(tmp_path / ".claude" / "settings.json").write_text(
 		json.dumps(
@@ -702,7 +802,7 @@ def test_write_hooks_preserves_non_camas_hook_mentioning_mcp_fix(
 	"""A non-camas hook whose command merely contains the substring ``mcp fix`` is preserved —
 	the sweep requires the ``camas`` token too, so it doesn't false-positive on unrelated hooks."""
 	monkeypatch.chdir(tmp_path)
-	monkeypatch.setattr("shutil.which", _which("camas"))
+	monkeypatch.setattr("shutil.which", which("camas"))
 	(tmp_path / ".claude").mkdir(parents=True)
 	(tmp_path / ".claude" / "settings.json").write_text(
 		json.dumps(
@@ -723,7 +823,7 @@ def test_write_hooks_preserves_non_camas_hook_mentioning_mcp_fix(
 
 def test_write_hooks_rejects_matcher_null(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 	monkeypatch.chdir(tmp_path)
-	monkeypatch.setattr("shutil.which", _which("camas"))
+	monkeypatch.setattr("shutil.which", which("camas"))
 	(tmp_path / ".claude").mkdir(parents=True)
 	(tmp_path / ".claude" / "settings.json").write_text(
 		json.dumps(
@@ -746,7 +846,7 @@ def test_write_hooks_preserves_matcher_empty_string(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
 	monkeypatch.chdir(tmp_path)
-	monkeypatch.setattr("shutil.which", _which("camas"))
+	monkeypatch.setattr("shutil.which", which("camas"))
 	(tmp_path / ".claude").mkdir(parents=True)
 	(tmp_path / ".claude" / "settings.json").write_text(
 		json.dumps(
@@ -775,7 +875,7 @@ def test_write_hooks_preserves_extra_hook_command_fields(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
 	monkeypatch.chdir(tmp_path)
-	monkeypatch.setattr("shutil.which", _which("camas"))
+	monkeypatch.setattr("shutil.which", which("camas"))
 	(tmp_path / ".claude").mkdir(parents=True)
 	(tmp_path / ".claude" / "settings.json").write_text(
 		json.dumps(
@@ -820,7 +920,7 @@ def test_write_hooks_preserves_key_order_and_omits_matcher(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
 	monkeypatch.chdir(tmp_path)
-	monkeypatch.setattr("shutil.which", _which("camas"))
+	monkeypatch.setattr("shutil.which", which("camas"))
 	(tmp_path / ".claude").mkdir(parents=True)
 	(tmp_path / ".claude" / "settings.json").write_text(
 		json.dumps(
@@ -847,7 +947,7 @@ def test_write_hooks_removes_camas_only_groups(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
 	monkeypatch.chdir(tmp_path)
-	monkeypatch.setattr("shutil.which", _which("camas"))
+	monkeypatch.setattr("shutil.which", which("camas"))
 	(tmp_path / ".claude").mkdir(parents=True)
 	(tmp_path / ".claude" / "settings.json").write_text(
 		json.dumps(
@@ -872,7 +972,7 @@ def _sweep_survivors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: s
 	always survives; ``command`` survives only when it is not recognized as a camas hook.
 	"""
 	monkeypatch.chdir(tmp_path)
-	monkeypatch.setattr("shutil.which", _which("camas"))
+	monkeypatch.setattr("shutil.which", which("camas"))
 	(tmp_path / ".claude").mkdir(parents=True)
 	(tmp_path / ".claude" / "settings.json").write_text(
 		json.dumps(
@@ -931,7 +1031,7 @@ def test_write_hooks_reinit_does_not_accumulate_pep723_hooks(
 	(tmp_path / "tasks.py").write_text(
 		'# /// script\n# dependencies = ["camas[mcp]>=0.1.8"]\n# ///\nfrom camas import Task\n'
 	)
-	monkeypatch.setattr("shutil.which", _which("uv"))
+	monkeypatch.setattr("shutil.which", which("uv"))
 	assert write_hooks([]) == 0
 	assert write_hooks([]) == 0
 	settings = json.loads((tmp_path / ".claude" / "settings.json").read_text())
@@ -951,7 +1051,7 @@ def test_write_claude_writes_all_generated_files(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
 	monkeypatch.chdir(tmp_path)
-	monkeypatch.setattr("shutil.which", _which("camas"))
+	monkeypatch.setattr("shutil.which", which("camas"))
 	assert write_claude([]) == 0
 	# .mcp.json
 	assert (tmp_path / ".mcp.json").exists()
@@ -979,7 +1079,7 @@ def test_write_claude_stops_on_mcp_json_failure(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
 	monkeypatch.chdir(tmp_path)
-	monkeypatch.setattr("shutil.which", _which())
+	monkeypatch.setattr("shutil.which", which())
 	assert write_claude([]) == 2
 	assert not (tmp_path / ".claude" / "settings.json").exists()
 	for filename in _TIERED_AGENT_FILES:
@@ -988,7 +1088,7 @@ def test_write_claude_stops_on_mcp_json_failure(
 
 def test_write_claude_idempotent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 	monkeypatch.chdir(tmp_path)
-	monkeypatch.setattr("shutil.which", _which("camas"))
+	monkeypatch.setattr("shutil.which", which("camas"))
 	# First run
 	assert write_claude([]) == 0
 	mtime1 = (tmp_path / ".claude" / "agents" / "camas-lint-fixer-haiku.md").stat().st_mtime
@@ -1019,7 +1119,7 @@ def test_run_cli_script_entry_init_claude_matches_project_init_agent_set(
 	"""
 	from camas.main.dispatch import run_cli
 
-	monkeypatch.setattr("shutil.which", _which("uv"))
+	monkeypatch.setattr("shutil.which", which("uv"))
 	script_dir = tmp_path / "script"
 	project_dir = tmp_path / "project"
 	for d in (script_dir, project_dir):
@@ -1044,7 +1144,7 @@ def test_entrypoint_mcp_init_routes_to_scaffold(
 	from camas.main import main
 
 	monkeypatch.chdir(tmp_path)
-	monkeypatch.setattr("shutil.which", _which("camas"))
+	monkeypatch.setattr("shutil.which", which("camas"))
 	monkeypatch.setattr("sys.argv", ["camas", "mcp", "init"])
 	with pytest.raises(SystemExit) as exc:
 		main()
@@ -1089,7 +1189,7 @@ def test_mcp_cli_init_claude_routes_to_write_claude(
 	from camas.mcp.cli import main
 
 	monkeypatch.chdir(tmp_path)
-	monkeypatch.setattr("shutil.which", _which("camas"))
+	monkeypatch.setattr("shutil.which", which("camas"))
 	with pytest.raises(SystemExit) as exc:
 		main(["init", "--claude"])
 	assert exc.value.code == 0
@@ -1134,7 +1234,7 @@ def test_mcp_cli_init_invalid_launcher_exits_2(
 	from camas.mcp.cli import main
 
 	monkeypatch.chdir(tmp_path)
-	monkeypatch.setattr("shutil.which", _which("camas"))
+	monkeypatch.setattr("shutil.which", which("camas"))
 	with pytest.raises(SystemExit) as exc:
 		main(["init", "--launcher", "bogus"])
 	assert exc.value.code == 2
@@ -1151,7 +1251,7 @@ def test_mcp_cli_init_launcher_camas_writes_bare_camas(
 
 	monkeypatch.chdir(tmp_path)
 	(tmp_path / "uv.lock").write_text("")
-	monkeypatch.setattr("shutil.which", _which("uv", "uvx", "camas"))
+	monkeypatch.setattr("shutil.which", which("uv", "uvx", "camas"))
 	with pytest.raises(SystemExit) as exc:
 		main(["init", "--launcher", "camas"])
 	assert exc.value.code == 0
@@ -1166,7 +1266,7 @@ def test_mcp_cli_init_launcher_uvx_forces_uvx_even_with_uv_lock(
 
 	monkeypatch.chdir(tmp_path)
 	(tmp_path / "uv.lock").write_text("")
-	monkeypatch.setattr("shutil.which", _which("uv", "uvx", "camas"))
+	monkeypatch.setattr("shutil.which", which("uv", "uvx", "camas"))
 	_pin_installed_version(monkeypatch, _DEV_VERSION)
 	with pytest.raises(SystemExit) as exc:
 		main(["init", "--launcher", "uvx"])
@@ -1182,7 +1282,7 @@ def test_hooks_flag_warns_and_writes_only_mcp_json(
 	from camas.mcp.cli import main
 
 	monkeypatch.chdir(tmp_path)
-	monkeypatch.setattr("shutil.which", _which("camas"))
+	monkeypatch.setattr("shutil.which", which("camas"))
 	with pytest.raises(SystemExit) as exc:
 		main(["init", "--hooks"])
 	assert exc.value.code == 0
@@ -1231,7 +1331,7 @@ def test_write_mcp_json_pinned_when_resolve_pin_returns_value(
 ) -> None:
 	"""When ``resolve_pin()`` returns a requirement, the uvx launcher splices it into the spec."""
 	monkeypatch.chdir(tmp_path)
-	monkeypatch.setattr("shutil.which", _which("uvx"))
+	monkeypatch.setattr("shutil.which", which("uvx"))
 	monkeypatch.setattr("camas.mcp.scaffold.resolve_pin", lambda: "camas[mcp]>=0.1.18")
 	assert write_mcp_json([]) == 0
 	entry = json.loads((tmp_path / ".mcp.json").read_text())["mcpServers"]["camas"]
@@ -1244,7 +1344,7 @@ def test_write_hooks_pinned_when_resolve_pin_returns_value(
 ) -> None:
 	"""When ``resolve_pin()`` returns a requirement, the hook command uses the pinned launcher."""
 	monkeypatch.chdir(tmp_path)
-	monkeypatch.setattr("shutil.which", _which("uvx"))
+	monkeypatch.setattr("shutil.which", which("uvx"))
 	monkeypatch.setattr("camas.mcp.scaffold.resolve_pin", lambda: "camas[mcp]>=0.1.18")
 	assert write_hooks([]) == 0
 	out = capsys.readouterr().out
@@ -1256,7 +1356,7 @@ def test_write_mcp_json_unpinned_when_no_tasks_py(
 ) -> None:
 	"""No PEP 723 pin and a dev/local build (not on PyPI to pin against) → unpinned fallback."""
 	monkeypatch.chdir(tmp_path)
-	monkeypatch.setattr("shutil.which", _which("uvx"))
+	monkeypatch.setattr("shutil.which", which("uvx"))
 	_pin_installed_version(monkeypatch, _DEV_VERSION)
 	assert write_mcp_json([]) == 0
 	entry = json.loads((tmp_path / ".mcp.json").read_text())["mcpServers"]["camas"]
@@ -1268,7 +1368,7 @@ def test_write_mcp_json_pinned_to_installed_version_when_release(
 ) -> None:
 	"""No PEP 723 pin, but the running camas is a clean release → pin the uvx fallback to it."""
 	monkeypatch.chdir(tmp_path)
-	monkeypatch.setattr("shutil.which", _which("uvx"))
+	monkeypatch.setattr("shutil.which", which("uvx"))
 	_pin_installed_version(monkeypatch, _RELEASE_VERSION)
 	assert write_mcp_json([]) == 0
 	entry = json.loads((tmp_path / ".mcp.json").read_text())["mcpServers"]["camas"]
@@ -1280,7 +1380,7 @@ def test_write_mcp_json_launcher_camas_writes_bare_camas(
 ) -> None:
 	monkeypatch.chdir(tmp_path)
 	(tmp_path / "uv.lock").write_text("")
-	monkeypatch.setattr("shutil.which", _which("uv", "uvx", "camas"))
+	monkeypatch.setattr("shutil.which", which("uv", "uvx", "camas"))
 	assert write_mcp_json([], launcher="camas") == 0
 	entry = json.loads((tmp_path / ".mcp.json").read_text())["mcpServers"]["camas"]
 	assert (entry["command"], entry["args"]) == ("camas", ["mcp"])
@@ -1291,7 +1391,7 @@ def test_write_mcp_json_launcher_uvx_forces_uvx_even_with_uv_lock(
 ) -> None:
 	monkeypatch.chdir(tmp_path)
 	(tmp_path / "uv.lock").write_text("")
-	monkeypatch.setattr("shutil.which", _which("uv", "uvx", "camas"))
+	monkeypatch.setattr("shutil.which", which("uv", "uvx", "camas"))
 	_pin_installed_version(monkeypatch, _DEV_VERSION)
 	assert write_mcp_json([], launcher="uvx") == 0
 	entry = json.loads((tmp_path / ".mcp.json").read_text())["mcpServers"]["camas"]
@@ -1302,7 +1402,7 @@ def test_write_mcp_json_launcher_uv_errors_without_lock_or_pep723(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
 	monkeypatch.chdir(tmp_path)
-	monkeypatch.setattr("shutil.which", _which("uv", "uvx", "camas"))
+	monkeypatch.setattr("shutil.which", which("uv", "uvx", "camas"))
 	assert write_mcp_json([], launcher="uv") == 2
 	err = capsys.readouterr().err
 	assert "--launcher uv" in err
@@ -1314,7 +1414,7 @@ def test_write_mcp_json_launcher_camas_errors_without_path(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
 	monkeypatch.chdir(tmp_path)
-	monkeypatch.setattr("shutil.which", _which())
+	monkeypatch.setattr("shutil.which", which())
 	assert write_mcp_json([], launcher="camas") == 2
 	err = capsys.readouterr().err
 	assert "--launcher camas" in err
@@ -1325,7 +1425,7 @@ def test_write_mcp_json_launcher_uvx_errors_without_uvx(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
 	monkeypatch.chdir(tmp_path)
-	monkeypatch.setattr("shutil.which", _which("uv", "camas"))
+	monkeypatch.setattr("shutil.which", which("uv", "camas"))
 	assert write_mcp_json([], launcher="uvx") == 2
 	err = capsys.readouterr().err
 	assert "--launcher uvx" in err
@@ -1338,7 +1438,7 @@ def test_write_hooks_launcher_matches_chosen_command(
 ) -> None:
 	monkeypatch.chdir(tmp_path)
 	(tmp_path / "uv.lock").write_text("")
-	monkeypatch.setattr("shutil.which", _which("uv", "uvx", "camas"))
+	monkeypatch.setattr("shutil.which", which("uv", "uvx", "camas"))
 	assert write_hooks([], launcher="camas") == 0
 	out = capsys.readouterr().out
 	assert "camas mcp fix" in out
@@ -1386,7 +1486,7 @@ def test_write_claude_stops_on_hooks_failure(
 	"""write_mcp_json succeeds but write_hooks fails on malformed settings.json → write_claude
 	returns 2 and does NOT write agent/skill templates."""
 	monkeypatch.chdir(tmp_path)
-	monkeypatch.setattr("shutil.which", _which("camas"))
+	monkeypatch.setattr("shutil.which", which("camas"))
 	(tmp_path / ".claude").mkdir(parents=True)
 	(tmp_path / ".claude" / "settings.json").write_text("{not valid json")
 	assert write_claude([]) == 2

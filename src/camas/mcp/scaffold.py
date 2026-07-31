@@ -14,14 +14,22 @@ from importlib.metadata import version
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, Literal, cast
 
+if sys.version_info >= (3, 11):
+	from typing import assert_never
+else:  # pragma: no cover
+	from typing_extensions import assert_never
+
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from ..core.timings import ensure_camas_dir
 from ..v0.config import DEFAULT_CAMAS_DIR
+from .environment import local_camas, local_environment
 from .gitignore import warn_uncommittable
 
 if TYPE_CHECKING:
 	from collections.abc import Mapping
+
+	from .environment import LocalEnvironment
 
 SERVER_NAME: Final = "camas"
 MCP_JSON_PATH: Final = Path(".mcp.json")
@@ -166,7 +174,7 @@ def write_mcp_json(argv: list[str], *, launcher: Launcher | None = None) -> int:
 	command, args = resolved
 	servers[SERVER_NAME] = {"type": "stdio", "command": command, "args": args}
 	camas_dir: Final = Path.cwd() / DEFAULT_CAMAS_DIR
-	camas_note: Final = (
+	camas_dir_note: Final = (
 		f"  created {camas_dir} for run logs and timing estimates; delete it to opt out.\n"
 		if not camas_dir.exists()
 		else ""
@@ -179,7 +187,7 @@ def write_mcp_json(argv: list[str], *, launcher: Launcher | None = None) -> int:
 	print(
 		f"Wrote the {SERVER_NAME!r} MCP server to {mcp_json_path}\n"
 		f"  command: {command} {' '.join(args)}\n"
-		f"{camas_note}"
+		f"{camas_dir_note}"
 		f"\n{portability_note(command)} Reload Claude Code, approve the server, "
 		"then ask it to call camas_list."
 	)
@@ -210,7 +218,7 @@ def uvx_spec(pin: str | None) -> str:
 	return pin if pin is not None else installed_version_spec(version("camas"))
 
 
-def uv_command(tail: list[str]) -> tuple[str, list[str]] | None:
+def uv_command(tail: list[str]) -> tuple[Launcher, list[str]] | None:
 	"""The ``uv`` launch command: the lockfile project path, else PEP 723 ``tasks.py``, else
 	``None`` when neither applies.
 	"""
@@ -224,11 +232,15 @@ def uv_command(tail: list[str]) -> tuple[str, list[str]] | None:
 
 def launch_command(
 	*, pin: str | None = None, launcher: Launcher | None = None
-) -> tuple[str, list[str]] | None:
+) -> tuple[Launcher, list[str]] | None:
 	"""The most portable launch command for camas, or None if none is portable enough to commit.
 
 	``launcher`` forces a specific strategy instead of the auto-probe (``uv`` errors unless a
 	uv.lock project or PEP 723 ``tasks.py`` applies; ``camas`` errors unless it's on PATH).
+
+	The auto-probe takes a ``camas`` belonging to the project's own environment over ``uvx``: a uvx
+	server is isolated from the venv or devShell that holds the project's tools, so no task it runs
+	can see them, while ``uv run`` is already inside the project it locks and keeps its priority.
 	"""
 	tail = ["mcp"]
 	if launcher == "uv":
@@ -241,9 +253,12 @@ def launch_command(
 		found = uv_command(tail)
 		if found is not None:
 			return found
+	camas_path = shutil.which("camas")
+	if camas_path is not None and local_environment(camas_path) is not None:
+		return "camas", tail
 	if shutil.which("uvx") is not None:
 		return "uvx", [uvx_spec(pin), *tail]
-	if shutil.which("camas") is not None:
+	if camas_path is not None:
 		return "camas", tail
 	return None
 
@@ -278,13 +293,48 @@ def uv_project_root() -> Path | None:
 	return next((d for d in (cwd, *cwd.parents) if (d / "uv.lock").is_file()), None)
 
 
-def portability_note(command: str) -> str:
-	"""How portable the chosen launch command is, for the committed ``.mcp.json``."""
-	if command == "uv":
-		return "This entry is portable; uv resolves camas from the lockfile or the PEP 723 header in tasks.py."
-	if command == "uvx":
-		return "This entry is portable; uvx downloads and runs camas[mcp] from PyPI."
-	return "This entry is portable if your team installs camas on PATH; commit it to share."
+def camas_note(environment: LocalEnvironment | None) -> str:
+	"""What a committed bare ``camas`` command gets a teammate, given the ``environment`` that
+	command resolves into here — which is what a teammate has to reproduce for the tasks it runs to
+	find the same tools.
+	"""
+	match environment:
+		case "venv":
+			return (
+				"This entry runs the camas in the virtual environment active here, so tasks see the "
+				"tools installed there; commit it, and have that environment active before starting "
+				"the client."
+			)
+		case "nix":
+			return (
+				"This entry runs the flake-provided camas, so tasks see the devShell's toolchain; "
+				"commit it, and enter the devShell before starting the client."
+			)
+		case None:
+			return "This entry is portable if your team installs camas on PATH; commit it to share."
+		case _:
+			assert_never(environment)
+
+
+def portability_note(command: Launcher) -> str:
+	"""How portable the chosen launch command is, for the committed ``.mcp.json``.
+
+	The ``camas`` case reads the environment back rather than being handed the one the auto-probe
+	chose for, so a forced ``--launcher camas`` is described the same way: what a teammate needs to
+	know is what a bare ``camas`` resolves to, not how it came to be written.
+	"""
+	match command:
+		case "uv":
+			return (
+				"This entry is portable; uv resolves camas from the lockfile or the PEP 723 header "
+				"in tasks.py."
+			)
+		case "uvx":
+			return "This entry is portable; uvx downloads and runs camas[mcp] from PyPI."
+		case "camas":
+			return camas_note(local_camas())
+		case _:
+			assert_never(command)
 
 
 def parse_json_object(path: Path) -> dict[str, Any] | None:
