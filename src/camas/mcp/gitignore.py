@@ -252,11 +252,12 @@ def warn_uncommittable(paths: Sequence[str], *, consequence: str) -> None:
 
 	Neither write may raise, whatever is wrong with the stream: this runs after the files are
 	already on disk, so failing here turns a completed init into an exception over an advisory
-	message. A stream can fail two ways that share no exception type — a reader that walked away
-	(``camas mcp init | head``, or ``2>&1 |`` with both streams on the one pipe) gives
-	``BrokenPipeError``, while a stream someone closed outright gives ``ValueError``. The two
-	guards stay separate because a dead stdout must not cost the warning a stderr that is still
-	being read.
+	message. Whole categories are suppressed on purpose, not the two failures that happen to have
+	been seen — ``OSError`` for a reader that walked away (``BrokenPipeError``, from
+	``camas mcp init | head``, or ``2>&1 |`` with both streams on the one pipe) and any other
+	OS-level write failure, ``ValueError`` for a stream someone closed outright. A report on
+	finished work has nothing useful to do with any of them. The two guards stay separate because a
+	dead stdout must not cost the warning a stderr that is still being read.
 	"""
 	warning = gitignore_warning(paths, consequence=consequence)
 	if warning is not None:
