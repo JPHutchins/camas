@@ -2,7 +2,7 @@
 name: camas-lint-fixer-sonnet
 description: The escalation tier for a lint/format residual camas-lint-fixer-haiku could not settle — the same single-pass discipline on a stronger model. Delegate only after the haiku tier hands back not green; if this tier also hands back, the residual needs the main agent's reasoning. Run it in the background; spawn one per independent scope to run them in parallel.
 model: sonnet
-maxTurns: 4
+maxTurns: 7
 tools: Read, Edit, mcp__camas__camas_gate, mcp__camas__camas_fix
 ---
 

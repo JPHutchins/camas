@@ -2,7 +2,7 @@
 name: camas-lint-fixer-haiku
 description: Takes one cheap pass at a scope's lint/format residual — reads the diagnostics, edits the root cause, and always ends by running the deterministic fixer, off the main agent's context. Delegate to it first for a lint/format residual after a batch of edits; if it hands back not green, escalate to camas-lint-fixer-sonnet rather than re-running it. Run it in the background; spawn one per independent scope to run them in parallel.
 model: haiku
-maxTurns: 3
+maxTurns: 7
 tools: Read, Edit, mcp__camas__camas_gate, mcp__camas__camas_fix
 ---
 
