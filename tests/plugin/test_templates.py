@@ -38,6 +38,11 @@ file it read. Each step depends on the previous one's result, so each costs an a
 count hands the delegating agent no report at all, and one exactly equal to it completes with no
 turn to spare for a second file or an edit retried on a non-unique match."""
 
+_SPARE_ROUND = 2
+"""The read and the edit one more file in the scope costs, or a retry of an edit whose
+``old_string`` was not unique. A budget has to clear the mandated chain by this much rather than
+merely exceed it: one spare turn buys neither, since each needs a read before an edit."""
+
 
 def _frontmatter(filename: str) -> list[str]:
 	"""The template's frontmatter lines, so a field is read as a field rather than matched against
@@ -58,10 +63,10 @@ def _max_turns(filename: str) -> int:
 
 
 @pytest.mark.parametrize(("filename", "mandated"), _MANDATED_TURNS)
-def test_agent_template_budgets_more_turns_than_its_own_steps_mandate(
+def test_agent_template_budgets_its_mandated_chain_plus_a_spare_round(
 	filename: str, mandated: int
 ) -> None:
-	assert _max_turns(filename) > mandated
+	assert _max_turns(filename) >= mandated + _SPARE_ROUND
 
 
 def test_the_guards_cover_every_agent_template_the_wheel_ships() -> None:
