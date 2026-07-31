@@ -293,6 +293,22 @@ def test_warn_uncommittable_still_warns_when_stdout_is_unusable(
 
 @requires_git
 @_STREAM_FAILURES
+def test_warn_uncommittable_does_not_raise_when_only_stderr_is_gone(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: type[BaseException]
+) -> None:
+	"""The two guards are separate so a dead stdout cannot cost the warning a live stderr; this is the
+	other side of that, and the case the pair did not cover. With only the both-gone and stdout-gone
+	tests, dropping the ``suppress`` around the stderr write alone passes the whole suite — which is
+	exactly the omission #271 was: a guard on one stream and not the other.
+	"""
+	_repo(tmp_path, ".mcp.json\n")
+	monkeypatch.chdir(tmp_path)
+	monkeypatch.setattr("sys.stderr", _DeadStream(error))
+	warn_uncommittable((".mcp.json",), consequence="nobody else gets the server entry")
+
+
+@requires_git
+@_STREAM_FAILURES
 def test_warn_uncommittable_does_not_raise_when_both_streams_are_gone(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: type[BaseException]
 ) -> None:
