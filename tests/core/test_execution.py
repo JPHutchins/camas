@@ -356,8 +356,7 @@ def test_missing_cwd_errors_naming_the_directory_not_the_executable(tmp_path: Pa
 	completion = result.results[0].completion
 	assert isinstance(completion, Errored)
 	assert completion.returncode == NOT_FOUND_RC
-	assert str(missing) in completion.message
-	assert "python" not in completion.message
+	assert completion.message.endswith(str(missing))
 
 
 def test_unusable_cwd_answers_none_when_the_cwd_cannot_be_inspected(

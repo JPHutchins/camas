@@ -252,6 +252,15 @@ def spawn_error_message(exc: OSError, argv: Sequence[str], cwd: Path | None) -> 
 	...     FileNotFoundError(2, "No such file or directory", "gone"), ("echo",), Path("gone")
 	... )
 	'no such file or directory: gone'
+
+	The OS wins over both when all three differ:
+
+	>>> spawn_error_message(
+	...     FileNotFoundError(2, "No such file or directory", "named-by-os"),
+	...     ("ghost",),
+	...     Path("also-gone"),
+	... )
+	'no such file or directory: named-by-os'
 	>>> spawn_error_message(OSError(267, "The directory name is invalid"), ("python",), Path("gone"))
 	'the directory name is invalid: gone'
 	>>> spawn_error_message(PermissionError(13, "Permission denied"), ("./script.sh",), None)
