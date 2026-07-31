@@ -12,21 +12,22 @@ from pathlib import Path
 
 import pytest
 
+from camas.mcp.scaffold import AGENT_TEMPLATES
+
 _REPO = Path(__file__).resolve().parents[2]
 _TEMPLATES = _REPO / "src" / "camas" / "main"
 
-_AGENT_TEMPLATES = (
-	("claude_agent_lint_haiku.md", "camas-lint-fixer-haiku", "haiku"),
-	("claude_agent_lint_sonnet.md", "camas-lint-fixer-sonnet", "sonnet"),
-	("claude_agent_test_fixer.md", "camas-test-fixer", "sonnet"),
+_GUARDED = (
+	("claude_agent_lint_haiku.md", "camas-lint-fixer-haiku", "haiku", 5),
+	("claude_agent_lint_sonnet.md", "camas-lint-fixer-sonnet", "sonnet", 5),
+	("claude_agent_test_fixer.md", "camas-test-fixer", "sonnet", 7),
 )
+"""One row per shipped template, cross-checked against ``AGENT_TEMPLATES`` — the list the wheel
+actually writes — so a tier added there cannot land unguarded here."""
 
+_AGENT_TEMPLATES = tuple((source, name, model) for source, name, model, _ in _GUARDED)
 
-_MANDATED_TURNS = (
-	("claude_agent_lint_haiku.md", 5),
-	("claude_agent_lint_sonnet.md", 5),
-	("claude_agent_test_fixer.md", 7),
-)
+_MANDATED_TURNS = tuple((source, mandated) for source, _, _, mandated in _GUARDED)
 """``(template, the longest chain of turns its own steps mandate)``: the conditional
 ``camas_gate``, the ``Read`` that Edit's contract forces before an edit, the edit, ``camas_fix``,
 and the final report — plus, for the test tier, its closing re-gate and a second read, since its
@@ -55,8 +56,10 @@ def test_agent_template_budgets_more_turns_than_its_own_steps_mandate(
 	assert _max_turns(filename) > mandated
 
 
-def test_every_shipped_agent_template_has_a_mandated_turn_count() -> None:
-	assert sorted(f for f, _ in _MANDATED_TURNS) == sorted(f for f, _, _ in _AGENT_TEMPLATES)
+def test_the_guards_cover_every_agent_template_the_wheel_ships() -> None:
+	assert sorted(source for source, *_ in _GUARDED) == sorted(
+		source for source, _ in AGENT_TEMPLATES
+	)
 
 
 def test_templates_mandating_the_same_chain_budget_the_same_turns() -> None:
