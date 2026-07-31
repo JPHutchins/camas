@@ -11,8 +11,13 @@ import shlex
 import shutil
 import sys
 from importlib.metadata import version
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any, Final, Literal, cast
+
+if sys.version_info >= (3, 11):
+	from typing import assert_never
+else:  # pragma: no cover
+	from typing_extensions import assert_never
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -222,6 +227,60 @@ def uv_command(tail: list[str]) -> tuple[str, list[str]] | None:
 	return None
 
 
+LocalEnvironment = Literal["venv", "nix"]
+"""An ecosystem environment a ``camas`` executable can belong to, and whose tools it therefore
+shares: a Python virtual environment, or the Nix store a flake devShell builds from."""
+
+
+def in_nix_store(executable: str) -> bool:
+	r"""Whether ``executable`` came out of the Nix store, and so from a devShell or profile that
+	provides the project's toolchain alongside it.
+
+	>>> in_nix_store("/nix/store/9k1zdwqp-camas-0.1.27/bin/camas")
+	True
+	>>> in_nix_store("/usr/bin/camas"), in_nix_store(r"C:\Program Files\camas.exe")
+	(False, False)
+	"""
+	return PurePosixPath(executable).is_relative_to("/nix/store")
+
+
+def in_virtualenv(executable: str) -> bool:
+	"""Whether ``executable`` sits in a virtual environment's script directory — ``bin``, or
+	``Scripts`` on Windows — and so shares an interpreter with every tool installed into it. Decided
+	by the ``pyvenv.cfg`` beside that directory rather than by a ``.venv`` name, so ``venv/``,
+	``env/`` and ``~/.virtualenvs/x`` count too and a plain directory someone named ``.venv`` does
+	not.
+	"""
+	return (Path(executable).parent.parent / "pyvenv.cfg").is_file()
+
+
+def local_environment(executable: str) -> LocalEnvironment | None:
+	"""Which ecosystem environment ``executable`` belongs to, or ``None`` for a global or
+	tool-isolated install — ``uv tool install``, pipx, a system package — that shares no tools with
+	the project.
+
+	Only where the executable lives is consulted, never ``VIRTUAL_ENV`` or ``IN_NIX_SHELL``: those
+	report that a shell was entered, not that *this* camas came from it. Measured on nix 2.32.1,
+	``nix develop`` sets ``IN_NIX_SHELL=impure`` in a shell where ``camas`` still resolved to a
+	global ``~/.local/bin/camas`` — as isolated from the devShell's tools as ``uvx`` is, and without
+	its pin.
+	"""
+	if in_nix_store(executable):
+		return "nix"
+	if in_virtualenv(executable):
+		return "venv"
+	return None
+
+
+def local_camas() -> LocalEnvironment | None:
+	"""Which environment the PATH ``camas`` belongs to — the one a bare ``camas`` command written
+	into ``.mcp.json`` or a hook will resolve to — or ``None`` when there is none on PATH, or the one
+	there belongs to no environment.
+	"""
+	found = shutil.which("camas")
+	return None if found is None else local_environment(found)
+
+
 def launch_command(
 	*, pin: str | None = None, launcher: Launcher | None = None
 ) -> tuple[str, list[str]] | None:
@@ -229,6 +288,10 @@ def launch_command(
 
 	``launcher`` forces a specific strategy instead of the auto-probe (``uv`` errors unless a
 	uv.lock project or PEP 723 ``tasks.py`` applies; ``camas`` errors unless it's on PATH).
+
+	The auto-probe takes a ``camas`` belonging to the project's own environment over ``uvx``: a uvx
+	server is isolated from the venv or devShell that holds the project's tools, so no task it runs
+	can see them, while ``uv run`` is already inside the project it locks and keeps its priority.
 	"""
 	tail = ["mcp"]
 	if launcher == "uv":
@@ -241,6 +304,8 @@ def launch_command(
 		found = uv_command(tail)
 		if found is not None:
 			return found
+	if local_camas() is not None:
+		return "camas", tail
 	if shutil.which("uvx") is not None:
 		return "uvx", [uvx_spec(pin), *tail]
 	if shutil.which("camas") is not None:
@@ -278,13 +343,41 @@ def uv_project_root() -> Path | None:
 	return next((d for d in (cwd, *cwd.parents) if (d / "uv.lock").is_file()), None)
 
 
+def camas_note(environment: LocalEnvironment | None) -> str:
+	"""What a committed bare ``camas`` command gets a teammate, given the ``environment`` that
+	command resolves into here — which is what a teammate has to reproduce for the tasks it runs to
+	find the same tools.
+	"""
+	match environment:
+		case "venv":
+			return (
+				"This entry runs the camas in this project's virtual environment, so tasks see the "
+				"tools installed there; commit it, and activate that environment before starting "
+				"the client."
+			)
+		case "nix":
+			return (
+				"This entry runs the flake-provided camas, so tasks see the devShell's toolchain; "
+				"commit it, and enter the devShell before starting the client."
+			)
+		case None:
+			return "This entry is portable if your team installs camas on PATH; commit it to share."
+		case _:
+			assert_never(environment)
+
+
 def portability_note(command: str) -> str:
-	"""How portable the chosen launch command is, for the committed ``.mcp.json``."""
+	"""How portable the chosen launch command is, for the committed ``.mcp.json``.
+
+	The ``camas`` case reads the environment back rather than being handed the one the auto-probe
+	chose for, so a forced ``--launcher camas`` is described the same way: what a teammate needs to
+	know is what a bare ``camas`` resolves to, not how it came to be written.
+	"""
 	if command == "uv":
 		return "This entry is portable; uv resolves camas from the lockfile or the PEP 723 header in tasks.py."
 	if command == "uvx":
 		return "This entry is portable; uvx downloads and runs camas[mcp] from PyPI."
-	return "This entry is portable if your team installs camas on PATH; commit it to share."
+	return camas_note(local_camas())
 
 
 def parse_json_object(path: Path) -> dict[str, Any] | None:
