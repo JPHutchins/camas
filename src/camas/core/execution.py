@@ -220,18 +220,20 @@ def unusable_cwd(cwd: Path | None) -> str | None:
 	"""``cwd`` when a leaf could not have been spawned in it, else ``None`` — asked only after a
 	spawn has already failed, to attribute a failure the OS declined to attribute itself.
 
+	Answers about the real filesystem, so these ask it about this module's own file and directory —
+	which exist, and are what they are, wherever the suite runs from.
+
 	>>> from pathlib import Path
 	>>> unusable_cwd(None) is None
 	True
-	>>> unusable_cwd(Path("no-such-directory-xyz"))
-	'no-such-directory-xyz'
-	>>> unusable_cwd(Path(".")) is None
+	>>> unusable_cwd(Path(__file__).parent) is None
+	True
+	>>> unusable_cwd(Path(__file__)) == str(Path(__file__))
 	True
 	"""
-	if cwd is None:
-		return None
 	with suppress(OSError):
-		return None if cwd.is_dir() else str(cwd)
+		if cwd is not None and not cwd.is_dir():
+			return str(cwd)
 	return None
 
 
@@ -261,8 +263,6 @@ def spawn_error_message(exc: OSError, argv: Sequence[str], cwd: Path | None) -> 
 	...     Path("also-gone"),
 	... )
 	'no such file or directory: named-by-os'
-	>>> spawn_error_message(OSError(267, "The directory name is invalid"), ("python",), Path("gone"))
-	'the directory name is invalid: gone'
 	>>> spawn_error_message(PermissionError(13, "Permission denied"), ("./script.sh",), None)
 	'permission denied: ./script.sh'
 	>>> spawn_error_message(OSError(), ("weird",), None)

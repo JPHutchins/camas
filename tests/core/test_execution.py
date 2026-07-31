@@ -23,6 +23,7 @@ from camas.core.execution import (
 	restore_tty,
 	run,
 	spawn_cwd,
+	spawn_error_message,
 	step_interrupt,
 	suppress_ctrl_c_echo,
 	unusable_cwd,
@@ -357,6 +358,19 @@ def test_missing_cwd_errors_naming_the_directory_not_the_executable(tmp_path: Pa
 	assert isinstance(completion, Errored)
 	assert completion.returncode == NOT_FOUND_RC
 	assert completion.message.endswith(str(missing))
+
+
+def test_spawn_error_names_the_cwd_when_the_os_named_no_path(tmp_path: Path) -> None:
+	"""The Windows shape, which no Linux run reaches: ``OSError(267)`` "The directory name is
+	invalid" with ``filename`` unset, where the cwd is the only thing that can name the failure.
+	A fresh ``tmp_path`` child cannot exist, so the answer does not depend on the cwd the suite
+	happens to run from.
+	"""
+	missing = tmp_path / "gone"
+	message = spawn_error_message(
+		OSError(267, "The directory name is invalid"), ("python",), missing
+	)
+	assert message == f"the directory name is invalid: {missing}"
 
 
 def test_unusable_cwd_answers_none_when_the_cwd_cannot_be_inspected(
