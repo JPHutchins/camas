@@ -8,20 +8,10 @@ from typing import TYPE_CHECKING
 from camas.mcp.environment import in_virtualenv, local_camas, local_environment
 
 if TYPE_CHECKING:
-	from collections.abc import Callable, Mapping
+	from collections.abc import Callable
 	from pathlib import Path
 
 	import pytest
-
-
-def _which(*found: str) -> Callable[[str], str | None]:
-	return lambda name: f"/usr/bin/{name}" if name in found else None
-
-
-def _which_at(found: Mapping[str, str]) -> Callable[[str], str | None]:
-	"""A ``shutil.which`` that resolves each name to a chosen path, for the cases where *where* a
-	tool lives is the thing under test."""
-	return found.get
 
 
 def _outside_any_environment(tmp_path: Path) -> Path:
@@ -56,22 +46,42 @@ def test_local_environment_global_install_belongs_to_none(tmp_path: Path) -> Non
 	assert local_environment(str(_outside_any_environment(tmp_path))) is None
 
 
+def _camas_resolving_to(path: Path | None) -> Callable[[str], str | None]:
+	"""A ``shutil.which`` that finds ``camas`` at ``path``, or finds nothing — the only question
+	:func:`local_camas` asks of PATH.
+	"""
+	return lambda _name: None if path is None else str(path)
+
+
 def test_local_camas_none_when_off_path(monkeypatch: pytest.MonkeyPatch) -> None:
-	monkeypatch.setattr("shutil.which", _which())
+	monkeypatch.setattr("shutil.which", _camas_resolving_to(None))
 	assert local_camas() is None
 
 
 def test_local_camas_none_for_a_global_install(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-	monkeypatch.setattr(
-		"shutil.which", _which_at({"camas": str(_outside_any_environment(tmp_path))})
-	)
+	monkeypatch.setattr("shutil.which", _camas_resolving_to(_outside_any_environment(tmp_path)))
 	assert local_camas() is None
 
 
 def test_local_camas_finds_the_venv(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, venv_camas: Callable[[Path], Path]
 ) -> None:
-	monkeypatch.setattr("shutil.which", _which_at({"camas": str(venv_camas(tmp_path / ".venv"))}))
+	monkeypatch.setattr("shutil.which", _camas_resolving_to(venv_camas(tmp_path / ".venv")))
 	assert local_camas() == "venv"
+
+
+def test_in_virtualenv_answers_rather_than_raising_on_an_unreadable_parent(
+	monkeypatch: pytest.MonkeyPatch,
+) -> None:
+	"""``Path.is_file`` raises ``PermissionError`` here on Python 3.10 and 3.12 and returns ``False`` on
+	3.14, and camas supports both — so a launcher probe over an unreadable directory has to answer,
+	not take down ``camas mcp init`` on half the range.
+	"""
+
+	def denied(*_args: object, **_kwargs: object) -> object:
+		raise PermissionError(13, "Permission denied")
+
+	monkeypatch.setattr("os.stat", denied)
+	assert in_virtualenv("/locked/bin/camas") is False

@@ -35,8 +35,13 @@ def in_virtualenv(executable: str) -> bool:
 	by the ``pyvenv.cfg`` beside that directory rather than by a ``.venv`` name, so ``venv/``,
 	``env/`` and ``~/.virtualenvs/x`` count too and a plain directory someone named ``.venv`` does
 	not.
+
+	``os.path.isfile`` rather than ``Path.is_file``, which answers only on the newer half of the
+	interpreters camas supports: measured, an unreadable parent directory makes it raise
+	``PermissionError`` on 3.10 and 3.12 and return ``False`` on 3.14. A launcher probe has to fall
+	through to the next candidate, not take down ``camas mcp init`` on the older ones.
 	"""
-	return (Path(executable).parent.parent / "pyvenv.cfg").is_file()
+	return Path(Path(executable).parent.parent / "pyvenv.cfg").is_file()
 
 
 def local_environment(executable: str) -> LocalEnvironment | None:

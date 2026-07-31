@@ -4,8 +4,9 @@
 """``camas mcp init --claude`` produces a loadable plugin surface (criterion #1 + #4).
 
 Happy path: in a tmp_path with a tasks.py and a uv.lock, ``init --claude`` writes the generated
-files; the ``.mcp.json`` camas entry uses a ``uv`` or ``uvx`` launcher (criterion #4 — no bare
-``camas``); and a headless ``claude -p --strict-mcp-config`` loads the produced config and calls
+files; the ``.mcp.json`` camas entry uses the ``uv`` launcher that project's lockfile calls for
+(criterion #4 — bare ``camas`` is deliberate only where it belongs to the project's environment,
+which this fixture is not); and a headless ``claude -p --strict-mcp-config`` loads it and calls
 the ``camas_list`` MCP tool without error.
 
 The shipped PostToolBatch hook command uses the same portable launcher as ``.mcp.json`` and ends

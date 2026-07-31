@@ -218,7 +218,7 @@ def uvx_spec(pin: str | None) -> str:
 	return pin if pin is not None else installed_version_spec(version("camas"))
 
 
-def uv_command(tail: list[str]) -> tuple[str, list[str]] | None:
+def uv_command(tail: list[str]) -> tuple[Launcher, list[str]] | None:
 	"""The ``uv`` launch command: the lockfile project path, else PEP 723 ``tasks.py``, else
 	``None`` when neither applies.
 	"""
@@ -232,7 +232,7 @@ def uv_command(tail: list[str]) -> tuple[str, list[str]] | None:
 
 def launch_command(
 	*, pin: str | None = None, launcher: Launcher | None = None
-) -> tuple[str, list[str]] | None:
+) -> tuple[Launcher, list[str]] | None:
 	"""The most portable launch command for camas, or None if none is portable enough to commit.
 
 	``launcher`` forces a specific strategy instead of the auto-probe (``uv`` errors unless a
@@ -316,18 +316,25 @@ def camas_note(environment: LocalEnvironment | None) -> str:
 			assert_never(environment)
 
 
-def portability_note(command: str) -> str:
+def portability_note(command: Launcher) -> str:
 	"""How portable the chosen launch command is, for the committed ``.mcp.json``.
 
 	The ``camas`` case reads the environment back rather than being handed the one the auto-probe
 	chose for, so a forced ``--launcher camas`` is described the same way: what a teammate needs to
 	know is what a bare ``camas`` resolves to, not how it came to be written.
 	"""
-	if command == "uv":
-		return "This entry is portable; uv resolves camas from the lockfile or the PEP 723 header in tasks.py."
-	if command == "uvx":
-		return "This entry is portable; uvx downloads and runs camas[mcp] from PyPI."
-	return camas_note(local_camas())
+	match command:
+		case "uv":
+			return (
+				"This entry is portable; uv resolves camas from the lockfile or the PEP 723 header "
+				"in tasks.py."
+			)
+		case "uvx":
+			return "This entry is portable; uvx downloads and runs camas[mcp] from PyPI."
+		case "camas":
+			return camas_note(local_camas())
+		case _:
+			assert_never(command)
 
 
 def parse_json_object(path: Path) -> dict[str, Any] | None:
