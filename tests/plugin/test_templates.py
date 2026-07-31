@@ -39,10 +39,18 @@ count hands the delegating agent no report at all, and one exactly equal to it c
 turn to spare for a second file or an edit retried on a non-unique match."""
 
 
+def _frontmatter(filename: str) -> list[str]:
+	"""The template's frontmatter lines, so a field is read as a field rather than matched against
+	the body prose the agent is meant to follow.
+	"""
+	head, _, _ = (_TEMPLATES / filename).read_text().partition("\n---\n")
+	return head.removeprefix("---\n").splitlines()
+
+
 def _max_turns(filename: str) -> int:
 	declared = [
 		line.removeprefix("maxTurns:")
-		for line in (_TEMPLATES / filename).read_text().splitlines()
+		for line in _frontmatter(filename)
 		if line.startswith("maxTurns:")
 	]
 	assert len(declared) == 1, f"{filename} declares {len(declared)} maxTurns lines, want exactly 1"
@@ -70,7 +78,7 @@ def test_templates_mandating_the_same_chain_budget_the_same_turns() -> None:
 	"""
 	budgets = {
 		mandated: sorted({_max_turns(f) for f, m in _MANDATED_TURNS if m == mandated})
-		for _, mandated in _MANDATED_TURNS
+		for mandated in {m for _, m in _MANDATED_TURNS}
 	}
 	assert all(len(seen) == 1 for seen in budgets.values()), budgets
 
