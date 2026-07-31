@@ -347,14 +347,16 @@ def test_non_executable_file_errors_without_traceback(tmp_path: Path) -> None:
 	assert str(script) in completion.message
 
 
-def test_missing_cwd_errors_without_traceback(tmp_path: Path) -> None:
-	task = Task(("python", "-c", "pass"), name="lost", cwd=tmp_path / "does-not-exist")
+def test_missing_cwd_errors_naming_the_directory_not_the_executable(tmp_path: Path) -> None:
+	missing = tmp_path / "does-not-exist"
+	task = Task(("python", "-c", "pass"), name="lost", cwd=missing)
 	result = asyncio.run(run(task))
 	assert result.returncode == 1
 	completion = result.results[0].completion
 	assert isinstance(completion, Errored)
 	assert completion.returncode == NOT_FOUND_RC
-	assert completion.message
+	assert str(missing) in completion.message
+	assert "python" not in completion.message
 
 
 def test_sequential_skip_nested_group() -> None:

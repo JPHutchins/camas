@@ -220,17 +220,24 @@ def spawn_error_message(exc: OSError, argv: Sequence[str]) -> str:
 	"""The Errored message for a leaf whose spawn raised ``exc``: the canonical
 	'no such file or directory' for a missing executable, else the OS ``strerror``.
 
+	Names the path the OS reported when it named one, falling back to the executable. A leaf
+	whose ``cwd`` does not exist fails with the directory as the missing path, and reporting
+	the executable there sends the reader after a file that is present and fine.
+
 	>>> spawn_error_message(FileNotFoundError(2, "No such file or directory"), ("ghost",))
 	'no such file or directory: ghost'
+	>>> spawn_error_message(FileNotFoundError(2, "No such file or directory", "gone"), ("echo",))
+	'no such file or directory: gone'
 	>>> spawn_error_message(PermissionError(13, "Permission denied"), ("./script.sh",))
 	'permission denied: ./script.sh'
 	>>> spawn_error_message(OSError(), ("weird",))
 	'could not start command: weird'
 	"""
+	target: Final = exc.filename or argv[0]
 	if isinstance(exc, FileNotFoundError):
-		return f"no such file or directory: {argv[0]}"
+		return f"no such file or directory: {target}"
 	reason: Final = exc.strerror.lower() if exc.strerror else "could not start command"
-	return f"{reason}: {argv[0]}"
+	return f"{reason}: {target}"
 
 
 async def run_cmd(task: Task, leaf_index: int, ctx: RunContext) -> TaskResult:
