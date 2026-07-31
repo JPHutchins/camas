@@ -24,7 +24,7 @@ from .execution import run
 from .matrix import expand_matrix
 from .scope import scope_to_changed
 from .task import task_label
-from .timings import observation_keys, scope_of
+from .timings import NO_KEYS, observation_keys, scope_of
 from .traversal import flatten_leaves
 
 if sys.version_info >= (3, 11):
@@ -72,7 +72,7 @@ class GateOutcome(NamedTuple):
 	"""Each leaf's path-mode report file, DFS order aligned with ``node``'s leaves — set for a
 	leaf whose ``agent_format.args`` used :data:`REPORT_TOKEN`, ``None`` for every other leaf.
 	"""
-	keys: Mapping[TaskLabel, CacheKey] = {}
+	keys: Mapping[TaskLabel, CacheKey] = NO_KEYS
 	"""Where each leaf that ran should be recorded, by the label it reports. Built here because only
 	the gate knows both the matrix-expanded tree its budget read from and what ``agent_format`` then
 	did to each command; see :func:`camas.core.timings.observation_keys`."""

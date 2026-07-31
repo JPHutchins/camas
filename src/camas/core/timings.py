@@ -271,11 +271,8 @@ def observed(camas_dir: Path | None, expanded: TaskNode, changed: Sequence[str])
 	"""How to record a run of ``expanded`` scoped to ``changed`` — the one derivation of the three
 	things that keying needs.
 	"""
-	return Observed(
-		camas_dir,
-		scope_of(changed),
-		observation_keys(expanded, tuple(changed), scope_of(changed)),
-	)
+	scope = scope_of(changed)
+	return Observed(camas_dir, scope, observation_keys(expanded, tuple(changed), scope))
 
 
 def ensure_camas_dir(camas_dir: Path) -> None:

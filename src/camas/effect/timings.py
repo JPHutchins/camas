@@ -46,7 +46,10 @@ class Timings:
 	"""
 
 	def __init__(
-		self, camas_dir: Path, scope: int = 0, keys: Mapping[str, timings.CacheKey] = {}
+		self,
+		camas_dir: Path,
+		scope: int = 0,
+		keys: Mapping[str, timings.CacheKey] = timings.NO_KEYS,
 	) -> None:
 		self._camas_dir: Final = camas_dir
 		self._scope: Final = scope

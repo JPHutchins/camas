@@ -9,6 +9,7 @@ import ast
 import functools
 from typing import TYPE_CHECKING, Any
 
+from ..core.timings import NO_KEYS
 from ..v0.effect import Effect
 from .expression import format_syntax_error
 from .mypyc import MISSING, signature_fields_from_source
@@ -267,7 +268,7 @@ def resolve_default_effects(
 	agent: bool = False,
 	base: Path | None = None,
 	scope: int = 0,
-	keys: Mapping[str, CacheKey] = {},
+	keys: Mapping[str, CacheKey] = NO_KEYS,
 ) -> tuple[Effect[Any], ...]:
 	"""The effects a bare run uses: the :class:`Config` override, else the environment default.
 
@@ -316,7 +317,7 @@ def resolve_effects(
 	scope_effects: Mapping[str, type[Effect[Any]]] = {},
 	base: Path | None = None,
 	scope: int = 0,
-	keys: Mapping[str, CacheKey] = {},
+	keys: Mapping[str, CacheKey] = NO_KEYS,
 ) -> tuple[Effect[Any], ...]:
 	"""The effects for a run: the parsed ``--effects`` expression (propagating its
 	``ValueError`` on a malformed expression), or the environment default when
