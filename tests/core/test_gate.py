@@ -21,7 +21,7 @@ from camas.core.gate import (
 )
 from camas.core.matrix import resolve_cmd
 from camas.core.task import task_label
-from camas.core.timings import TaskTiming
+from camas.core.timings import CacheKey, TaskTiming
 
 if TYPE_CHECKING:
 	import pytest
@@ -88,7 +88,10 @@ async def test_gate_runs_untimed_check_under_budget() -> None:
 
 async def test_gate_budget_runs_fitting_check() -> None:
 	out = await run_gate(
-		Parallel(CHECK_PASS), (), under=1.0, timings={task_label(CHECK_PASS): TaskTiming(0.01, 1)}
+		Parallel(CHECK_PASS),
+		(),
+		under=1.0,
+		timings={CacheKey(task_label(CHECK_PASS), 0): TaskTiming(0.01, 1)},
 	)
 	assert out.residual_class == "green"
 	assert out.result is not None
@@ -96,7 +99,10 @@ async def test_gate_budget_runs_fitting_check() -> None:
 
 async def test_gate_budget_skips_over_budget_check() -> None:
 	out = await run_gate(
-		Parallel(CHECK_PASS), (), under=0.001, timings={task_label(CHECK_PASS): TaskTiming(99.0, 1)}
+		Parallel(CHECK_PASS),
+		(),
+		under=0.001,
+		timings={CacheKey(task_label(CHECK_PASS), 0): TaskTiming(99.0, 1)},
 	)
 	assert out.residual_class == "green"
 	assert out.result is None

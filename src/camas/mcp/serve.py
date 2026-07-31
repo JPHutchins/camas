@@ -714,7 +714,7 @@ async def run_for(
 		leaf_color=leaf_color_of(config),
 	)
 	logs = write_logs(create_run_log_dir(session.camas_dir, name, session.reserve_run()), result)
-	timings.record_run(session.camas_dir, result)
+	timings.record_run(session.camas_dir, result, scope_for(req.paths, base_for(session)))
 	resp = attach_logs(to_run_response(node, result, verbosity=req.verbosity), logs)
 	nudge = improve_loop_nudge(
 		any_truncated=resp.truncated,
@@ -726,6 +726,13 @@ async def run_for(
 		session.compat,
 		links=failing_log_links(resp, logs),
 	)
+
+
+def scope_for(paths: list[str], base: Path) -> int:
+	"""The timing scope for a request's ``paths`` — normalized the same way the scoping itself
+	normalizes them, so a run is recorded under the change size that actually narrowed it.
+	"""
+	return timings.scope_of(to_changed(paths, base))
 
 
 def scope_to_paths(node: TaskNode, paths: list[str], base: Path) -> TaskNode | None:
@@ -860,7 +867,8 @@ async def run_budget(
 	if scoped_source is None:
 		return nothing_covered_result(session, req.paths)
 	source = scoped_source
-	plan = plan_under(source, budget_s, timings.load(session.camas_dir))
+	scope = scope_for(req.paths, base_for(session))
+	plan = plan_under(source, budget_s, timings.load(session.camas_dir), scope)
 	report = to_budget_report(plan)
 	if plan.node is None:
 		empty = empty_run_response()
@@ -881,7 +889,7 @@ async def run_budget(
 		leaf_color=leaf_color_of(config),
 	)
 	logs = write_logs(create_run_log_dir(session.camas_dir, label, session.reserve_run()), result)
-	timings.record_run(session.camas_dir, result)
+	timings.record_run(session.camas_dir, result, scope)
 	resp = attach_budget(
 		attach_logs(to_run_response(plan.node, result, verbosity=req.verbosity), logs), report
 	)
@@ -1406,6 +1414,8 @@ async def gate_for(
 		timings=timings.load(session.camas_dir),
 		leaf_color=leaf_color_of(config),
 	)
+	if outcome.result is not None:
+		timings.record_run(session.camas_dir, outcome.result, timings.scope_of(changed))
 	budget = to_budget_report(outcome.budget) if outcome.budget is not None else None
 	rerun = wire.GateRerun(task=req.task, paths=changed, under=req.under)
 	resp = to_gate_response(outcome, budget, rerun)
@@ -1477,6 +1487,7 @@ async def fix_for(
 			base=base_for(session),
 			leaf_color=leaf_color_of(config),
 		)
+		timings.record_run(session.camas_dir, result, scope_for(req.paths, base_for(session)))
 		resp = to_run_response(scoped, result)
 		empty_cause = None
 	return success(
@@ -1806,7 +1817,7 @@ def run_gate_cli(
 	if args.dry_run:
 		expanded = expand_matrix(node)
 		plan = (
-			plan_under(expanded, args.under, timings.load(camas_dir))
+			plan_under(expanded, args.under, timings.load(camas_dir), timings.scope_of(changed))
 			if args.under is not None
 			else None
 		)
@@ -1831,6 +1842,8 @@ def run_gate_cli(
 			leaf_color=leaf_color_of(config),
 		)
 	)
+	if outcome.result is not None:
+		timings.record_run(camas_dir, outcome.result, timings.scope_of(changed))
 	budget = to_budget_report(outcome.budget) if outcome.budget is not None else None
 	rerun = wire.GateRerun(task=args.task, paths=changed, under=args.under)
 	resp = to_gate_response(outcome, budget, rerun)

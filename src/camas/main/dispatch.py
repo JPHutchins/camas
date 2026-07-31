@@ -117,6 +117,7 @@ def run_under(
 	source: TaskNode,
 	budget_s: float,
 	*,
+	scope: int,
 	camas_dir: Path | None,
 	effects: Sequence[Effect[Any]],
 	jobs: int | None,
@@ -129,7 +130,9 @@ def run_under(
 	if passthrough:
 		print("error: -- passthrough args cannot be combined with --under", file=sys.stderr)
 		return 2
-	plan = plan_under(source, budget_s, timings.load(camas_dir) if camas_dir is not None else {})
+	plan = plan_under(
+		source, budget_s, timings.load(camas_dir) if camas_dir is not None else {}, scope
+	)
 	for line in budget_summary_lines(plan):
 		print(line)
 	if plan.node is None:
@@ -196,11 +199,11 @@ def fix_cli(argv: list[str]) -> int:
 		return 0
 	if scoped is None:
 		return 0
-	_ = finish_run(
-		asyncio.run(
-			run(scoped, effects=(), jobs=None, base=base, leaf_color=state.config.leaf_color)
-		)
+	result = asyncio.run(
+		run(scoped, effects=(), jobs=None, base=base, leaf_color=state.config.leaf_color)
 	)
+	timings.record_run(state.config.camas_path(base), result, timings.scope_of(changed))
+	_ = finish_run(result)
 	return 0
 
 
@@ -463,6 +466,11 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 				print(f"error: {format_empty_variants_error(empty_variants)}", file=sys.stderr)
 				sys.exit(2)
 
+			cli_scope: Final = timings.scope_of(
+				to_changed(args.paths, source.parent if source is not None else Path.cwd())
+				if args.paths is not None
+				else ()
+			)
 			try:
 				effects: Final = resolve_effects(
 					args.effects,
@@ -471,6 +479,7 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 					agent=in_agent,
 					scope_effects=scope_effects,
 					base=source.parent if source is not None else None,
+					scope=cli_scope,
 				)
 			except ValueError as e:
 				print(f"error: --effects: {e}", file=sys.stderr)
@@ -498,6 +507,7 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 					run_under(
 						resolved,
 						args.under,
+						scope=cli_scope,
 						camas_dir=camas_dir,
 						effects=effects,
 						jobs=budget_jobs,

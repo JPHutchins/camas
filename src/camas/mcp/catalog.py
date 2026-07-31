@@ -15,7 +15,7 @@ from . import wire
 if TYPE_CHECKING:
 	from collections.abc import Mapping
 
-	from ..core.timings import Estimate, TaskTiming
+	from ..core.timings import CacheKey, Estimate, TaskTiming
 	from ..v0.config import Config
 	from ..v0.task import TaskNode
 
@@ -23,14 +23,15 @@ if TYPE_CHECKING:
 def to_list_response(
 	tasks: Mapping[str, TaskNode],
 	config: Config | None,
-	timings: Mapping[str, TaskTiming] = {},
+	timings: Mapping[CacheKey, TaskTiming] = {},
 	*,
 	expand: bool = False,
 ) -> wire.ListResponse:
 	"""Assemble the ``camas_list`` catalog — one ``TaskInfo`` per task, sorted by
 	name, with the default and CI-default names taken from ``config`` and each task's
-	observed duration drawn from ``timings``. ``expand`` matrix-expands each command
-	preview; otherwise it stays the unexpanded template.
+	observed duration drawn from ``timings`` — the whole-tree observation, which is what running
+	the task by name costs. ``expand`` matrix-expands each command preview; otherwise it stays the
+	unexpanded template.
 	"""
 	default = task_name(config.default_task) if config is not None else None
 	github_default = task_name(config.github_task) if config is not None else None

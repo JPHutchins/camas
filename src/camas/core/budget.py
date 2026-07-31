@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 	from collections.abc import Mapping
 
 	from ..v0.task import TaskNode
-	from .timings import TaskLabel, TaskTiming
+	from .timings import CacheKey, TaskTiming
 
 
 class Fits(NamedTuple):
@@ -54,18 +54,22 @@ class BudgetPlan(NamedTuple):
 	untimed: tuple[Untimed, ...]
 
 
-def classify(task: Task, budget_s: float, timings: Mapping[TaskLabel, TaskTiming]) -> Disposition:
-	"""A leaf's disposition under ``budget_s``, read from its observed estimate.
+def classify(
+	task: Task, budget_s: float, timings: Mapping[CacheKey, TaskTiming], scope: int = 0
+) -> Disposition:
+	"""A leaf's disposition under ``budget_s``, read from its observed estimate at ``scope``.
 
-	>>> from camas.core.timings import TaskTiming
-	>>> classify(Task("a"), 1.0, {"a": TaskTiming(0.5, 1)})
+	>>> from camas.core.timings import CacheKey, TaskTiming
+	>>> classify(Task("a"), 1.0, {CacheKey("a", 0): TaskTiming(0.5, 1)})
 	Fits(task=Task(cmd='a', name=None, env={}, cwd=None), estimated_s=0.5)
-	>>> classify(Task("a"), 1.0, {"a": TaskTiming(2.0, 1)})
+	>>> classify(Task("a"), 1.0, {CacheKey("a", 0): TaskTiming(2.0, 1)})
 	OverBudget(task=Task(cmd='a', name=None, env={}, cwd=None), estimated_s=2.0)
 	>>> classify(Task("a"), 1.0, {})
 	Untimed(task=Task(cmd='a', name=None, env={}, cwd=None))
+	>>> classify(Task("a"), 1.0, {CacheKey("a", 0): TaskTiming(0.5, 1)}, scope=1)
+	Untimed(task=Task(cmd='a', name=None, env={}, cwd=None))
 	"""
-	est = estimate(task, timings)
+	est = estimate(task, timings, scope)
 	if est is None:
 		return Untimed(task)
 	if est.elapsed_s <= budget_s:
@@ -74,14 +78,15 @@ def classify(task: Task, budget_s: float, timings: Mapping[TaskLabel, TaskTiming
 
 
 def plan_under(
-	node: TaskNode, budget_s: float, timings: Mapping[TaskLabel, TaskTiming]
+	node: TaskNode, budget_s: float, timings: Mapping[CacheKey, TaskTiming], scope: int = 0
 ) -> BudgetPlan:
 	"""Partition ``node``'s expanded, de-duplicated leaves by ``budget_s``. Only leaves measured
 	to exceed the budget are excluded; untimed leaves are run (and thereby measured), since a
-	budget that skipped them would keep them forever unmeasured.
+	budget that skipped them would keep them forever unmeasured. ``scope`` selects which
+	observations count as measurements of this run — see :func:`camas.core.timings.estimate`.
 	"""
 	leaves = tuple(dict.fromkeys(info.task for info in flatten_leaves(expand_matrix(node))))
-	dispositions = tuple(classify(leaf, budget_s, timings) for leaf in leaves)
+	dispositions = tuple(classify(leaf, budget_s, timings, scope) for leaf in leaves)
 	fits = tuple(d for d in dispositions if isinstance(d, Fits))
 	over_budget = tuple(d for d in dispositions if isinstance(d, OverBudget))
 	untimed = tuple(d for d in dispositions if isinstance(d, Untimed))

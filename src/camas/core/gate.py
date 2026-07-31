@@ -23,6 +23,7 @@ from .budget import plan_under
 from .execution import run
 from .matrix import expand_matrix
 from .scope import scope_to_changed
+from .timings import scope_of
 
 if sys.version_info >= (3, 11):
 	from typing import assert_never
@@ -35,7 +36,7 @@ if TYPE_CHECKING:
 	from ..v0.task import TaskNode
 	from .budget import BudgetPlan
 	from .completion import RunResult
-	from .timings import TaskLabel, TaskTiming
+	from .timings import CacheKey, TaskTiming
 
 
 ResidualClass: TypeAlias = Literal["green", "needs_reasoning"]
@@ -233,7 +234,7 @@ async def run_gate(
 	under: float | None = None,
 	jobs: int | None = None,
 	base: Path | None = None,
-	timings: Mapping[TaskLabel, TaskTiming] | None = None,
+	timings: Mapping[CacheKey, TaskTiming] | None = None,
 	leaf_color: bool = True,
 ) -> GateOutcome:
 	"""Run the check ``node`` over the ``changed`` paths and classify the residual.
@@ -242,8 +243,10 @@ async def run_gate(
 	never mutates. Untimed leaves are run (and thereby measured); only leaves measured to exceed
 	``under`` are skipped. ``green`` means the checks passed — or the change touched nothing the
 	checks cover, or every leaf was measured too slow for ``under``; ``needs_reasoning`` means a
-	check still fails. Budgeting precedes scoping so each leaf's estimate reuses its unscoped
-	record (a scoped run is no slower than the whole).
+	check still fails. Budgeting precedes scoping, but budgets against observations taken at this
+	change's own scope (:func:`camas.core.timings.scope_of`) — a whole-tree record is not an
+	estimate of a two-file gate, and using it as one excluded the heavy-but-scopable checks from
+	exactly the small changes they are cheap on.
 
 	A path-mode leaf's report file is allocated under a fresh, machine-temp ``camas-report-*``
 	directory for this call — left on disk (not cleaned up here) so an over-limit payload's
@@ -251,7 +254,9 @@ async def run_gate(
 	accumulation.
 	"""
 	expanded = expand_matrix(node)
-	plan = plan_under(expanded, under, timings or {}) if under is not None else None
+	plan = (
+		plan_under(expanded, under, timings or {}, scope_of(changed)) if under is not None else None
+	)
 	budgeted = plan.node if plan is not None else expanded
 	if budgeted is None:
 		return GateOutcome("green", None, None, plan)

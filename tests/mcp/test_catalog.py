@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from camas import Claude, Config, Parallel, Sequential, Task
-from camas.core.timings import TaskTiming
+from camas.core.timings import CacheKey, TaskTiming
 from camas.mcp.catalog import to_list_response
 
 
@@ -83,7 +83,7 @@ def test_expand_inlines_every_matrix_leaf() -> None:
 
 def test_estimates_composed_onto_matching_task() -> None:
 	ci = Sequential(Task("ruff", name="fmt"), Task("pytest", name="run"), name="ci")
-	cache = {"fmt": TaskTiming(0.5, 1), "run": TaskTiming(2.0, 3)}
+	cache = {CacheKey("fmt", 0): TaskTiming(0.5, 1), CacheKey("run", 0): TaskTiming(2.0, 3)}
 	resp = to_list_response({"ci": ci, "lint": Task("ruff", name="lint")}, None, cache)
 	by_name = {t.name: t for t in resp.tasks}
 	assert by_name["ci"].estimated_s == 2.5

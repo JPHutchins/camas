@@ -19,6 +19,12 @@ if TYPE_CHECKING:
 
 	from camas.v0.effect import Effect
 
+
+def cache_key(label: str, scope: int = 0) -> timings.CacheKey:
+	"""The cache key for ``label`` at ``scope`` — whole-tree unless a test says otherwise."""
+	return timings.CacheKey(label, scope)
+
+
 TS = datetime(2026, 5, 21, 14, 30, 0)
 T = TypeVar("T")
 
@@ -55,8 +61,8 @@ def test_records_each_leaf(tmp_path: Path) -> None:
 	]
 	asyncio.run(drive(Timings(camas_dir=tmp_path), Parallel(a, b, name="quick"), events))
 	cache = timings.load(tmp_path)
-	assert cache["fast"].elapsed_s == 0.1
-	assert cache["slow"].elapsed_s == 0.5
+	assert cache[cache_key("fast")].elapsed_s == 0.1
+	assert cache[cache_key("slow")].elapsed_s == 0.5
 
 
 def test_anonymous_run_records_its_leaves(tmp_path: Path) -> None:
@@ -66,7 +72,7 @@ def test_anonymous_run_records_its_leaves(tmp_path: Path) -> None:
 		CompletedEvent(a, 0, Finished(0, 0.1, ()), TS),
 	]
 	asyncio.run(drive(Timings(camas_dir=tmp_path), Parallel(a), events))
-	assert timings.load(tmp_path)["solo"].elapsed_s == 0.1
+	assert timings.load(tmp_path)[cache_key("solo")].elapsed_s == 0.1
 
 
 def test_anonymous_leaves_named_by_command(tmp_path: Path) -> None:
@@ -79,8 +85,8 @@ def test_anonymous_leaves_named_by_command(tmp_path: Path) -> None:
 	]
 	asyncio.run(drive(Timings(camas_dir=tmp_path), Parallel(s, t, name="grp"), events))
 	cache = timings.load(tmp_path)
-	assert cache["echo hi"].elapsed_s == 0.5
-	assert cache["python -c pass"].elapsed_s == 0.1
+	assert cache[cache_key("echo hi")].elapsed_s == 0.5
+	assert cache[cache_key("python -c pass")].elapsed_s == 0.1
 
 
 def test_unfinished_leaf_excluded(tmp_path: Path) -> None:
@@ -92,8 +98,8 @@ def test_unfinished_leaf_excluded(tmp_path: Path) -> None:
 	]
 	asyncio.run(drive(Timings(camas_dir=tmp_path), Parallel(a, b, name="grp"), events))
 	cache = timings.load(tmp_path)
-	assert "done" in cache
-	assert "never" not in cache
+	assert cache_key("done") in cache
+	assert cache_key("never") not in cache
 
 
 def test_zero_leaf_run_records_nothing(tmp_path: Path) -> None:
@@ -110,5 +116,5 @@ def test_skipped_leaf_excluded(tmp_path: Path) -> None:
 	]
 	asyncio.run(drive(Timings(camas_dir=tmp_path), Sequential(a, b, name="seq"), events))
 	cache = timings.load(tmp_path)
-	assert "fail" in cache
-	assert "skip" not in cache
+	assert cache_key("fail") in cache
+	assert cache_key("skip") not in cache

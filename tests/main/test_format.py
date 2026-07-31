@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 from camas import Parallel, Sequential, Task
 from camas.core import timings
+from camas.core.timings import CacheKey
 from camas.main.format import (
 	first_line_doc,
 	format_annotation,
@@ -39,7 +40,7 @@ def test_task_summary_leaf_str_cmd() -> None:
 def test_listing_shows_observed_timing(tmp_path: Path) -> None:
 	camas_dir = tmp_path / ".camas"
 	camas_dir.mkdir()
-	timings.record(camas_dir, [("lint", 0.1), ("test", 31.9)])
+	timings.record(camas_dir, [(CacheKey("lint", 0), 0.1), (CacheKey("test", 0), 31.9)])
 	out = format_task_summary_listing(
 		{"check": Parallel(Task("ruff", name="lint"), Task("pytest", name="test"), name="check")},
 		tmp_path / "tasks.py",
@@ -59,7 +60,7 @@ def test_listing_without_camas_dir_shows_no_timing() -> None:
 def test_tree_shows_observed_timing(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
 	camas_dir = tmp_path / ".camas"
 	camas_dir.mkdir()
-	timings.record(camas_dir, [("lint", 0.2)])
+	timings.record(camas_dir, [(CacheKey("lint", 0), 0.2)])
 	print_task_trees(
 		{"lint": Task("ruff", name="lint")}, tmp_path / "tasks.py", camas_dir=camas_dir
 	)

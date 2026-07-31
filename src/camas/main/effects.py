@@ -260,13 +260,19 @@ def running_under_agent() -> bool:
 
 
 def resolve_default_effects(
-	config: Config, *, github: bool, agent: bool = False, base: Path | None = None
+	config: Config,
+	*,
+	github: bool,
+	agent: bool = False,
+	base: Path | None = None,
+	scope: int = 0,
 ) -> tuple[Effect[Any], ...]:
 	"""The effects a bare run uses: the :class:`Config` override, else the environment default.
 
 	The renderer is ``Status(output_mode="github")`` under GitHub Actions, the line-oriented
 	``Status`` for an agent, else the live ``Termtree``. A project whose camas directory exists
-	also gets ``Timings`` to record per-leaf durations.
+	also gets ``Timings`` to record per-leaf durations, keyed to ``scope`` — how many changed paths
+	``--paths`` narrowed this run to — so a scoped run is not recorded as a whole-tree one.
 	"""
 	configured = config.effects(github=github)
 	if configured is not None:
@@ -281,7 +287,7 @@ def resolve_default_effects(
 	if camas is not None and camas.is_dir():
 		from ..effect.timings import Timings
 
-		return (renderer, Timings(camas_dir=camas))
+		return (renderer, Timings(camas_dir=camas, scope=scope))
 	return (renderer,)
 
 
@@ -302,13 +308,14 @@ def resolve_effects(
 	agent: bool = False,
 	scope_effects: Mapping[str, type[Effect[Any]]] = {},
 	base: Path | None = None,
+	scope: int = 0,
 ) -> tuple[Effect[Any], ...]:
 	"""The effects for a run: the parsed ``--effects`` expression (propagating its
 	``ValueError`` on a malformed expression), or the environment default when
 	``--effects`` was omitted (``expr is None``).
 	"""
 	if expr is None:
-		return resolve_default_effects(config, github=github, agent=agent, base=base)
+		return resolve_default_effects(config, github=github, agent=agent, base=base, scope=scope)
 	return parse_effects(expr, scope_effects)
 
 

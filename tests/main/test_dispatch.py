@@ -287,7 +287,7 @@ def test_dispatch_under_bad_jobs_env_errors(
 def _camas_with_timings(tmp_path: Path, leaves: list[tuple[str, float]]) -> Path:
 	camas = tmp_path / ".camas"
 	camas.mkdir()
-	timings.record(camas, leaves)
+	timings.record(camas, [(timings.CacheKey(label, 0), s) for label, s in leaves])
 	return camas
 
 
@@ -298,7 +298,7 @@ def test_run_under_dry_run_shows_plan(tmp_path: Path, capsys: pytest.CaptureFixt
 		Parallel(Task("echo lint", name="lint"), Task("echo slow", name="slow")),
 	)
 	code = run_under(
-		source, 1.0, camas_dir=camas, effects=(), jobs=None, dry_run=True, passthrough=()
+		source, 1.0, scope=0, camas_dir=camas, effects=(), jobs=None, dry_run=True, passthrough=()
 	)
 	assert code == 0
 	out = capsys.readouterr().out
@@ -313,7 +313,7 @@ def test_run_under_executes_selected(tmp_path: Path, capsys: pytest.CaptureFixtu
 		Task(("python", "-c", "print('b')"), name="b"),
 	)
 	code = run_under(
-		source, 1.0, camas_dir=camas, effects=(), jobs=None, dry_run=False, passthrough=()
+		source, 1.0, scope=0, camas_dir=camas, effects=(), jobs=None, dry_run=False, passthrough=()
 	)
 	assert code == 0
 	assert "unmeasured (running to record an estimate): b" in capsys.readouterr().out
@@ -326,6 +326,7 @@ def test_run_under_all_over_budget_runs_nothing(
 	code = run_under(
 		Parallel(Task("echo slow", name="slow")),
 		0.5,
+		scope=0,
 		camas_dir=camas,
 		effects=(),
 		jobs=None,
@@ -562,3 +563,16 @@ def test_dispatch_no_mcp_hint_off_agent(
 	with pytest.raises(SystemExit, match="0"):
 		dispatch(_state({"check": Task("echo hi", name="check")}), ["--dry-run", "check"])
 	assert mcp_cli_hint() not in capsys.readouterr().err
+
+
+def test_fix_cli_records_at_the_scope_it_ran(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	"""The ``PostToolBatch`` autofix hook ran with ``effects=()``, so it observed nothing either —
+	the fix node's leaves were invisible to every later ``--under`` decision.
+	"""
+	(tmp_path / "tasks.py").write_text(_TIDY.format(scope="."))
+	monkeypatch.chdir(tmp_path)
+	timings.ensure_camas_dir(tmp_path / ".camas")
+	assert fix_cli(["--paths", "x.py"]) == 0
+	assert set(timings.load(tmp_path / ".camas")) == {timings.CacheKey("tidy", 1)}

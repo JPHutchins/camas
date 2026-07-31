@@ -25,9 +25,10 @@ class TimingsState:
 
 
 class TimingsContext(NamedTuple):
-	"""Immutable context: the run's camas directory and its latest per-leaf states."""
+	"""Immutable context: the run's camas directory, its scope, and its latest per-leaf states."""
 
 	camas_dir: Path
+	scope: int
 	state: TimingsState
 
 
@@ -36,14 +37,19 @@ class Timings:
 
 	``camas_dir`` is required and assumed to exist: the caller enables this effect only
 	when the project's camas directory is present, so the effect always records.
+
+	``scope`` is how many changed paths narrowed this run, keying each observation to the size of
+	change it was measured on — see :class:`camas.core.timings.CacheKey`.
 	"""
 
-	def __init__(self, camas_dir: Path) -> None:
+	def __init__(self, camas_dir: Path, scope: int = 0) -> None:
 		self._camas_dir: Final = camas_dir
+		self._scope: Final = scope
 
 	async def setup(self, task: TaskNode) -> TimingsContext:
 		return TimingsContext(
 			camas_dir=self._camas_dir,
+			scope=self._scope,
 			state=TimingsState(tuple(Waiting(info.task) for info in flatten_leaves(task))),
 		)
 
@@ -56,9 +62,9 @@ class Timings:
 	async def teardown(self, ctxs: tuple[TimingsContext, ...]) -> None:
 		ctx: Final = ctxs[0]  # zuban: ignore[misc] # zuban defies PEP591
 		leaves = [
-			(task_label(state.task), elapsed)
+			(timings.CacheKey(task_label(state.task), ctx.scope), elapsed)
 			for state in ctx.state.states
 			if isinstance(state, Completed)
 			and (elapsed := timings.elapsed_of(state.completion)) is not None
 		]
-		await asyncio.to_thread(timings.record, ctx.camas_dir, leaves)
+		await asyncio.to_thread(timings.record_observed, ctx.camas_dir, leaves)
