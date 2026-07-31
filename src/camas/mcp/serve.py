@@ -1487,10 +1487,9 @@ async def fix_for(
 		)
 	except ValueError as e:
 		return error_result(str(e))
-	scoped: TaskNode | None = None
-	# Bound before the branch below because the "nothing ran" path never records; it carries this
-	# request's real scope so it is a usable value rather than a placeholder.
-	keying = timings.Observed(session.camas_dir, timings.scope_of(req.paths), {})
+	# The node to run and how to observe it are bound together, since neither is meaningful without
+	# the other: nothing to run means nothing to record, and the path that runs always has both.
+	prepared: tuple[TaskNode, timings.Observed] | None = None
 	blocked = unsatisfiable_message(fix_node) if fix_node is not None else None
 	if fix_node is not None and blocked is None:
 		changed = to_changed(req.paths, base_for(session))
@@ -1502,9 +1501,10 @@ async def fix_for(
 			if changed
 			else with_default_paths(expanded)
 		)
-		keying = timings.observed(session.camas_dir, expanded, changed)
+		if scoped is not None:
+			prepared = (scoped, timings.observed(session.camas_dir, expanded, changed))
 	empty_cause: str | None
-	if scoped is None:
+	if prepared is None:
 		resp = empty_run_response()
 		empty_cause = (
 			"no fix node registered (Config.agent.fix is None)"
@@ -1514,15 +1514,16 @@ async def fix_for(
 			else "no fix leaf covers the paths"
 		)
 	else:
+		node, observed = prepared
 		result = await run(
-			scoped,
+			node,
 			jobs=req.jobs,
 			interactive=False,
 			base=base_for(session),
 			leaf_color=leaf_color_of(config),
 		)
-		keying.record(result)
-		resp = to_run_response(scoped, result)
+		observed.record(result)
+		resp = to_run_response(node, result)
 		empty_cause = None
 	return success(
 		with_warning(session, fix_text(resp, empty_cause=empty_cause)), resp, session.compat
