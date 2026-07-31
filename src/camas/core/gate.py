@@ -260,9 +260,8 @@ async def run_gate(
 	accumulation.
 	"""
 	expanded = expand_matrix(node)
-	plan = (
-		plan_under(expanded, under, timings or {}, scope_of(changed)) if under is not None else None
-	)
+	scope = scope_of(changed)
+	plan = plan_under(expanded, under, timings or {}, scope) if under is not None else None
 	budgeted = plan.node if plan is not None else expanded
 	if budgeted is None:
 		return GateOutcome("green", None, None, plan)
@@ -285,7 +284,7 @@ async def run_gate(
 		checks,
 		plan,
 		formatted.report_paths,
-		as_reported(observation_keys(expanded, changed, scope_of(changed)), scoped, formatted.node),
+		as_reported(observation_keys(expanded, changed, scope), scoped, formatted.node),
 	)
 
 

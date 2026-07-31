@@ -572,3 +572,19 @@ def test_gate_cli_records_nothing_when_no_leaf_ran(
 	timings.ensure_camas_dir(tmp_path / ".camas")
 	assert serve.gate_cli(["--paths", "unrelated.txt"]) == 0
 	assert timings.load(tmp_path / ".camas") == {}
+
+
+def test_gate_cli_paths_all_outside_the_repo_run_nothing(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	"""Paths that all normalize away are not the same as passing none. Treated as none, the Stop-hook
+	gate would run the whole tree over an edit outside the repo — the opposite of what it was scoped
+	for — and nothing it checks changed, so it is green.
+	"""
+	monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+	monkeypatch.chdir(tmp_path)
+	(tmp_path / "tasks.py").write_text(_BUDGET_TASKS)
+	timings.ensure_camas_dir(tmp_path / ".camas")
+	assert serve.gate_cli(["--paths", "/etc/passwd"]) == 0
+	assert "nothing would run" in capsys.readouterr().out
+	assert timings.load(tmp_path / ".camas") == {}

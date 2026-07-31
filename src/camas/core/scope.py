@@ -47,7 +47,7 @@ from ..v0.task import Group, Task
 from .task import task_label
 
 if TYPE_CHECKING:
-	from collections.abc import Iterable
+	from collections.abc import Iterable, Sequence
 
 	from ..v0.task import PathScope, TaskNode, WhenPredicate
 
@@ -80,6 +80,21 @@ def to_changed(raw: Iterable[str], base: Path) -> tuple[str, ...]:
 		if (entry := e.strip())
 		if (rp := (root / entry).resolve()).is_relative_to(root)
 	)
+
+
+def requested_but_unusable(paths: Sequence[str], changed: Sequence[str]) -> bool:
+	"""Whether paths were named and none of them survived normalization — every one outside the repo.
+
+	Distinct from naming none, which means run everything, and the distinction is only visible to a
+	caller holding both: :func:`to_changed` returns the same empty tuple either way. Told apart wrong,
+	an edit outside the repo runs the whole tree — the opposite of what scoping was asked for.
+
+	>>> requested_but_unusable(["/etc/passwd"], ()), requested_but_unusable([], ())
+	(True, False)
+	>>> requested_but_unusable(["a.py"], ("a.py",))
+	False
+	"""
+	return bool(paths) and not changed
 
 
 def _within(path: str, prefix: str) -> bool:

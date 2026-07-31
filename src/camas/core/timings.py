@@ -12,6 +12,7 @@ from enum import IntEnum
 from functools import reduce
 from itertools import groupby
 from math import isfinite
+from types import MappingProxyType
 from typing import IO, TYPE_CHECKING, Final, NamedTuple, TypeAlias
 
 from ..v0.completion import Errored, Finished, Skipped, Stopped
@@ -165,6 +166,11 @@ def record(camas_dir: Path, leaves: Sequence[tuple[CacheKey, float]]) -> None:
 		handle.seek(0)
 		handle.truncate()
 		handle.write(serialize(merged))
+
+
+NO_KEYS: Final[Mapping[TaskLabel, CacheKey]] = MappingProxyType({})
+"""The empty label mapping — an unscoped run rewrites nothing, so every label keys by itself.
+Immutable so that sharing it as a default cannot become shared mutable state."""
 
 
 NO_OBSERVATIONS: Final = TaskTiming(0.0, 0)
@@ -389,7 +395,7 @@ def observations(
 
 
 def leaves_of(
-	result: RunResult, scope: int = 0, keys: Mapping[TaskLabel, CacheKey] = {}
+	result: RunResult, scope: int = 0, keys: Mapping[TaskLabel, CacheKey] = NO_KEYS
 ) -> list[tuple[CacheKey, float]]:
 	"""``result``'s timed leaves as observations at ``scope``."""
 	return observations(((r.name, r.completion) for r in result.results), scope, keys)
@@ -423,18 +429,35 @@ def observation(elapsed_s: str, samples: str) -> TaskTiming | None:
 	return TaskTiming(elapsed, count)
 
 
+def recordable_scope(scope: str) -> int | None:
+	"""``scope`` as a number a lookup could ask for, or ``None``.
+
+	:func:`scope_of` only ever yields ``0`` or a power of two, so any other value in a cache is a row
+	no estimate will ever match — space held by something unreachable. Rejected on read for the same
+	reason a ``nan`` duration is.
+
+	>>> recordable_scope("0"), recordable_scope("4"), recordable_scope("16")
+	(0, 4, 16)
+	>>> print(recordable_scope("-1"), recordable_scope("3"), recordable_scope("x"))
+	None None None
+	"""
+	try:
+		value = int(scope)
+	except ValueError:
+		return None
+	return value if value == 0 or (value > 0 and value & (value - 1) == 0) else None
+
+
 def parse_line(line: str) -> tuple[CacheKey, TaskTiming] | None:
 	parts = line.rsplit(maxsplit=3)
 	if len(parts) != 4:
 		return None
 	label, elapsed_s, samples, scope = parts
 	timing = observation(elapsed_s, samples)
-	if timing is None:
+	value = recordable_scope(scope)
+	if timing is None or value is None:
 		return None
-	try:
-		return CacheKey(label, int(scope)), timing
-	except ValueError:
-		return None
+	return CacheKey(label, value), timing
 
 
 def parse_v0_line(line: str) -> tuple[CacheKey, TaskTiming] | None:

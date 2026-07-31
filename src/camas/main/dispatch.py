@@ -30,7 +30,12 @@ from ..core.matrix import (
 	unfilled_required_axes,
 )
 from ..core.render import print_tree, render_tree_lines
-from ..core.scope import scope_to_changed, to_changed, with_default_paths
+from ..core.scope import (
+	requested_but_unusable,
+	scope_to_changed,
+	to_changed,
+	with_default_paths,
+)
 from ..core.task import did_you_mean, task_label
 from ..v0.config import Config
 from .argv import (
@@ -198,9 +203,16 @@ def fix_cli(argv: list[str]) -> int:
 	stdin = stdin_changed() if not args.paths else None
 	if not args.paths and stdin is not None and not stdin:
 		return 0
-	changed = to_changed(args.paths or (stdin or ()), base)
+	requested = args.paths or (stdin or ())
+	changed = to_changed(requested, base)
 	expanded = expand_matrix(node)
-	scoped = scope_to_changed(expanded, changed) if changed else with_default_paths(expanded)
+	scoped = (
+		None
+		if requested_but_unusable(requested, changed)
+		else scope_to_changed(expanded, changed)
+		if changed
+		else with_default_paths(expanded)
+	)
 	if args.dry_run:
 		if scoped is None:
 			print("No leaves cover the changed paths — nothing would run.")
@@ -500,10 +512,14 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 				print(f"error: --effects: {e}", file=sys.stderr)
 				sys.exit(2)
 
-			if args.paths is not None and not cli_changed:
-				# Named paths of which none survived normalization — all outside the repo. Checked
-				# ahead of both branches below, since --under exits before the scoping one is reached.
-				print("No task leaf covers (no paths given) — nothing to run.")
+			cli_requested: Final[tuple[str, ...]] = tuple(args.paths or ())
+			if requested_but_unusable(cli_requested, cli_changed):
+				# Checked ahead of both branches below, since --under exits before the scoping one is
+				# reached.
+				print(
+					f"No task leaf covers {', '.join(cli_requested) or '(no paths given)'}"
+					" — nothing to run."
+				)
 				sys.exit(0)
 
 			if args.under is not None:

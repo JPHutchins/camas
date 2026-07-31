@@ -40,7 +40,12 @@ from ..core.matrix import (
 	unfilled_required_axes,
 )
 from ..core.render import render_tree_lines, strip_ansi
-from ..core.scope import scope_to_changed, to_changed, with_default_paths
+from ..core.scope import (
+	requested_but_unusable,
+	scope_to_changed,
+	to_changed,
+	with_default_paths,
+)
 from ..core.task import did_you_mean, task_label
 from ..main.argv import apply_passthrough
 from ..main.compose import load_py_tasks_state
@@ -700,7 +705,9 @@ async def run_for(
 		return error_result(str(e))
 	changed = to_changed(req.paths, base_for(session))
 	expanded = expand_matrix(node)
-	scoped = scope_to_paths(expanded, changed) if changed or not req.paths else None
+	scoped = (
+		None if requested_but_unusable(req.paths, changed) else scope_to_paths(expanded, changed)
+	)
 	if scoped is None:
 		return nothing_covered_result(session, req.paths)
 	observed = timings.observed(session.camas_dir, expanded, changed)
@@ -880,7 +887,11 @@ async def run_budget(
 	plan = plan_under(expanded, budget_s, timings.load(session.camas_dir), observed.scope)
 	report = to_budget_report(plan)
 	if plan.node is not None:
-		scoped_source = scope_to_paths(plan.node, changed) if changed or not req.paths else None
+		scoped_source = (
+			None
+			if requested_but_unusable(req.paths, changed)
+			else scope_to_paths(plan.node, changed)
+		)
 		if scoped_source is None:
 			return nothing_covered_result(session, req.paths)
 		plan = plan._replace(node=scoped_source)
@@ -1486,7 +1497,7 @@ async def fix_for(
 		expanded = expand_matrix(fix_node)
 		scoped = (
 			None
-			if req.paths and not changed
+			if requested_but_unusable(req.paths, changed)
 			else scope_to_changed(expanded, changed)
 			if changed
 			else with_default_paths(expanded)
@@ -1835,7 +1846,14 @@ def run_gate_cli(
 		print(f"camas mcp gate: {e}", file=sys.stderr)
 		return 0 if args.nudge else 2
 	event = event_from_stdin() if not args.paths else NO_EVENT
-	changed = to_changed(args.paths or (event.changed or ()), base)
+	requested = args.paths or (event.changed or ())
+	changed = to_changed(requested, base)
+	if requested_but_unusable(requested, changed):
+		# Green either way, nudge or not: nothing the checks cover changed, so there is nothing to
+		# block the turn on — and running the whole tree over an edit outside the repo is what
+		# scoping was asked to prevent.
+		print(f"No leaves cover {', '.join(requested)} — nothing would run.")
+		return 0
 	camas_dir = (config if config is not None else Config()).camas_path(base)
 	if args.dry_run:
 		expanded = expand_matrix(node)
