@@ -195,3 +195,27 @@ def test_load_drops_a_corrupted_non_finite_row(tmp_path: Path) -> None:
 		"1\ngood 1.0 2 0\npoisoned nan 1 0\nendless inf 1 0\nunsampled 1.0 0 0\n", encoding="utf-8"
 	)
 	assert timings.load(tmp_path) == {cache_key("good"): timings.TaskTiming(1.0, 2)}
+
+
+def test_load_treats_invalid_utf8_as_an_empty_cache(tmp_path: Path) -> None:
+	"""``load`` promises an unreadable file is an empty cache; invalid bytes raise
+	``UnicodeDecodeError``, which is a ``ValueError`` and not an ``OSError``.
+	"""
+	(tmp_path / timings.CACHE_NAME).write_bytes(b"1\nlint 0.5 2 0\n\xff\xfe not utf-8\n")
+	assert timings.load(tmp_path) == {}
+
+
+def test_a_label_a_row_cannot_carry_is_dropped_rather_than_misread(tmp_path: Path) -> None:
+	"""A newline in a label fragments its row, and the tail re-parses as a genuine-looking
+	observation under a truncated label — so it is refused at the write instead.
+	"""
+	timings.record(
+		tmp_path,
+		[
+			(cache_key("real"), 0.5),
+			(cache_key("two\nlines 9.0 9 0"), 1.0),
+			(cache_key("trailing "), 2.0),
+			(cache_key(" "), 3.0),
+		],
+	)
+	assert timings.load(tmp_path) == {cache_key("real"): timings.TaskTiming(0.5, 1)}

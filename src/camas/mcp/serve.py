@@ -710,12 +710,12 @@ async def run_for(
 	)
 	if scoped is None:
 		return nothing_covered_result(session, req.paths)
-	observed = timings.observed(session.camas_dir, expanded, changed)
 	node = scoped
 	if req.dry_run:
 		return success(
 			with_warning(session, dry_run_text(node)), to_plan_response(node), session.compat
 		)
+	observed = timings.observed(session.camas_dir, expanded, changed)
 	result = await run(
 		node,
 		jobs=req.jobs,
@@ -881,10 +881,10 @@ async def run_budget(
 		return error_result(str(e))
 	changed = to_changed(req.paths, base_for(session))
 	expanded = expand_matrix(source)
-	observed = timings.observed(session.camas_dir, expanded, changed)
+	scope = timings.scope_of(changed)
 	# Budget before scoping, as the gate does: an estimate is keyed by the label a leaf carries
 	# before its {paths} are injected, so budgeting the scoped tree looks up a label nothing records.
-	plan = plan_under(expanded, budget_s, timings.load(session.camas_dir), observed.scope)
+	plan = plan_under(expanded, budget_s, timings.load(session.camas_dir), scope)
 	report = to_budget_report(plan)
 	if plan.node is not None:
 		scoped_source = (
@@ -914,7 +914,9 @@ async def run_budget(
 		leaf_color=leaf_color_of(config),
 	)
 	logs = write_logs(create_run_log_dir(session.camas_dir, label, session.reserve_run()), result)
-	observed.record(result)
+	# Built here rather than beside the budget above: it walks the tree, and the dry-run and
+	# nothing-fit paths between the two return without ever recording.
+	timings.observed(session.camas_dir, expanded, changed).record(result)
 	resp = attach_budget(
 		attach_logs(to_run_response(plan.node, result, verbosity=req.verbosity), logs), report
 	)

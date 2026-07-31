@@ -111,12 +111,18 @@ class Estimate(NamedTuple):
 
 
 def load(camas_dir: Path) -> dict[CacheKey, TaskTiming]:
-	"""Read the cache in ``camas_dir``; an absent or unreadable file is an empty cache."""
+	"""Read the cache in ``camas_dir``; an absent or unreadable file is an empty cache.
+
+	``ValueError`` as well as ``OSError``, because the read decodes as UTF-8 and a file holding
+	invalid bytes raises ``UnicodeDecodeError`` — a ``ValueError``. Unreadable is unreadable however
+	the file got that way, and :func:`record_observed` already answers the same question the same way
+	on the writing side.
+	"""
 	try:
 		with (camas_dir / CACHE_NAME).open("r", encoding="utf-8") as handle:
 			lock(handle, exclusive=False)
 			text = handle.read()
-	except OSError:
+	except (OSError, ValueError):
 		return {}
 	return parse(text)
 
@@ -153,16 +159,14 @@ def record(camas_dir: Path, leaves: Sequence[tuple[CacheKey, float]]) -> None:
 
 	``camas_dir`` must already exist.
 
-	An observation with an empty label is dropped, because a row cannot carry one: the label is the
-	first field of a whitespace-separated line, so ``" 0.5 1 0"`` reads back as three fields and the
-	row is discarded on load. Dropping it on the way in says so, rather than writing something that
-	silently never returns. Only a leaf explicitly named ``""`` produces one.
+	An observation whose label a row cannot carry is dropped on the way in rather than written and
+	then misread — see :func:`recordable_label`.
 	"""
 	if not leaves:
 		return
 	with open_for_update(camas_dir / CACHE_NAME) as handle:
 		lock(handle, exclusive=True)
-		merged = folded(parse(handle.read()), [o for o in leaves if o[0].label])
+		merged = folded(parse(handle.read()), [o for o in leaves if recordable_label(o[0].label)])
 		handle.seek(0)
 		handle.truncate()
 		handle.write(serialize(merged))
@@ -221,10 +225,14 @@ def record_observed(camas_dir: Path | None, leaves: Sequence[tuple[CacheKey, flo
 	same pair, for the same reason, guards the ``mcp init`` warning (:func:`camas.mcp.gitignore.
 	warn_uncommittable`, #271).
 	"""
-	if camas_dir is None or not camas_dir.is_dir():
+	if camas_dir is None:
 		return
 	with suppress(OSError, ValueError):
-		record(camas_dir, leaves)
+		# Inside the suppress, not before it: ``is_dir`` raises ``PermissionError`` when a parent
+		# loses search permission, and this runs in a ``Stop`` hook where an exception is the one
+		# outcome that must not happen.
+		if camas_dir.is_dir():
+			record(camas_dir, leaves)
 
 
 class Observed(NamedTuple):
@@ -443,6 +451,28 @@ def recordable_scope(scope: str) -> int | None:
 	except ValueError:
 		return None
 	return value if value == 0 or (value > 0 and value & (value - 1) == 0) else None
+
+
+def recordable_label(label: TaskLabel) -> bool:
+	r"""Whether a cache row can carry ``label`` and give it back unchanged.
+
+	A row is ``<label> <mean> <samples> <scope>`` read off a single line with ``rsplit(maxsplit=3)``,
+	so a label may contain spaces — ``ruff check .`` and ``test [PY=3.13]`` are both fine — but not
+	everything survives: trailing whitespace is eaten by the split, an empty or whitespace-only label
+	leaves too few fields, and an embedded newline breaks the row in two, where the tail can re-parse
+	as a genuine-looking observation under a truncated label. Only a leaf named something like that
+	produces one, and dropping it beats writing a row that comes back as different data.
+
+	Decided by performing the round trip rather than by listing the rules, since listing them is how
+	the last two of those were missed.
+
+	>>> [recordable_label(x) for x in ("lint", "ruff check .", "test [PY=3.13]", "  lead")]
+	[True, True, True, True]
+	>>> [recordable_label(x) for x in ("", " ", "trail ", "two\nlines")]
+	[False, False, False, False]
+	"""
+	lines = f"{label} 0.0 1 0".splitlines()
+	return len(lines) == 1 and parse_line(lines[0]) == (CacheKey(label, 0), TaskTiming(0.0, 1))
 
 
 def parse_line(line: str) -> tuple[CacheKey, TaskTiming] | None:
