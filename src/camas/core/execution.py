@@ -10,7 +10,7 @@ import os
 import signal
 import sys
 import time
-from contextlib import nullcontext
+from contextlib import nullcontext, suppress
 from dataclasses import dataclass
 from datetime import datetime
 from subprocess import DEVNULL, STDOUT
@@ -216,24 +216,50 @@ def spawn_cwd(base: Path | None, cwd: Path | None) -> Path | None:
 	return base / cwd
 
 
-def spawn_error_message(exc: OSError, argv: Sequence[str]) -> str:
+def unusable_cwd(cwd: Path | None) -> str | None:
+	"""``cwd`` when a leaf could not have been spawned in it, else ``None`` — asked only after a
+	spawn has already failed, to attribute a failure the OS declined to attribute itself.
+
+	>>> from pathlib import Path
+	>>> unusable_cwd(None) is None
+	True
+	>>> unusable_cwd(Path("no-such-directory-xyz"))
+	'no-such-directory-xyz'
+	>>> unusable_cwd(Path(".")) is None
+	True
+	"""
+	if cwd is None:
+		return None
+	with suppress(OSError):
+		return None if cwd.is_dir() else str(cwd)
+	return None
+
+
+def spawn_error_message(exc: OSError, argv: Sequence[str], cwd: Path | None) -> str:
 	"""The Errored message for a leaf whose spawn raised ``exc``: the canonical
 	'no such file or directory' for a missing executable, else the OS ``strerror``.
 
-	Names the path the OS reported when it named one, falling back to the executable. A leaf
-	whose ``cwd`` does not exist fails with the directory as the missing path, and reporting
-	the executable there sends the reader after a file that is present and fine.
+	Names the path the OS reported, else the leaf's ``cwd`` when that is what it could not have
+	run in, else the executable. Naming the executable for a leaf whose ``cwd`` is missing sends
+	the reader after a file that is present and fine — and Windows reports exactly that case as
+	'The directory name is invalid' with no path attached, so the ``cwd`` has to be filled in
+	from what camas passed rather than read out of the error.
 
-	>>> spawn_error_message(FileNotFoundError(2, "No such file or directory"), ("ghost",))
+	>>> from pathlib import Path
+	>>> spawn_error_message(FileNotFoundError(2, "No such file or directory"), ("ghost",), None)
 	'no such file or directory: ghost'
-	>>> spawn_error_message(FileNotFoundError(2, "No such file or directory", "gone"), ("echo",))
+	>>> spawn_error_message(
+	...     FileNotFoundError(2, "No such file or directory", "gone"), ("echo",), Path("gone")
+	... )
 	'no such file or directory: gone'
-	>>> spawn_error_message(PermissionError(13, "Permission denied"), ("./script.sh",))
+	>>> spawn_error_message(OSError(267, "The directory name is invalid"), ("python",), Path("gone"))
+	'the directory name is invalid: gone'
+	>>> spawn_error_message(PermissionError(13, "Permission denied"), ("./script.sh",), None)
 	'permission denied: ./script.sh'
-	>>> spawn_error_message(OSError(), ("weird",))
+	>>> spawn_error_message(OSError(), ("weird",), None)
 	'could not start command: weird'
 	"""
-	target: Final = exc.filename or argv[0]
+	target: Final = exc.filename or unusable_cwd(cwd) or argv[0]
 	if isinstance(exc, FileNotFoundError):
 		return f"no such file or directory: {target}"
 	reason: Final = exc.strerror.lower() if exc.strerror else "could not start command"
@@ -252,6 +278,7 @@ async def run_cmd(task: Task, leaf_index: int, ctx: RunContext) -> TaskResult:
 		start_pc: Final = time.perf_counter()
 		await ctx.dispatch(leaf_index, StartedEvent(task, leaf_index, datetime.now()))
 		argv: Final = resolve_cmd(task.cmd)
+		cwd: Final = spawn_cwd(ctx.base, task.cwd)
 		try:
 			proc: Final = await asyncio.create_subprocess_exec(
 				*argv,
@@ -259,10 +286,10 @@ async def run_cmd(task: Task, leaf_index: int, ctx: RunContext) -> TaskResult:
 				stdout=asyncio.subprocess.PIPE,
 				stderr=STDOUT,
 				env=subprocess_env({**os.environ, **task.env}, color=ctx.leaf_color),
-				cwd=spawn_cwd(ctx.base, task.cwd),
+				cwd=cwd,
 			)
 		except OSError as exc:
-			errored: Final = Errored(NOT_FOUND_RC, spawn_error_message(exc, argv))
+			errored: Final = Errored(NOT_FOUND_RC, spawn_error_message(exc, argv, cwd))
 			await ctx.dispatch(
 				leaf_index, CompletedEvent(task, leaf_index, errored, datetime.now())
 			)

@@ -25,6 +25,7 @@ from camas.core.execution import (
 	spawn_cwd,
 	step_interrupt,
 	suppress_ctrl_c_echo,
+	unusable_cwd,
 )
 from camas.core.leaf_state import KILL_PRESSES
 from camas.v0.completion import INTERRUPT_RC, NOT_FOUND_RC, Errored, Finished, Skipped, Stopped
@@ -357,6 +358,21 @@ def test_missing_cwd_errors_naming_the_directory_not_the_executable(tmp_path: Pa
 	assert completion.returncode == NOT_FOUND_RC
 	assert str(missing) in completion.message
 	assert "python" not in completion.message
+
+
+def test_unusable_cwd_answers_none_when_the_cwd_cannot_be_inspected(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	"""``Path.is_dir`` raises ``PermissionError`` on 3.10 through 3.13 when a parent has lost search
+	permission (3.14 returns False instead). This runs while a spawn failure is already being
+	reported, so it answers rather than raises, and the message falls back to the executable.
+	"""
+
+	def denied(_self: Path) -> bool:
+		raise PermissionError(13, "Permission denied")
+
+	monkeypatch.setattr(Path, "is_dir", denied)
+	assert unusable_cwd(tmp_path) is None
 
 
 def test_sequential_skip_nested_group() -> None:
