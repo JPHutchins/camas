@@ -23,8 +23,10 @@ from camas.core.execution import (
 	restore_tty,
 	run,
 	spawn_cwd,
+	spawn_error_message,
 	step_interrupt,
 	suppress_ctrl_c_echo,
+	unusable_cwd,
 )
 from camas.core.leaf_state import KILL_PRESSES
 from camas.v0.completion import INTERRUPT_RC, NOT_FOUND_RC, Errored, Finished, Skipped, Stopped
@@ -347,14 +349,43 @@ def test_non_executable_file_errors_without_traceback(tmp_path: Path) -> None:
 	assert str(script) in completion.message
 
 
-def test_missing_cwd_errors_without_traceback(tmp_path: Path) -> None:
-	task = Task(("python", "-c", "pass"), name="lost", cwd=tmp_path / "does-not-exist")
+def test_missing_cwd_errors_naming_the_directory_not_the_executable(tmp_path: Path) -> None:
+	missing = tmp_path / "does-not-exist"
+	task = Task(("python", "-c", "pass"), name="lost", cwd=missing)
 	result = asyncio.run(run(task))
 	assert result.returncode == 1
 	completion = result.results[0].completion
 	assert isinstance(completion, Errored)
 	assert completion.returncode == NOT_FOUND_RC
-	assert completion.message
+	assert completion.message.endswith(str(missing))
+
+
+def test_spawn_error_names_the_cwd_when_the_os_named_no_path(tmp_path: Path) -> None:
+	"""The Windows shape, which no Linux run reaches: ``OSError(267)`` "The directory name is
+	invalid" with ``filename`` unset, where the cwd is the only thing that can name the failure.
+	A fresh ``tmp_path`` child cannot exist, so the answer does not depend on the cwd the suite
+	happens to run from.
+	"""
+	missing = tmp_path / "gone"
+	message = spawn_error_message(
+		OSError(267, "The directory name is invalid"), ("python",), missing
+	)
+	assert message == f"the directory name is invalid: {missing}"
+
+
+def test_unusable_cwd_answers_none_when_the_cwd_cannot_be_inspected(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	"""``Path.is_dir`` raises ``PermissionError`` on 3.10 through 3.13 when a parent has lost search
+	permission (3.14 returns False instead). This runs while a spawn failure is already being
+	reported, so it answers rather than raises, and the message falls back to the executable.
+	"""
+
+	def denied(_self: Path) -> bool:
+		raise PermissionError(13, "Permission denied")
+
+	monkeypatch.setattr(Path, "is_dir", denied)
+	assert unusable_cwd(tmp_path) is None
 
 
 def test_sequential_skip_nested_group() -> None:
