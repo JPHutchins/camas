@@ -12,12 +12,9 @@ from camas.mcp.scaffold import (
 	AGENT_TEMPLATES,
 	camas_note,
 	dumps_prettier,
-	in_virtualenv,
 	installed_version_spec,
 	launch_command,
 	launch_command_str,
-	local_camas,
-	local_environment,
 	parse_json_object,
 	resolve_pin,
 	tasks_py_path,
@@ -31,7 +28,7 @@ if TYPE_CHECKING:
 	from collections.abc import Callable, Mapping
 	from pathlib import Path
 
-	from camas.mcp.scaffold import LocalEnvironment
+	from camas.mcp.environment import LocalEnvironment
 
 _DEV_VERSION = "0.1.0.dev0+gabc1234"
 _RELEASE_VERSION = "0.1.18"
@@ -45,14 +42,6 @@ def _which_at(found: Mapping[str, str]) -> Callable[[str], str | None]:
 	"""A ``shutil.which`` that resolves each name to a chosen path, for the cases where *where* a
 	tool lives is the thing under test."""
 	return found.get
-
-
-def _venv_camas(root: Path) -> Path:
-	"""A ``camas`` in a virtual environment at ``root`` — the ``pyvenv.cfg`` is what makes it one."""
-	(root / "bin").mkdir(parents=True)
-	(root / "pyvenv.cfg").write_text("home = /usr\n", encoding="utf-8")
-	(root / "bin" / "camas").write_text("", encoding="utf-8")
-	return root / "bin" / "camas"
 
 
 def _pin_installed_version(monkeypatch: pytest.MonkeyPatch, installed: str) -> None:
@@ -284,44 +273,8 @@ def test_launch_command_launcher_camas_forced_errors_without_path(
 	assert launch_command(launcher="camas") is None
 
 
-def test_in_virtualenv_reads_the_pyvenv_cfg(tmp_path: Path) -> None:
-	assert in_virtualenv(str(_venv_camas(tmp_path / ".venv")))
-
-
-def test_in_virtualenv_rejects_a_directory_merely_named_venv(tmp_path: Path) -> None:
-	(tmp_path / ".venv" / "bin").mkdir(parents=True)
-	assert not in_virtualenv(str(tmp_path / ".venv" / "bin" / "camas"))
-
-
-def test_local_environment_nix_store() -> None:
-	assert local_environment("/nix/store/9k1zdwqp-camas-0.1.27/bin/camas") == "nix"
-
-
-def test_local_environment_virtualenv(tmp_path: Path) -> None:
-	assert local_environment(str(_venv_camas(tmp_path / ".venv"))) == "venv"
-
-
-def test_local_environment_global_install_belongs_to_none() -> None:
-	assert local_environment("/usr/bin/camas") is None
-
-
-def test_local_camas_none_when_off_path(monkeypatch: pytest.MonkeyPatch) -> None:
-	monkeypatch.setattr("shutil.which", _which())
-	assert local_camas() is None
-
-
-def test_local_camas_none_for_a_global_install(monkeypatch: pytest.MonkeyPatch) -> None:
-	monkeypatch.setattr("shutil.which", _which("camas"))
-	assert local_camas() is None
-
-
-def test_local_camas_finds_the_venv(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-	monkeypatch.setattr("shutil.which", _which_at({"camas": str(_venv_camas(tmp_path / ".venv"))}))
-	assert local_camas() == "venv"
-
-
 def test_launch_command_prefers_venv_camas_over_uvx(
-	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, venv_camas: Callable[[Path], Path]
 ) -> None:
 	"""#217: a uvx server is isolated from the venv holding the project's tools, so a gate run
 	through it cannot see them — the camas already installed there can.
@@ -331,7 +284,7 @@ def test_launch_command_prefers_venv_camas_over_uvx(
 		"shutil.which",
 		_which_at(
 			{
-				"camas": str(_venv_camas(tmp_path / ".venv")),
+				"camas": str(venv_camas(tmp_path / ".venv")),
 				"uv": "/usr/bin/uv",
 				"uvx": "/usr/bin/uvx",
 			}
@@ -353,7 +306,7 @@ def test_launch_command_prefers_nix_store_camas_over_uvx(
 
 
 def test_launch_command_uv_lock_project_still_wins_over_venv_camas(
-	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, venv_camas: Callable[[Path], Path]
 ) -> None:
 	"""``uv run`` is inside the project environment too, and provisions it from the lockfile, so a
 	locked project keeps its priority over the venv's camas.
@@ -362,7 +315,7 @@ def test_launch_command_uv_lock_project_still_wins_over_venv_camas(
 	(tmp_path / "uv.lock").write_text("")
 	monkeypatch.setattr(
 		"shutil.which",
-		_which_at({"uv": "/usr/bin/uv", "camas": str(_venv_camas(tmp_path / ".venv"))}),
+		_which_at({"uv": "/usr/bin/uv", "camas": str(venv_camas(tmp_path / ".venv"))}),
 	)
 	assert launch_command() == ("uv", ["run", "camas", "mcp"])
 
@@ -372,9 +325,17 @@ def test_launch_command_global_camas_still_loses_to_uvx(
 ) -> None:
 	"""A global install shares no tools with the project, so the pinned uvx entry stays the better
 	one — detection only reorders for a camas that is part of the project's environment.
+
+	The global ``camas`` is placed under ``tmp_path`` rather than ``/usr/bin`` so the verdict rests
+	on a directory this test controls: ``in_virtualenv`` stats the ``pyvenv.cfg`` beside it, and a
+	real system path could in principle have one.
 	"""
 	monkeypatch.chdir(tmp_path)
-	monkeypatch.setattr("shutil.which", _which("uvx", "camas"))
+	(tmp_path / "global").mkdir()
+	monkeypatch.setattr(
+		"shutil.which",
+		_which_at({"uvx": "/usr/bin/uvx", "camas": str(tmp_path / "global" / "camas")}),
+	)
 	_pin_installed_version(monkeypatch, _DEV_VERSION)
 	assert launch_command() == ("uvx", ["camas[mcp]", "mcp"])
 
@@ -390,12 +351,15 @@ def test_camas_note_names_what_a_teammate_has_to_reproduce(
 
 
 def test_mcp_json_note_names_the_venv(
-	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+	tmp_path: Path,
+	monkeypatch: pytest.MonkeyPatch,
+	capsys: pytest.CaptureFixture[str],
+	venv_camas: Callable[[Path], Path],
 ) -> None:
 	monkeypatch.chdir(tmp_path)
-	monkeypatch.setattr("shutil.which", _which_at({"camas": str(_venv_camas(tmp_path / ".venv"))}))
+	monkeypatch.setattr("shutil.which", _which_at({"camas": str(venv_camas(tmp_path / ".venv"))}))
 	assert write_mcp_json([]) == 0
-	assert "virtual environment" in capsys.readouterr().out
+	assert "virtual environment active here" in capsys.readouterr().out
 
 
 def test_write_mcp_json_uses_uv_run_tasks_py_when_pep723(

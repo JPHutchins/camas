@@ -71,7 +71,13 @@ def _mcp_command(mcp_json: Path) -> str:
 
 
 def _mcp_json_uses_portable_launcher(mcp_json: Path) -> bool:
-	return _mcp_command(mcp_json) in ("uv", "uvx")
+	"""Whether the entry uses the launcher this fixture's project calls for. ``_setup_project``
+	writes a ``uv.lock``, so the auto-probe must resolve ``uv`` — the exact answer, not merely a
+	non-bare one, which is what the historical "bare ``camas``" regression produced. Bare ``camas``
+	is now a deliberate outcome elsewhere (a camas belonging to the project's venv or devShell), so
+	"anything but ``camas``" would no longer be the invariant to assert.
+	"""
+	return _mcp_command(mcp_json) == "uv"
 
 
 def _setup_project(tmp_path: Path) -> None:
@@ -118,7 +124,7 @@ def test_init_claude_writes_generated_files_and_mcp_uses_portable_launcher(
 		assert (tmp_path / rel).exists(), f"init --claude did not write {rel}"
 
 	assert _mcp_json_uses_portable_launcher(tmp_path / ".mcp.json"), (
-		".mcp.json camas entry must use uv or uvx launcher (criterion #4)"
+		".mcp.json camas entry must use the uv launcher this uv.lock project calls for (criterion #4)"
 	)
 
 	headless = run_headless(
