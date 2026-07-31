@@ -33,6 +33,7 @@ from ..core.render import print_tree, render_tree_lines
 from ..core.scope import (
 	requested_but_unusable,
 	scope_to_changed,
+	scoped_or_default,
 	to_changed,
 	with_default_paths,
 )
@@ -206,13 +207,7 @@ def fix_cli(argv: list[str]) -> int:
 	requested = args.paths or (stdin or ())
 	changed = to_changed(requested, base)
 	expanded = expand_matrix(node)
-	scoped = (
-		None
-		if requested_but_unusable(requested, changed)
-		else scope_to_changed(expanded, changed)
-		if changed
-		else with_default_paths(expanded)
-	)
+	scoped = scoped_or_default(expanded, requested, changed)
 	if args.dry_run:
 		if scoped is None:
 			print("No leaves cover the changed paths — nothing would run.")

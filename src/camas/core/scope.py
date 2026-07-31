@@ -97,6 +97,28 @@ def requested_but_unusable(paths: Sequence[str], changed: Sequence[str]) -> bool
 	return bool(paths) and not changed
 
 
+def scoped_or_default(
+	expanded: TaskNode, requested: Sequence[str], changed: Sequence[str]
+) -> TaskNode | None:
+	"""``expanded`` narrowed to ``changed``, or its full-run form when nothing narrows it, or ``None``
+	when paths were named and none of them survived normalization.
+
+	The three-way answer the fix paths need, in one place: both the CLI's ``camas mcp fix`` and the
+	MCP's ``camas_fix`` were spelling it out character for character, in different layers.
+
+	>>> node = Task("tidy {paths}", paths=".")
+	>>> scoped_or_default(node, ["a.py"], ("a.py",)).cmd
+	'tidy a.py'
+	>>> scoped_or_default(node, [], ()).cmd
+	'tidy .'
+	>>> scoped_or_default(node, ["/etc/passwd"], ()) is None
+	True
+	"""
+	if requested_but_unusable(requested, changed):
+		return None
+	return scope_to_changed(expanded, tuple(changed)) if changed else with_default_paths(expanded)
+
+
 def _within(path: str, prefix: str) -> bool:
 	"""True when POSIX ``path`` lies under ``prefix`` (segment-wise, so ``frontend`` does
 	not cover ``frontendx``); ``"."`` covers everything.

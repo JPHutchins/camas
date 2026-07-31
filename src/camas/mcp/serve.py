@@ -43,8 +43,8 @@ from ..core.render import render_tree_lines, strip_ansi
 from ..core.scope import (
 	requested_but_unusable,
 	scope_to_changed,
+	scoped_or_default,
 	to_changed,
-	with_default_paths,
 )
 from ..core.task import did_you_mean, task_label
 from ..main.argv import apply_passthrough
@@ -1496,13 +1496,7 @@ async def fix_for(
 	if fix_node is not None and blocked is None:
 		changed = to_changed(req.paths, base_for(session))
 		expanded = expand_matrix(fix_node)
-		scoped = (
-			None
-			if requested_but_unusable(req.paths, changed)
-			else scope_to_changed(expanded, changed)
-			if changed
-			else with_default_paths(expanded)
-		)
+		scoped = scoped_or_default(expanded, req.paths, changed)
 		if scoped is not None:
 			prepared = (scoped, timings.observed(session.camas_dir, expanded, changed))
 	empty_cause: str | None
