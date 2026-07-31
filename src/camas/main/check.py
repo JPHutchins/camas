@@ -11,6 +11,7 @@ explicitly requests it.
 from __future__ import annotations
 
 import linecache
+import os
 import shutil
 import subprocess
 import sys
@@ -231,19 +232,57 @@ def find_typechecker() -> FoundChecker | None:
 	return None
 
 
-def checker_argv(found: FoundChecker, tasks_py: Path) -> list[str]:
-	"""Build the per-tool argv: ``ty check <path>`` vs ``mypy <path>``.
+class CheckerInvocation(NamedTuple):
+	"""How to run a located checker so that ``tasks_py``'s ``import camas`` resolves."""
 
-	>>> checker_argv(FoundChecker("ty", Path("ty")), Path("tasks.py"))
-	['ty', 'check', 'tasks.py']
-	>>> checker_argv(FoundChecker("mypy", Path("mypy")), Path("tasks.py"))
-	['mypy', 'tasks.py']
+	argv: tuple[str, ...]
+	env: Mapping[str, str]
+	"""Variables to overlay on the inherited environment; empty when ``argv`` carries it all."""
+
+
+def camas_search_path() -> Path:
+	"""The directory holding the running ``camas`` package.
+
+	Resolved at call time, not import time: mypyc-compiled modules may not define ``__file__``
+	while the module body executes (nixpkgs' mypyc doesn't) — which is the very install this
+	path exists to serve.
+
+	>>> (camas_search_path() / "camas" / "__init__.py").is_file()
+	True
+	"""
+	return Path(__file__).parents[2]
+
+
+def checker_invocation(
+	found: FoundChecker, tasks_py: Path, camas_root: Path, *, mypypath: str | None = None
+) -> CheckerInvocation:
+	"""Build the per-tool invocation: ``ty check <path>`` vs ``mypy <path>``, each told where
+	``camas_root`` is so the checker resolves ``import camas`` from the camas that is running
+	rather than from whatever environment it discovers for itself.
+
+	>>> checker_invocation(FoundChecker("ty", Path("ty")), Path("tasks.py"), Path("site"))
+	CheckerInvocation(argv=('ty', 'check', '--extra-search-path', 'site', 'tasks.py'), env={})
+	>>> checker_invocation(FoundChecker("mypy", Path("mypy")), Path("tasks.py"), Path("site"))
+	CheckerInvocation(argv=('mypy', 'tasks.py'), env={'MYPYPATH': 'site'})
+
+	An inherited ``MYPYPATH`` keeps its priority; ``camas_root`` is appended behind it:
+
+	>>> checker_invocation(
+	...     FoundChecker("mypy", Path("mypy")), Path("tasks.py"), Path("site"), mypypath="stubs"
+	... ).env["MYPYPATH"].split(os.pathsep)
+	['stubs', 'site']
 	"""
 	match found.name:
 		case "ty":
-			return [str(found.path), "check", str(tasks_py)]
+			return CheckerInvocation(
+				(str(found.path), "check", "--extra-search-path", str(camas_root), str(tasks_py)),
+				{},
+			)
 		case "mypy":
-			return [str(found.path), str(tasks_py)]
+			return CheckerInvocation(
+				(str(found.path), str(tasks_py)),
+				{"MYPYPATH": os.pathsep.join(p for p in (mypypath, str(camas_root)) if p)},
+			)
 		case _:
 			assert_never(found.name)
 
@@ -253,13 +292,17 @@ def run_typecheck(tasks_py: Path) -> TypeCheckResult:
 	found = find_typechecker()
 	if found is None:
 		return CheckerNotFound()
+	invocation = checker_invocation(
+		found, tasks_py, camas_search_path(), mypypath=os.environ.get("MYPYPATH")
+	)
 	proc = subprocess.run(
-		checker_argv(found, tasks_py),
+		invocation.argv,
 		capture_output=True,
 		text=True,
 		encoding="utf-8",
 		errors="replace",
 		check=False,
+		env={**os.environ, **invocation.env},
 	)
 	if proc.returncode == 0:
 		return CheckerOk(name=found.name)

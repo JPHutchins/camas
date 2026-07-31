@@ -21,7 +21,8 @@ from camas.main.check import (
 	CheckerNotFound,
 	CheckerOk,
 	FoundChecker,
-	checker_argv,
+	camas_search_path,
+	checker_invocation,
 	deepest_user_frame,
 	describe_check_help,
 	find_typechecker,
@@ -45,6 +46,40 @@ requires_checker = pytest.mark.skipif(
 	CHECKER_NAME is None,
 	reason="real-checker test requires ty or mypy on PATH (install camas[check])",
 )
+
+
+requires_ty = pytest.mark.skipif(
+	CHECKER_NAME != "ty",
+	reason="only ty discovers its environment from VIRTUAL_ENV, which is what these isolate",
+)
+
+
+def _isolate_the_checkers_environment(monkeypatch: pytest.MonkeyPatch, root: Path) -> None:
+	"""Point the checker at an environment holding nothing, the way a Nix install's holds no camas.
+
+	Every route by which camas could leak back in has to be closed, and the nix build's check
+	phase — which installs camas into all of them — is what proves it: ty rejects a
+	``VIRTUAL_ENV`` with no ``pyvenv.cfg`` and fails if it cannot iterate the install's
+	``lib``/``lib64``, so the shape must be real though empty; without an explicit
+	``include-system-site-packages = false`` the base interpreter's site-packages is searched
+	too; and ty honours ``PYTHONPATH``, which a check phase running pytest populates.
+	"""
+	site = (
+		root / "Lib" / "site-packages"
+		if sys.platform == "win32"
+		else root / "lib" / f"python{sys.version_info[0]}.{sys.version_info[1]}" / "site-packages"
+	)
+	site.mkdir(parents=True)
+	(root / "pyvenv.cfg").write_text(
+		f"home = {Path(sys.executable).parent}\ninclude-system-site-packages = false\n"
+	)
+	monkeypatch.setenv("VIRTUAL_ENV", str(root))
+	monkeypatch.delenv("PYTHONPATH", raising=False)
+
+
+def _tasks_py_importing_camas(path: Path) -> Path:
+	path.write_text('from camas import Task\n\nt = Task("echo hi", name="t")\n')
+	return path
 
 
 def _stub_ok(_p: Path) -> CheckerOk:
@@ -78,19 +113,20 @@ def test_checker_priority_is_ty_then_mypy() -> None:
 EXE_SUFFIX: Final = ".exe" if sys.platform == "win32" else ""
 
 
-def test_checker_argv_ty() -> None:
-	assert checker_argv(FoundChecker("ty", Path("ty")), Path("tasks.py")) == [
-		"ty",
-		"check",
-		"tasks.py",
-	]
+def test_checker_invocation_ty_puts_camas_on_the_search_path() -> None:
+	assert checker_invocation(
+		FoundChecker("ty", Path("ty")), Path("tasks.py"), Path("site")
+	) == check_mod.CheckerInvocation(("ty", "check", "--extra-search-path", "site", "tasks.py"), {})
 
 
-def test_checker_argv_mypy() -> None:
-	assert checker_argv(FoundChecker("mypy", Path("mypy")), Path("tasks.py")) == [
-		"mypy",
-		"tasks.py",
-	]
+def test_checker_invocation_mypy_puts_camas_on_mypypath() -> None:
+	assert checker_invocation(
+		FoundChecker("mypy", Path("mypy")), Path("tasks.py"), Path("site")
+	) == check_mod.CheckerInvocation(("mypy", "tasks.py"), {"MYPYPATH": "site"})
+
+
+def test_camas_search_path_holds_the_running_camas() -> None:
+	assert (camas_search_path() / "camas" / "__init__.py").is_file()
 
 
 def test_find_typechecker_internal_ty_preferred(
@@ -185,6 +221,37 @@ def test_run_typecheck_fails(tmp_path: Path) -> None:
 	# Both ty and mypy reference the declared type in their error message;
 	# the exact wording differs, so we only assert the shared anchor.
 	assert "int" in result.output
+
+
+@requires_ty
+def test_run_typecheck_resolves_camas_when_the_checkers_own_env_lacks_it(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	"""#277: the checker discovers an environment for itself, and for a Nix install that
+	environment is not the one camas lives in — so ``import camas`` went unresolved in every
+	tasks.py. An emptied environment stands in for that discovery, no second install needed; the
+	chdir keeps ty from discovering camas's own repo (and its ``src`` layout) from the cwd.
+	"""
+	monkeypatch.chdir(tmp_path)
+	_isolate_the_checkers_environment(monkeypatch, tmp_path / "env")
+	assert isinstance(run_typecheck(_tasks_py_importing_camas(tmp_path / "tasks.py")), CheckerOk)
+
+
+@requires_ty
+def test_the_isolated_env_really_cannot_resolve_camas_on_its_own(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	"""The other half of that pair: point camas's own location at an empty directory and the
+	same run reports #277's diagnostic — so the search path is what resolves the import, not the
+	isolation quietly failing to isolate.
+	"""
+	(nowhere := tmp_path / "nowhere").mkdir()
+	monkeypatch.chdir(tmp_path)
+	monkeypatch.setattr(check_mod, "camas_search_path", lambda: nowhere)
+	_isolate_the_checkers_environment(monkeypatch, tmp_path / "env")
+	result = run_typecheck(_tasks_py_importing_camas(tmp_path / "tasks.py"))
+	assert isinstance(result, CheckerErr)
+	assert "unresolved-import" in result.output
 
 
 def test_run_typecheck_no_checker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
