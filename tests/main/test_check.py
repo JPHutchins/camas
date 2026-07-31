@@ -115,13 +115,13 @@ EXE_SUFFIX: Final = ".exe" if sys.platform == "win32" else ""
 
 def test_checker_invocation_ty_puts_camas_on_the_search_path() -> None:
 	assert checker_invocation(
-		FoundChecker("ty", Path("ty")), Path("tasks.py"), Path("site")
+		FoundChecker("ty", Path("ty")), Path("tasks.py"), Path("site"), {}
 	) == check_mod.CheckerInvocation(("ty", "check", "--extra-search-path", "site", "tasks.py"), {})
 
 
 def test_checker_invocation_mypy_puts_camas_on_mypypath() -> None:
 	assert checker_invocation(
-		FoundChecker("mypy", Path("mypy")), Path("tasks.py"), Path("site")
+		FoundChecker("mypy", Path("mypy")), Path("tasks.py"), Path("site"), {}
 	) == check_mod.CheckerInvocation(("mypy", "tasks.py"), {"MYPYPATH": "site"})
 
 

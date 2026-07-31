@@ -236,8 +236,13 @@ class CheckerInvocation(NamedTuple):
 	"""How to run a located checker so that ``tasks_py``'s ``import camas`` resolves."""
 
 	argv: tuple[str, ...]
-	env: Mapping[str, str]
-	"""Variables to overlay on the inherited environment; empty when ``argv`` carries it all."""
+	env: dict[str, str]
+	"""Variables to overlay on the inherited environment; empty when ``argv`` carries it all.
+
+	A builtin rather than ``Mapping`` so the annotation resolves at runtime: under PEP 563 a
+	``NamedTuple`` field annotated with a ``TYPE_CHECKING``-only name makes ``get_type_hints``
+	raise ``NameError``, and importing ``Mapping`` unconditionally would be moved back under
+	``TYPE_CHECKING`` by the ``TC`` lint rules on the next ``camas fix``."""
 
 
 def camas_search_path() -> Path:
@@ -254,21 +259,24 @@ def camas_search_path() -> Path:
 
 
 def checker_invocation(
-	found: FoundChecker, tasks_py: Path, camas_root: Path, *, mypypath: str | None = None
+	found: FoundChecker, tasks_py: Path, camas_root: Path, inherited: Mapping[str, str]
 ) -> CheckerInvocation:
 	"""Build the per-tool invocation: ``ty check <path>`` vs ``mypy <path>``, each told where
 	``camas_root`` is so the checker resolves ``import camas`` from the camas that is running
 	rather than from whatever environment it discovers for itself.
 
-	>>> checker_invocation(FoundChecker("ty", Path("ty")), Path("tasks.py"), Path("site"))
+	``inherited`` is the environment the checker would run under, so each tool reads whatever it
+	needs from it here rather than having the runner know which variable belongs to which tool.
+
+	>>> checker_invocation(FoundChecker("ty", Path("ty")), Path("tasks.py"), Path("site"), {})
 	CheckerInvocation(argv=('ty', 'check', '--extra-search-path', 'site', 'tasks.py'), env={})
-	>>> checker_invocation(FoundChecker("mypy", Path("mypy")), Path("tasks.py"), Path("site"))
+	>>> checker_invocation(FoundChecker("mypy", Path("mypy")), Path("tasks.py"), Path("site"), {})
 	CheckerInvocation(argv=('mypy', 'tasks.py'), env={'MYPYPATH': 'site'})
 
-	An inherited ``MYPYPATH`` keeps its priority; ``camas_root`` is appended behind it:
+	A non-empty inherited ``MYPYPATH`` keeps its priority; ``camas_root`` is appended behind it:
 
 	>>> checker_invocation(
-	...     FoundChecker("mypy", Path("mypy")), Path("tasks.py"), Path("site"), mypypath="stubs"
+	...     FoundChecker("mypy", Path("mypy")), Path("tasks.py"), Path("site"), {"MYPYPATH": "stubs"}
 	... ).env["MYPYPATH"].split(os.pathsep)
 	['stubs', 'site']
 	"""
@@ -281,7 +289,11 @@ def checker_invocation(
 		case "mypy":
 			return CheckerInvocation(
 				(str(found.path), str(tasks_py)),
-				{"MYPYPATH": os.pathsep.join(p for p in (mypypath, str(camas_root)) if p)},
+				{
+					"MYPYPATH": os.pathsep.join(
+						p for p in (inherited.get("MYPYPATH"), str(camas_root)) if p
+					)
+				},
 			)
 		case _:
 			assert_never(found.name)
@@ -292,9 +304,7 @@ def run_typecheck(tasks_py: Path) -> TypeCheckResult:
 	found = find_typechecker()
 	if found is None:
 		return CheckerNotFound()
-	invocation = checker_invocation(
-		found, tasks_py, camas_search_path(), mypypath=os.environ.get("MYPYPATH")
-	)
+	invocation = checker_invocation(found, tasks_py, camas_search_path(), os.environ)
 	proc = subprocess.run(
 		invocation.argv,
 		capture_output=True,
@@ -302,7 +312,7 @@ def run_typecheck(tasks_py: Path) -> TypeCheckResult:
 		encoding="utf-8",
 		errors="replace",
 		check=False,
-		env={**os.environ, **invocation.env},
+		env={**os.environ, **invocation.env} if invocation.env else None,
 	)
 	if proc.returncode == 0:
 		return CheckerOk(name=found.name)
