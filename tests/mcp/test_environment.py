@@ -3,13 +3,13 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from camas.mcp.environment import in_virtualenv, local_camas, local_environment
 
 if TYPE_CHECKING:
 	from collections.abc import Callable
-	from pathlib import Path
 
 	import pytest
 
@@ -75,13 +75,17 @@ def test_local_camas_finds_the_venv(
 def test_in_virtualenv_answers_rather_than_raising_on_an_unreadable_parent(
 	monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-	"""``Path.is_file`` raises ``PermissionError`` here on Python 3.10 and 3.12 and returns ``False`` on
-	3.14, and camas supports both — so a launcher probe over an unreadable directory has to answer,
-	not take down ``camas mcp init`` on half the range.
+	"""Whatever the probe raises, classifying a candidate launcher answers — ``camas mcp init`` has
+	to fall through to the next one, not die on a directory it merely wanted to look at.
+
+	The raise is injected into ``Path.is_file`` rather than into ``os.stat`` so this holds on every
+	supported interpreter: measured, an unreadable parent makes ``Path.is_file`` raise
+	``PermissionError`` on 3.10 through 3.13 but return ``False`` on 3.14, so patching underneath it
+	would leave the guard unexercised on the newer ones.
 	"""
 
-	def denied(*_args: object, **_kwargs: object) -> object:
+	def denied(_self: Path, **_kwargs: object) -> bool:
 		raise PermissionError(13, "Permission denied")
 
-	monkeypatch.setattr("os.stat", denied)
+	monkeypatch.setattr(Path, "is_file", denied)
 	assert in_virtualenv("/locked/bin/camas") is False

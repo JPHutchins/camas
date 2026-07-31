@@ -9,6 +9,7 @@ a virtual environment or a Nix devShell — which is what decides whether a laun
 from __future__ import annotations
 
 import shutil
+from contextlib import suppress
 from pathlib import Path, PurePosixPath
 from typing import Literal
 
@@ -36,12 +37,16 @@ def in_virtualenv(executable: str) -> bool:
 	``env/`` and ``~/.virtualenvs/x`` count too and a plain directory someone named ``.venv`` does
 	not.
 
-	``os.path.isfile`` rather than ``Path.is_file``, which answers only on the newer half of the
-	interpreters camas supports: measured, an unreadable parent directory makes it raise
-	``PermissionError`` on 3.10 and 3.12 and return ``False`` on 3.14. A launcher probe has to fall
-	through to the next candidate, not take down ``camas mcp init`` on the older ones.
+	The probe is guarded rather than trusted to answer. ``Path.is_file`` swallows only
+	``ENOENT``/``ENOTDIR``/``EBADF``/``ELOOP``, so an unreadable parent directory makes it raise
+	``PermissionError`` on most of the interpreters camas supports: measured, it raises on 3.10
+	through 3.13 and returns ``False`` on 3.14. Classifying a candidate launcher must fall through to
+	the next one, not take down ``camas mcp init``. ``os.path.isfile`` never raises and would say this
+	in one call, but the repo's ``PTH`` lint rule rewrites it straight back into ``Path.is_file``.
 	"""
-	return Path(Path(executable).parent.parent / "pyvenv.cfg").is_file()
+	with suppress(OSError):
+		return (Path(executable).parent.parent / "pyvenv.cfg").is_file()
+	return False
 
 
 def local_environment(executable: str) -> LocalEnvironment | None:
