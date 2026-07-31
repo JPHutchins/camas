@@ -226,4 +226,4 @@ async def test_gate_canonical_survives_agent_format_rewriting_the_command() -> N
 	assert outcome.result is not None
 	reported = outcome.result.results[0].name
 	assert "--output-format sarif" in reported
-	assert outcome.canonical[reported] == "python -c pass ."
+	assert outcome.keys[reported] == CacheKey("python -c pass .", 1)

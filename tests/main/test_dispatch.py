@@ -608,7 +608,7 @@ def test_run_under_with_paths_reads_the_observation_it_recorded(
 	camas.mkdir()
 	source = Parallel(Task(("python", "-c", "pass", "{paths}"), paths="."))
 	observed = timings.observed(camas, source, ("a.py",))
-	effects = (Timings(camas_dir=camas).for_run(observed.scope, observed.canonical),)
+	effects = (Timings(camas_dir=camas).for_run(observed.scope, observed.keys),)
 	assert (
 		run_under(
 			source,
@@ -662,3 +662,19 @@ def test_run_under_reports_when_no_leaf_covers_the_changed_paths(
 		== 0
 	)
 	assert "No task leaf covers docs/readme.md" in capsys.readouterr().out
+
+
+def test_paths_that_all_fall_outside_the_repo_run_nothing_even_under_a_budget(
+	monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	"""``--under`` exits before the scoping guard is reached, so a request naming only paths that
+	normalize away would have run the whole tree — the opposite of what scoping was asked for.
+	"""
+	task = Task("echo scoped {paths}", name="scoped", paths=".")
+	monkeypatch.setattr("sys.argv", ["camas"])
+	with pytest.raises(SystemExit, match="0"):
+		dispatch(
+			_state({"check": task}, Config()),
+			["check", "--paths", "/etc/passwd", "--under", "60"],
+		)
+	assert "nothing to run" in capsys.readouterr().out

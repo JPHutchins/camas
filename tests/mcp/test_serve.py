@@ -1983,11 +1983,23 @@ async def test_gate_call_records_a_failing_leaf(tmp_path: Path) -> None:
 	assert timings.load(session.camas_dir)[timings.CacheKey("bad", 0)].samples == 1
 
 
-async def test_gate_call_records_at_the_scope_it_ran(tmp_path: Path) -> None:
-	node = Parallel(PASS)
+async def test_gate_call_records_a_scopable_leaf_at_the_scope_it_ran(tmp_path: Path) -> None:
+	node = Parallel(Task(("python", "-c", "pass", "{paths}"), name="lint", paths="."))
 	session = _observed_session({"all": node}, Config(default_task=node), tmp_path)
 	await serve.call(session, "camas_gate", {"paths": ["a.py", "b.py"]})
 	assert set(timings.load(session.camas_dir)) == {timings.CacheKey("lint", 2)}
+
+
+async def test_gate_call_records_a_leaf_that_ignores_the_paths_at_scope_zero(
+	tmp_path: Path,
+) -> None:
+	"""Its command does not take the changed paths, so its cost does not vary with them and one
+	observation serves every change size — rather than one per bucket the project gates at.
+	"""
+	node = Parallel(PASS)
+	session = _observed_session({"all": node}, Config(default_task=node), tmp_path)
+	await serve.call(session, "camas_gate", {"paths": ["a.py", "b.py"]})
+	assert set(timings.load(session.camas_dir)) == {timings.CacheKey("lint", 0)}
 
 
 async def test_gate_call_records_nothing_when_no_leaf_ran(tmp_path: Path) -> None:

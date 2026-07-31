@@ -30,7 +30,7 @@ from ..core.matrix import (
 	unfilled_required_axes,
 )
 from ..core.render import print_tree, render_tree_lines
-from ..core.scope import canonical_labels, scope_to_changed, to_changed, with_default_paths
+from ..core.scope import scope_to_changed, to_changed, with_default_paths
 from ..core.task import did_you_mean, task_label
 from ..v0.config import Config
 from .argv import (
@@ -484,7 +484,7 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 			)
 			cli_expanded: Final = expand_matrix(resolved)
 			cli_scope: Final = timings.scope_of(cli_changed)
-			cli_canonical: Final = canonical_labels(cli_expanded, cli_changed)
+			cli_keys: Final = timings.observation_keys(cli_expanded, cli_changed, cli_scope)
 			try:
 				effects: Final = resolve_effects(
 					args.effects,
@@ -494,11 +494,17 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 					scope_effects=scope_effects,
 					base=source.parent if source is not None else None,
 					scope=cli_scope,
-					canonical=cli_canonical,
+					keys=cli_keys,
 				)
 			except ValueError as e:
 				print(f"error: --effects: {e}", file=sys.stderr)
 				sys.exit(2)
+
+			if args.paths is not None and not cli_changed:
+				# Named paths of which none survived normalization — all outside the repo. Checked
+				# ahead of both branches below, since --under exits before the scoping one is reached.
+				print("No task leaf covers (no paths given) — nothing to run.")
+				sys.exit(0)
 
 			if args.under is not None:
 				try:
@@ -524,12 +530,9 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 
 			if args.paths is not None:
 				# Without a budget there is nothing to order against, so scope up front.
-				scoped = scope_to_changed(cli_expanded, cli_changed) if cli_changed else None
+				scoped = scope_to_changed(cli_expanded, cli_changed)
 				if scoped is None:
-					print(
-						f"No task leaf covers {', '.join(cli_changed) or '(no paths given)'}"
-						" — nothing to run."
-					)
+					print(f"No task leaf covers {', '.join(cli_changed)} — nothing to run.")
 					sys.exit(0)
 				resolved = scoped
 

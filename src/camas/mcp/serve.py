@@ -741,22 +741,21 @@ def record_gate(camas_dir: Path | None, outcome: GateOutcome, changed: tuple[str
 	``agent_format`` did to each command after scoping.
 	"""
 	if outcome.result is not None:
-		timings.Observed(camas_dir, timings.scope_of(changed), outcome.canonical).record(
-			outcome.result
-		)
+		timings.Observed(camas_dir, timings.scope_of(changed), outcome.keys).record(outcome.result)
 
 
-def scope_to_paths(node: TaskNode, changed: tuple[str, ...]) -> TaskNode | None:
-	"""``node`` narrowed to the ``changed`` paths — the MCP counterpart of the CLI ``--paths``.
+def scope_to_paths(expanded: TaskNode, changed: tuple[str, ...]) -> TaskNode | None:
+	"""``expanded`` narrowed to the ``changed`` paths — the MCP counterpart of the CLI ``--paths``.
 
-	``node`` unchanged when nothing narrows it (run the whole task); the path-scoped tree when some
+	Takes an already matrix-expanded tree, since both callers have one to build their keying from.
+	Returns it unchanged when nothing narrows it (run the whole task); the path-scoped tree when some
 	leaf covers the paths; ``None`` when there are changed paths but no leaf covers them. A request
 	that named paths of which none survived normalization — all outside the repo — is the caller's to
 	reject, since only it can tell that apart from a request that named none.
 	"""
 	if not changed:
-		return node
-	return scope_to_changed(expand_matrix(node), changed)
+		return expanded
+	return scope_to_changed(expanded, changed)
 
 
 def empty_run_response() -> wire.RunResponse:
@@ -1478,7 +1477,9 @@ async def fix_for(
 	except ValueError as e:
 		return error_result(str(e))
 	scoped: TaskNode | None = None
-	keying = timings.Observed(session.camas_dir, 0, {})
+	# Bound before the branch below because the "nothing ran" path never records; it carries this
+	# request's real scope so it is a usable value rather than a placeholder.
+	keying = timings.Observed(session.camas_dir, timings.scope_of(req.paths), {})
 	blocked = unsatisfiable_message(fix_node) if fix_node is not None else None
 	if fix_node is not None and blocked is None:
 		changed = to_changed(req.paths, base_for(session))

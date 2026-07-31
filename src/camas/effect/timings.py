@@ -29,7 +29,7 @@ class TimingsContext(NamedTuple):
 
 	camas_dir: Path
 	scope: int
-	canonical: Mapping[str, str]
+	keys: Mapping[str, timings.CacheKey]
 	state: TimingsState
 
 
@@ -40,26 +40,27 @@ class Timings:
 	when the project's camas directory is present, so the effect always records.
 
 	``scope`` is how many changed paths narrowed this run, keying each observation to the size of
-	change it was measured on — see :class:`camas.core.timings.CacheKey`. ``canonical`` maps the
-	label a scoped leaf reports back to the one an estimate is read under — see
-	:func:`camas.core.scope.canonical_labels`. Neither is knowable at construction when this effect
+	change it was measured on — see :class:`camas.core.timings.CacheKey`. ``keys`` says where the label a
+	scoped leaf reports belongs instead — see :func:`camas.core.timings.observation_keys`. Neither is knowable at construction when this effect
 	is written out by hand in ``--effects`` or a ``Config``, so :func:`for_run` supplies them.
 	"""
 
-	def __init__(self, camas_dir: Path, scope: int = 0, canonical: Mapping[str, str] = {}) -> None:
+	def __init__(
+		self, camas_dir: Path, scope: int = 0, keys: Mapping[str, timings.CacheKey] = {}
+	) -> None:
 		self._camas_dir: Final = camas_dir
 		self._scope: Final = scope
-		self._canonical: Final = canonical
+		self._keys: Final = keys
 
-	def for_run(self, scope: int, canonical: Mapping[str, str]) -> "Timings":
+	def for_run(self, scope: int, keys: Mapping[str, timings.CacheKey]) -> "Timings":
 		"""This effect keyed to one run, for a caller that knows what the run is scoped to."""
-		return Timings(self._camas_dir, scope, canonical)
+		return Timings(self._camas_dir, scope, keys)
 
 	async def setup(self, task: TaskNode) -> TimingsContext:
 		return TimingsContext(
 			camas_dir=self._camas_dir,
 			scope=self._scope,
-			canonical=self._canonical,
+			keys=self._keys,
 			state=TimingsState(tuple(Waiting(info.task) for info in flatten_leaves(task))),
 		)
 
@@ -78,6 +79,6 @@ class Timings:
 				if isinstance(state, Completed)
 			),
 			ctx.scope,
-			ctx.canonical,
+			ctx.keys,
 		)
 		await asyncio.to_thread(timings.record_observed, ctx.camas_dir, leaves)

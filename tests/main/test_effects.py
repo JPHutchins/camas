@@ -356,7 +356,7 @@ def test_configured_timings_is_keyed_to_the_run(tmp_path: Path) -> None:
 
 	configured = (Summary(), Timings(camas_dir=tmp_path))
 	resolved = resolve_default_effects(
-		Config(default_effects=configured), github=False, scope=2, canonical={"a": "b"}
+		Config(default_effects=configured), github=False, scope=2, keys={}
 	)
 	assert resolved[0] is configured[0]
 	assert resolved[1] is not configured[1]

@@ -66,8 +66,11 @@ def classify(
 	OverBudget(task=Task(cmd='a', name=None, env={}, cwd=None), estimated_s=2.0)
 	>>> classify(Task("a"), 1.0, {})
 	Untimed(task=Task(cmd='a', name=None, env={}, cwd=None))
-	>>> classify(Task("a"), 1.0, {CacheKey("a", 0): TaskTiming(0.5, 1)}, scope=1)
-	Untimed(task=Task(cmd='a', name=None, env={}, cwd=None))
+	>>> scoped = Task("a {paths}", paths=".")
+	>>> classify(scoped, 1.0, {CacheKey("a .", 0): TaskTiming(0.5, 1)}, scope=1).task.name is None
+	True
+	>>> isinstance(classify(scoped, 1.0, {CacheKey("a .", 0): TaskTiming(0.5, 1)}, scope=1), Untimed)
+	True
 	"""
 	est = estimate(task, timings, scope)
 	if est is None:

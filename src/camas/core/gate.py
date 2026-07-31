@@ -22,9 +22,9 @@ from ..v0.task import Group, Task
 from .budget import plan_under
 from .execution import run
 from .matrix import expand_matrix
-from .scope import canonical_labels, scope_to_changed
+from .scope import scope_to_changed
 from .task import task_label
-from .timings import scope_of
+from .timings import observation_keys, scope_of
 from .traversal import flatten_leaves
 
 if sys.version_info >= (3, 11):
@@ -72,10 +72,10 @@ class GateOutcome(NamedTuple):
 	"""Each leaf's path-mode report file, DFS order aligned with ``node``'s leaves — set for a
 	leaf whose ``agent_format.args`` used :data:`REPORT_TOKEN`, ``None`` for every other leaf.
 	"""
-	canonical: Mapping[TaskLabel, TaskLabel] = {}
-	"""What each leaf that ran should be recorded under, since scoping rewrote the label it reports.
-	Built here because only the gate holds the matrix-expanded tree the budget read from; see
-	:func:`camas.core.scope.canonical_labels`."""
+	keys: Mapping[TaskLabel, CacheKey] = {}
+	"""Where each leaf that ran should be recorded, by the label it reports. Built here because only
+	the gate knows both the matrix-expanded tree its budget read from and what ``agent_format`` then
+	did to each command; see :func:`camas.core.timings.observation_keys`."""
 
 
 def decision_of(residual_class: ResidualClass) -> Decision:
@@ -285,14 +285,14 @@ async def run_gate(
 		checks,
 		plan,
 		formatted.report_paths,
-		as_reported(canonical_labels(expanded, changed), scoped, formatted.node),
+		as_reported(observation_keys(expanded, changed, scope_of(changed)), scoped, formatted.node),
 	)
 
 
 def as_reported(
-	canonical: Mapping[TaskLabel, TaskLabel], scoped: TaskNode, formatted: TaskNode
-) -> dict[TaskLabel, TaskLabel]:
-	"""``canonical`` re-keyed by the label each leaf reports *after* ``agent_format`` appended its
+	keys: Mapping[TaskLabel, CacheKey], scoped: TaskNode, formatted: TaskNode
+) -> dict[TaskLabel, CacheKey]:
+	"""``keys`` re-keyed by the label each leaf reports *after* ``agent_format`` appended its
 	arguments, which is a second rewrite of the same command that scoping already rewrote.
 
 	A nameless leaf is labelled by its command, so ``pylint src/a.py`` becomes
@@ -301,6 +301,7 @@ def as_reported(
 	correspond one to one.
 	"""
 	return {
-		task_label(after.task): canonical.get(task_label(before.task), task_label(before.task))
+		task_label(after.task): key
 		for before, after in zip(flatten_leaves(scoped), flatten_leaves(formatted), strict=True)
+		if (key := keys.get(task_label(before.task))) is not None
 	}

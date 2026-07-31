@@ -10,12 +10,13 @@ import sys
 from contextlib import suppress
 from enum import IntEnum
 from functools import reduce
+from itertools import groupby
 from math import isfinite
 from typing import IO, TYPE_CHECKING, Final, NamedTuple, TypeAlias
 
 from ..v0.completion import Errored, Finished, Skipped, Stopped
 from ..v0.task import Parallel, Sequential, Task
-from .scope import resolve_default_leaf
+from .scope import PATHS_TOKEN, resolve_default_leaf
 from .task import task_label
 
 if sys.version_info >= (3, 11):
@@ -57,6 +58,21 @@ class CacheKey(NamedTuple):
 	"""How many changed paths the run was scoped to, rounded up to a power of two — ``0`` for an
 	unscoped whole-tree run. A leaf costs what its input costs, so two observations are only
 	comparable at the same scale: scoping ``pylint`` to one file is not the run that took 206s."""
+
+
+def leaf_scope(task: Task, scope: int) -> int:
+	"""The scope one leaf's observation belongs to: the run's, when its command takes the changed
+	paths, and ``0`` when it does not.
+
+	A command with no ``{paths}`` runs identically whatever changed, so its cost does not vary with
+	the change size and bucketing it by that would only make it re-run once per bucket to learn the
+	same number — which for a slow unscopable leaf is #218's blocked turn again, once per bucket the
+	project happens to gate at.
+
+	>>> leaf_scope(Task("mypy src"), 4), leaf_scope(Task("pylint {paths}", paths="."), 4)
+	(0, 4)
+	"""
+	return scope if PATHS_TOKEN in task.cmd else 0
 
 
 def scope_of(changed: Sequence[str]) -> int:
@@ -117,7 +133,7 @@ def estimate(
 	match node:
 		case Task():
 			label = task_label(resolve_default_leaf(node))
-			timing = timings.get(CacheKey(label, scope))
+			timing = timings.get(CacheKey(label, leaf_scope(node, scope)))
 			if timing is None:
 				return None
 			return Estimate(timing.elapsed_s, timing.samples, label, timing.elapsed_s)
@@ -145,25 +161,42 @@ def record(camas_dir: Path, leaves: Sequence[tuple[CacheKey, float]]) -> None:
 		return
 	with open_for_update(camas_dir / CACHE_NAME) as handle:
 		lock(handle, exclusive=True)
-		merged = reduce(folded, (o for o in leaves if o[0].label), parse(handle.read()))
+		merged = folded(parse(handle.read()), [o for o in leaves if o[0].label])
 		handle.seek(0)
 		handle.truncate()
 		handle.write(serialize(merged))
 
 
-def folded(
-	cache: Mapping[CacheKey, TaskTiming], observation: tuple[CacheKey, float]
-) -> dict[CacheKey, TaskTiming]:
-	"""``cache`` with one observation folded in. Folded one at a time rather than collected into a
-	dict first, so two leaves that report the same label in a single run — two ``Task`` objects
-	sharing a name, or a command — both count instead of the later one replacing the earlier.
+NO_OBSERVATIONS: Final = TaskTiming(0.0, 0)
+"""The neutral value for :meth:`TaskTiming.fold` — folding the first duration into it yields that
+duration with one sample, so a key absent from the cache needs no separate case."""
 
-	>>> folded(folded({}, (CacheKey("a", 0), 1.0)), (CacheKey("a", 0), 3.0))
+
+def folded(
+	cache: Mapping[CacheKey, TaskTiming], leaves: Sequence[tuple[CacheKey, float]]
+) -> dict[CacheKey, TaskTiming]:
+	"""``cache`` with every observation in ``leaves`` folded in.
+
+	Grouped by key and folded per group, so two leaves reporting the same label in one run — two
+	``Task`` objects sharing a name, or a command — both count rather than the later replacing the
+	earlier, and the cache is copied once rather than once per observation.
+
+	>>> folded({}, [(CacheKey("a", 0), 1.0), (CacheKey("a", 0), 3.0)])
 	{CacheKey(label='a', scope=0): TaskTiming(elapsed_s=2.0, samples=2)}
+	>>> folded({CacheKey("a", 0): TaskTiming(2.0, 2)}, [(CacheKey("a", 0), 8.0)])
+	{CacheKey(label='a', scope=0): TaskTiming(elapsed_s=4.0, samples=3)}
 	"""
-	key, elapsed = observation
-	prior = cache.get(key)
-	return {**cache, key: prior.fold(elapsed) if prior is not None else TaskTiming(elapsed, 1)}
+	return {
+		**cache,
+		**{
+			key: reduce(
+				lambda timing, elapsed: timing.fold(elapsed),
+				(elapsed for _, elapsed in group),
+				cache.get(key, NO_OBSERVATIONS),
+			)
+			for key, group in groupby(sorted(leaves), key=lambda observation: observation[0])
+		},
+	}
 
 
 def record_observed(camas_dir: Path | None, leaves: Sequence[tuple[CacheKey, float]]) -> None:
@@ -200,20 +233,43 @@ class Observed(NamedTuple):
 
 	camas_dir: Path | None
 	scope: int
-	canonical: Mapping[TaskLabel, TaskLabel]
+	keys: Mapping[TaskLabel, CacheKey]
+	"""Where each leaf's observation goes, by the label it reports — see
+	:func:`observation_keys`. A label with no entry is keyed by itself at this run's scope."""
 
 	def record(self, result: RunResult) -> None:
 		"""Record ``result``'s timed leaves."""
-		record_observed(self.camas_dir, leaves_of(result, self.scope, self.canonical))
+		record_observed(self.camas_dir, leaves_of(result, self.scope, self.keys))
+
+
+def observation_keys(
+	expanded: TaskNode, changed: tuple[str, ...], scope: int
+) -> dict[TaskLabel, CacheKey]:
+	"""The key each surviving leaf's observation belongs under, by the label that leaf will report.
+
+	Two things differ from the reported label, and both have to be undone here or the observation
+	lands where no budget looks: scoping rewrote a nameless leaf's command, and a leaf that ignores
+	the changed paths belongs at scope ``0`` rather than this run's.
+	"""
+	from .scope import scoped_leaves
+
+	return {
+		task_label(scoped): CacheKey(
+			task_label(resolve_default_leaf(task)), leaf_scope(task, scope)
+		)
+		for task, scoped in scoped_leaves(expanded, changed)
+	}
 
 
 def observed(camas_dir: Path | None, expanded: TaskNode, changed: Sequence[str]) -> Observed:
 	"""How to record a run of ``expanded`` scoped to ``changed`` — the one derivation of the three
 	things that keying needs.
 	"""
-	from .scope import canonical_labels
-
-	return Observed(camas_dir, scope_of(changed), canonical_labels(expanded, tuple(changed)))
+	return Observed(
+		camas_dir,
+		scope_of(changed),
+		observation_keys(expanded, tuple(changed), scope_of(changed)),
+	)
 
 
 def ensure_camas_dir(camas_dir: Path) -> None:
@@ -315,29 +371,28 @@ else:  # pragma: no cover
 def observations(
 	reported: Iterable[tuple[TaskLabel, Completion]],
 	scope: int,
-	canonical: Mapping[TaskLabel, TaskLabel],
+	keys: Mapping[TaskLabel, CacheKey],
 ) -> list[tuple[CacheKey, float]]:
 	"""The recordable observations among ``reported`` — each leaf's label as it ran, paired with how
 	it completed.
 
 	A leaf reports the label it ran under, which for a scoped ``{paths}`` leaf with no ``name`` is the
-	command with those paths already in it. ``canonical`` — from
-	:func:`camas.core.scope.canonical_labels` — maps that back to the label an estimate is looked up
-	by, so what a scoped run records is what a later budget can read. The one place that mapping
-	happens, for both the run result and the effect that watches leaf states.
+	command with those paths already in it. ``keys`` — from :func:`observation_keys` — says where that
+	belongs instead, so what a scoped run records is what a later budget can read. The one place that
+	mapping happens, for both the run result and the effect that watches leaf states.
 	"""
 	return [
-		(CacheKey(canonical.get(label, label), scope), elapsed)
+		(keys.get(label, CacheKey(label, scope)), elapsed)
 		for label, completion in reported
 		if (elapsed := elapsed_of(completion)) is not None
 	]
 
 
 def leaves_of(
-	result: RunResult, scope: int = 0, canonical: Mapping[TaskLabel, TaskLabel] = {}
+	result: RunResult, scope: int = 0, keys: Mapping[TaskLabel, CacheKey] = {}
 ) -> list[tuple[CacheKey, float]]:
 	"""``result``'s timed leaves as observations at ``scope``."""
-	return observations(((r.name, r.completion) for r in result.results), scope, canonical)
+	return observations(((r.name, r.completion) for r in result.results), scope, keys)
 
 
 def observation(elapsed_s: str, samples: str) -> TaskTiming | None:
@@ -347,12 +402,15 @@ def observation(elapsed_s: str, samples: str) -> TaskTiming | None:
 	cache can still hold. Either would stick permanently: :meth:`TaskTiming.fold` keeps propagating
 	it through the running mean, and every ``elapsed_s <= budget_s`` comparison against a ``nan`` is
 	false, so the leaf is over budget forever and never runs to correct itself. A sample count below
-	one is the same kind of impossibility — the mean it weights is of no observations.
+	one is the same kind of impossibility — the mean it weights is of no observations — and so is a
+	negative duration, which would drag the mean down and make the leaf look ever cheaper than it is.
 
 	>>> observation("0.5", "2")
 	TaskTiming(elapsed_s=0.5, samples=2)
 	>>> print(observation("nan", "1"), observation("inf", "1"), observation("0.5", "0"))
 	None None None
+	>>> print(observation("-0.5", "1"))
+	None
 	>>> print(observation("x", "1"), observation("0.5", "x"))
 	None None
 	"""
@@ -360,7 +418,7 @@ def observation(elapsed_s: str, samples: str) -> TaskTiming | None:
 		elapsed, count = float(elapsed_s), int(samples)
 	except ValueError:
 		return None
-	if not isfinite(elapsed) or count < 1:
+	if not isfinite(elapsed) or elapsed < 0 or count < 1:
 		return None
 	return TaskTiming(elapsed, count)
 

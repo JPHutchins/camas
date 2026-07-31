@@ -133,7 +133,7 @@ def test_for_run_keys_a_configured_effect_to_the_scope_and_labels(tmp_path: Path
 	]
 	asyncio.run(
 		drive(
-			Timings(camas_dir=tmp_path).for_run(2, {"pylint a.py": "pylint ."}),
+			Timings(camas_dir=tmp_path).for_run(2, {"pylint a.py": cache_key("pylint .", 2)}),
 			Parallel(scoped, name="check"),
 			events,
 		)

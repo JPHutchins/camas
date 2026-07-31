@@ -158,9 +158,19 @@ def test_observations_at_different_scopes_do_not_mix(tmp_path: Path) -> None:
 
 
 def test_estimate_at_one_scope_ignores_anothers_observation() -> None:
+	"""Only for a leaf whose cost can vary with the change — one that takes the paths."""
+	scoped = Task("ruff {paths}", name="lint", paths=".")
 	cache = {cache_key("lint", 0): timings.TaskTiming(100.0, 1)}
-	assert timings.estimate(Task("ruff", name="lint"), cache, 1) is None
-	assert timings.estimate(Task("ruff", name="lint"), cache, 0) is not None
+	assert timings.estimate(scoped, cache, 1) is None
+	assert timings.estimate(scoped, cache, 0) is not None
+
+
+def test_estimate_of_a_leaf_that_ignores_the_paths_reads_any_scope() -> None:
+	"""#259 follow-through: a command with no ``{paths}`` runs identically whatever changed, so its
+	one observation answers every scope instead of being re-learned per bucket.
+	"""
+	cache = {cache_key("lint", 0): timings.TaskTiming(100.0, 1)}
+	assert timings.estimate(Task("ruff src", name="lint"), cache, 4) is not None
 
 
 def test_record_observed_without_a_camas_dir_is_a_noop(tmp_path: Path) -> None:

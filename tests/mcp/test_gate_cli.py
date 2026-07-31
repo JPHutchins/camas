@@ -479,7 +479,7 @@ def test_gate_cli_dry_run_under_excludes_over_budget_leaf(
 	(tmp_path / "tasks.py").write_text(_BUDGET_TASKS)
 	camas_dir = tmp_path / ".camas"
 	camas_dir.mkdir()
-	timings.record(camas_dir, [(CacheKey("fast", 1), 0.5), (CacheKey("slow", 1), 99.0)])
+	timings.record(camas_dir, [(CacheKey("fast", 0), 0.5), (CacheKey("slow", 0), 99.0)])
 	assert serve.gate_cli(["--paths", "sample.py", "--under", "5", "--dry-run"]) == 0
 	preview, _, headline = capsys.readouterr().out.partition("Time budget")
 	assert "Dry run" in preview
@@ -498,10 +498,14 @@ def test_gate_cli_under_ignores_a_whole_tree_estimate(
 	"""
 	monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
 	monkeypatch.chdir(tmp_path)
-	(tmp_path / "tasks.py").write_text(_BUDGET_TASKS)
+	(tmp_path / "tasks.py").write_text(
+		"from camas import Config, Task\n"
+		'check = Task("python --version {paths}", name="slow", paths=".")\n'
+		"_ = Config(default_task=check)\n"
+	)
 	camas_dir = tmp_path / ".camas"
 	camas_dir.mkdir()
-	timings.record(camas_dir, [(CacheKey("fast", 0), 0.5), (CacheKey("slow", 0), 99.0)])
+	timings.record(camas_dir, [(CacheKey("slow", 0), 99.0)])
 	assert serve.gate_cli(["--paths", "sample.py", "--under", "5", "--dry-run"]) == 0
 	preview, _, headline = capsys.readouterr().out.partition("Time budget")
 	assert "slow" in preview
@@ -520,7 +524,7 @@ def test_gate_cli_dry_run_under_all_over_budget(
 	)
 	camas_dir = tmp_path / ".camas"
 	camas_dir.mkdir()
-	timings.record(camas_dir, [(CacheKey("only", 1), 99.0)])
+	timings.record(camas_dir, [(CacheKey("only", 0), 99.0)])
 	assert serve.gate_cli(["--paths", "sample.py", "--under", "5", "--dry-run"]) == 0
 	out = capsys.readouterr().out
 	assert "nothing would run" in out
@@ -551,7 +555,7 @@ def test_gate_cli_records_so_a_persistent_failure_becomes_budgetable(
 	(tmp_path / "tasks.py").write_text(_ALWAYS_FAILS_TASKS)
 	timings.ensure_camas_dir(tmp_path / ".camas")
 	assert serve.gate_cli(["--paths", "sample.py", "--under", "0.001"]) == 2
-	assert timings.load(tmp_path / ".camas")[CacheKey("always_fails", 1)].samples == 1
+	assert timings.load(tmp_path / ".camas")[CacheKey("always_fails", 0)].samples == 1
 	assert serve.gate_cli(["--paths", "sample.py", "--under", "0.001"]) == 0
 
 
