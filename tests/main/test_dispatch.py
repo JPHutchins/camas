@@ -287,7 +287,7 @@ def test_dispatch_under_bad_jobs_env_errors(
 def _camas_with_timings(tmp_path: Path, leaves: list[tuple[str, float]]) -> Path:
 	camas = tmp_path / ".camas"
 	camas.mkdir()
-	timings.record(camas, leaves)
+	timings.record(camas, [(timings.CacheKey(label, 0), s) for label, s in leaves])
 	return camas
 
 
@@ -298,7 +298,15 @@ def test_run_under_dry_run_shows_plan(tmp_path: Path, capsys: pytest.CaptureFixt
 		Parallel(Task("echo lint", name="lint"), Task("echo slow", name="slow")),
 	)
 	code = run_under(
-		source, 1.0, camas_dir=camas, effects=(), jobs=None, dry_run=True, passthrough=()
+		source,
+		1.0,
+		changed=(),
+		scope=0,
+		camas_dir=camas,
+		effects=(),
+		jobs=None,
+		dry_run=True,
+		passthrough=(),
 	)
 	assert code == 0
 	out = capsys.readouterr().out
@@ -313,7 +321,15 @@ def test_run_under_executes_selected(tmp_path: Path, capsys: pytest.CaptureFixtu
 		Task(("python", "-c", "print('b')"), name="b"),
 	)
 	code = run_under(
-		source, 1.0, camas_dir=camas, effects=(), jobs=None, dry_run=False, passthrough=()
+		source,
+		1.0,
+		changed=(),
+		scope=0,
+		camas_dir=camas,
+		effects=(),
+		jobs=None,
+		dry_run=False,
+		passthrough=(),
 	)
 	assert code == 0
 	assert "unmeasured (running to record an estimate): b" in capsys.readouterr().out
@@ -326,6 +342,8 @@ def test_run_under_all_over_budget_runs_nothing(
 	code = run_under(
 		Parallel(Task("echo slow", name="slow")),
 		0.5,
+		changed=(),
+		scope=0,
 		camas_dir=camas,
 		effects=(),
 		jobs=None,
@@ -562,3 +580,101 @@ def test_dispatch_no_mcp_hint_off_agent(
 	with pytest.raises(SystemExit, match="0"):
 		dispatch(_state({"check": Task("echo hi", name="check")}), ["--dry-run", "check"])
 	assert mcp_cli_hint() not in capsys.readouterr().err
+
+
+def test_fix_cli_records_at_the_scope_it_ran(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	"""The ``PostToolBatch`` autofix hook ran with ``effects=()``, so it observed nothing either —
+	the fix node's leaves were invisible to every later ``--under`` decision.
+	"""
+	(tmp_path / "tasks.py").write_text(_TIDY.format(scope="."))
+	monkeypatch.chdir(tmp_path)
+	timings.ensure_camas_dir(tmp_path / ".camas")
+	assert fix_cli(["--paths", "x.py"]) == 0
+	assert set(timings.load(tmp_path / ".camas")) == {timings.CacheKey("tidy", 1)}
+
+
+def test_run_under_with_paths_reads_the_observation_it_recorded(
+	tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+	"""#218/#224 on the CLI: budgeting the already-scoped tree looked up a nameless leaf's injected
+	label while the run recorded the canonical one, so it stayed unmeasured however often it ran.
+	Two runs through the effect that actually records: the second must budget from the first.
+	"""
+	from camas.effect.timings import Timings
+
+	camas = tmp_path / ".camas"
+	camas.mkdir()
+	source = Parallel(Task(("python", "-c", "pass", "{paths}"), paths="."))
+	observed = timings.observed(camas, source, ("a.py",))
+	effects = (Timings(camas_dir=camas).for_run(observed.scope, observed.keys),)
+	assert (
+		run_under(
+			source,
+			60.0,
+			changed=("a.py",),
+			scope=observed.scope,
+			camas_dir=camas,
+			effects=effects,
+			jobs=None,
+			dry_run=False,
+			passthrough=(),
+		)
+		== 0
+	)
+	assert "1 unmeasured" in capsys.readouterr().out
+	assert (
+		run_under(
+			source,
+			60.0,
+			changed=("a.py",),
+			scope=observed.scope,
+			camas_dir=camas,
+			effects=effects,
+			jobs=None,
+			dry_run=False,
+			passthrough=(),
+		)
+		== 0
+	)
+	assert "0 unmeasured" in capsys.readouterr().out
+
+
+def test_run_under_reports_when_no_leaf_covers_the_changed_paths(
+	tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+	camas = tmp_path / ".camas"
+	camas.mkdir()
+	source = Parallel(Task("echo scoped {paths}", name="scoped", paths="src"))
+	assert (
+		run_under(
+			source,
+			60.0,
+			changed=("docs/readme.md",),
+			scope=1,
+			camas_dir=camas,
+			effects=(),
+			jobs=None,
+			dry_run=False,
+			passthrough=(),
+		)
+		== 0
+	)
+	assert "No task leaf covers docs/readme.md" in capsys.readouterr().out
+
+
+def test_paths_that_all_fall_outside_the_repo_run_nothing_even_under_a_budget(
+	monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	"""``--under`` exits before the scoping guard is reached, so a request naming only paths that
+	normalize away would have run the whole tree — the opposite of what scoping was asked for.
+	"""
+	task = Task("echo scoped {paths}", name="scoped", paths=".")
+	monkeypatch.setattr("sys.argv", ["camas"])
+	with pytest.raises(SystemExit, match="0"):
+		dispatch(
+			_state({"check": task}, Config()),
+			["check", "--paths", "/etc/passwd", "--under", "60"],
+		)
+	assert "nothing to run" in capsys.readouterr().out

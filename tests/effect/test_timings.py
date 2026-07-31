@@ -19,6 +19,12 @@ if TYPE_CHECKING:
 
 	from camas.v0.effect import Effect
 
+
+def cache_key(label: str, scope: int = 0) -> timings.CacheKey:
+	"""The cache key for ``label`` at ``scope`` — whole-tree unless a test says otherwise."""
+	return timings.CacheKey(label, scope)
+
+
 TS = datetime(2026, 5, 21, 14, 30, 0)
 T = TypeVar("T")
 
@@ -55,8 +61,8 @@ def test_records_each_leaf(tmp_path: Path) -> None:
 	]
 	asyncio.run(drive(Timings(camas_dir=tmp_path), Parallel(a, b, name="quick"), events))
 	cache = timings.load(tmp_path)
-	assert cache["fast"].elapsed_s == 0.1
-	assert cache["slow"].elapsed_s == 0.5
+	assert cache[cache_key("fast")].elapsed_s == 0.1
+	assert cache[cache_key("slow")].elapsed_s == 0.5
 
 
 def test_anonymous_run_records_its_leaves(tmp_path: Path) -> None:
@@ -66,7 +72,7 @@ def test_anonymous_run_records_its_leaves(tmp_path: Path) -> None:
 		CompletedEvent(a, 0, Finished(0, 0.1, ()), TS),
 	]
 	asyncio.run(drive(Timings(camas_dir=tmp_path), Parallel(a), events))
-	assert timings.load(tmp_path)["solo"].elapsed_s == 0.1
+	assert timings.load(tmp_path)[cache_key("solo")].elapsed_s == 0.1
 
 
 def test_anonymous_leaves_named_by_command(tmp_path: Path) -> None:
@@ -79,8 +85,8 @@ def test_anonymous_leaves_named_by_command(tmp_path: Path) -> None:
 	]
 	asyncio.run(drive(Timings(camas_dir=tmp_path), Parallel(s, t, name="grp"), events))
 	cache = timings.load(tmp_path)
-	assert cache["echo hi"].elapsed_s == 0.5
-	assert cache["python -c pass"].elapsed_s == 0.1
+	assert cache[cache_key("echo hi")].elapsed_s == 0.5
+	assert cache[cache_key("python -c pass")].elapsed_s == 0.1
 
 
 def test_unfinished_leaf_excluded(tmp_path: Path) -> None:
@@ -92,8 +98,8 @@ def test_unfinished_leaf_excluded(tmp_path: Path) -> None:
 	]
 	asyncio.run(drive(Timings(camas_dir=tmp_path), Parallel(a, b, name="grp"), events))
 	cache = timings.load(tmp_path)
-	assert "done" in cache
-	assert "never" not in cache
+	assert cache_key("done") in cache
+	assert cache_key("never") not in cache
 
 
 def test_zero_leaf_run_records_nothing(tmp_path: Path) -> None:
@@ -110,5 +116,44 @@ def test_skipped_leaf_excluded(tmp_path: Path) -> None:
 	]
 	asyncio.run(drive(Timings(camas_dir=tmp_path), Sequential(a, b, name="seq"), events))
 	cache = timings.load(tmp_path)
-	assert "fail" in cache
-	assert "skip" not in cache
+	assert cache_key("fail") in cache
+	assert cache_key("skip") not in cache
+
+
+def test_for_run_keys_a_configured_effect_to_the_scope_and_labels(tmp_path: Path) -> None:
+	"""A ``Timings`` written out by hand — in ``--effects`` or a ``Config`` — cannot know what the run
+	it lands in is scoped to, so it records whole-tree by default. ``for_run`` is how the caller that
+	does know keys it, and without that a path-scoped run would be recorded as a whole-tree
+	observation under a label no scoped budget reads: #224, for explicitly configured effects.
+	"""
+	scoped = Task(("python", "-c", "pass"), name="pylint a.py")
+	events: list[TaskEvent] = [
+		StartedEvent(scoped, 0, TS),
+		CompletedEvent(scoped, 0, Finished(0, 0.4, ()), TS),
+	]
+	asyncio.run(
+		drive(
+			Timings(camas_dir=tmp_path).for_run(2, {"pylint a.py": cache_key("pylint .", 2)}),
+			Parallel(scoped, name="check"),
+			events,
+		)
+	)
+	assert timings.load(tmp_path) == {cache_key("pylint .", 2): timings.TaskTiming(0.4, 1)}
+
+
+def test_a_leaf_named_empty_records_nothing_rather_than_something_unreadable(
+	tmp_path: Path,
+) -> None:
+	"""A leaf named ``""`` has no label a cache row can carry — the label is a row's first
+	whitespace-separated field, so it would be written and then discarded on every load. It is
+	dropped on the way in instead, and the run still records everything else.
+	"""
+	blank, named = Task(("python", "-c", "pass"), name=""), _task("real")
+	events: list[TaskEvent] = [
+		StartedEvent(blank, 0, TS),
+		StartedEvent(named, 1, TS),
+		CompletedEvent(blank, 0, Finished(0, 0.2, ()), TS),
+		CompletedEvent(named, 1, Finished(0, 0.3, ()), TS),
+	]
+	asyncio.run(drive(Timings(camas_dir=tmp_path), Parallel(blank, named, name="grp"), events))
+	assert timings.load(tmp_path) == {cache_key("real"): timings.TaskTiming(0.3, 1)}

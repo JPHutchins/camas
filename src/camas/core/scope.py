@@ -47,7 +47,7 @@ from ..v0.task import Group, Task
 from .task import task_label
 
 if TYPE_CHECKING:
-	from collections.abc import Iterable
+	from collections.abc import Iterable, Sequence
 
 	from ..v0.task import PathScope, TaskNode, WhenPredicate
 
@@ -80,6 +80,43 @@ def to_changed(raw: Iterable[str], base: Path) -> tuple[str, ...]:
 		if (entry := e.strip())
 		if (rp := (root / entry).resolve()).is_relative_to(root)
 	)
+
+
+def requested_but_unusable(paths: Sequence[str], changed: Sequence[str]) -> bool:
+	"""Whether paths were named and none of them survived normalization — every one outside the repo.
+
+	Distinct from naming none, which means run everything, and the distinction is only visible to a
+	caller holding both: :func:`to_changed` returns the same empty tuple either way. Told apart wrong,
+	an edit outside the repo runs the whole tree — the opposite of what scoping was asked for.
+
+	>>> requested_but_unusable(["/etc/passwd"], ()), requested_but_unusable([], ())
+	(True, False)
+	>>> requested_but_unusable(["a.py"], ("a.py",))
+	False
+	"""
+	return bool(paths) and not changed
+
+
+def scoped_or_default(
+	expanded: TaskNode, requested: Sequence[str], changed: Sequence[str]
+) -> TaskNode | None:
+	"""``expanded`` narrowed to ``changed``, or its full-run form when nothing narrows it, or ``None``
+	when paths were named and none of them survived normalization.
+
+	The three-way answer the fix paths need, in one place: both the CLI's ``camas mcp fix`` and the
+	MCP's ``camas_fix`` were spelling it out character for character, in different layers.
+
+	>>> node = Task("tidy {paths}", paths=".")
+	>>> scoped_or_default(node, ["a.py"], ("a.py",)).cmd
+	'tidy a.py'
+	>>> scoped_or_default(node, [], ()).cmd
+	'tidy .'
+	>>> scoped_or_default(node, ["/etc/passwd"], ()) is None
+	True
+	"""
+	if requested_but_unusable(requested, changed):
+		return None
+	return scope_to_changed(expanded, tuple(changed)) if changed else with_default_paths(expanded)
 
 
 def _within(path: str, prefix: str) -> bool:
@@ -265,6 +302,27 @@ def with_default_paths(node: TaskNode) -> TaskNode:
 	Task(cmd='mypy .', name=None, env={}, cwd=None)
 	"""
 	return scope_to_changed(node, ()) or node
+
+
+def scoped_leaves(node: TaskNode, changed: tuple[str, ...]) -> tuple[tuple[Task, Task], ...]:
+	"""Each leaf of ``node`` that survives scoping to ``changed``, paired with its scoped form.
+
+	The pairing is what lets a caller relate what a leaf *reports* when it runs to what it *is*:
+	scoping rewrites a ``{paths}`` command, so a leaf with no ``name`` reports a different label for
+	every change set.
+
+	>>> [(a.cmd, b.cmd) for a, b in scoped_leaves(Task("pylint {paths}", paths="."), ("a.py",))]
+	[('pylint {paths}', 'pylint a.py')]
+	>>> scoped_leaves(Task("pylint {paths}", paths="src"), ("docs/x.md",))
+	()
+	"""
+	from .traversal import flatten_leaves
+
+	return tuple(
+		(info.task, scoped)
+		for info in flatten_leaves(node)
+		if (scoped := _resolve_leaf(info.task, changed)) is not None
+	)
 
 
 def resolve_default_leaf(task: Task) -> Task:

@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 
 from camas.core import timings
 from camas.core.hook_event import HookEvent, changed_from_stdin
+from camas.core.timings import CacheKey
 from camas.mcp import serve, wire
 
 if TYPE_CHECKING:
@@ -478,7 +479,7 @@ def test_gate_cli_dry_run_under_excludes_over_budget_leaf(
 	(tmp_path / "tasks.py").write_text(_BUDGET_TASKS)
 	camas_dir = tmp_path / ".camas"
 	camas_dir.mkdir()
-	timings.record(camas_dir, [("fast", 0.5), ("slow", 99.0)])
+	timings.record(camas_dir, [(CacheKey("fast", 0), 0.5), (CacheKey("slow", 0), 99.0)])
 	assert serve.gate_cli(["--paths", "sample.py", "--under", "5", "--dry-run"]) == 0
 	preview, _, headline = capsys.readouterr().out.partition("Time budget")
 	assert "Dry run" in preview
@@ -486,6 +487,29 @@ def test_gate_cli_dry_run_under_excludes_over_budget_leaf(
 	assert "slow" not in preview
 	assert "excluded 1 over budget" in headline
 	assert "slow" in headline
+
+
+def test_gate_cli_under_ignores_a_whole_tree_estimate(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	"""#224: a whole-tree observation is not an estimate of a one-file gate. ``slow`` costing 99s
+	over the tree must not exclude it from a scoped run, where it is cheap — it is unmeasured *at
+	this scope*, so it runs and gets measured.
+	"""
+	monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+	monkeypatch.chdir(tmp_path)
+	(tmp_path / "tasks.py").write_text(
+		"from camas import Config, Task\n"
+		'check = Task("python --version {paths}", name="slow", paths=".")\n'
+		"_ = Config(default_task=check)\n"
+	)
+	camas_dir = tmp_path / ".camas"
+	camas_dir.mkdir()
+	timings.record(camas_dir, [(CacheKey("slow", 0), 99.0)])
+	assert serve.gate_cli(["--paths", "sample.py", "--under", "5", "--dry-run"]) == 0
+	preview, _, headline = capsys.readouterr().out.partition("Time budget")
+	assert "slow" in preview
+	assert "excluded 0 over budget" in headline
 
 
 def test_gate_cli_dry_run_under_all_over_budget(
@@ -500,9 +524,67 @@ def test_gate_cli_dry_run_under_all_over_budget(
 	)
 	camas_dir = tmp_path / ".camas"
 	camas_dir.mkdir()
-	timings.record(camas_dir, [("only", 99.0)])
+	timings.record(camas_dir, [(CacheKey("only", 0), 99.0)])
 	assert serve.gate_cli(["--paths", "sample.py", "--under", "5", "--dry-run"]) == 0
 	out = capsys.readouterr().out
 	assert "nothing would run" in out
 	assert "excluded 1 over budget" in out
 	assert "only" in out
+
+
+_ALWAYS_FAILS_TASKS = (
+	"from camas import Config, Parallel, Task\n"
+	'ok = Task("python --version", name="ok")\n'
+	'always_fails = Task("python -c \\"raise SystemExit(1)\\"", name="always_fails")\n'
+	'check = Parallel(ok, always_fails, name="check")\n'
+	"_ = Config(default_task=check)\n"
+)
+
+
+def test_gate_cli_records_so_a_persistent_failure_becomes_budgetable(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	"""#218 end to end, through the command the ``Stop`` hook actually installs. The gate recorded
+	nothing, so its leaves stayed unmeasured; an unmeasured leaf runs, so the one that always fails
+	blocked every single turn and no amount of gating could ever warm it out. Now the first run
+	measures it and the second can budget it out — the gate goes from blocking to green with no
+	change to the tree.
+	"""
+	monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+	monkeypatch.chdir(tmp_path)
+	(tmp_path / "tasks.py").write_text(_ALWAYS_FAILS_TASKS)
+	timings.ensure_camas_dir(tmp_path / ".camas")
+	assert serve.gate_cli(["--paths", "sample.py", "--under", "0.001"]) == 2
+	assert timings.load(tmp_path / ".camas")[CacheKey("always_fails", 0)].samples == 1
+	assert serve.gate_cli(["--paths", "sample.py", "--under", "0.001"]) == 0
+
+
+def test_gate_cli_records_nothing_when_no_leaf_ran(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+	monkeypatch.chdir(tmp_path)
+	(tmp_path / "tasks.py").write_text(
+		"from camas import Config, Task\n"
+		'check = Task("echo scope-miss {paths}", name="check", paths="src")\n'
+		"_ = Config(default_task=check)\n"
+	)
+	timings.ensure_camas_dir(tmp_path / ".camas")
+	assert serve.gate_cli(["--paths", "unrelated.txt"]) == 0
+	assert timings.load(tmp_path / ".camas") == {}
+
+
+def test_gate_cli_paths_all_outside_the_repo_run_nothing(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	"""Paths that all normalize away are not the same as passing none. Treated as none, the Stop-hook
+	gate would run the whole tree over an edit outside the repo — the opposite of what it was scoped
+	for — and nothing it checks changed, so it is green.
+	"""
+	monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+	monkeypatch.chdir(tmp_path)
+	(tmp_path / "tasks.py").write_text(_BUDGET_TASKS)
+	timings.ensure_camas_dir(tmp_path / ".camas")
+	assert serve.gate_cli(["--paths", "/etc/passwd"]) == 0
+	assert "nothing would run" in capsys.readouterr().out
+	assert timings.load(tmp_path / ".camas") == {}

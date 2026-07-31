@@ -23,6 +23,9 @@ from .budget import plan_under
 from .execution import run
 from .matrix import expand_matrix
 from .scope import scope_to_changed
+from .task import task_label
+from .timings import NO_KEYS, observation_keys, scope_of
+from .traversal import flatten_leaves
 
 if sys.version_info >= (3, 11):
 	from typing import assert_never
@@ -35,7 +38,7 @@ if TYPE_CHECKING:
 	from ..v0.task import TaskNode
 	from .budget import BudgetPlan
 	from .completion import RunResult
-	from .timings import TaskLabel, TaskTiming
+	from .timings import CacheKey, TaskLabel, TaskTiming
 
 
 ResidualClass: TypeAlias = Literal["green", "needs_reasoning"]
@@ -69,6 +72,10 @@ class GateOutcome(NamedTuple):
 	"""Each leaf's path-mode report file, DFS order aligned with ``node``'s leaves — set for a
 	leaf whose ``agent_format.args`` used :data:`REPORT_TOKEN`, ``None`` for every other leaf.
 	"""
+	keys: Mapping[TaskLabel, CacheKey] = NO_KEYS
+	"""Where each leaf that ran should be recorded, by the label it reports. Built here because only
+	the gate knows both the matrix-expanded tree its budget read from and what ``agent_format`` then
+	did to each command; see :func:`camas.core.timings.observation_keys`."""
 
 
 def decision_of(residual_class: ResidualClass) -> Decision:
@@ -233,7 +240,7 @@ async def run_gate(
 	under: float | None = None,
 	jobs: int | None = None,
 	base: Path | None = None,
-	timings: Mapping[TaskLabel, TaskTiming] | None = None,
+	timings: Mapping[CacheKey, TaskTiming] | None = None,
 	leaf_color: bool = True,
 ) -> GateOutcome:
 	"""Run the check ``node`` over the ``changed`` paths and classify the residual.
@@ -242,8 +249,10 @@ async def run_gate(
 	never mutates. Untimed leaves are run (and thereby measured); only leaves measured to exceed
 	``under`` are skipped. ``green`` means the checks passed — or the change touched nothing the
 	checks cover, or every leaf was measured too slow for ``under``; ``needs_reasoning`` means a
-	check still fails. Budgeting precedes scoping so each leaf's estimate reuses its unscoped
-	record (a scoped run is no slower than the whole).
+	check still fails. Budgeting precedes scoping, but budgets against observations taken at this
+	change's own scope (:func:`camas.core.timings.scope_of`) — a whole-tree record is not an
+	estimate of a two-file gate, and using it as one excluded the heavy-but-scopable checks from
+	exactly the small changes they are cheap on.
 
 	A path-mode leaf's report file is allocated under a fresh, machine-temp ``camas-report-*``
 	directory for this call — left on disk (not cleaned up here) so an over-limit payload's
@@ -251,7 +260,8 @@ async def run_gate(
 	accumulation.
 	"""
 	expanded = expand_matrix(node)
-	plan = plan_under(expanded, under, timings or {}) if under is not None else None
+	scope = scope_of(changed)
+	plan = plan_under(expanded, under, timings or {}, scope) if under is not None else None
 	budgeted = plan.node if plan is not None else expanded
 	if budgeted is None:
 		return GateOutcome("green", None, None, plan)
@@ -268,4 +278,29 @@ async def run_gate(
 		formatted.node, jobs=jobs, base=base, interactive=False, leaf_color=leaf_color
 	)
 	residual: ResidualClass = "needs_reasoning" if checks.returncode != 0 else "green"
-	return GateOutcome(residual, formatted.node, checks, plan, formatted.report_paths)
+	return GateOutcome(
+		residual,
+		formatted.node,
+		checks,
+		plan,
+		formatted.report_paths,
+		as_reported(observation_keys(expanded, changed, scope), scoped, formatted.node),
+	)
+
+
+def as_reported(
+	keys: Mapping[TaskLabel, CacheKey], scoped: TaskNode, formatted: TaskNode
+) -> dict[TaskLabel, CacheKey]:
+	"""``keys`` re-keyed by the label each leaf reports *after* ``agent_format`` appended its
+	arguments, which is a second rewrite of the same command that scoping already rewrote.
+
+	A nameless leaf is labelled by its command, so ``pylint src/a.py`` becomes
+	``pylint src/a.py --output-format sarif`` and a map keyed by the former misses. The two trees
+	differ only in those commands — :func:`with_agent_format` prunes nothing — so their leaves
+	correspond one to one.
+	"""
+	return {
+		task_label(after.task): key
+		for before, after in zip(flatten_leaves(scoped), flatten_leaves(formatted), strict=True)
+		if (key := keys.get(task_label(before.task))) is not None
+	}

@@ -21,7 +21,7 @@ from camas.core.gate import (
 )
 from camas.core.matrix import resolve_cmd
 from camas.core.task import task_label
-from camas.core.timings import TaskTiming
+from camas.core.timings import CacheKey, TaskTiming
 
 if TYPE_CHECKING:
 	import pytest
@@ -88,7 +88,10 @@ async def test_gate_runs_untimed_check_under_budget() -> None:
 
 async def test_gate_budget_runs_fitting_check() -> None:
 	out = await run_gate(
-		Parallel(CHECK_PASS), (), under=1.0, timings={task_label(CHECK_PASS): TaskTiming(0.01, 1)}
+		Parallel(CHECK_PASS),
+		(),
+		under=1.0,
+		timings={CacheKey(task_label(CHECK_PASS), 0): TaskTiming(0.01, 1)},
 	)
 	assert out.residual_class == "green"
 	assert out.result is not None
@@ -96,7 +99,10 @@ async def test_gate_budget_runs_fitting_check() -> None:
 
 async def test_gate_budget_skips_over_budget_check() -> None:
 	out = await run_gate(
-		Parallel(CHECK_PASS), (), under=0.001, timings={task_label(CHECK_PASS): TaskTiming(99.0, 1)}
+		Parallel(CHECK_PASS),
+		(),
+		under=0.001,
+		timings={CacheKey(task_label(CHECK_PASS), 0): TaskTiming(99.0, 1)},
 	)
 	assert out.residual_class == "green"
 	assert out.result is None
@@ -204,3 +210,20 @@ async def test_gate_tags_residual_with_agent_format_kind() -> None:
 	)
 	out = await run_gate(Parallel(chk), ())
 	assert out.residual_class == "needs_reasoning"
+
+
+async def test_gate_canonical_survives_agent_format_rewriting_the_command() -> None:
+	"""``agent_format`` appends to the command *after* scoping already rewrote it, so a nameless leaf
+	reports a third label again. The map has to be keyed by what the run reports, or the observation
+	lands under something the budget cannot read — the #218 failure, one rewrite further along.
+	"""
+	leaf = Task(
+		("python", "-c", "pass", "{paths}"),
+		paths=".",
+		agent_format=AgentFormat("--output-format sarif", "sarif"),
+	)
+	outcome = await run_gate(Parallel(leaf), ("a.py",))
+	assert outcome.result is not None
+	reported = outcome.result.results[0].name
+	assert "--output-format sarif" in reported
+	assert outcome.keys[reported] == CacheKey("python -c pass .", 1)

@@ -469,8 +469,8 @@ async def test_run_call_records_timing(tmp_path: Path) -> None:
 	session = _session({"lint": PASS}, None, tmp_path)
 	await serve.run_call(session, {"task": "lint"})
 	cache = timings.load(session.camas_dir)
-	assert cache["lint"].samples == 1
-	assert cache["lint"].elapsed_s >= 0.0
+	assert cache[timings.CacheKey("lint", 0)].samples == 1
+	assert cache[timings.CacheKey("lint", 0)].elapsed_s >= 0.0
 
 
 async def test_run_call_dry_run_records_no_timing(tmp_path: Path) -> None:
@@ -814,9 +814,10 @@ def test_resolve_run_node_no_task_applies_args() -> None:
 
 
 def _record(base: Path, leaves: list[tuple[str, float]]) -> None:
+	"""Seed whole-tree observations — what an unscoped run would have recorded."""
 	camas = base / ".camas"
 	camas.mkdir(exist_ok=True)
-	timings.record(camas, leaves)
+	timings.record(camas, [(timings.CacheKey(label, 0), s) for label, s in leaves])
 
 
 _FMT = Task(("python", "-c", "print('fmt')"), name="fmt", mutates=True)
@@ -1948,3 +1949,101 @@ def test_github_matrix_call_prepends_version_warning(tmp_path: Path) -> None:
 	result = serve.github_matrix_call(session, {"task": "m"})
 	assert not result.isError
 	assert _text(result).startswith("WARNING: version mismatch")
+
+
+GATE_SCOPED = Task(("python", "-c", "print('ok')", "{paths}"), name="scoped", paths="src")
+
+
+def _observed_session(tasks: dict[str, TaskNode], config: Config | None, base: Path) -> Session:
+	"""A session over a project that keeps a camas directory — the condition for observing a run at
+	all, and what ``camas --init`` / ``camas mcp init`` leave behind. The run path happens to create
+	it as a side effect of writing logs; the gate writes none, so these say it outright.
+	"""
+	timings.ensure_camas_dir(base / ".camas")
+	return _session(tasks, config, base)
+
+
+async def test_gate_call_records_timing(tmp_path: Path) -> None:
+	"""#218: a gate has to budget from its own runs, and it was recording none of them — so a leaf
+	that only ever runs in the gate stayed unmeasured forever and ``--under`` ran it every turn.
+	"""
+	node = Parallel(PASS)
+	session = _observed_session({"all": node}, Config(default_task=node), tmp_path)
+	await serve.call(session, "camas_gate", {})
+	assert timings.load(session.camas_dir)[timings.CacheKey("lint", 0)].samples == 1
+
+
+async def test_gate_call_records_a_failing_leaf(tmp_path: Path) -> None:
+	"""The leaf #218 is about: it fails every time, so only a recorded duration can ever budget it
+	out of the gate.
+	"""
+	node = Parallel(FAIL)
+	session = _observed_session({"all": node}, Config(default_task=node), tmp_path)
+	await serve.call(session, "camas_gate", {})
+	assert timings.load(session.camas_dir)[timings.CacheKey("bad", 0)].samples == 1
+
+
+async def test_gate_call_records_a_scopable_leaf_at_the_scope_it_ran(tmp_path: Path) -> None:
+	node = Parallel(Task(("python", "-c", "pass", "{paths}"), name="lint", paths="."))
+	session = _observed_session({"all": node}, Config(default_task=node), tmp_path)
+	await serve.call(session, "camas_gate", {"paths": ["a.py", "b.py"]})
+	assert set(timings.load(session.camas_dir)) == {timings.CacheKey("lint", 2)}
+
+
+async def test_gate_call_records_a_leaf_that_ignores_the_paths_at_scope_zero(
+	tmp_path: Path,
+) -> None:
+	"""Its command does not take the changed paths, so its cost does not vary with them and one
+	observation serves every change size — rather than one per bucket the project gates at.
+	"""
+	node = Parallel(PASS)
+	session = _observed_session({"all": node}, Config(default_task=node), tmp_path)
+	await serve.call(session, "camas_gate", {"paths": ["a.py", "b.py"]})
+	assert set(timings.load(session.camas_dir)) == {timings.CacheKey("lint", 0)}
+
+
+async def test_gate_call_records_nothing_when_no_leaf_ran(tmp_path: Path) -> None:
+	node = Parallel(GATE_SCOPED)
+	session = _observed_session({"all": node}, Config(default_task=node), tmp_path)
+	await serve.call(session, "camas_gate", {"paths": ["other/x.py"]})
+	assert timings.load(session.camas_dir) == {}
+
+
+async def test_fix_call_records_timing(tmp_path: Path) -> None:
+	cfg = Config(agent=Claude(fix=FIX_TASK))
+	session = _observed_session({"fmt": FIX_TASK}, cfg, tmp_path)
+	await serve.call(session, "camas_fix", {})
+	assert timings.load(session.camas_dir)
+
+
+NAMELESS_SCOPED = Task(("python", "-c", "pass", "{paths}"), paths=".")
+
+
+async def test_run_under_with_paths_reads_the_observation_it_recorded(tmp_path: Path) -> None:
+	"""#218/#224 for a nameless leaf under ``--under --paths``: budgeting the *scoped* tree looked up
+	the path-injected label while recording used the canonical one, so the leaf was untimed forever.
+	Two runs: the first records, the second must find it rather than call it unmeasured.
+	"""
+	node = Parallel(NAMELESS_SCOPED, name="check")
+	timings.ensure_camas_dir(tmp_path / ".camas")
+	session = _session({"check": node}, Config(default_task=node), tmp_path, rich=True)
+	await serve.call(session, "camas_run", {"task": "check", "paths": ["a.py"], "under": 60})
+	assert set(timings.load(session.camas_dir)) == {timings.CacheKey("python -c pass .", 1)}
+	result = await serve.call(
+		session, "camas_run", {"task": "check", "paths": ["a.py"], "under": 60}
+	)
+	assert result.structuredContent is not None
+	budget = result.structuredContent["budget"]
+	assert budget["unmeasured"] == []
+	assert budget["selected"] == ["python -c pass {paths}"]
+
+
+async def test_fix_call_paths_all_outside_repo_fixes_nothing(tmp_path: Path) -> None:
+	"""Paths that all normalize away are not the same as passing none — running the whole fix tree
+	over an unrelated edit is what the scoping was asked to prevent.
+	"""
+	cfg = Config(agent=Claude(fix=FIX_TASK))
+	session = _observed_session({"fmt": FIX_TASK}, cfg, tmp_path)
+	result = await serve.call(session, "camas_fix", {"paths": ["/etc/passwd"]})
+	assert not result.isError
+	assert "nothing to fix" in _text(result)
