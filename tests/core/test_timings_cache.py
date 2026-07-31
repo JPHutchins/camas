@@ -173,3 +173,13 @@ def test_record_observed_swallows_a_write_failure(tmp_path: Path) -> None:
 	"""
 	(tmp_path / timings.CACHE_NAME).mkdir()
 	timings.record_observed(tmp_path, [(cache_key("lint"), 0.5)])
+
+
+def test_load_drops_a_corrupted_non_finite_row(tmp_path: Path) -> None:
+	"""A ``nan`` would stick permanently — it propagates through the running mean and compares false
+	against every budget, so the leaf is over budget forever and never runs to correct itself.
+	"""
+	(tmp_path / timings.CACHE_NAME).write_text(
+		"1\ngood 1.0 2 0\npoisoned nan 1 0\nendless inf 1 0\nunsampled 1.0 0 0\n", encoding="utf-8"
+	)
+	assert timings.load(tmp_path) == {cache_key("good"): timings.TaskTiming(1.0, 2)}

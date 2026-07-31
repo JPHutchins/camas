@@ -9,6 +9,7 @@ import os
 import sys
 from contextlib import suppress
 from enum import IntEnum
+from math import isfinite
 from typing import IO, TYPE_CHECKING, Final, NamedTuple, TypeAlias
 
 from ..v0.completion import Errored, Finished, Skipped, Stopped
@@ -278,13 +279,41 @@ def leaves_of(result: RunResult, scope: int = 0) -> list[tuple[CacheKey, float]]
 	]
 
 
+def observation(elapsed_s: str, samples: str) -> TaskTiming | None:
+	r"""One row's timing, or ``None`` when the row cannot be one.
+
+	``float`` accepts ``nan`` and ``inf``, which :func:`serialize` can never write and a corrupted
+	cache can still hold. Either would stick permanently: :meth:`TaskTiming.fold` keeps propagating
+	it through the running mean, and every ``elapsed_s <= budget_s`` comparison against a ``nan`` is
+	false, so the leaf is over budget forever and never runs to correct itself. A sample count below
+	one is the same kind of impossibility — the mean it weights is of no observations.
+
+	>>> observation("0.5", "2")
+	TaskTiming(elapsed_s=0.5, samples=2)
+	>>> print(observation("nan", "1"), observation("inf", "1"), observation("0.5", "0"))
+	None None None
+	>>> print(observation("x", "1"), observation("0.5", "x"))
+	None None
+	"""
+	try:
+		elapsed, count = float(elapsed_s), int(samples)
+	except ValueError:
+		return None
+	if not isfinite(elapsed) or count < 1:
+		return None
+	return TaskTiming(elapsed, count)
+
+
 def parse_line(line: str) -> tuple[CacheKey, TaskTiming] | None:
 	parts = line.rsplit(maxsplit=3)
 	if len(parts) != 4:
 		return None
 	label, elapsed_s, samples, scope = parts
+	timing = observation(elapsed_s, samples)
+	if timing is None:
+		return None
 	try:
-		return CacheKey(label, int(scope)), TaskTiming(float(elapsed_s), int(samples))
+		return CacheKey(label, int(scope)), timing
 	except ValueError:
 		return None
 
@@ -294,7 +323,5 @@ def parse_v0_line(line: str) -> tuple[CacheKey, TaskTiming] | None:
 	if len(parts) != 3:
 		return None
 	label, elapsed_s, samples = parts
-	try:
-		return CacheKey(label, 0), TaskTiming(float(elapsed_s), int(samples))
-	except ValueError:
-		return None
+	timing = observation(elapsed_s, samples)
+	return None if timing is None else (CacheKey(label, 0), timing)

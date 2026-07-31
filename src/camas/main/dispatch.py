@@ -466,11 +466,12 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 				print(f"error: {format_empty_variants_error(empty_variants)}", file=sys.stderr)
 				sys.exit(2)
 
-			cli_scope: Final = timings.scope_of(
+			cli_changed: Final = (
 				to_changed(args.paths, source.parent if source is not None else Path.cwd())
 				if args.paths is not None
 				else ()
 			)
+			cli_scope: Final = timings.scope_of(cli_changed)
 			try:
 				effects: Final = resolve_effects(
 					args.effects,
@@ -486,12 +487,12 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 				sys.exit(2)
 
 			if args.paths is not None:
-				base = source.parent if source is not None else Path.cwd()
-				changed = to_changed(args.paths, base)
-				scoped = scope_to_changed(expand_matrix(resolved), changed) if changed else None
+				scoped = (
+					scope_to_changed(expand_matrix(resolved), cli_changed) if cli_changed else None
+				)
 				if scoped is None:
 					print(
-						f"No task leaf covers {', '.join(changed) or '(no paths given)'}"
+						f"No task leaf covers {', '.join(cli_changed) or '(no paths given)'}"
 						" — nothing to run."
 					)
 					sys.exit(0)
