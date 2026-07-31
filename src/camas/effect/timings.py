@@ -75,7 +75,7 @@ class Timings:
 			(timings.CacheKey(ctx.canonical.get(label, label), ctx.scope), elapsed)
 			for state in ctx.state.states
 			if isinstance(state, Completed)
-			and (elapsed := timings.elapsed_of(state.completion)) is not None
-			and (label := task_label(state.task))
+			for label in (task_label(state.task),)
+			if (elapsed := timings.elapsed_of(state.completion)) is not None
 		]
 		await asyncio.to_thread(timings.record_observed, ctx.camas_dir, leaves)

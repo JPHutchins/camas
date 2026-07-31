@@ -23,7 +23,9 @@ from .budget import plan_under
 from .execution import run
 from .matrix import expand_matrix
 from .scope import canonical_labels, scope_to_changed
+from .task import task_label
 from .timings import scope_of
+from .traversal import flatten_leaves
 
 if sys.version_info >= (3, 11):
 	from typing import assert_never
@@ -283,5 +285,22 @@ async def run_gate(
 		checks,
 		plan,
 		formatted.report_paths,
-		canonical_labels(expanded, changed),
+		as_reported(canonical_labels(expanded, changed), scoped, formatted.node),
 	)
+
+
+def as_reported(
+	canonical: Mapping[TaskLabel, TaskLabel], scoped: TaskNode, formatted: TaskNode
+) -> dict[TaskLabel, TaskLabel]:
+	"""``canonical`` re-keyed by the label each leaf reports *after* ``agent_format`` appended its
+	arguments, which is a second rewrite of the same command that scoping already rewrote.
+
+	A nameless leaf is labelled by its command, so ``pylint src/a.py`` becomes
+	``pylint src/a.py --output-format sarif`` and a map keyed by the former misses. The two trees
+	differ only in those commands — :func:`with_agent_format` prunes nothing — so their leaves
+	correspond one to one.
+	"""
+	return {
+		task_label(after.task): canonical.get(task_label(before.task), task_label(before.task))
+		for before, after in zip(flatten_leaves(scoped), flatten_leaves(formatted), strict=True)
+	}

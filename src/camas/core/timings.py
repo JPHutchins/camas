@@ -135,12 +135,17 @@ def record(camas_dir: Path, leaves: Sequence[tuple[CacheKey, float]]) -> None:
 	"""Fold a run's observed per-leaf durations into the cache under an exclusive lock.
 
 	``camas_dir`` must already exist.
+
+	An observation with an empty label is dropped, because a row cannot carry one: the label is the
+	first field of a whitespace-separated line, so ``" 0.5 1 0"`` reads back as three fields and the
+	row is discarded on load. Dropping it on the way in says so, rather than writing something that
+	silently never returns. Only a leaf explicitly named ``""`` produces one.
 	"""
 	if not leaves:
 		return
 	with open_for_update(camas_dir / CACHE_NAME) as handle:
 		lock(handle, exclusive=True)
-		merged = reduce(folded, leaves, parse(handle.read()))
+		merged = reduce(folded, (o for o in leaves if o[0].label), parse(handle.read()))
 		handle.seek(0)
 		handle.truncate()
 		handle.write(serialize(merged))

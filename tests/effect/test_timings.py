@@ -139,3 +139,21 @@ def test_for_run_keys_a_configured_effect_to_the_scope_and_labels(tmp_path: Path
 		)
 	)
 	assert timings.load(tmp_path) == {cache_key("pylint .", 2): timings.TaskTiming(0.4, 1)}
+
+
+def test_a_leaf_named_empty_records_nothing_rather_than_something_unreadable(
+	tmp_path: Path,
+) -> None:
+	"""A leaf named ``""`` has no label a cache row can carry — the label is a row's first
+	whitespace-separated field, so it would be written and then discarded on every load. It is
+	dropped on the way in instead, and the run still records everything else.
+	"""
+	blank, named = Task(("python", "-c", "pass"), name=""), _task("real")
+	events: list[TaskEvent] = [
+		StartedEvent(blank, 0, TS),
+		StartedEvent(named, 1, TS),
+		CompletedEvent(blank, 0, Finished(0, 0.2, ()), TS),
+		CompletedEvent(named, 1, Finished(0, 0.3, ()), TS),
+	]
+	asyncio.run(drive(Timings(camas_dir=tmp_path), Parallel(blank, named, name="grp"), events))
+	assert timings.load(tmp_path) == {cache_key("real"): timings.TaskTiming(0.3, 1)}

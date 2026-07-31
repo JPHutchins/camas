@@ -699,10 +699,11 @@ async def run_for(
 	except ValueError as e:
 		return error_result(str(e))
 	changed = to_changed(req.paths, base_for(session))
-	scoped = scope_to_paths(node, changed) if changed or not req.paths else None
+	expanded = expand_matrix(node)
+	scoped = scope_to_paths(expanded, changed) if changed or not req.paths else None
 	if scoped is None:
 		return nothing_covered_result(session, req.paths)
-	canonical = canonical_labels(expand_matrix(node), changed)
+	canonical = canonical_labels(expanded, changed)
 	node = scoped
 	if req.dry_run:
 		return success(
@@ -868,14 +869,18 @@ async def run_budget(
 	except ValueError as e:
 		return error_result(str(e))
 	changed = to_changed(req.paths, base_for(session))
-	canonical = canonical_labels(expand_matrix(source), changed)
-	scoped_source = scope_to_paths(source, changed) if changed or not req.paths else None
-	if scoped_source is None:
-		return nothing_covered_result(session, req.paths)
-	source = scoped_source
+	expanded = expand_matrix(source)
+	canonical = canonical_labels(expanded, changed)
 	scope = timings.scope_of(changed)
-	plan = plan_under(source, budget_s, timings.load(session.camas_dir), scope)
+	# Budget before scoping, as the gate does: an estimate is keyed by the label a leaf carries
+	# before its {paths} are injected, so budgeting the scoped tree looks up a label nothing records.
+	plan = plan_under(expanded, budget_s, timings.load(session.camas_dir), scope)
 	report = to_budget_report(plan)
+	if plan.node is not None:
+		scoped_source = scope_to_paths(plan.node, changed) if changed or not req.paths else None
+		if scoped_source is None:
+			return nothing_covered_result(session, req.paths)
+		plan = plan._replace(node=scoped_source)
 	if plan.node is None:
 		empty = empty_run_response()
 		text = f"{budget_headline(report)}\n\nNothing ran — no leaf fit the budget."
@@ -1474,7 +1479,13 @@ async def fix_for(
 	if fix_node is not None and blocked is None:
 		changed = to_changed(req.paths, base_for(session))
 		expanded = expand_matrix(fix_node)
-		scoped = scope_to_changed(expanded, changed) if changed else with_default_paths(expanded)
+		scoped = (
+			None
+			if req.paths and not changed
+			else scope_to_changed(expanded, changed)
+			if changed
+			else with_default_paths(expanded)
+		)
 		keying = (timings.scope_of(changed), canonical_labels(expanded, changed))
 	empty_cause: str | None
 	if scoped is None:

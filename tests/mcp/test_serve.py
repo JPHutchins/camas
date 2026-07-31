@@ -2002,3 +2002,36 @@ async def test_fix_call_records_timing(tmp_path: Path) -> None:
 	session = _observed_session({"fmt": FIX_TASK}, cfg, tmp_path)
 	await serve.call(session, "camas_fix", {})
 	assert timings.load(session.camas_dir)
+
+
+NAMELESS_SCOPED = Task(("python", "-c", "pass", "{paths}"), paths=".")
+
+
+async def test_run_under_with_paths_reads_the_observation_it_recorded(tmp_path: Path) -> None:
+	"""#218/#224 for a nameless leaf under ``--under --paths``: budgeting the *scoped* tree looked up
+	the path-injected label while recording used the canonical one, so the leaf was untimed forever.
+	Two runs: the first records, the second must find it rather than call it unmeasured.
+	"""
+	node = Parallel(NAMELESS_SCOPED, name="check")
+	timings.ensure_camas_dir(tmp_path / ".camas")
+	session = _session({"check": node}, Config(default_task=node), tmp_path, rich=True)
+	await serve.call(session, "camas_run", {"task": "check", "paths": ["a.py"], "under": 60})
+	assert set(timings.load(session.camas_dir)) == {timings.CacheKey("python -c pass .", 1)}
+	result = await serve.call(
+		session, "camas_run", {"task": "check", "paths": ["a.py"], "under": 60}
+	)
+	assert result.structuredContent is not None
+	budget = result.structuredContent["budget"]
+	assert budget["unmeasured"] == []
+	assert budget["selected"] == ["python -c pass {paths}"]
+
+
+async def test_fix_call_paths_all_outside_repo_fixes_nothing(tmp_path: Path) -> None:
+	"""Paths that all normalize away are not the same as passing none — running the whole fix tree
+	over an unrelated edit is what the scoping was asked to prevent.
+	"""
+	cfg = Config(agent=Claude(fix=FIX_TASK))
+	session = _observed_session({"fmt": FIX_TASK}, cfg, tmp_path)
+	result = await serve.call(session, "camas_fix", {"paths": ["/etc/passwd"]})
+	assert not result.isError
+	assert "nothing to fix" in _text(result)

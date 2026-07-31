@@ -277,13 +277,20 @@ def canonical_labels(node: TaskNode, changed: tuple[str, ...]) -> dict[str, str]
 	reported label would key every observation to something no budget ever reads, leaving the leaf
 	permanently unmeasured and growing a cache entry per change set.
 
+	Empty for an unscoped run, which rewrites nothing — the lookup this feeds falls back to the
+	reported label, so there is nothing for an identity mapping to add.
+
 	>>> canonical_labels(Task("pylint {paths}", paths="."), ("a.py",))
 	{'pylint a.py': 'pylint .'}
 	>>> canonical_labels(Task("mypy .", name="types"), ("a.py",))
 	{'types': 'types'}
+	>>> canonical_labels(Task("pylint {paths}", paths="."), ())
+	{}
 	"""
 	from .traversal import flatten_leaves
 
+	if not changed:
+		return {}
 	return {
 		task_label(scoped): task_label(resolve_default_leaf(info.task))
 		for info in flatten_leaves(node)

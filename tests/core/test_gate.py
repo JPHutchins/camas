@@ -210,3 +210,20 @@ async def test_gate_tags_residual_with_agent_format_kind() -> None:
 	)
 	out = await run_gate(Parallel(chk), ())
 	assert out.residual_class == "needs_reasoning"
+
+
+async def test_gate_canonical_survives_agent_format_rewriting_the_command() -> None:
+	"""``agent_format`` appends to the command *after* scoping already rewrote it, so a nameless leaf
+	reports a third label again. The map has to be keyed by what the run reports, or the observation
+	lands under something the budget cannot read — the #218 failure, one rewrite further along.
+	"""
+	leaf = Task(
+		("python", "-c", "pass", "{paths}"),
+		paths=".",
+		agent_format=AgentFormat("--output-format sarif", "sarif"),
+	)
+	outcome = await run_gate(Parallel(leaf), ("a.py",))
+	assert outcome.result is not None
+	reported = outcome.result.results[0].name
+	assert "--output-format sarif" in reported
+	assert outcome.canonical[reported] == "python -c pass ."
