@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 import pytest
 
@@ -258,41 +258,49 @@ def test_warn_uncommittable_reports_to_stderr(
 	)
 
 
-class _ClosedStdout:
-	"""A stdout whose reader is gone — ``camas mcp init | head``."""
+class _DeadStream(NamedTuple):
+	"""A stream that fails on use, the two ways a real one does: ``BrokenPipeError`` once its
+	reader is gone (``camas mcp init | head``), ``ValueError`` once someone closed it outright.
+	"""
 
-	def flush(self) -> None:
-		raise BrokenPipeError
-
-
-class _ClosedStderr:
-	"""A stderr sharing that dead pipe — ``camas mcp init 2>&1 | head``."""
+	error: type[BaseException]
 
 	def write(self, _text: str) -> int:
-		raise BrokenPipeError
+		raise self.error
+
+	def flush(self) -> None:
+		raise self.error
+
+
+_STREAM_FAILURES = pytest.mark.parametrize("error", [BrokenPipeError, ValueError])
 
 
 @requires_git
-def test_warn_uncommittable_still_warns_when_stdout_has_no_reader(
-	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+@_STREAM_FAILURES
+def test_warn_uncommittable_still_warns_when_stdout_is_unusable(
+	tmp_path: Path,
+	monkeypatch: pytest.MonkeyPatch,
+	capsys: pytest.CaptureFixture[str],
+	error: type[BaseException],
 ) -> None:
 	"""The flush that orders the two streams must not cost the warning the one stream still read."""
 	_repo(tmp_path, ".mcp.json\n")
 	monkeypatch.chdir(tmp_path)
-	monkeypatch.setattr("sys.stdout", _ClosedStdout())
+	monkeypatch.setattr("sys.stdout", _DeadStream(error))
 	warn_uncommittable((".mcp.json",), consequence="nobody else gets the server entry")
 	assert "!.mcp.json" in capsys.readouterr().err
 
 
 @requires_git
+@_STREAM_FAILURES
 def test_warn_uncommittable_does_not_raise_when_both_streams_are_gone(
-	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: type[BaseException]
 ) -> None:
 	"""The files are already written by then — an advisory message must not become an exception."""
 	_repo(tmp_path, ".mcp.json\n")
 	monkeypatch.chdir(tmp_path)
-	monkeypatch.setattr("sys.stdout", _ClosedStdout())
-	monkeypatch.setattr("sys.stderr", _ClosedStderr())
+	monkeypatch.setattr("sys.stdout", _DeadStream(error))
+	monkeypatch.setattr("sys.stderr", _DeadStream(error))
 	warn_uncommittable((".mcp.json",), consequence="nobody else gets the server entry")
 
 
