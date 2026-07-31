@@ -31,7 +31,7 @@ from pydantic import AnyUrl, BaseModel, ValidationError
 from ..core import timings
 from ..core.budget import plan_under
 from ..core.execution import run
-from ..core.gate import STALE_TEMP_MAX_AGE_S, run_gate
+from ..core.gate import STALE_TEMP_MAX_AGE_S, GateOutcome, run_gate
 from ..core.hook_event import NO_EVENT, HookEvent, event_from_stdin
 from ..core.matrix import (
 	empty_variant_labels,
@@ -40,7 +40,7 @@ from ..core.matrix import (
 	unfilled_required_axes,
 )
 from ..core.render import render_tree_lines, strip_ansi
-from ..core.scope import scope_to_changed, to_changed, with_default_paths
+from ..core.scope import canonical_labels, scope_to_changed, to_changed, with_default_paths
 from ..core.task import did_you_mean, task_label
 from ..main.argv import apply_passthrough
 from ..main.compose import load_py_tasks_state
@@ -698,9 +698,11 @@ async def run_for(
 		name, node = resolve_run_node(tasks, req, config)
 	except ValueError as e:
 		return error_result(str(e))
-	scoped = scope_to_paths(node, req.paths, base_for(session))
+	changed = to_changed(req.paths, base_for(session))
+	scoped = scope_to_paths(node, changed) if changed or not req.paths else None
 	if scoped is None:
 		return nothing_covered_result(session, req.paths)
+	canonical = canonical_labels(expand_matrix(node), changed)
 	node = scoped
 	if req.dry_run:
 		return success(
@@ -714,7 +716,7 @@ async def run_for(
 		leaf_color=leaf_color_of(config),
 	)
 	logs = write_logs(create_run_log_dir(session.camas_dir, name, session.reserve_run()), result)
-	timings.record_run(session.camas_dir, result, scope_for(req.paths, base_for(session)))
+	timings.record_run(session.camas_dir, result, timings.scope_of(changed), canonical)
 	resp = attach_logs(to_run_response(node, result, verbosity=req.verbosity), logs)
 	nudge = improve_loop_nudge(
 		any_truncated=resp.truncated,
@@ -728,24 +730,26 @@ async def run_for(
 	)
 
 
-def scope_for(paths: list[str], base: Path) -> int:
-	"""The timing scope for a request's ``paths`` — normalized the same way the scoping itself
-	normalizes them, so a run is recorded under the change size that actually narrowed it.
+def record_gate(camas_dir: Path | None, outcome: GateOutcome, changed: tuple[str, ...]) -> None:
+	"""Record what a gate run's leaves cost, under the labels a later budget will read. Shared by
+	both gate entry points — the MCP tool and the ``Stop``-hook subcommand — which otherwise differ
+	only in where they get ``under`` from, and which between them account for two of the four paths
+	that used to run leaves and observe nothing.
 	"""
-	return timings.scope_of(to_changed(paths, base))
+	if outcome.result is not None:
+		timings.record_run(camas_dir, outcome.result, timings.scope_of(changed), outcome.canonical)
 
 
-def scope_to_paths(node: TaskNode, paths: list[str], base: Path) -> TaskNode | None:
-	"""``node`` narrowed to the changed ``paths`` — the MCP counterpart of the CLI ``--paths``.
+def scope_to_paths(node: TaskNode, changed: tuple[str, ...]) -> TaskNode | None:
+	"""``node`` narrowed to the ``changed`` paths — the MCP counterpart of the CLI ``--paths``.
 
-	``node`` unchanged when ``paths`` is empty (run the whole task); the path-scoped tree when
-	some leaf covers the paths; ``None`` when ``paths`` is non-empty but no leaf covers it.
+	``node`` unchanged when nothing narrows it (run the whole task); the path-scoped tree when some
+	leaf covers the paths; ``None`` when there are changed paths but no leaf covers them. A request
+	that named paths of which none survived normalization — all outside the repo — is the caller's to
+	reject, since only it can tell that apart from a request that named none.
 	"""
-	if not paths:
-		return node
-	changed = to_changed(paths, base)
 	if not changed:
-		return None
+		return node
 	return scope_to_changed(expand_matrix(node), changed)
 
 
@@ -863,11 +867,13 @@ async def run_budget(
 		require_filled_axes(source)
 	except ValueError as e:
 		return error_result(str(e))
-	scoped_source = scope_to_paths(source, req.paths, base_for(session))
+	changed = to_changed(req.paths, base_for(session))
+	canonical = canonical_labels(expand_matrix(source), changed)
+	scoped_source = scope_to_paths(source, changed) if changed or not req.paths else None
 	if scoped_source is None:
 		return nothing_covered_result(session, req.paths)
 	source = scoped_source
-	scope = scope_for(req.paths, base_for(session))
+	scope = timings.scope_of(changed)
 	plan = plan_under(source, budget_s, timings.load(session.camas_dir), scope)
 	report = to_budget_report(plan)
 	if plan.node is None:
@@ -889,7 +895,7 @@ async def run_budget(
 		leaf_color=leaf_color_of(config),
 	)
 	logs = write_logs(create_run_log_dir(session.camas_dir, label, session.reserve_run()), result)
-	timings.record_run(session.camas_dir, result, scope)
+	timings.record_run(session.camas_dir, result, scope, canonical)
 	resp = attach_budget(
 		attach_logs(to_run_response(plan.node, result, verbosity=req.verbosity), logs), report
 	)
@@ -1414,8 +1420,7 @@ async def gate_for(
 		timings=timings.load(session.camas_dir),
 		leaf_color=leaf_color_of(config),
 	)
-	if outcome.result is not None:
-		timings.record_run(session.camas_dir, outcome.result, timings.scope_of(changed))
+	record_gate(session.camas_dir, outcome, changed)
 	budget = to_budget_report(outcome.budget) if outcome.budget is not None else None
 	rerun = wire.GateRerun(task=req.task, paths=changed, under=req.under)
 	resp = to_gate_response(outcome, budget, rerun)
@@ -1464,11 +1469,13 @@ async def fix_for(
 	except ValueError as e:
 		return error_result(str(e))
 	scoped: TaskNode | None = None
+	keying: tuple[int, Mapping[str, str]] = (0, {})
 	blocked = unsatisfiable_message(fix_node) if fix_node is not None else None
 	if fix_node is not None and blocked is None:
 		changed = to_changed(req.paths, base_for(session))
 		expanded = expand_matrix(fix_node)
 		scoped = scope_to_changed(expanded, changed) if changed else with_default_paths(expanded)
+		keying = (timings.scope_of(changed), canonical_labels(expanded, changed))
 	empty_cause: str | None
 	if scoped is None:
 		resp = empty_run_response()
@@ -1487,7 +1494,7 @@ async def fix_for(
 			base=base_for(session),
 			leaf_color=leaf_color_of(config),
 		)
-		timings.record_run(session.camas_dir, result, scope_for(req.paths, base_for(session)))
+		timings.record_run(session.camas_dir, result, *keying)
 		resp = to_run_response(scoped, result)
 		empty_cause = None
 	return success(
@@ -1842,8 +1849,7 @@ def run_gate_cli(
 			leaf_color=leaf_color_of(config),
 		)
 	)
-	if outcome.result is not None:
-		timings.record_run(camas_dir, outcome.result, timings.scope_of(changed))
+	record_gate(camas_dir, outcome, changed)
 	budget = to_budget_report(outcome.budget) if outcome.budget is not None else None
 	rerun = wire.GateRerun(task=args.task, paths=changed, under=args.under)
 	resp = to_gate_response(outcome, budget, rerun)

@@ -266,17 +266,23 @@ def resolve_default_effects(
 	agent: bool = False,
 	base: Path | None = None,
 	scope: int = 0,
+	canonical: Mapping[str, str] = {},
 ) -> tuple[Effect[Any], ...]:
 	"""The effects a bare run uses: the :class:`Config` override, else the environment default.
 
 	The renderer is ``Status(output_mode="github")`` under GitHub Actions, the line-oriented
 	``Status`` for an agent, else the live ``Termtree``. A project whose camas directory exists
 	also gets ``Timings`` to record per-leaf durations, keyed to ``scope`` — how many changed paths
-	``--paths`` narrowed this run to — so a scoped run is not recorded as a whole-tree one.
+	``--paths`` narrowed this run to — so a scoped run is not recorded as a whole-tree one, and to
+	``canonical`` so a scoped leaf is recorded under the label a budget reads.
+
+	A ``Config`` that names its own effects, or an explicit ``--effects``, may include a ``Timings``
+	written without either, since neither is knowable where it is written; both are keyed to this run
+	by :func:`keyed_to_run` rather than left recording every scoped run as a whole-tree one.
 	"""
 	configured = config.effects(github=github)
 	if configured is not None:
-		return configured
+		return keyed_to_run(configured, scope, canonical)
 	from ..effect.status import Status
 	from ..effect.termtree import Termtree
 
@@ -287,7 +293,7 @@ def resolve_default_effects(
 	if camas is not None and camas.is_dir():
 		from ..effect.timings import Timings
 
-		return (renderer, Timings(camas_dir=camas, scope=scope))
+		return (renderer, Timings(camas_dir=camas, scope=scope, canonical=canonical))
 	return (renderer,)
 
 
@@ -309,14 +315,34 @@ def resolve_effects(
 	scope_effects: Mapping[str, type[Effect[Any]]] = {},
 	base: Path | None = None,
 	scope: int = 0,
+	canonical: Mapping[str, str] = {},
 ) -> tuple[Effect[Any], ...]:
 	"""The effects for a run: the parsed ``--effects`` expression (propagating its
 	``ValueError`` on a malformed expression), or the environment default when
 	``--effects`` was omitted (``expr is None``).
 	"""
 	if expr is None:
-		return resolve_default_effects(config, github=github, agent=agent, base=base, scope=scope)
-	return parse_effects(expr, scope_effects)
+		return resolve_default_effects(
+			config, github=github, agent=agent, base=base, scope=scope, canonical=canonical
+		)
+	return keyed_to_run(parse_effects(expr, scope_effects), scope, canonical)
+
+
+def keyed_to_run(
+	effects: tuple[Effect[Any], ...], scope: int, canonical: Mapping[str, str]
+) -> tuple[Effect[Any], ...]:
+	"""``effects`` with every ``Timings`` keyed to this run's scope and labels. A ``Timings`` spelled
+	out in a ``Config`` or in ``--effects`` cannot carry either — so without this it would record a
+	path-scoped run as a whole-tree observation, which is the mis-estimation #224 is about.
+
+	``effects`` itself is returned when it holds no ``Timings``, so a caller's own tuple survives
+	identically rather than being rebuilt for nothing.
+	"""
+	from ..effect.timings import Timings
+
+	if not any(isinstance(e, Timings) for e in effects):
+		return effects
+	return tuple(e.for_run(scope, canonical) if isinstance(e, Timings) else e for e in effects)
 
 
 def format_effect_call(effect: Effect[Any]) -> str:

@@ -267,6 +267,30 @@ def with_default_paths(node: TaskNode) -> TaskNode:
 	return scope_to_changed(node, ()) or node
 
 
+def canonical_labels(node: TaskNode, changed: tuple[str, ...]) -> dict[str, str]:
+	"""For each leaf that survives scoping to ``changed``, the label it will report mapped to the
+	label its timing is keyed under.
+
+	Scoping rewrites a ``{paths}`` command, so a leaf with no ``name`` reports a different label for
+	every change set — ``pylint a.py`` here, ``pylint b.py`` next turn — while an estimate is looked
+	up under the unscoped form :func:`resolve_default_leaf` gives (``pylint .``). Recording under the
+	reported label would key every observation to something no budget ever reads, leaving the leaf
+	permanently unmeasured and growing a cache entry per change set.
+
+	>>> canonical_labels(Task("pylint {paths}", paths="."), ("a.py",))
+	{'pylint a.py': 'pylint .'}
+	>>> canonical_labels(Task("mypy .", name="types"), ("a.py",))
+	{'types': 'types'}
+	"""
+	from .traversal import flatten_leaves
+
+	return {
+		task_label(scoped): task_label(resolve_default_leaf(info.task))
+		for info in flatten_leaves(node)
+		if (scoped := _resolve_leaf(info.task, changed)) is not None
+	}
+
+
 def resolve_default_leaf(task: Task) -> Task:
 	"""``task`` with its ``{paths}`` resolved to the full-run default — the form a normal run
 	records its timing under. The timing lookup keys on this so a ``{paths}``-template leaf

@@ -118,3 +118,24 @@ def test_skipped_leaf_excluded(tmp_path: Path) -> None:
 	cache = timings.load(tmp_path)
 	assert cache_key("fail") in cache
 	assert cache_key("skip") not in cache
+
+
+def test_for_run_keys_a_configured_effect_to_the_scope_and_labels(tmp_path: Path) -> None:
+	"""A ``Timings`` written out by hand — in ``--effects`` or a ``Config`` — cannot know what the run
+	it lands in is scoped to, so it records whole-tree by default. ``for_run`` is how the caller that
+	does know keys it, and without that a path-scoped run would be recorded as a whole-tree
+	observation under a label no scoped budget reads: #224, for explicitly configured effects.
+	"""
+	scoped = Task(("python", "-c", "pass"), name="pylint a.py")
+	events: list[TaskEvent] = [
+		StartedEvent(scoped, 0, TS),
+		CompletedEvent(scoped, 0, Finished(0, 0.4, ()), TS),
+	]
+	asyncio.run(
+		drive(
+			Timings(camas_dir=tmp_path).for_run(2, {"pylint a.py": "pylint ."}),
+			Parallel(scoped, name="check"),
+			events,
+		)
+	)
+	assert timings.load(tmp_path) == {cache_key("pylint .", 2): timings.TaskTiming(0.4, 1)}

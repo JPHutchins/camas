@@ -30,7 +30,7 @@ from ..core.matrix import (
 	unfilled_required_axes,
 )
 from ..core.render import print_tree, render_tree_lines
-from ..core.scope import scope_to_changed, to_changed, with_default_paths
+from ..core.scope import canonical_labels, scope_to_changed, to_changed, with_default_paths
 from ..core.task import did_you_mean, task_label
 from ..v0.config import Config
 from .argv import (
@@ -202,7 +202,12 @@ def fix_cli(argv: list[str]) -> int:
 	result = asyncio.run(
 		run(scoped, effects=(), jobs=None, base=base, leaf_color=state.config.leaf_color)
 	)
-	timings.record_run(state.config.camas_path(base), result, timings.scope_of(changed))
+	timings.record_run(
+		state.config.camas_path(base),
+		result,
+		timings.scope_of(changed),
+		canonical_labels(expanded, changed),
+	)
 	_ = finish_run(result)
 	return 0
 
@@ -472,6 +477,7 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 				else ()
 			)
 			cli_scope: Final = timings.scope_of(cli_changed)
+			cli_canonical: Final = canonical_labels(expand_matrix(resolved), cli_changed)
 			try:
 				effects: Final = resolve_effects(
 					args.effects,
@@ -481,6 +487,7 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 					scope_effects=scope_effects,
 					base=source.parent if source is not None else None,
 					scope=cli_scope,
+					canonical=cli_canonical,
 				)
 			except ValueError as e:
 				print(f"error: --effects: {e}", file=sys.stderr)

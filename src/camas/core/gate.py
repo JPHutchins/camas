@@ -22,7 +22,7 @@ from ..v0.task import Group, Task
 from .budget import plan_under
 from .execution import run
 from .matrix import expand_matrix
-from .scope import scope_to_changed
+from .scope import canonical_labels, scope_to_changed
 from .timings import scope_of
 
 if sys.version_info >= (3, 11):
@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 	from ..v0.task import TaskNode
 	from .budget import BudgetPlan
 	from .completion import RunResult
-	from .timings import CacheKey, TaskTiming
+	from .timings import CacheKey, TaskLabel, TaskTiming
 
 
 ResidualClass: TypeAlias = Literal["green", "needs_reasoning"]
@@ -70,6 +70,10 @@ class GateOutcome(NamedTuple):
 	"""Each leaf's path-mode report file, DFS order aligned with ``node``'s leaves — set for a
 	leaf whose ``agent_format.args`` used :data:`REPORT_TOKEN`, ``None`` for every other leaf.
 	"""
+	canonical: Mapping[TaskLabel, TaskLabel] = {}
+	"""What each leaf that ran should be recorded under, since scoping rewrote the label it reports.
+	Built here because only the gate holds the matrix-expanded tree the budget read from; see
+	:func:`camas.core.scope.canonical_labels`."""
 
 
 def decision_of(residual_class: ResidualClass) -> Decision:
@@ -273,4 +277,11 @@ async def run_gate(
 		formatted.node, jobs=jobs, base=base, interactive=False, leaf_color=leaf_color
 	)
 	residual: ResidualClass = "needs_reasoning" if checks.returncode != 0 else "green"
-	return GateOutcome(residual, formatted.node, checks, plan, formatted.report_paths)
+	return GateOutcome(
+		residual,
+		formatted.node,
+		checks,
+		plan,
+		formatted.report_paths,
+		canonical_labels(expanded, changed),
+	)

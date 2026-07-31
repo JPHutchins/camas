@@ -9,6 +9,7 @@ import os
 import sys
 from contextlib import suppress
 from enum import IntEnum
+from functools import reduce
 from math import isfinite
 from typing import IO, TYPE_CHECKING, Final, NamedTuple, TypeAlias
 
@@ -137,20 +138,27 @@ def record(camas_dir: Path, leaves: Sequence[tuple[CacheKey, float]]) -> None:
 	"""
 	if not leaves:
 		return
-	observed: Final = dict(leaves)
 	with open_for_update(camas_dir / CACHE_NAME) as handle:
 		lock(handle, exclusive=True)
-		cache = parse(handle.read())
-		merged = {
-			**cache,
-			**{
-				key: cache[key].fold(s) if key in cache else TaskTiming(s, 1)
-				for key, s in observed.items()
-			},
-		}
+		merged = reduce(folded, leaves, parse(handle.read()))
 		handle.seek(0)
 		handle.truncate()
 		handle.write(serialize(merged))
+
+
+def folded(
+	cache: Mapping[CacheKey, TaskTiming], observation: tuple[CacheKey, float]
+) -> dict[CacheKey, TaskTiming]:
+	"""``cache`` with one observation folded in. Folded one at a time rather than collected into a
+	dict first, so two leaves that report the same label in a single run — two ``Task`` objects
+	sharing a name, or a command — both count instead of the later one replacing the earlier.
+
+	>>> folded(folded({}, (CacheKey("a", 0), 1.0)), (CacheKey("a", 0), 3.0))
+	{CacheKey(label='a', scope=0): TaskTiming(elapsed_s=2.0, samples=2)}
+	"""
+	key, elapsed = observation
+	prior = cache.get(key)
+	return {**cache, key: prior.fold(elapsed) if prior is not None else TaskTiming(elapsed, 1)}
 
 
 def record_observed(camas_dir: Path | None, leaves: Sequence[tuple[CacheKey, float]]) -> None:
@@ -163,16 +171,28 @@ def record_observed(camas_dir: Path | None, leaves: Sequence[tuple[CacheKey, flo
 	than raised: the run these durations describe has already finished, so failing here would turn a
 	completed check into an error over a cache — and :func:`load` already treats an unreadable cache
 	as an empty one, which is the same judgement on the reading side.
+
+	``ValueError`` alongside ``OSError`` because recording reads the existing cache first, and a file
+	holding invalid UTF-8 raises ``UnicodeDecodeError`` — a ``ValueError``, not an ``OSError``. The
+	same pair, for the same reason, guards the ``mcp init`` warning (:func:`camas.mcp.gitignore.
+	warn_uncommittable`, #271).
 	"""
 	if camas_dir is None or not camas_dir.is_dir():
 		return
-	with suppress(OSError):
+	with suppress(OSError, ValueError):
 		record(camas_dir, leaves)
 
 
-def record_run(camas_dir: Path | None, result: RunResult, scope: int = 0) -> None:
-	"""Record a finished run's per-leaf durations as observations at ``scope``."""
-	record_observed(camas_dir, leaves_of(result, scope))
+def record_run(
+	camas_dir: Path | None,
+	result: RunResult,
+	scope: int = 0,
+	canonical: Mapping[TaskLabel, TaskLabel] = {},
+) -> None:
+	"""Record a finished run's per-leaf durations as observations at ``scope``, keyed through
+	``canonical`` — see :func:`leaves_of`.
+	"""
+	record_observed(camas_dir, leaves_of(result, scope, canonical))
 
 
 def ensure_camas_dir(camas_dir: Path) -> None:
@@ -271,9 +291,18 @@ else:  # pragma: no cover
 		"""Advisory file locking is POSIX-only; a no-op on Windows."""
 
 
-def leaves_of(result: RunResult, scope: int = 0) -> list[tuple[CacheKey, float]]:
+def leaves_of(
+	result: RunResult, scope: int = 0, canonical: Mapping[TaskLabel, TaskLabel] = {}
+) -> list[tuple[CacheKey, float]]:
+	"""``result``'s timed leaves as observations at ``scope``.
+
+	A leaf reports the label it ran under, which for a scoped ``{paths}`` leaf with no ``name`` is
+	the command with those paths already in it. ``canonical`` — from
+	:func:`camas.core.scope.canonical_labels` — maps that back to the label an estimate is looked up
+	by, so what a scoped run records is what a later budget can read.
+	"""
 	return [
-		(CacheKey(r.name, scope), e)
+		(CacheKey(canonical.get(r.name, r.name), scope), e)
 		for r in result.results
 		if (e := elapsed_of(r.completion)) is not None
 	]

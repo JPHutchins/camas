@@ -345,3 +345,18 @@ def test_running_under_agent_false_when_unset(monkeypatch: pytest.MonkeyPatch) -
 	monkeypatch.delenv("CLAUDECODE", raising=False)
 	monkeypatch.delenv("CAMAS_AGENT", raising=False)
 	assert running_under_agent() is False
+
+
+def test_configured_timings_is_keyed_to_the_run(tmp_path: Path) -> None:
+	"""A ``Config`` may name its own effects, including a ``Timings`` that cannot know what the run is
+	scoped to. Resolving replaces it with one that does, instead of leaving every scoped run recorded
+	as a whole-tree observation.
+	"""
+	from camas.effect.timings import Timings
+
+	configured = (Summary(), Timings(camas_dir=tmp_path))
+	resolved = resolve_default_effects(
+		Config(default_effects=configured), github=False, scope=2, canonical={"a": "b"}
+	)
+	assert resolved[0] is configured[0]
+	assert resolved[1] is not configured[1]
