@@ -40,7 +40,7 @@ from ..core.matrix import (
 	unfilled_required_axes,
 )
 from ..core.render import render_tree_lines, strip_ansi
-from ..core.scope import canonical_labels, scope_to_changed, to_changed, with_default_paths
+from ..core.scope import scope_to_changed, to_changed, with_default_paths
 from ..core.task import did_you_mean, task_label
 from ..main.argv import apply_passthrough
 from ..main.compose import load_py_tasks_state
@@ -703,7 +703,7 @@ async def run_for(
 	scoped = scope_to_paths(expanded, changed) if changed or not req.paths else None
 	if scoped is None:
 		return nothing_covered_result(session, req.paths)
-	canonical = canonical_labels(expanded, changed)
+	observed = timings.observed(session.camas_dir, expanded, changed)
 	node = scoped
 	if req.dry_run:
 		return success(
@@ -717,7 +717,7 @@ async def run_for(
 		leaf_color=leaf_color_of(config),
 	)
 	logs = write_logs(create_run_log_dir(session.camas_dir, name, session.reserve_run()), result)
-	timings.record_run(session.camas_dir, result, timings.scope_of(changed), canonical)
+	observed.record(result)
 	resp = attach_logs(to_run_response(node, result, verbosity=req.verbosity), logs)
 	nudge = improve_loop_nudge(
 		any_truncated=resp.truncated,
@@ -736,9 +736,14 @@ def record_gate(camas_dir: Path | None, outcome: GateOutcome, changed: tuple[str
 	both gate entry points — the MCP tool and the ``Stop``-hook subcommand — which otherwise differ
 	only in where they get ``under`` from, and which between them account for two of the four paths
 	that used to run leaves and observe nothing.
+
+	The gate supplies its own label map rather than deriving one: only it knows what
+	``agent_format`` did to each command after scoping.
 	"""
 	if outcome.result is not None:
-		timings.record_run(camas_dir, outcome.result, timings.scope_of(changed), outcome.canonical)
+		timings.Observed(camas_dir, timings.scope_of(changed), outcome.canonical).record(
+			outcome.result
+		)
 
 
 def scope_to_paths(node: TaskNode, changed: tuple[str, ...]) -> TaskNode | None:
@@ -870,11 +875,10 @@ async def run_budget(
 		return error_result(str(e))
 	changed = to_changed(req.paths, base_for(session))
 	expanded = expand_matrix(source)
-	canonical = canonical_labels(expanded, changed)
-	scope = timings.scope_of(changed)
+	observed = timings.observed(session.camas_dir, expanded, changed)
 	# Budget before scoping, as the gate does: an estimate is keyed by the label a leaf carries
 	# before its {paths} are injected, so budgeting the scoped tree looks up a label nothing records.
-	plan = plan_under(expanded, budget_s, timings.load(session.camas_dir), scope)
+	plan = plan_under(expanded, budget_s, timings.load(session.camas_dir), observed.scope)
 	report = to_budget_report(plan)
 	if plan.node is not None:
 		scoped_source = scope_to_paths(plan.node, changed) if changed or not req.paths else None
@@ -900,7 +904,7 @@ async def run_budget(
 		leaf_color=leaf_color_of(config),
 	)
 	logs = write_logs(create_run_log_dir(session.camas_dir, label, session.reserve_run()), result)
-	timings.record_run(session.camas_dir, result, scope, canonical)
+	observed.record(result)
 	resp = attach_budget(
 		attach_logs(to_run_response(plan.node, result, verbosity=req.verbosity), logs), report
 	)
@@ -1474,7 +1478,7 @@ async def fix_for(
 	except ValueError as e:
 		return error_result(str(e))
 	scoped: TaskNode | None = None
-	keying: tuple[int, Mapping[str, str]] = (0, {})
+	keying = timings.Observed(session.camas_dir, 0, {})
 	blocked = unsatisfiable_message(fix_node) if fix_node is not None else None
 	if fix_node is not None and blocked is None:
 		changed = to_changed(req.paths, base_for(session))
@@ -1486,7 +1490,7 @@ async def fix_for(
 			if changed
 			else with_default_paths(expanded)
 		)
-		keying = (timings.scope_of(changed), canonical_labels(expanded, changed))
+		keying = timings.observed(session.camas_dir, expanded, changed)
 	empty_cause: str | None
 	if scoped is None:
 		resp = empty_run_response()
@@ -1505,7 +1509,7 @@ async def fix_for(
 			base=base_for(session),
 			leaf_color=leaf_color_of(config),
 		)
-		timings.record_run(session.camas_dir, result, *keying)
+		keying.record(result)
 		resp = to_run_response(scoped, result)
 		empty_cause = None
 	return success(

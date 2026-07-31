@@ -37,8 +37,7 @@ def test_ensure_camas_dir_creates_dir_and_gitignore(tmp_path: Path) -> None:
 
 
 def test_record_run_writes_each_leaf(tmp_path: Path) -> None:
-	timings.record_run(
-		tmp_path,
+	timings.Observed(tmp_path, 0, {}).record(
 		_result(
 			TaskResult("lint", Finished(0, 0.1, ())),
 			TaskResult("test", Finished(0, 2.0, ())),
@@ -57,19 +56,22 @@ def test_record_averages_repeated_runs(tmp_path: Path) -> None:
 
 
 def test_record_counts_stopped_leaf(tmp_path: Path) -> None:
-	timings.record_run(tmp_path, _result(TaskResult("x", Stopped(130, 0.3, ())), elapsed=0.3))
+	timings.Observed(tmp_path, 0, {}).record(
+		_result(TaskResult("x", Stopped(130, 0.3, ())), elapsed=0.3)
+	)
 	assert timings.load(tmp_path)[cache_key("x")].elapsed_s == 0.3
 
 
 def test_record_skips_run_with_no_timed_leaf(tmp_path: Path) -> None:
-	timings.record_run(tmp_path, _result(TaskResult("s", Skipped(1, "blk")), elapsed=0.0))
+	timings.Observed(tmp_path, 0, {}).record(
+		_result(TaskResult("s", Skipped(1, "blk")), elapsed=0.0)
+	)
 	assert timings.load(tmp_path) == {}
 	assert not (tmp_path / timings.CACHE_NAME).exists()
 
 
 def test_record_skips_errored_leaf(tmp_path: Path) -> None:
-	timings.record_run(
-		tmp_path,
+	timings.Observed(tmp_path, 0, {}).record(
 		_result(TaskResult("ghost", Errored(127, "no such file or directory: ghost")), elapsed=0.0),
 	)
 	assert timings.load(tmp_path) == {}

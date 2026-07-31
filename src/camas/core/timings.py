@@ -24,7 +24,7 @@ else:  # pragma: no cover
 	from typing_extensions import assert_never
 
 if TYPE_CHECKING:
-	from collections.abc import Mapping, Sequence
+	from collections.abc import Iterable, Mapping, Sequence
 	from pathlib import Path
 
 	from ..v0.completion import Completion
@@ -188,16 +188,32 @@ def record_observed(camas_dir: Path | None, leaves: Sequence[tuple[CacheKey, flo
 		record(camas_dir, leaves)
 
 
-def record_run(
-	camas_dir: Path | None,
-	result: RunResult,
-	scope: int = 0,
-	canonical: Mapping[TaskLabel, TaskLabel] = {},
-) -> None:
-	"""Record a finished run's per-leaf durations as observations at ``scope``, keyed through
-	``canonical`` — see :func:`leaves_of`.
+class Observed(NamedTuple):
+	"""How one run's durations are to be recorded: where, keyed to what size of change, and under
+	which labels.
+
+	Built once where a run is set up, and carried to wherever the run finishes, so that no path can
+	run leaves and get part of this right. Deriving the three by hand per call site is what let a gate
+	record under labels its own budget could not read — in three separate places, each found only
+	after the previous one was fixed.
 	"""
-	record_observed(camas_dir, leaves_of(result, scope, canonical))
+
+	camas_dir: Path | None
+	scope: int
+	canonical: Mapping[TaskLabel, TaskLabel]
+
+	def record(self, result: RunResult) -> None:
+		"""Record ``result``'s timed leaves."""
+		record_observed(self.camas_dir, leaves_of(result, self.scope, self.canonical))
+
+
+def observed(camas_dir: Path | None, expanded: TaskNode, changed: Sequence[str]) -> Observed:
+	"""How to record a run of ``expanded`` scoped to ``changed`` — the one derivation of the three
+	things that keying needs.
+	"""
+	from .scope import canonical_labels
+
+	return Observed(camas_dir, scope_of(changed), canonical_labels(expanded, tuple(changed)))
 
 
 def ensure_camas_dir(camas_dir: Path) -> None:
@@ -296,21 +312,32 @@ else:  # pragma: no cover
 		"""Advisory file locking is POSIX-only; a no-op on Windows."""
 
 
+def observations(
+	reported: Iterable[tuple[TaskLabel, Completion]],
+	scope: int,
+	canonical: Mapping[TaskLabel, TaskLabel],
+) -> list[tuple[CacheKey, float]]:
+	"""The recordable observations among ``reported`` — each leaf's label as it ran, paired with how
+	it completed.
+
+	A leaf reports the label it ran under, which for a scoped ``{paths}`` leaf with no ``name`` is the
+	command with those paths already in it. ``canonical`` — from
+	:func:`camas.core.scope.canonical_labels` — maps that back to the label an estimate is looked up
+	by, so what a scoped run records is what a later budget can read. The one place that mapping
+	happens, for both the run result and the effect that watches leaf states.
+	"""
+	return [
+		(CacheKey(canonical.get(label, label), scope), elapsed)
+		for label, completion in reported
+		if (elapsed := elapsed_of(completion)) is not None
+	]
+
+
 def leaves_of(
 	result: RunResult, scope: int = 0, canonical: Mapping[TaskLabel, TaskLabel] = {}
 ) -> list[tuple[CacheKey, float]]:
-	"""``result``'s timed leaves as observations at ``scope``.
-
-	A leaf reports the label it ran under, which for a scoped ``{paths}`` leaf with no ``name`` is
-	the command with those paths already in it. ``canonical`` — from
-	:func:`camas.core.scope.canonical_labels` — maps that back to the label an estimate is looked up
-	by, so what a scoped run records is what a later budget can read.
-	"""
-	return [
-		(CacheKey(canonical.get(r.name, r.name), scope), e)
-		for r in result.results
-		if (e := elapsed_of(r.completion)) is not None
-	]
+	"""``result``'s timed leaves as observations at ``scope``."""
+	return observations(((r.name, r.completion) for r in result.results), scope, canonical)
 
 
 def observation(elapsed_s: str, samples: str) -> TaskTiming | None:

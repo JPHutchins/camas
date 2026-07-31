@@ -71,11 +71,13 @@ class Timings:
 
 	async def teardown(self, ctxs: tuple[TimingsContext, ...]) -> None:
 		ctx: Final = ctxs[0]  # zuban: ignore[misc] # zuban defies PEP591
-		leaves = [
-			(timings.CacheKey(ctx.canonical.get(label, label), ctx.scope), elapsed)
-			for state in ctx.state.states
-			if isinstance(state, Completed)
-			for label in (task_label(state.task),)
-			if (elapsed := timings.elapsed_of(state.completion)) is not None
-		]
+		leaves = timings.observations(
+			(
+				(task_label(state.task), state.completion)
+				for state in ctx.state.states
+				if isinstance(state, Completed)
+			),
+			ctx.scope,
+			ctx.canonical,
+		)
 		await asyncio.to_thread(timings.record_observed, ctx.camas_dir, leaves)
