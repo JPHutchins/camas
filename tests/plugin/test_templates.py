@@ -8,6 +8,7 @@ ladder and the Stop-hook nudge."""
 
 from __future__ import annotations
 
+from itertools import takewhile
 from pathlib import Path
 
 import pytest
@@ -44,22 +45,29 @@ _SPARE_ROUND = 2
 merely exceed it: one spare turn buys neither, since each needs a read before an edit."""
 
 
-def _frontmatter(filename: str) -> list[str]:
-	"""The template's frontmatter lines, so a field is read as a field rather than matched against
-	the body prose the agent is meant to follow.
+def _frontmatter(text: str) -> list[str]:
+	"""A template's frontmatter lines, so a field is read as a field rather than matched against the
+	body prose the agent is meant to follow. Cut by lines rather than by a literal ``\\n---\\n``,
+	which a CRLF checkout — the repo has no ``.gitattributes`` pinning the line ending — would not
+	contain, silently widening the search back to the whole file.
 	"""
-	head, _, _ = (_TEMPLATES / filename).read_text().partition("\n---\n")
-	return head.removeprefix("---\n").splitlines()
+	return list(takewhile(lambda line: line != "---", text.splitlines()[1:]))
 
 
 def _max_turns(filename: str) -> int:
 	declared = [
 		line.removeprefix("maxTurns:")
-		for line in _frontmatter(filename)
+		for line in _frontmatter((_TEMPLATES / filename).read_text())
 		if line.startswith("maxTurns:")
 	]
 	assert len(declared) == 1, f"{filename} declares {len(declared)} maxTurns lines, want exactly 1"
 	return int(declared[0])
+
+
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+def test_frontmatter_cuts_at_the_closing_delimiter_whatever_the_line_ending(newline: str) -> None:
+	text = newline.join(("---", "name: x", "maxTurns: 7", "---", "", "maxTurns: not a field"))
+	assert _frontmatter(text) == ["name: x", "maxTurns: 7"]
 
 
 @pytest.mark.parametrize(("filename", "mandated"), _MANDATED_TURNS)
