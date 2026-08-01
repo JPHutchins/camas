@@ -50,7 +50,7 @@ jobs:
       # verbatim and break it (pypi.org parsed with port 0, the next host dropped).
       # release-assets: actionlint-py is sdist-only and its build backend downloads the actionlint
       # binary from the GitHub release-asset host during any fresh `uv sync`.
-      extra_endpoints: pypi.org:443 files.pythonhosted.org:443 release-assets.githubusercontent.com:443
+      extra_endpoints: pypi.org:443 files.pythonhosted.org:443 release-assets.githubusercontent.com:443 *.actions.githubusercontent.com:443
       mechanic_time_limit: 3m
       mechanic_grace_period: 90s
       full_review_time_limit: 24m
