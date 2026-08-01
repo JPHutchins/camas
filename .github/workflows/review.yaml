@@ -32,7 +32,7 @@ jobs:
       conclusion:    ${{ github.event.workflow_run.conclusion }}
       trigger_event: ${{ github.event.workflow_run.event }}
       api_base_url:  ${{ vars.API_BASE_URL }}
-      model_full:    deepseek-v4-pro
+      model_full:    deepseek-v4-flash
       model_mechanic: deepseek-v4-flash
       # Python check-running, egress-minimal: install uv via pipx from PyPI (already allowlisted)
       # rather than setup-uv (which pulls from raw.githubusercontent.com + releases.astral.sh). Export
