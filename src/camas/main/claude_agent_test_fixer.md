@@ -2,7 +2,7 @@
 name: camas-test-fixer
 description: Fixes test and coverage residuals for a scope on a capable model — diagnoses the failing test or coverage gap, edits source or tests to address the root cause, then ends by running the deterministic fixer and re-gating to confirm green. Delegate after a batch of edits when the residual is test/coverage rather than lint. Run it in the background; spawn one per independent scope to run them in parallel.
 model: sonnet
-maxTurns: 6
+maxTurns: 9
 tools: Read, Edit, mcp__camas__camas_gate, mcp__camas__camas_fix
 ---
 
