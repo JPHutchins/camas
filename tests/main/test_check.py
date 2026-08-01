@@ -126,22 +126,26 @@ def test_checker_invocation_mypy_puts_camas_on_mypypath() -> None:
 	) == check_mod.CheckerInvocation(("mypy", "tasks.py"), {"MYPYPATH": "site"})
 
 
-def test_search_path_hint_is_none_when_camas_sits_in_the_checkers_own_site_packages(
-	monkeypatch: pytest.MonkeyPatch,
-) -> None:
-	"""mypy refuses to start when MYPYPATH holds one of its own site-packages, and a checker there
-	resolves camas without being told — the same condition, so the hint is skipped rather than
-	worked around.
+def test_mypy_is_told_nothing_when_camas_sits_in_a_site_packages_of_its_own() -> None:
+	"""mypy refuses to start when MYPYPATH holds one of its own site-packages, and a mypy running
+	there already resolves camas — the same condition, so it is skipped rather than evaded.
 	"""
-	monkeypatch.setattr(check_mod, "camas_search_path", lambda: Path(site.getsitepackages()[0]))
-	assert check_mod.search_path_hint() is None
+	assert checker_invocation(
+		FoundChecker("mypy", Path("mypy")),
+		Path("tasks.py"),
+		Path(site.getsitepackages()[0]),
+		{},
+	) == check_mod.CheckerInvocation(("mypy", "tasks.py"), {})
 
 
-def test_search_path_hint_names_camas_when_it_is_outside_site_packages(
-	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-	monkeypatch.setattr(check_mod, "camas_search_path", lambda: tmp_path)
-	assert check_mod.search_path_hint() == tmp_path
+def test_ty_is_told_even_from_site_packages_since_it_resolves_elsewhere(tmp_path: Path) -> None:
+	"""ty resolves against an environment it discovers, which can be the project's venv rather than
+	camas's, so a wheel-installed camas still has to say where it is.
+	"""
+	site_packages = Path(site.getsitepackages()[0])
+	assert checker_invocation(
+		FoundChecker("ty", Path("ty")), Path("tasks.py"), site_packages, {}
+	).argv == ("ty", "check", "--extra-search-path", str(site_packages), "tasks.py")
 
 
 def test_camas_search_path_holds_the_running_camas() -> None:

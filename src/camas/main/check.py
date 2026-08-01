@@ -259,33 +259,31 @@ def camas_search_path() -> Path:
 	return Path(__file__).parents[2]
 
 
-def search_path_hint() -> Path | None:
-	"""Where to tell the checker camas lives, or ``None`` when saying so is unnecessary — and, for
-	mypy, fatal.
+def in_interpreter_site_packages(path: Path) -> bool:
+	"""Whether ``path`` is one of *this* interpreter's site-packages directories.
 
-	A checker running under this interpreter already resolves ``import camas`` when camas sits in
-	one of its own site-packages, so the hint would say nothing new; mypy goes further and refuses
-	to start, since ``modulefinder`` rejects any ``MYPYPATH`` entry at or under a site-packages of
-	its own ("… is in the MYPYPATH. Please remove it."). The two conditions coincide exactly, which
-	is what makes skipping right rather than a workaround: the hint is refused precisely where it
-	was never needed. A Nix install is the other case — camas is composed onto the interpreter from
-	its own store path, which is nobody's site-packages, so the hint is both accepted and required.
+	Asked only for mypy, which resolves imports from the site-packages of the interpreter it runs
+	under: a mypy there already sees camas, and ``modulefinder`` refuses to start when ``MYPYPATH``
+	holds one of those directories ("… is in the MYPYPATH. Please remove it."). For mypy the two
+	conditions coincide, so skipping is right rather than an evasion of the guard. It is not asked
+	for ty, which resolves against an environment it *discovers* — possibly the project's venv
+	rather than camas's — where camas can be absent from ty's view while sitting in this
+	interpreter's site-packages, exactly the case a wheel-installed camas is in.
 
-	>>> hint = search_path_hint()
-	>>> hint is None or (hint / "camas" / "__init__.py").is_file()
+	>>> in_interpreter_site_packages(Path(site.getsitepackages()[0]))
 	True
+	>>> in_interpreter_site_packages(Path("nowhere-in-particular"))
+	False
 	"""
-	root: Final = camas_search_path()
-	return None if str(root) in (*site.getsitepackages(), site.getusersitepackages()) else root
+	return str(path) in (*site.getsitepackages(), site.getusersitepackages())
 
 
 def checker_invocation(
-	found: FoundChecker, tasks_py: Path, camas_root: Path | None, inherited: Mapping[str, str]
+	found: FoundChecker, tasks_py: Path, camas_root: Path, inherited: Mapping[str, str]
 ) -> CheckerInvocation:
 	"""Build the per-tool invocation: ``ty check <path>`` vs ``mypy <path>``, each told where
 	``camas_root`` is so the checker resolves ``import camas`` from the camas that is running
-	rather than from whatever environment it discovers for itself. ``None`` says the checker needs
-	no telling (:func:`search_path_hint`), and each tool then runs exactly as it did before #277.
+	rather than from whatever environment it discovers for itself.
 
 	``inherited`` is the environment the checker would run under, so each tool reads whatever it
 	needs from it here rather than having the runner know which variable belongs to which tool.
@@ -295,11 +293,12 @@ def checker_invocation(
 	>>> checker_invocation(FoundChecker("mypy", Path("mypy")), Path("tasks.py"), Path("site"), {})
 	CheckerInvocation(argv=('mypy', 'tasks.py'), env={'MYPYPATH': 'site'})
 
-	Nothing to add, for either tool:
+	mypy is told nothing when camas sits in a site-packages of its own, which it rejects outright
+	and where it needs no telling (:func:`in_interpreter_site_packages`):
 
-	>>> checker_invocation(FoundChecker("ty", Path("ty")), Path("tasks.py"), None, {})
-	CheckerInvocation(argv=('ty', 'check', 'tasks.py'), env={})
-	>>> checker_invocation(FoundChecker("mypy", Path("mypy")), Path("tasks.py"), None, {})
+	>>> checker_invocation(
+	...     FoundChecker("mypy", Path("mypy")), Path("tasks.py"), Path(site.getsitepackages()[0]), {}
+	... )
 	CheckerInvocation(argv=('mypy', 'tasks.py'), env={})
 
 	A non-empty inherited ``MYPYPATH`` keeps its priority; ``camas_root`` is appended behind it:
@@ -311,13 +310,15 @@ def checker_invocation(
 	"""
 	match found.name:
 		case "ty":
-			search: Final = () if camas_root is None else ("--extra-search-path", str(camas_root))
-			return CheckerInvocation((str(found.path), "check", *search, str(tasks_py)), {})
+			return CheckerInvocation(
+				(str(found.path), "check", "--extra-search-path", str(camas_root), str(tasks_py)),
+				{},
+			)
 		case "mypy":
 			return CheckerInvocation(
 				(str(found.path), str(tasks_py)),
 				{}
-				if camas_root is None
+				if in_interpreter_site_packages(camas_root)
 				else {
 					"MYPYPATH": os.pathsep.join(
 						p for p in (inherited.get("MYPYPATH"), str(camas_root)) if p
@@ -333,7 +334,7 @@ def run_typecheck(tasks_py: Path) -> TypeCheckResult:
 	found = find_typechecker()
 	if found is None:
 		return CheckerNotFound()
-	invocation = checker_invocation(found, tasks_py, search_path_hint(), os.environ)
+	invocation = checker_invocation(found, tasks_py, camas_search_path(), os.environ)
 	proc = subprocess.run(
 		invocation.argv,
 		capture_output=True,
