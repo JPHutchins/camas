@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import os
+import site
 import subprocess
 import sys
 from pathlib import Path
@@ -123,6 +124,24 @@ def test_checker_invocation_mypy_puts_camas_on_mypypath() -> None:
 	assert checker_invocation(
 		FoundChecker("mypy", Path("mypy")), Path("tasks.py"), Path("site"), {}
 	) == check_mod.CheckerInvocation(("mypy", "tasks.py"), {"MYPYPATH": "site"})
+
+
+def test_search_path_hint_is_none_when_camas_sits_in_the_checkers_own_site_packages(
+	monkeypatch: pytest.MonkeyPatch,
+) -> None:
+	"""mypy refuses to start when MYPYPATH holds one of its own site-packages, and a checker there
+	resolves camas without being told — the same condition, so the hint is skipped rather than
+	worked around.
+	"""
+	monkeypatch.setattr(check_mod, "camas_search_path", lambda: Path(site.getsitepackages()[0]))
+	assert check_mod.search_path_hint() is None
+
+
+def test_search_path_hint_names_camas_when_it_is_outside_site_packages(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	monkeypatch.setattr(check_mod, "camas_search_path", lambda: tmp_path)
+	assert check_mod.search_path_hint() == tmp_path
 
 
 def test_camas_search_path_holds_the_running_camas() -> None:

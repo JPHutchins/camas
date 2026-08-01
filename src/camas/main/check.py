@@ -13,6 +13,7 @@ from __future__ import annotations
 import linecache
 import os
 import shutil
+import site
 import subprocess
 import sys
 import traceback
@@ -258,12 +259,33 @@ def camas_search_path() -> Path:
 	return Path(__file__).parents[2]
 
 
+def search_path_hint() -> Path | None:
+	"""Where to tell the checker camas lives, or ``None`` when saying so is unnecessary — and, for
+	mypy, fatal.
+
+	A checker running under this interpreter already resolves ``import camas`` when camas sits in
+	one of its own site-packages, so the hint would say nothing new; mypy goes further and refuses
+	to start, since ``modulefinder`` rejects any ``MYPYPATH`` entry at or under a site-packages of
+	its own ("… is in the MYPYPATH. Please remove it."). The two conditions coincide exactly, which
+	is what makes skipping right rather than a workaround: the hint is refused precisely where it
+	was never needed. A Nix install is the other case — camas is composed onto the interpreter from
+	its own store path, which is nobody's site-packages, so the hint is both accepted and required.
+
+	>>> hint = search_path_hint()
+	>>> hint is None or (hint / "camas" / "__init__.py").is_file()
+	True
+	"""
+	root: Final = camas_search_path()
+	return None if str(root) in (*site.getsitepackages(), site.getusersitepackages()) else root
+
+
 def checker_invocation(
-	found: FoundChecker, tasks_py: Path, camas_root: Path, inherited: Mapping[str, str]
+	found: FoundChecker, tasks_py: Path, camas_root: Path | None, inherited: Mapping[str, str]
 ) -> CheckerInvocation:
 	"""Build the per-tool invocation: ``ty check <path>`` vs ``mypy <path>``, each told where
 	``camas_root`` is so the checker resolves ``import camas`` from the camas that is running
-	rather than from whatever environment it discovers for itself.
+	rather than from whatever environment it discovers for itself. ``None`` says the checker needs
+	no telling (:func:`search_path_hint`), and each tool then runs exactly as it did before #277.
 
 	``inherited`` is the environment the checker would run under, so each tool reads whatever it
 	needs from it here rather than having the runner know which variable belongs to which tool.
@@ -272,6 +294,13 @@ def checker_invocation(
 	CheckerInvocation(argv=('ty', 'check', '--extra-search-path', 'site', 'tasks.py'), env={})
 	>>> checker_invocation(FoundChecker("mypy", Path("mypy")), Path("tasks.py"), Path("site"), {})
 	CheckerInvocation(argv=('mypy', 'tasks.py'), env={'MYPYPATH': 'site'})
+
+	Nothing to add, for either tool:
+
+	>>> checker_invocation(FoundChecker("ty", Path("ty")), Path("tasks.py"), None, {})
+	CheckerInvocation(argv=('ty', 'check', 'tasks.py'), env={})
+	>>> checker_invocation(FoundChecker("mypy", Path("mypy")), Path("tasks.py"), None, {})
+	CheckerInvocation(argv=('mypy', 'tasks.py'), env={})
 
 	A non-empty inherited ``MYPYPATH`` keeps its priority; ``camas_root`` is appended behind it:
 
@@ -282,14 +311,14 @@ def checker_invocation(
 	"""
 	match found.name:
 		case "ty":
-			return CheckerInvocation(
-				(str(found.path), "check", "--extra-search-path", str(camas_root), str(tasks_py)),
-				{},
-			)
+			search: Final = () if camas_root is None else ("--extra-search-path", str(camas_root))
+			return CheckerInvocation((str(found.path), "check", *search, str(tasks_py)), {})
 		case "mypy":
 			return CheckerInvocation(
 				(str(found.path), str(tasks_py)),
-				{
+				{}
+				if camas_root is None
+				else {
 					"MYPYPATH": os.pathsep.join(
 						p for p in (inherited.get("MYPYPATH"), str(camas_root)) if p
 					)
@@ -304,7 +333,7 @@ def run_typecheck(tasks_py: Path) -> TypeCheckResult:
 	found = find_typechecker()
 	if found is None:
 		return CheckerNotFound()
-	invocation = checker_invocation(found, tasks_py, camas_search_path(), os.environ)
+	invocation = checker_invocation(found, tasks_py, search_path_hint(), os.environ)
 	proc = subprocess.run(
 		invocation.argv,
 		capture_output=True,
