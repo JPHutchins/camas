@@ -14,10 +14,11 @@ name: Claude Code hook harness
 on:
   workflow_dispatch:
   schedule:
-    # Weekly. Everything this job installs is pinned — claude-code, uv, harden-runner by SHA, the
-    # wheels by uv.lock — so it cannot see a release change the hook contract, and testing a new
-    # Claude Code means moving a pin, which is a file edit and therefore its own push. What is left
-    # unpinned is what the schedule watches: the runner image and its system Python, and whatever
+    # Weekly. The Claude Code under test is pinned below, so no release of it can reach this job
+    # without a file edit — moving that pin is its own push, which is why the schedule cannot be
+    # what notices one. What it does cover is whatever the job leaves free to move: the runner image
+    # and its system Python, the mutable action tags, the Node the setup action picks, the transitive
+    # wheels the suite's own inner `uv sync`s resolve from camas's dependency ranges, and whatever
     # DeepSeek serves behind the deepseek-v4-flash name.
     - cron: "17 6 * * 1"
   push:
