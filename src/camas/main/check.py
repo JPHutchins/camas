@@ -264,10 +264,17 @@ def camas_search_path() -> Path:
 ANSI_ESCAPE: Final = re.compile(r"\x1b(?:\[[0-9;?]*[@-~]|\([A-Za-z0-9])")
 
 
-UNRESOLVED_CAMAS: Final = ('module named "camas"', 'module named "camas.')
-"""mypy's phrasing for camas itself, and for a submodule of a camas it cannot find at all.
-A ``camas``-prefixed *other* module (``camas_extra``) is deliberately not matched: no search path
-camas can name would resolve it, so it earns no second run."""
+UNRESOLVED_CAMAS: Final = 'module named "camas"'
+"""mypy's phrasing for camas itself, and nothing looser.
+
+``camas_extra`` and ``camas.mcp`` are deliberately not matched. Neither is a camas a search path
+would resolve: the first is somebody else's module, and the second is a submodule of a camas mypy
+*did* find, so the hint cannot conjure it. A camas missing entirely still matches, even when the
+tasks file imports a submodule — mypy reports the parent too:
+
+    import camas.mcp  ->  … module named "camas.mcp"   (this line is ignored)
+                          … module named "camas"       (this line is the one that counts)
+"""
 
 
 def plain(output: str) -> str:
@@ -303,13 +310,13 @@ def cannot_resolve_camas(output: str) -> bool:
 	>>> cannot_resolve_camas('t.py:1: error: … stub for module named "camas"')
 	True
 	>>> cannot_resolve_camas('t.py:1: error: … stub for module named "camas.mcp"')
-	True
+	False
 	>>> cannot_resolve_camas('t.py:1: error: … stub for module named "camas_extra"')
 	False
 	>>> cannot_resolve_camas('t.py:1: error: Name "x" is undefined')
 	False
 	"""
-	return any(phrase in plain(output) for phrase in UNRESOLVED_CAMAS)
+	return UNRESOLVED_CAMAS in plain(output)
 
 
 def refuses_the_search_path(output: str) -> bool:

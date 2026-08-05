@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import site
 import subprocess
 import sys
@@ -242,19 +243,28 @@ def test_a_refused_hint_keeps_the_answer_mypy_gave_without_it(
 	assert len(envs) == 2
 
 
+def _a_real_mypy() -> Path | None:
+	"""Wherever production would find mypy: beside this interpreter, else on PATH — the same two
+	routes as :func:`camas.main.check.find_typechecker`, so the wording pins are not skipped in a
+	layout the code supports (a pipx or uv-tool mypy, or a wheels job whose extras ship only ty).
+	"""
+	sibling = Path(sys.executable).parent / f"mypy{EXE_SUFFIX}"
+	on_path = shutil.which("mypy")
+	return sibling if sibling.is_file() else Path(on_path) if on_path is not None else None
+
+
 requires_mypy = pytest.mark.skipif(
-	not (Path(sys.executable).parent / f"mypy{EXE_SUFFIX}").is_file(),
-	reason="pins mypy's own wording, so it needs a real mypy beside this interpreter",
+	_a_real_mypy() is None, reason="pins mypy's own wording, so it needs a real mypy"
 )
 
 
 def _real_mypy(source: str, tmp_path: Path, *args: str, **env: str) -> str:
-	"""Run the mypy beside this interpreter over ``source``, from ``tmp_path`` so the repo's own
-	configuration is out of the picture. Returns its combined output.
+	"""Run a real mypy over ``source``, from ``tmp_path`` so the repo's own configuration is out of
+	the picture. Returns its combined output.
 	"""
 	(probe := tmp_path / "probe.py").write_text(source)
 	proc = subprocess.run(
-		[str(Path(sys.executable).parent / f"mypy{EXE_SUFFIX}"), *args, probe.name],
+		[str(_a_real_mypy()), *args, probe.name],
 		capture_output=True,
 		text=True,
 		check=False,
@@ -269,20 +279,41 @@ def _real_mypy(source: str, tmp_path: Path, *args: str, **env: str) -> str:
 	("source", "args", "expected"),
 	[
 		("from camas import Task\n", ("--no-site-packages",), True),
-		("import camas.definitely_absent\n", (), True),
+		("import camas.definitely_absent\n", (), False),
+		("import camas.definitely_absent\n", ("--no-site-packages",), True),
 		("import camas_prefixed_but_unrelated\n", (), False),
 	],
 )
 def test_what_real_mypy_prints_decides_the_second_run(
 	source: str, args: tuple[str, ...], expected: bool, tmp_path: Path
 ) -> None:
-	"""The phrases :func:`cannot_resolve_camas` keys on are mypy's, so a rewording fails here rather
-	than silently costing the second run — and a ``camas``-prefixed *other* module must not earn one,
-	since no search path camas can name would resolve it. ``--no-site-packages`` is how camas itself
-	is made unresolvable to a mypy that has it installed.
+	"""The phrase :func:`cannot_resolve_camas` keys on is mypy's, so a rewording fails here rather
+	than silently costing the second run.
+
+	The cases that must *not* earn a run are the point: a ``camas``-prefixed other module, and a
+	submodule missing from a camas that mypy did find — no search path resolves either. A camas
+	missing entirely still earns one through a submodule import, because mypy names the parent too.
+	``--no-site-packages`` is how camas is made unresolvable to a mypy that has it installed.
 	"""
 	output = _real_mypy(source, tmp_path, *args)
 	assert check_mod.cannot_resolve_camas(output) is expected, output
+
+
+@requires_mypy
+def test_real_mypy_colour_does_not_hide_the_phrase(tmp_path: Path) -> None:
+	"""``FORCE_COLOR=1`` plus a usable ``TERM`` is what camas hands every leaf, and it makes mypy write
+	escapes between the words of this very phrase. Asserting an escape is present keeps the test from
+	going vacuous if a future mypy stops colouring.
+	"""
+	output = _real_mypy(
+		"from camas import Task\n",
+		tmp_path,
+		"--no-site-packages",
+		FORCE_COLOR="1",
+		TERM="xterm-256color",
+	)
+	assert "\x1b" in output, output
+	assert check_mod.cannot_resolve_camas(output), output
 
 
 @requires_mypy
