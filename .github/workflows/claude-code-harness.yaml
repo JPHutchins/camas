@@ -14,10 +14,11 @@ name: Claude Code hook harness
 on:
   workflow_dispatch:
   schedule:
-    # Weekly. It reinstalls the claude-code the pin below names, so it cannot see a release change
-    # the hook contract — what it does catch is drift in everything installed around that pin (uv,
-    # the PyPI wheels, DeepSeek). Testing a new Claude Code means moving the pin, which is a file
-    # edit and therefore its own push.
+    # Weekly. Everything this job installs is pinned — claude-code, uv, harden-runner by SHA, the
+    # wheels by uv.lock — so it cannot see a release change the hook contract, and testing a new
+    # Claude Code means moving a pin, which is a file edit and therefore its own push. What is left
+    # unpinned is what the schedule watches: the runner image and its system Python, and whatever
+    # DeepSeek serves behind the deepseek-v4-flash name.
     - cron: "17 6 * * 1"
   push:
     # Branch pushes only: GitHub does not evaluate `paths` for tag pushes, so a release tag ran the
