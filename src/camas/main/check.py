@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import linecache
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -260,24 +261,62 @@ def camas_search_path() -> Path:
 	return camas_package_dir().resolve().parent
 
 
+ANSI_ESCAPE: Final = re.compile(r"\x1b(?:\[[0-9;?]*[@-~]|\([A-Za-z0-9])")
+
+
+def plain(output: str) -> str:
+	r"""``output`` with terminal escapes removed, so a phrase match cannot be split by one.
+
+	camas puts ``FORCE_COLOR=1`` in every leaf environment (:data:`camas.core.execution.FORCED_COLOR`),
+	so a ``camas --check`` running as a leaf hands mypy an environment that asks for colour and mypy
+	writes escapes *between the words* of its diagnostics — ``module named \x1b(B\x1b[m\x1b[1m"camas"``.
+	Only matching is normalized; what reaches the user keeps its colour.
+
+	>>> plain('error:\x1b(B\x1b[m\x1b[1m "camas"')
+	'error: "camas"'
+	"""
+	return ANSI_ESCAPE.sub("", output)
+
+
+def cannot_resolve_camas(output: str) -> bool:
+	"""Whether mypy reported the ``import camas`` in a tasks file unresolved — the #277 failure, and
+	the only thing that earns a second run.
+
+	Whether a given mypy resolves camas on its own is a question about the interpreter *it* runs
+	under, which camas cannot see: a mypy beside this interpreter shares its site-packages, but so
+	does one in a venv built with ``--system-site-packages``, and mypy refuses a ``MYPYPATH`` entry
+	at *or under* its site-packages rather than only one equal to it. So mypy is asked rather than
+	modelled, and asked in the order that costs least — bare first, since the layout where camas and
+	mypy share an environment both resolves camas already and refuses the hint outright.
+
+	Matching mypy's wording can only be wrong in the cheap direction. A tasks file whose own source
+	contains the phrase (mypy echoes source lines) buys one extra run that adds a search path and
+	changes no verdict; a future rewording stops the second run from happening, which is where this
+	was before the fix rather than worse than it.
+
+	>>> cannot_resolve_camas('t.py:1: error: Cannot find implementation or library stub for module named "camas"')
+	True
+	>>> cannot_resolve_camas('t.py:1: error: Name "x" is undefined')
+	False
+	"""
+	return 'module named "camas' in plain(output)
+
+
 def refuses_the_search_path(output: str) -> bool:
 	"""Whether mypy declined to start because the directory camas named is one of its own
 	site-packages, which ``modulefinder`` rejects outright ("… is in the MYPYPATH. Please
 	remove it.").
 
-	Reacting to that refusal is what makes the hint safe everywhere, because the question it answers
-	— does *this* mypy resolve camas already? — is about the interpreter mypy runs under, which camas
-	cannot see. Every proxy for it misses a layout: a mypy beside this interpreter shares its
-	site-packages, but so does one in a venv built with ``--system-site-packages``, and mypy refuses
-	an entry at *or under* its site-packages rather than only one equal to it. A missed layout is a
-	hard failure where passing nothing would have worked, so mypy is asked instead of modelled.
+	Only reachable on the second run, and only from a layout that holds camas *under* one of mypy's
+	site-packages rather than in it — where mypy can neither resolve camas nor accept being told. The
+	first run's diagnostic is the honest one there, so it is what gets reported.
 
 	>>> refuses_the_search_path("/x/site-packages is in the MYPYPATH. Please remove it.")
 	True
-	>>> refuses_the_search_path('tasks.py:1: error: Name "x" is not defined')
+	>>> refuses_the_search_path('t.py:1: error: Name "x" is undefined')
 	False
 	"""
-	return "is in the MYPYPATH" in output
+	return "is in the MYPYPATH" in plain(output)
 
 
 def mypypath(inherited: str, camas_root: Path) -> str:
@@ -294,32 +333,17 @@ def mypypath(inherited: str, camas_root: Path) -> str:
 	return os.pathsep.join((*(p for p in inherited.split(os.pathsep) if p), str(camas_root)))
 
 
-def checker_invocation(
-	found: FoundChecker, tasks_py: Path, camas_root: Path, inherited: Mapping[str, str]
-) -> CheckerInvocation:
-	"""Build the per-tool invocation: ``ty check <path>`` vs ``mypy <path>``, each told where
-	``camas_root`` is so the checker resolves ``import camas`` from the camas that is running
-	rather than from whatever environment it discovers for itself.
+def checker_invocation(found: FoundChecker, tasks_py: Path, camas_root: Path) -> CheckerInvocation:
+	"""Build the per-tool invocation: ``ty check <path>`` vs ``mypy <path>``.
 
-	``inherited`` is the environment the checker would run under, so each tool reads whatever it
-	needs from it here rather than having the runner know which variable belongs to which tool.
+	ty is told where ``camas_root`` is up front — the flag is additive, and a ty that discovered some
+	other environment would otherwise never resolve ``import camas``. mypy is asked bare, and told
+	only if it says it could not find camas (:func:`second_attempt`).
 
-	>>> checker_invocation(FoundChecker("ty", Path("ty")), Path("tasks.py"), Path("site"), {})
+	>>> checker_invocation(FoundChecker("ty", Path("ty")), Path("tasks.py"), Path("site"))
 	CheckerInvocation(argv=('ty', 'check', '--extra-search-path', 'site', 'tasks.py'), env={})
-	>>> checker_invocation(FoundChecker("mypy", Path("mypy")), Path("tasks.py"), Path("site"), {})
-	CheckerInvocation(argv=('mypy', 'tasks.py'), env={'MYPYPATH': 'site'})
-
-	mypy is always told, and :func:`refuses_the_search_path` withdraws the telling for the mypy that
-	will not have it.
-
-	A non-empty inherited ``MYPYPATH`` keeps its priority; ``camas_root`` is appended behind it, so
-	an entry there holding a camas of its own shadows the running one — explicit configuration wins
-	over camas's hint:
-
-	>>> checker_invocation(
-	...     FoundChecker("mypy", Path("mypy")), Path("tasks.py"), Path("site"), {"MYPYPATH": "stubs"}
-	... ).env["MYPYPATH"].split(os.pathsep)
-	['stubs', 'site']
+	>>> checker_invocation(FoundChecker("mypy", Path("mypy")), Path("tasks.py"), Path("site"))
+	CheckerInvocation(argv=('mypy', 'tasks.py'), env={})
 	"""
 	match found.name:
 		case "ty":
@@ -328,9 +352,40 @@ def checker_invocation(
 				{},
 			)
 		case "mypy":
-			return CheckerInvocation(
-				(str(found.path), str(tasks_py)),
-				{"MYPYPATH": mypypath(inherited.get("MYPYPATH", ""), camas_root)},
+			return CheckerInvocation((str(found.path), str(tasks_py)), {})
+		case _:
+			assert_never(found.name)
+
+
+def second_attempt(
+	found: FoundChecker, output: str, argv: tuple[str, ...], camas_root: Path, inherited: str
+) -> CheckerInvocation | None:
+	"""The run worth making after ``output``, or ``None`` when the first answer stands.
+
+	Only mypy has one. ty was told in its argv already, so re-running it would ask the same question
+	twice; mypy is told here, which keeps the layout that shares an environment with camas — the
+	common ``pip install camas mypy`` — at a single run, and spends a second only where the hint is
+	the fix.
+
+	``inherited`` keeps its priority, so an entry there holding a camas of its own shadows the
+	running one: explicit configuration outranks camas's hint.
+
+	>>> unresolved = 'error: … stub for module named "camas"'
+	>>> second_attempt(FoundChecker("mypy", Path("mypy")), unresolved, ("mypy", "t.py"), Path("s"), "")
+	CheckerInvocation(argv=('mypy', 't.py'), env={'MYPYPATH': 's'})
+	>>> second_attempt(FoundChecker("ty", Path("ty")), unresolved, ("ty", "t.py"), Path("s"), "") is None
+	True
+	>>> second_attempt(FoundChecker("mypy", Path("mypy")), "boom", ("mypy", "t.py"), Path("s"), "") is None
+	True
+	"""
+	match found.name:
+		case "ty":
+			return None
+		case "mypy":
+			return (
+				CheckerInvocation(argv, {"MYPYPATH": mypypath(inherited, camas_root)})
+				if cannot_resolve_camas(output)
+				else None
 			)
 		case _:
 			assert_never(found.name)
@@ -352,20 +407,31 @@ def run_checker(found: FoundChecker, invocation: CheckerInvocation) -> CheckerOk
 
 
 def run_typecheck(tasks_py: Path) -> TypeCheckResult:
-	"""Run the highest-priority available type checker against ``tasks_py``, withdrawing the
-	search-path hint from a checker that refuses to start with it.
+	"""Run the highest-priority available type checker against ``tasks_py``, telling mypy where camas
+	is if its first answer was that it could not find it.
 
-	The retry costs an extra run only where the first one refused, which mypy does before analysing
-	anything.
+	A mypy that will neither resolve camas nor accept being told about it — camas installed *under*
+	one of mypy's site-packages — keeps its first answer, which is the diagnostic camas gave before
+	any of this existed.
 	"""
 	found = find_typechecker()
 	if found is None:
 		return CheckerNotFound()
-	invocation = checker_invocation(found, tasks_py, camas_search_path(), os.environ)
-	result = run_checker(found, invocation)
-	if isinstance(result, CheckerErr) and refuses_the_search_path(result.output):
-		return run_checker(found, CheckerInvocation(invocation.argv, {}))
-	return result
+	camas_root = camas_search_path()
+	result = run_checker(found, checker_invocation(found, tasks_py, camas_root))
+	if not isinstance(result, CheckerErr):
+		return result
+	retry = second_attempt(
+		found,
+		result.output,
+		(str(found.path), str(tasks_py)),
+		camas_root,
+		os.environ.get("MYPYPATH", ""),
+	)
+	if retry is None:
+		return result
+	told = run_checker(found, retry)
+	return result if isinstance(told, CheckerErr) and refuses_the_search_path(told.output) else told
 
 
 def deepest_user_frame(exc: Exception, tasks_py: Path) -> traceback.FrameSummary | None:

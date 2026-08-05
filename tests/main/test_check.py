@@ -147,42 +147,68 @@ def test_checker_priority_is_ty_then_mypy() -> None:
 EXE_SUFFIX: Final = ".exe" if sys.platform == "win32" else ""
 
 
+UNRESOLVED_CAMAS: Final = (
+	'tasks.py:1: error: Cannot find implementation or library stub for module named "camas"'
+)
+
+
 def test_checker_invocation_ty_puts_camas_on_the_search_path() -> None:
 	assert checker_invocation(
-		FoundChecker("ty", Path("ty")), Path("tasks.py"), Path("site"), {}
+		FoundChecker("ty", Path("ty")), Path("tasks.py"), Path("site")
 	) == check_mod.CheckerInvocation(("ty", "check", "--extra-search-path", "site", "tasks.py"), {})
 
 
-def test_checker_invocation_mypy_puts_camas_on_mypypath() -> None:
+def test_checker_invocation_asks_mypy_bare_first() -> None:
+	"""The layout that shares an environment with camas resolves it already and refuses the hint, and
+	it is the common one — so nothing is said until mypy asks for it.
+	"""
 	assert checker_invocation(
-		FoundChecker("mypy", Path("mypy")), Path("tasks.py"), Path("site"), {}
-	) == check_mod.CheckerInvocation(("mypy", "tasks.py"), {"MYPYPATH": "site"})
+		FoundChecker("mypy", Path("mypy")), Path("tasks.py"), Path("site")
+	) == check_mod.CheckerInvocation(("mypy", "tasks.py"), {})
 
 
-def test_mypy_refusing_the_search_path_is_rerun_without_it(
+def test_mypy_is_told_where_camas_is_after_reporting_it_unresolved(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-	"""mypy refuses to start when MYPYPATH holds one of *its* site-packages, which camas cannot see
-	from here — so the hint is withdrawn on refusal rather than withheld on a guess, and the run
-	that follows is the one camas made before it started hinting at all.
-	"""
 	envs: list[Mapping[str, str] | None] = []
-	refusal: Final = f"{site.getsitepackages()[0]} is in the MYPYPATH. Please remove it."
 
 	monkeypatch.setattr(check_mod, "find_typechecker", _stub_found_mypy)
-	monkeypatch.setattr(subprocess, "run", _spawn_recording(envs, ((2, refusal), (0, ""))))
+	monkeypatch.setattr(subprocess, "run", _spawn_recording(envs, ((1, UNRESOLVED_CAMAS), (0, ""))))
 	assert isinstance(run_typecheck(tmp_path / "tasks.py"), CheckerOk)
-	assert envs[0] is not None
-	assert "MYPYPATH" in envs[0]
-	assert envs[1] is None
+	assert envs[0] is None
+	assert envs[1] is not None
+	assert envs[1]["MYPYPATH"].endswith(str(camas_search_path()))
+
+
+COLOURED_UNRESOLVED_CAMAS: Final = (
+	"tasks.py:1: \x1b[1m\x1b[31merror:\x1b(B\x1b[m Cannot find implementation or library stub "
+	'for module named \x1b(B\x1b[m\x1b[1m"camas"\x1b(B\x1b[m  \x1b(B\x1b[m\x1b[33m[import-not-found]'
+)
+
+
+def test_a_coloured_diagnostic_still_earns_the_second_run(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	"""camas puts ``FORCE_COLOR=1`` in every leaf environment, so a ``camas --check`` running as a
+	leaf gets escapes *inside* mypy's phrase — this is a real capture of that. Matching the raw text
+	silently skips the second run, which is #277 unfixed.
+	"""
+	envs: list[Mapping[str, str] | None] = []
+
+	monkeypatch.setattr(check_mod, "find_typechecker", _stub_found_mypy)
+	monkeypatch.setattr(
+		subprocess, "run", _spawn_recording(envs, ((1, COLOURED_UNRESOLVED_CAMAS), (0, "")))
+	)
+	assert isinstance(run_typecheck(tmp_path / "tasks.py"), CheckerOk)
+	assert len(envs) == 2
+	assert envs[1] is not None
+	assert "MYPYPATH" in envs[1]
 
 
 def test_an_ordinary_type_error_is_not_rerun(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-	"""Only the refusal withdraws the hint; a real diagnostic is the answer, not a reason to ask
-	again without it.
-	"""
+	"""Only an unresolved camas earns a second run; a real diagnostic is the answer."""
 	envs: list[Mapping[str, str] | None] = []
 
 	monkeypatch.setattr(check_mod, "find_typechecker", _stub_found_mypy)
@@ -197,14 +223,61 @@ def test_an_ordinary_type_error_is_not_rerun(
 	assert len(envs) == 1
 
 
-def test_ty_is_told_even_from_site_packages_since_it_resolves_elsewhere(tmp_path: Path) -> None:
+def test_a_refused_hint_keeps_the_answer_mypy_gave_without_it(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	"""camas installed *under* one of mypy's site-packages: mypy resolves neither camas nor the
+	telling, and the first diagnostic is the one camas reported before any of this existed.
+	"""
+	envs: list[Mapping[str, str] | None] = []
+	refusal: Final = f"{site.getsitepackages()[0]} is in the MYPYPATH. Please remove it."
+
+	monkeypatch.setattr(check_mod, "find_typechecker", _stub_found_mypy)
+	monkeypatch.setattr(
+		subprocess, "run", _spawn_recording(envs, ((1, UNRESOLVED_CAMAS), (2, refusal)))
+	)
+	result = run_typecheck(tmp_path / "tasks.py")
+	assert isinstance(result, CheckerErr)
+	assert result.output == UNRESOLVED_CAMAS
+	assert len(envs) == 2
+
+
+@pytest.mark.skipif(
+	not (Path(sys.executable).parent / f"mypy{EXE_SUFFIX}").is_file(),
+	reason="pins mypy's own wording, so it needs a real mypy beside this interpreter",
+)
+def test_mypys_unresolved_import_wording_is_still_what_we_key_on(tmp_path: Path) -> None:
+	"""The phrase :func:`cannot_resolve_camas` keys on belongs to mypy, not to camas — so a rewording
+	fails here rather than silently costing the second run. Run from ``tmp_path`` so the repo's own
+	mypy configuration is out of the picture.
+	"""
+	(probe := tmp_path / "probe.py").write_text("import camas_not_installed_anywhere\n")
+	proc = subprocess.run(
+		[str(Path(sys.executable).parent / f"mypy{EXE_SUFFIX}"), probe.name],
+		capture_output=True,
+		text=True,
+		check=False,
+		cwd=tmp_path,
+	)
+	assert check_mod.cannot_resolve_camas(proc.stdout + proc.stderr), (
+		f"exit={proc.returncode} stdout={proc.stdout!r} stderr={proc.stderr!r}"
+	)
+
+
+def test_ty_is_told_even_from_site_packages_since_it_resolves_elsewhere() -> None:
 	"""ty resolves against an environment it discovers, which can be the project's venv rather than
 	camas's, so a wheel-installed camas still has to say where it is.
 	"""
 	site_packages = Path(site.getsitepackages()[0])
 	assert checker_invocation(
-		FoundChecker("ty", Path("ty")), Path("tasks.py"), site_packages, {}
-	).argv == ("ty", "check", "--extra-search-path", str(site_packages), "tasks.py")
+		FoundChecker("ty", Path("ty")), Path("tasks.py"), site_packages
+	).argv == (
+		"ty",
+		"check",
+		"--extra-search-path",
+		str(site_packages),
+		"tasks.py",
+	)
 
 
 def test_camas_search_path_holds_the_running_camas() -> None:
