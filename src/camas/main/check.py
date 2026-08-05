@@ -264,6 +264,12 @@ def camas_search_path() -> Path:
 ANSI_ESCAPE: Final = re.compile(r"\x1b(?:\[[0-9;?]*[@-~]|\([A-Za-z0-9])")
 
 
+UNRESOLVED_CAMAS: Final = ('module named "camas"', 'module named "camas.')
+"""mypy's phrasing for camas itself, and for a submodule of a camas it cannot find at all.
+A ``camas``-prefixed *other* module (``camas_extra``) is deliberately not matched: no search path
+camas can name would resolve it, so it earns no second run."""
+
+
 def plain(output: str) -> str:
 	r"""``output`` with terminal escapes removed, so a phrase match cannot be split by one.
 
@@ -294,12 +300,16 @@ def cannot_resolve_camas(output: str) -> bool:
 	changes no verdict; a future rewording stops the second run from happening, which is where this
 	was before the fix rather than worse than it.
 
-	>>> cannot_resolve_camas('t.py:1: error: Cannot find implementation or library stub for module named "camas"')
+	>>> cannot_resolve_camas('t.py:1: error: … stub for module named "camas"')
 	True
+	>>> cannot_resolve_camas('t.py:1: error: … stub for module named "camas.mcp"')
+	True
+	>>> cannot_resolve_camas('t.py:1: error: … stub for module named "camas_extra"')
+	False
 	>>> cannot_resolve_camas('t.py:1: error: Name "x" is undefined')
 	False
 	"""
-	return 'module named "camas' in plain(output)
+	return any(phrase in plain(output) for phrase in UNRESOLVED_CAMAS)
 
 
 def refuses_the_search_path(output: str) -> bool:
@@ -418,13 +428,14 @@ def run_typecheck(tasks_py: Path) -> TypeCheckResult:
 	if found is None:
 		return CheckerNotFound()
 	camas_root = camas_search_path()
-	result = run_checker(found, checker_invocation(found, tasks_py, camas_root))
+	invocation = checker_invocation(found, tasks_py, camas_root)
+	result = run_checker(found, invocation)
 	if not isinstance(result, CheckerErr):
 		return result
 	retry = second_attempt(
 		found,
 		result.output,
-		(str(found.path), str(tasks_py)),
+		invocation.argv,
 		camas_root,
 		os.environ.get("MYPYPATH", ""),
 	)
