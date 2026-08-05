@@ -251,9 +251,9 @@ class CheckerInvocation(NamedTuple):
 def camas_search_path() -> Path:
 	"""The directory holding the running ``camas`` package, for a checker's search path.
 
-	Symlinks resolved: an install reached through a symlink tree (a Nix profile, a symlinked
-	editable install) otherwise spells its location differently from the interpreter paths
-	:func:`mypy_already_resolves_camas` weighs it against.
+	An install reached through a symlink tree (a Nix profile, a symlinked editable install) is
+	handed to the checker as the location it will read the package out of, rather than as whichever
+	spelling of it the import came through.
 
 	>>> (camas_search_path() / "camas" / "__init__.py").is_file()
 	True
@@ -262,12 +262,11 @@ def camas_search_path() -> Path:
 
 
 def comparable(path: Path) -> str:
-	"""``path`` reduced to the form two spellings of one directory share — symlinks resolved, and
-	case folded where the filesystem ignores case.
+	"""``path`` reduced to the form two spellings of one directory share.
 
-	Without it a symlinked install or a Windows drive-letter difference reads as a directory other
-	than the one it is, which flips :func:`mypy_already_resolves_camas` into setting the very
-	``MYPYPATH`` mypy refuses to start with.
+	A symlinked install, or a Windows path spelled in another case, would otherwise read as a
+	directory other than the one it is — flipping :func:`mypy_already_resolves_camas` into setting
+	the very ``MYPYPATH`` mypy refuses to start with.
 	"""
 	return os.path.normcase(os.path.realpath(path))
 
