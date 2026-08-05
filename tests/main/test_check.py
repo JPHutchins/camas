@@ -166,14 +166,18 @@ def test_neither_checker_is_told_up_front() -> None:
 
 
 def test_each_checker_is_told_the_way_it_takes_it() -> None:
+	"""The expected spelling comes from the same ``Path``: a literal would assert POSIX separators
+	against the native string ``told_where_camas_is`` builds.
+	"""
+	root: Final = Path("/anywhere/site-packages")
 	assert told_where_camas_is(
-		FoundChecker("ty", Path("ty")), Path("tasks.py"), Path("/anywhere/site-packages"), ""
+		FoundChecker("ty", Path("ty")), Path("tasks.py"), root, ""
 	) == check_mod.CheckerInvocation(
-		("ty", "check", "--extra-search-path", "/anywhere/site-packages", "tasks.py"), {}
+		("ty", "check", "--extra-search-path", str(root), "tasks.py"), {}
 	)
 	assert told_where_camas_is(
-		FoundChecker("mypy", Path("mypy")), Path("tasks.py"), Path("/anywhere/site-packages"), ""
-	) == check_mod.CheckerInvocation(("mypy", "tasks.py"), {"MYPYPATH": "/anywhere/site-packages"})
+		FoundChecker("mypy", Path("mypy")), Path("tasks.py"), root, ""
+	) == check_mod.CheckerInvocation(("mypy", "tasks.py"), {"MYPYPATH": str(root)})
 
 
 @pytest.mark.parametrize("name", ["ty", "mypy"])
