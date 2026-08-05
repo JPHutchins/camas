@@ -30,14 +30,15 @@ jobs:
   harness:
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    # The environment (repo Settings → Environments → model-api-e2e) scopes MODEL_API_KEY to this
-    # job and carries no approval rule, deliberately: the triggers above never include
-    # pull_request, so only a push by someone with write access — or the schedule, or a dispatch —
-    # reaches the key, and a fork cannot. An actor guard would add nothing on top, since agent
-    # pushes made with the maintainer's token report the maintainer as github.actor. Spend stays
-    # bounded by the burner key's own cap. A required-reviewers rule was tried and removed
-    # (2026-08-05): it paused every run, and taking it off *rejects* the runs already waiting on it
-    # rather than releasing them, so re-run anything that failed that way.
+    # No approval rule on this environment, deliberately: this job's triggers never include
+    # pull_request, so it only ever runs code that someone with write access pushed, or the schedule,
+    # or a dispatch. An actor guard would add nothing, since agent pushes made with the maintainer's
+    # token report the maintainer as github.actor, and spend stays bounded by the burner key's own
+    # cap. MODEL_API_KEY is a repository secret — review.yaml reads it from a job that declares no
+    # environment at all — so naming an environment here scopes nothing; it is the hook a future
+    # approval rule would hang off. One was tried and removed (2026-08-05): it paused every run, and
+    # taking it off *rejects* the runs already waiting on it rather than releasing them, so anything
+    # that failed that way needs a re-run.
     environment: model-api-e2e
     permissions:
       contents: read
