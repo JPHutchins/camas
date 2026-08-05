@@ -20,6 +20,8 @@ import traceback
 from pathlib import Path
 from typing import TYPE_CHECKING, Final, Literal, NamedTuple, TypeAlias
 
+from ..paths import camas_package_dir
+
 if sys.version_info >= (3, 11):
 	from typing import assert_never
 else:  # pragma: no cover
@@ -247,35 +249,83 @@ class CheckerInvocation(NamedTuple):
 
 
 def camas_search_path() -> Path:
-	"""The directory holding the running ``camas`` package.
+	"""The directory holding the running ``camas`` package, for a checker's search path.
 
-	Resolved at call time, not import time: mypyc-compiled modules may not define ``__file__``
-	while the module body executes (nixpkgs' mypyc doesn't) — which is the very install this
-	path exists to serve.
+	Symlinks resolved: an install reached through a symlink tree (a Nix profile, a symlinked
+	editable install) otherwise spells its location differently from the interpreter paths
+	:func:`mypy_already_resolves_camas` weighs it against.
 
 	>>> (camas_search_path() / "camas" / "__init__.py").is_file()
 	True
 	"""
-	return Path(__file__).parents[2]
+	return camas_package_dir().resolve().parent
+
+
+def comparable(path: Path) -> str:
+	"""``path`` reduced to the form two spellings of one directory share — symlinks resolved, and
+	case folded where the filesystem ignores case.
+
+	Without it a symlinked install or a Windows drive-letter difference reads as a directory other
+	than the one it is, which flips :func:`mypy_already_resolves_camas` into setting the very
+	``MYPYPATH`` mypy refuses to start with.
+	"""
+	return os.path.normcase(os.path.realpath(path))
 
 
 def in_interpreter_site_packages(path: Path) -> bool:
 	"""Whether ``path`` is one of *this* interpreter's site-packages directories.
-
-	Asked only for mypy, which resolves imports from the site-packages of the interpreter it runs
-	under: a mypy there already sees camas, and ``modulefinder`` refuses to start when ``MYPYPATH``
-	holds one of those directories ("… is in the MYPYPATH. Please remove it."). For mypy the two
-	conditions coincide, so skipping is right rather than an evasion of the guard. It is not asked
-	for ty, which resolves against an environment it *discovers* — possibly the project's venv
-	rather than camas's — where camas can be absent from ty's view while sitting in this
-	interpreter's site-packages, exactly the case a wheel-installed camas is in.
 
 	>>> in_interpreter_site_packages(Path(site.getsitepackages()[0]))
 	True
 	>>> in_interpreter_site_packages(Path("nowhere-in-particular"))
 	False
 	"""
-	return str(path) in (*site.getsitepackages(), site.getusersitepackages())
+	return comparable(path) in {
+		comparable(Path(p)) for p in (*site.getsitepackages(), site.getusersitepackages())
+	}
+
+
+def beside_this_interpreter(checker: Path) -> bool:
+	"""Whether ``checker`` is the console script installed alongside the running interpreter.
+
+	>>> beside_this_interpreter(Path(sys.executable).parent / "mypy")
+	True
+	>>> beside_this_interpreter(Path("mypy"))
+	False
+	"""
+	return comparable(checker.parent) == comparable(Path(sys.executable).parent)
+
+
+def mypy_already_resolves_camas(mypy: Path, camas_root: Path) -> bool:
+	"""Whether this mypy imports camas without being told where it is — the same condition under
+	which ``modulefinder`` refuses to start with ``camas_root`` on ``MYPYPATH`` ("… is in the
+	MYPYPATH. Please remove it."), so skipping the hint answers that guard rather than evades it.
+
+	Both halves are load-bearing. mypy resolves imports from the site-packages of the interpreter
+	it runs under, so what *this* interpreter holds only speaks for a mypy installed beside it; a
+	mypy found on ``PATH`` in another environment (a pipx- or uv-tool-installed camas with a system
+	mypy) sees nothing camas can vouch for, and is the layout that most needs telling.
+
+	The question is not asked for ty, which resolves against an environment it *discovers* —
+	possibly the project's venv rather than camas's — where camas can be absent from ty's view
+	while sitting in this interpreter's site-packages, exactly the case a wheel-installed camas is
+	in.
+	"""
+	return beside_this_interpreter(mypy) and in_interpreter_site_packages(camas_root)
+
+
+def mypypath(inherited: str, camas_root: Path) -> str:
+	"""``camas_root`` behind whatever the environment already asked for, empty entries dropped so
+	that the spellings of "nothing inherited" overlay alike.
+
+	>>> mypypath("", Path("site"))
+	'site'
+	>>> mypypath(os.pathsep, Path("site"))
+	'site'
+	>>> mypypath(f"stubs{os.pathsep}", Path("site")).split(os.pathsep)
+	['stubs', 'site']
+	"""
+	return os.pathsep.join((*(p for p in inherited.split(os.pathsep) if p), str(camas_root)))
 
 
 def checker_invocation(
@@ -293,13 +343,17 @@ def checker_invocation(
 	>>> checker_invocation(FoundChecker("mypy", Path("mypy")), Path("tasks.py"), Path("site"), {})
 	CheckerInvocation(argv=('mypy', 'tasks.py'), env={'MYPYPATH': 'site'})
 
-	mypy is told nothing when camas sits in a site-packages of its own, which it rejects outright
-	and where it needs no telling (:func:`in_interpreter_site_packages`):
+	A mypy beside this interpreter is told nothing about a camas in that interpreter's
+	site-packages, which it rejects outright and where it needs no telling
+	(:func:`mypy_already_resolves_camas`):
 
 	>>> checker_invocation(
-	...     FoundChecker("mypy", Path("mypy")), Path("tasks.py"), Path(site.getsitepackages()[0]), {}
-	... )
-	CheckerInvocation(argv=('mypy', 'tasks.py'), env={})
+	...     FoundChecker("mypy", Path(sys.executable).parent / "mypy"),
+	...     Path("tasks.py"),
+	...     Path(site.getsitepackages()[0]),
+	...     {},
+	... ).env
+	{}
 
 	A non-empty inherited ``MYPYPATH`` keeps its priority; ``camas_root`` is appended behind it:
 
@@ -318,12 +372,8 @@ def checker_invocation(
 			return CheckerInvocation(
 				(str(found.path), str(tasks_py)),
 				{}
-				if in_interpreter_site_packages(camas_root)
-				else {
-					"MYPYPATH": os.pathsep.join(
-						p for p in (inherited.get("MYPYPATH"), str(camas_root)) if p
-					)
-				},
+				if mypy_already_resolves_camas(found.path, camas_root)
+				else {"MYPYPATH": mypypath(inherited.get("MYPYPATH", ""), camas_root)},
 			)
 		case _:
 			assert_never(found.name)

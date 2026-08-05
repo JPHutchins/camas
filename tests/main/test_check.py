@@ -65,12 +65,12 @@ def _isolate_the_checkers_environment(monkeypatch: pytest.MonkeyPatch, root: Pat
 	``include-system-site-packages = false`` the base interpreter's site-packages is searched
 	too; and ty honours ``PYTHONPATH``, which a check phase running pytest populates.
 	"""
-	site = (
+	site_packages = (
 		root / "Lib" / "site-packages"
 		if sys.platform == "win32"
 		else root / "lib" / f"python{sys.version_info[0]}.{sys.version_info[1]}" / "site-packages"
 	)
-	site.mkdir(parents=True)
+	site_packages.mkdir(parents=True)
 	(root / "pyvenv.cfg").write_text(
 		f"home = {Path(sys.executable).parent}\ninclude-system-site-packages = false\n"
 	)
@@ -130,12 +130,35 @@ def test_mypy_is_told_nothing_when_camas_sits_in_a_site_packages_of_its_own() ->
 	"""mypy refuses to start when MYPYPATH holds one of its own site-packages, and a mypy running
 	there already resolves camas — the same condition, so it is skipped rather than evaded.
 	"""
+	assert (
+		checker_invocation(
+			FoundChecker("mypy", Path(sys.executable).parent / f"mypy{EXE_SUFFIX}"),
+			Path("tasks.py"),
+			Path(site.getsitepackages()[0]),
+			{},
+		).env
+		== {}
+	)
+
+
+def test_mypy_from_another_environment_is_told_even_from_site_packages() -> None:
+	"""A PATH-found mypy (pipx-installed camas, system mypy) resolves imports from its own
+	environment, so this interpreter's site-packages says nothing about what it can see — the
+	layout that most needs telling, and the one the skip must not swallow.
+	"""
+	site_packages = Path(site.getsitepackages()[0])
 	assert checker_invocation(
-		FoundChecker("mypy", Path("mypy")),
-		Path("tasks.py"),
-		Path(site.getsitepackages()[0]),
-		{},
-	) == check_mod.CheckerInvocation(("mypy", "tasks.py"), {})
+		FoundChecker("mypy", Path("/elsewhere/bin/mypy")), Path("tasks.py"), site_packages, {}
+	).env == {"MYPYPATH": str(site_packages)}
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="directory symlinks need privileges on Windows")
+def test_site_packages_reached_through_a_symlink_is_still_recognized(tmp_path: Path) -> None:
+	"""Nix profiles and symlinked editable installs spell one directory two ways; comparing the
+	spellings would set the MYPYPATH a same-interpreter mypy refuses to start with.
+	"""
+	(link := tmp_path / "link").symlink_to(site.getsitepackages()[0], target_is_directory=True)
+	assert check_mod.in_interpreter_site_packages(link)
 
 
 def test_ty_is_told_even_from_site_packages_since_it_resolves_elsewhere(tmp_path: Path) -> None:
@@ -264,9 +287,10 @@ def test_run_typecheck_resolves_camas_when_the_checkers_own_env_lacks_it(
 def test_the_isolated_env_really_cannot_resolve_camas_on_its_own(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-	"""The other half of that pair: point camas's own location at an empty directory and the
-	same run reports #277's diagnostic — so the search path is what resolves the import, not the
-	isolation quietly failing to isolate.
+	"""The other half of that pair: point camas's own location at an empty directory and the same
+	run names camas as what it cannot resolve — so the search path is what resolves the import, not
+	the isolation quietly failing to isolate. The module rather than ty's diagnostic code, which a
+	ty release may rename.
 	"""
 	(nowhere := tmp_path / "nowhere").mkdir()
 	monkeypatch.chdir(tmp_path)
@@ -274,7 +298,7 @@ def test_the_isolated_env_really_cannot_resolve_camas_on_its_own(
 	_isolate_the_checkers_environment(monkeypatch, tmp_path / "env")
 	result = run_typecheck(_tasks_py_importing_camas(tmp_path / "tasks.py"))
 	assert isinstance(result, CheckerErr)
-	assert "unresolved-import" in result.output
+	assert "camas" in result.output
 
 
 def test_run_typecheck_no_checker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
