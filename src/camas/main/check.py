@@ -13,7 +13,6 @@ from __future__ import annotations
 import linecache
 import os
 import shutil
-import site
 import subprocess
 import sys
 import traceback
@@ -261,56 +260,24 @@ def camas_search_path() -> Path:
 	return camas_package_dir().resolve().parent
 
 
-def comparable(path: Path) -> str:
-	"""``path`` reduced to the form two spellings of one directory share.
+def refuses_the_search_path(output: str) -> bool:
+	"""Whether mypy declined to start because the directory camas named is one of its own
+	site-packages, which ``modulefinder`` rejects outright ("… is in the MYPYPATH. Please
+	remove it.").
 
-	A symlinked install, or a Windows path spelled in another case, would otherwise read as a
-	directory other than the one it is — flipping :func:`mypy_already_resolves_camas` into setting
-	the very ``MYPYPATH`` mypy refuses to start with.
-	"""
-	return os.path.normcase(os.path.realpath(path))
+	Reacting to that refusal is what makes the hint safe everywhere, because the question it answers
+	— does *this* mypy resolve camas already? — is about the interpreter mypy runs under, which camas
+	cannot see. Every proxy for it misses a layout: a mypy beside this interpreter shares its
+	site-packages, but so does one in a venv built with ``--system-site-packages``, and mypy refuses
+	an entry at *or under* its site-packages rather than only one equal to it. A missed layout is a
+	hard failure where passing nothing would have worked, so mypy is asked instead of modelled.
 
-
-def in_interpreter_site_packages(path: Path) -> bool:
-	"""Whether ``path`` is one of *this* interpreter's site-packages directories.
-
-	>>> in_interpreter_site_packages(Path(site.getsitepackages()[0]))
+	>>> refuses_the_search_path("/x/site-packages is in the MYPYPATH. Please remove it.")
 	True
-	>>> in_interpreter_site_packages(Path("nowhere-in-particular"))
+	>>> refuses_the_search_path('tasks.py:1: error: Name "x" is not defined')
 	False
 	"""
-	return comparable(path) in {
-		comparable(Path(p)) for p in (*site.getsitepackages(), site.getusersitepackages())
-	}
-
-
-def beside_this_interpreter(checker: Path) -> bool:
-	"""Whether ``checker`` is the console script installed alongside the running interpreter.
-
-	>>> beside_this_interpreter(Path(sys.executable).parent / "mypy")
-	True
-	>>> beside_this_interpreter(Path("mypy"))
-	False
-	"""
-	return comparable(checker.parent) == comparable(Path(sys.executable).parent)
-
-
-def mypy_already_resolves_camas(mypy: Path, camas_root: Path) -> bool:
-	"""Whether this mypy imports camas without being told where it is — the same condition under
-	which ``modulefinder`` refuses to start with ``camas_root`` on ``MYPYPATH`` ("… is in the
-	MYPYPATH. Please remove it."), so skipping the hint answers that guard rather than evades it.
-
-	Both halves are load-bearing. mypy resolves imports from the site-packages of the interpreter
-	it runs under, so what *this* interpreter holds only speaks for a mypy installed beside it; a
-	mypy found on ``PATH`` in another environment (a pipx- or uv-tool-installed camas with a system
-	mypy) sees nothing camas can vouch for, and is the layout that most needs telling.
-
-	The question is not asked for ty, which resolves against an environment it *discovers* —
-	possibly the project's venv rather than camas's — where camas can be absent from ty's view
-	while sitting in this interpreter's site-packages, exactly the case a wheel-installed camas is
-	in.
-	"""
-	return beside_this_interpreter(mypy) and in_interpreter_site_packages(camas_root)
+	return "is in the MYPYPATH" in output
 
 
 def mypypath(inherited: str, camas_root: Path) -> str:
@@ -342,19 +309,12 @@ def checker_invocation(
 	>>> checker_invocation(FoundChecker("mypy", Path("mypy")), Path("tasks.py"), Path("site"), {})
 	CheckerInvocation(argv=('mypy', 'tasks.py'), env={'MYPYPATH': 'site'})
 
-	A mypy beside this interpreter is told nothing about a camas in that interpreter's
-	site-packages, which it rejects outright and where it needs no telling
-	(:func:`mypy_already_resolves_camas`):
+	mypy is always told, and :func:`refuses_the_search_path` withdraws the telling for the mypy that
+	will not have it.
 
-	>>> checker_invocation(
-	...     FoundChecker("mypy", Path(sys.executable).parent / "mypy"),
-	...     Path("tasks.py"),
-	...     Path(site.getsitepackages()[0]),
-	...     {},
-	... ).env
-	{}
-
-	A non-empty inherited ``MYPYPATH`` keeps its priority; ``camas_root`` is appended behind it:
+	A non-empty inherited ``MYPYPATH`` keeps its priority; ``camas_root`` is appended behind it, so
+	an entry there holding a camas of its own shadows the running one — explicit configuration wins
+	over camas's hint:
 
 	>>> checker_invocation(
 	...     FoundChecker("mypy", Path("mypy")), Path("tasks.py"), Path("site"), {"MYPYPATH": "stubs"}
@@ -370,20 +330,13 @@ def checker_invocation(
 		case "mypy":
 			return CheckerInvocation(
 				(str(found.path), str(tasks_py)),
-				{}
-				if mypy_already_resolves_camas(found.path, camas_root)
-				else {"MYPYPATH": mypypath(inherited.get("MYPYPATH", ""), camas_root)},
+				{"MYPYPATH": mypypath(inherited.get("MYPYPATH", ""), camas_root)},
 			)
 		case _:
 			assert_never(found.name)
 
 
-def run_typecheck(tasks_py: Path) -> TypeCheckResult:
-	"""Run the highest-priority available type checker against ``tasks_py``."""
-	found = find_typechecker()
-	if found is None:
-		return CheckerNotFound()
-	invocation = checker_invocation(found, tasks_py, camas_search_path(), os.environ)
+def run_checker(found: FoundChecker, invocation: CheckerInvocation) -> CheckerOk | CheckerErr:
 	proc = subprocess.run(
 		invocation.argv,
 		capture_output=True,
@@ -396,6 +349,23 @@ def run_typecheck(tasks_py: Path) -> TypeCheckResult:
 	if proc.returncode == 0:
 		return CheckerOk(name=found.name)
 	return CheckerErr(name=found.name, output=proc.stdout + proc.stderr)
+
+
+def run_typecheck(tasks_py: Path) -> TypeCheckResult:
+	"""Run the highest-priority available type checker against ``tasks_py``, withdrawing the
+	search-path hint from a checker that refuses to start with it.
+
+	The retry costs an extra run only where the first one refused, which mypy does before analysing
+	anything.
+	"""
+	found = find_typechecker()
+	if found is None:
+		return CheckerNotFound()
+	invocation = checker_invocation(found, tasks_py, camas_search_path(), os.environ)
+	result = run_checker(found, invocation)
+	if isinstance(result, CheckerErr) and refuses_the_search_path(result.output):
+		return run_checker(found, CheckerInvocation(invocation.argv, {}))
+	return result
 
 
 def deepest_user_frame(exc: Exception, tasks_py: Path) -> traceback.FrameSummary | None:

@@ -8,10 +8,13 @@ import site
 import subprocess
 import sys
 from pathlib import Path
-from typing import Final
+from typing import TYPE_CHECKING, Final
 from unittest.mock import patch
 
 import pytest
+
+if TYPE_CHECKING:
+	from collections.abc import Callable, Mapping, Sequence
 
 from camas import Config, Parallel, Sequential, Task
 from camas.main import check as check_mod
@@ -107,6 +110,36 @@ def _stub_found_ty() -> FoundChecker:
 	return FoundChecker(name="ty", path=Path("/usr/bin/ty"))
 
 
+def _stub_found_mypy() -> FoundChecker:
+	return FoundChecker(name="mypy", path=Path("/usr/bin/mypy"))
+
+
+def _spawn_recording(
+	envs: list[Mapping[str, str] | None], outcomes: tuple[tuple[int, str], ...]
+) -> Callable[..., subprocess.CompletedProcess[str]]:
+	"""A ``subprocess.run`` stand-in answering with ``outcomes`` in order, recording each ``env``.
+
+	The keywords are spelled out rather than swallowed, so a change to how ``run_checker`` spawns
+	fails here instead of passing against a stale stub.
+	"""
+
+	def spawn(
+		argv: Sequence[str],
+		*,
+		capture_output: bool,
+		text: bool,
+		encoding: str,
+		errors: str,
+		check: bool,
+		env: Mapping[str, str] | None,
+	) -> subprocess.CompletedProcess[str]:
+		envs.append(env)
+		returncode, output = outcomes[len(envs) - 1]
+		return subprocess.CompletedProcess(list(argv), returncode, output, "")
+
+	return spawn
+
+
 def test_checker_priority_is_ty_then_mypy() -> None:
 	assert CHECKER_PRIORITY == ("ty", "mypy")
 
@@ -126,39 +159,42 @@ def test_checker_invocation_mypy_puts_camas_on_mypypath() -> None:
 	) == check_mod.CheckerInvocation(("mypy", "tasks.py"), {"MYPYPATH": "site"})
 
 
-def test_mypy_is_told_nothing_when_camas_sits_in_a_site_packages_of_its_own() -> None:
-	"""mypy refuses to start when MYPYPATH holds one of its own site-packages, and a mypy running
-	there already resolves camas — the same condition, so it is skipped rather than evaded.
+def test_mypy_refusing_the_search_path_is_rerun_without_it(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	"""mypy refuses to start when MYPYPATH holds one of *its* site-packages, which camas cannot see
+	from here — so the hint is withdrawn on refusal rather than withheld on a guess, and the run
+	that follows is the one camas made before it started hinting at all.
 	"""
-	assert (
-		checker_invocation(
-			FoundChecker("mypy", Path(sys.executable).parent / f"mypy{EXE_SUFFIX}"),
-			Path("tasks.py"),
-			Path(site.getsitepackages()[0]),
-			{},
-		).env
-		== {}
+	envs: list[Mapping[str, str] | None] = []
+	refusal: Final = f"{site.getsitepackages()[0]} is in the MYPYPATH. Please remove it."
+
+	monkeypatch.setattr(check_mod, "find_typechecker", _stub_found_mypy)
+	monkeypatch.setattr(subprocess, "run", _spawn_recording(envs, ((2, refusal), (0, ""))))
+	assert isinstance(run_typecheck(tmp_path / "tasks.py"), CheckerOk)
+	assert envs[0] is not None
+	assert "MYPYPATH" in envs[0]
+	assert envs[1] is None
+
+
+def test_an_ordinary_type_error_is_not_rerun(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	"""Only the refusal withdraws the hint; a real diagnostic is the answer, not a reason to ask
+	again without it.
+	"""
+	envs: list[Mapping[str, str] | None] = []
+
+	monkeypatch.setattr(check_mod, "find_typechecker", _stub_found_mypy)
+	monkeypatch.setattr(
+		subprocess,
+		"run",
+		_spawn_recording(envs, ((1, 'tasks.py:1: error: Name "x" is undefined'),)),
 	)
-
-
-def test_mypy_from_another_environment_is_told_even_from_site_packages() -> None:
-	"""A PATH-found mypy (pipx-installed camas, system mypy) resolves imports from its own
-	environment, so this interpreter's site-packages says nothing about what it can see — the
-	layout that most needs telling, and the one the skip must not swallow.
-	"""
-	site_packages = Path(site.getsitepackages()[0])
-	assert checker_invocation(
-		FoundChecker("mypy", Path("/elsewhere/bin/mypy")), Path("tasks.py"), site_packages, {}
-	).env == {"MYPYPATH": str(site_packages)}
-
-
-@pytest.mark.skipif(sys.platform == "win32", reason="directory symlinks need privileges on Windows")
-def test_site_packages_reached_through_a_symlink_is_still_recognized(tmp_path: Path) -> None:
-	"""Nix profiles and symlinked editable installs spell one directory two ways; comparing the
-	spellings would set the MYPYPATH a same-interpreter mypy refuses to start with.
-	"""
-	(link := tmp_path / "link").symlink_to(site.getsitepackages()[0], target_is_directory=True)
-	assert check_mod.in_interpreter_site_packages(link)
+	result = run_typecheck(tmp_path / "tasks.py")
+	assert isinstance(result, CheckerErr)
+	assert "is undefined" in result.output
+	assert len(envs) == 1
 
 
 def test_ty_is_told_even_from_site_packages_since_it_resolves_elsewhere(tmp_path: Path) -> None:
