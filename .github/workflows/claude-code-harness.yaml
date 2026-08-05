@@ -10,13 +10,23 @@ name: Claude Code hook harness
 #
 # It uses the same DeepSeek backend the agentic review workflow does (ANTHROPIC_BASE_URL +
 # ANTHROPIC_AUTH_TOKEN=MODEL_API_KEY, a burner key with a hard spend cap), on the cheap
-# deepseek-v4-flash tier. The schedule catches a Claude Code release changing the contract even
-# when camas itself has not changed.
+# deepseek-v4-flash tier.
 on:
   workflow_dispatch:
   schedule:
-    - cron: "17 6 * * 1" # weekly, Monday — catch a Claude Code release changing the hook contract
+    # Weekly. The Claude Code under test is pinned below, so no release of it can reach this job
+    # without a file edit — moving that pin is its own push, which is why the schedule cannot be
+    # what notices one. What it does cover is whatever the job leaves free to move: the runner image
+    # and its system Python, the mutable action tags, the Node the setup action picks, the transitive
+    # wheels the suite's own inner `uv sync`s resolve from camas's dependency ranges, and whatever
+    # DeepSeek serves behind the deepseek-v4-flash name.
+    - cron: "17 6 * * 1"
   push:
+    # Branch pushes only: GitHub does not evaluate `paths` for tag pushes, so a release tag ran the
+    # billed suite for a commit that touched no camas path at all. 0.1.25 through 0.1.29 each changed
+    # only VERSION, so the branch push skipped the job exactly as the filter intends and the tag push
+    # then ran it anyway.
+    branches: ["**"]
     paths:
       - "src/camas/**"
       - "src/camas/main/claude_*.md"
@@ -30,12 +40,17 @@ jobs:
   harness:
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    # A required-reviewers rule on this environment (repo Settings → Environments →
-    # model-api-e2e) holds MODEL_API_KEY back until a maintainer approves the run. Agent pushes
-    # made with the maintainer's token report the maintainer as github.actor, so an actor guard
-    # would not gate them; the environment approval pauses every run — push, schedule, dispatch —
-    # before the job starts. The environment must exist with @JPHutchins as a required reviewer;
-    # until then this name resolves to an unprotected auto-created environment (no gate).
+    # No approval rule on this environment, deliberately: this job's triggers never include
+    # pull_request, so it only ever runs code that someone with write access pushed, or the schedule,
+    # or a dispatch. An actor guard would add nothing, since agent pushes made with the maintainer's
+    # token report the maintainer as github.actor, and spend stays bounded by the burner key's own
+    # cap. MODEL_API_KEY is a repository secret — review.yaml reads it from a job that declares no
+    # environment at all — so naming an environment here scopes nothing; it is the hook a future
+    # approval rule would hang off. One was tried and removed (2026-08-05): it paused every run, and
+    # taking it off *rejects* the runs already waiting on it rather than releasing them, so anything
+    # that failed that way needs a re-run. The name existing is not itself evidence of a
+    # configuration: referencing an environment that has been deleted silently re-creates it
+    # unprotected.
     environment: model-api-e2e
     permissions:
       contents: read
