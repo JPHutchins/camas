@@ -4,8 +4,6 @@
 from __future__ import annotations
 
 import os
-import shutil
-import site
 import subprocess
 import sys
 from pathlib import Path
@@ -35,6 +33,7 @@ from camas.main.check import (
 	report_eval_error,
 	run_typecheck,
 	run_typecheck_only,
+	told_where_camas_is,
 )
 from camas.main.tasks import load_tasks_from_py
 
@@ -153,32 +152,102 @@ UNRESOLVED_CAMAS: Final = (
 )
 
 
-def test_checker_invocation_ty_puts_camas_on_the_search_path() -> None:
-	assert checker_invocation(
-		FoundChecker("ty", Path("ty")), Path("tasks.py"), Path("site")
-	) == check_mod.CheckerInvocation(("ty", "check", "--extra-search-path", "site", "tasks.py"), {})
-
-
-def test_checker_invocation_asks_mypy_bare_first() -> None:
-	"""The layout that shares an environment with camas resolves it already and refuses the hint, and
-	it is the common one — so nothing is said until mypy asks for it.
+def test_neither_checker_is_told_up_front() -> None:
+	"""Being told costs something in every layout that did not need it — mypy refuses a MYPYPATH
+	inside its own site-packages, and ty searches an --extra-search-path before its own environment,
+	which lets camas's site-packages shadow the project's. So the first ask is bare for both.
 	"""
-	assert checker_invocation(
-		FoundChecker("mypy", Path("mypy")), Path("tasks.py"), Path("site")
-	) == check_mod.CheckerInvocation(("mypy", "tasks.py"), {})
+	assert checker_invocation(FoundChecker("ty", Path("ty")), Path("tasks.py")) == (
+		check_mod.CheckerInvocation(("ty", "check", "tasks.py"), {})
+	)
+	assert checker_invocation(FoundChecker("mypy", Path("mypy")), Path("tasks.py")) == (
+		check_mod.CheckerInvocation(("mypy", "tasks.py"), {})
+	)
 
 
-def test_mypy_is_told_where_camas_is_after_reporting_it_unresolved(
-	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_each_checker_is_told_the_way_it_takes_it() -> None:
+	assert told_where_camas_is(
+		FoundChecker("ty", Path("ty")), Path("tasks.py"), Path("/anywhere/site-packages"), ""
+	) == check_mod.CheckerInvocation(
+		("ty", "check", "--extra-search-path", "/anywhere/site-packages", "tasks.py"), {}
+	)
+	assert told_where_camas_is(
+		FoundChecker("mypy", Path("mypy")), Path("tasks.py"), Path("/anywhere/site-packages"), ""
+	) == check_mod.CheckerInvocation(("mypy", "tasks.py"), {"MYPYPATH": "/anywhere/site-packages"})
+
+
+@pytest.mark.parametrize("name", ["ty", "mypy"])
+def test_a_checker_that_resolves_camas_is_never_told(
+	name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	"""The layout this fix does not serve must pay nothing for it: one process, no search path."""
+	envs: list[Mapping[str, str] | None] = []
+	argvs: list[Sequence[str]] = []
+
+	def spawn(
+		argv: Sequence[str],
+		*,
+		capture_output: bool,
+		text: bool,
+		encoding: str,
+		errors: str,
+		check: bool,
+		env: Mapping[str, str] | None,
+	) -> subprocess.CompletedProcess[str]:
+		argvs.append(argv)
+		envs.append(env)
+		return subprocess.CompletedProcess(list(argv), 0, "", "")
+
+	monkeypatch.setattr(
+		check_mod,
+		"find_typechecker",
+		_stub_found_ty if name == "ty" else _stub_found_mypy,
+	)
+	monkeypatch.setattr(subprocess, "run", spawn)
+	assert isinstance(run_typecheck(tmp_path / "tasks.py"), CheckerOk)
+	assert len(argvs) == 1
+	assert "--extra-search-path" not in argvs[0]
+	assert envs[0] is not None
+	assert "MYPYPATH" not in envs[0]
+
+
+@pytest.mark.parametrize(
+	("name", "unresolved"),
+	[
+		("ty", "error[unresolved-import]: Cannot resolve imported module `camas`"),
+		("mypy", UNRESOLVED_CAMAS),
+	],
+)
+def test_a_checker_that_cannot_find_camas_is_told_and_rerun(
+	name: str, unresolved: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
 	envs: list[Mapping[str, str] | None] = []
+	argvs: list[Sequence[str]] = []
 
-	monkeypatch.setattr(check_mod, "find_typechecker", _stub_found_mypy)
-	monkeypatch.setattr(subprocess, "run", _spawn_recording(envs, ((1, UNRESOLVED_CAMAS), (0, ""))))
+	def spawn(
+		argv: Sequence[str],
+		*,
+		capture_output: bool,
+		text: bool,
+		encoding: str,
+		errors: str,
+		check: bool,
+		env: Mapping[str, str] | None,
+	) -> subprocess.CompletedProcess[str]:
+		argvs.append(argv)
+		envs.append(env)
+		return subprocess.CompletedProcess(list(argv), 1 if len(argvs) == 1 else 0, unresolved, "")
+
+	monkeypatch.setattr(
+		check_mod,
+		"find_typechecker",
+		_stub_found_ty if name == "ty" else _stub_found_mypy,
+	)
+	monkeypatch.setattr(subprocess, "run", spawn)
 	assert isinstance(run_typecheck(tmp_path / "tasks.py"), CheckerOk)
-	assert envs[0] is None or "MYPYPATH" not in envs[0]
-	assert envs[1] is not None
-	assert envs[1]["MYPYPATH"].endswith(str(camas_search_path()))
+	assert len(argvs) == 2
+	told: Final = str(camas_search_path())
+	assert told in argvs[1] or (envs[1] is not None and told in envs[1]["MYPYPATH"])
 
 
 COLOURED_UNRESOLVED_CAMAS: Final = (
@@ -191,7 +260,7 @@ def test_a_coloured_diagnostic_still_earns_the_second_run(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
 	"""camas puts ``FORCE_COLOR=1`` in every leaf environment, so a ``camas --check`` running as a
-	leaf gets escapes *inside* mypy's phrase — this is a real capture of that. Matching the raw text
+	leaf gets escapes *inside* the phrase — this is a real capture of that. Matching the raw text
 	silently skips the second run, which is #277 unfixed.
 	"""
 	envs: list[Mapping[str, str] | None] = []
@@ -243,102 +312,22 @@ def test_a_refused_hint_keeps_the_answer_mypy_gave_without_it(
 	assert len(envs) == 2
 
 
-def _a_real_mypy() -> Path | None:
-	"""Wherever production would find mypy: beside this interpreter, else on PATH — the same two
-	routes as :func:`camas.main.check.find_typechecker`, so the wording pins are not skipped in a
-	layout the code supports (a pipx or uv-tool mypy, or a wheels job whose extras ship only ty).
-	"""
-	sibling = Path(sys.executable).parent / f"mypy{EXE_SUFFIX}"
-	on_path = shutil.which("mypy")
-	return sibling if sibling.is_file() else Path(on_path) if on_path is not None else None
-
-
-requires_mypy = pytest.mark.skipif(
-	_a_real_mypy() is None, reason="pins mypy's own wording, so it needs a real mypy"
-)
-
-
-def _real_mypy(source: str, tmp_path: Path, *args: str, **env: str) -> str:
-	"""Run a real mypy over ``source``, from ``tmp_path`` so the repo's own configuration is out of
-	the picture. Returns its combined output.
-	"""
-	(probe := tmp_path / "probe.py").write_text(source)
-	proc = subprocess.run(
-		[str(_a_real_mypy()), *args, probe.name],
-		capture_output=True,
-		text=True,
-		check=False,
-		cwd=tmp_path,
-		env={**os.environ, **env} if env else None,
-	)
-	return proc.stdout + proc.stderr
-
-
-@requires_mypy
-@pytest.mark.parametrize(
-	("source", "args", "expected"),
-	[
-		("from camas import Task\n", ("--no-site-packages",), True),
-		("import camas.definitely_absent\n", (), False),
-		("import camas.definitely_absent\n", ("--no-site-packages",), True),
-		("import camas_prefixed_but_unrelated\n", (), False),
-	],
-)
-def test_what_real_mypy_prints_decides_the_second_run(
-	source: str, args: tuple[str, ...], expected: bool, tmp_path: Path
+def test_a_told_run_that_fails_for_another_reason_is_the_answer(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-	"""The phrase :func:`cannot_resolve_camas` keys on is mypy's, so a rewording fails here rather
-	than silently costing the second run.
-
-	The cases that must *not* earn a run are the point: a ``camas``-prefixed other module, and a
-	submodule missing from a camas that mypy did find — no search path resolves either. A camas
-	missing entirely still earns one through a submodule import, because mypy names the parent too.
-	``--no-site-packages`` is how camas is made unresolvable to a mypy that has it installed.
+	"""Not every second failure is a refusal: once camas resolves, a real diagnostic the first run
+	could not reach is what the user needs to see.
 	"""
-	output = _real_mypy(source, tmp_path, *args)
-	assert check_mod.cannot_resolve_camas(output) is expected, output
+	envs: list[Mapping[str, str] | None] = []
+	real: Final = 'tasks.py:3: error: Argument 1 has incompatible type "int"'
 
-
-@requires_mypy
-def test_real_mypy_colour_does_not_hide_the_phrase(tmp_path: Path) -> None:
-	"""``FORCE_COLOR=1`` plus a usable ``TERM`` is what camas hands every leaf, and it makes mypy write
-	escapes between the words of this very phrase. Asserting an escape is present keeps the test from
-	going vacuous if a future mypy stops colouring.
-	"""
-	output = _real_mypy(
-		"from camas import Task\n",
-		tmp_path,
-		"--no-site-packages",
-		FORCE_COLOR="1",
-		TERM="xterm-256color",
+	monkeypatch.setattr(check_mod, "find_typechecker", _stub_found_mypy)
+	monkeypatch.setattr(
+		subprocess, "run", _spawn_recording(envs, ((1, UNRESOLVED_CAMAS), (1, real)))
 	)
-	assert "\x1b" in output, output
-	assert check_mod.cannot_resolve_camas(output), output
-
-
-@requires_mypy
-def test_real_mypy_still_refuses_a_search_path_inside_its_own_site_packages(tmp_path: Path) -> None:
-	"""The branch that hands the first answer back exists for this refusal, so the refusal itself is
-	pinned against a real mypy rather than a hand-written string.
-	"""
-	output = _real_mypy("from camas import Task\n", tmp_path, MYPYPATH=site.getsitepackages()[0])
-	assert check_mod.refuses_the_search_path(output), output
-
-
-def test_ty_is_told_even_from_site_packages_since_it_resolves_elsewhere() -> None:
-	"""ty resolves against an environment it discovers, which can be the project's venv rather than
-	camas's, so a wheel-installed camas still has to say where it is.
-	"""
-	site_packages = Path("/anywhere/site-packages")
-	assert checker_invocation(
-		FoundChecker("ty", Path("ty")), Path("tasks.py"), site_packages
-	).argv == (
-		"ty",
-		"check",
-		"--extra-search-path",
-		str(site_packages),
-		"tasks.py",
-	)
+	result = run_typecheck(tmp_path / "tasks.py")
+	assert isinstance(result, CheckerErr)
+	assert result.output == real
 
 
 def test_camas_search_path_holds_the_running_camas() -> None:
@@ -458,9 +447,10 @@ def test_the_isolated_env_really_cannot_resolve_camas_on_its_own(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
 	"""The other half of that pair: point camas's own location at an empty directory and the same
-	run names camas as what it cannot resolve — so the search path is what resolves the import, not
-	the isolation quietly failing to isolate. The module rather than ty's diagnostic code, which a
-	ty release may rename.
+	run still names camas as what it cannot resolve — so the search path is what resolves the import,
+	not the isolation quietly failing to isolate. This keys on ty's human wording, which a release
+	may reword; when it does, the fix is to reread what ty prints, not to loosen the assertion until
+	an unrelated failure satisfies it.
 	"""
 	(nowhere := tmp_path / "nowhere").mkdir()
 	monkeypatch.chdir(tmp_path)
