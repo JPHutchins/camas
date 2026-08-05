@@ -17,6 +17,10 @@ on:
   schedule:
     - cron: "17 6 * * 1" # weekly, Monday — catch a Claude Code release changing the hook contract
   push:
+    # Branch pushes only: GitHub does not evaluate `paths` for tag pushes, so without this every
+    # release tag fired the billed suite a second time for a commit the branch push already covered
+    # (0.1.25 through 0.1.29 each did).
+    branches: ["**"]
     paths:
       - "src/camas/**"
       - "src/camas/main/claude_*.md"
