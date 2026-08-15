@@ -634,7 +634,9 @@ def test_ctrl_c_during_the_spawn_window_reaches_the_child() -> None:
 	result = asyncio.run(scenario())
 	assert result.returncode == INTERRUPT_RC
 	assert result.results
-	assert all(isinstance(r.completion, Stopped) for r in result.results)
+	stopped = result.results[0].completion
+	assert isinstance(stopped, Stopped)
+	assert stopped.returncode == -signal.SIGINT
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal handling only")

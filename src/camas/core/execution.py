@@ -160,7 +160,8 @@ def step_interrupt(interrupts: Interrupts, states: list[LeafState]) -> None:
 			interrupts.main_task.cancel()
 		return
 	for leaf_index, proc in tuple(interrupts.procs.items()):
-		interrupt_proc(states, leaf_index, proc, interrupts.count)
+		with suppress(ProcessLookupError):
+			interrupt_proc(states, leaf_index, proc, interrupts.count)
 
 
 async def await_run(
@@ -348,8 +349,8 @@ async def run_cmd(task: Task, leaf_index: int, ctx: RunContext) -> TaskResult:
 			)
 			return TaskResult(task_label(task), errored, leaf_identity(ctx, leaf_index))
 		ctx.interrupts.procs[leaf_index] = proc
-		if ctx.interrupts.landed():
-			for press in range(1, ctx.interrupts.count + 1):
+		if ctx.interrupts.landed() and proc.returncode is None:
+			for press in range(1, min(ctx.interrupts.count, KILL_PRESSES) + 1):
 				with suppress(ProcessLookupError):
 					interrupt_proc(ctx.states, leaf_index, proc, press)
 		output: Final[list[bytes]] = []
