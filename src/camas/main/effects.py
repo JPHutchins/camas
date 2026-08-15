@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 	from collections.abc import Mapping
 	from pathlib import Path
 
-	from ..core.timings import CacheKey
+	from ..core.timings import Observed
 	from ..v0.config import Config
 
 
@@ -321,15 +321,12 @@ def resolve_effects(
 	return parse_effects(expr, scope_effects)
 
 
-def keyed_to_run(
-	effects: tuple[Effect[Any], ...],
-	scope: int,
-	keys: Mapping[str, CacheKey],
-	identities: tuple[CacheKey, ...] | None = None,
-) -> tuple[Effect[Any], ...]:
-	"""``effects`` with every ``Timings`` keyed to this run's scope and labels. A ``Timings`` spelled
-	out in a ``Config`` or in ``--effects`` cannot carry either — so without this it would record a
-	path-scoped run as a whole-tree observation, which is the mis-estimation #224 is about.
+def keyed_to_run(effects: tuple[Effect[Any], ...], observed: Observed) -> tuple[Effect[Any], ...]:
+	"""``effects`` with every ``Timings`` keyed to ``observed``. Scope, labels, and identities all
+	come off the one bundle that also feeds ``run(identities=...)``, so a caller cannot key the
+	effect one way and the run another. A ``Timings`` spelled out in a ``Config`` or in ``--effects``
+	cannot carry either — so without this it would record a path-scoped run as a whole-tree
+	observation, which is the mis-estimation #224 is about.
 
 	``effects`` itself is returned when it holds no ``Timings``, so a caller's own tuple survives
 	identically rather than being rebuilt for nothing.
@@ -339,7 +336,10 @@ def keyed_to_run(
 	if not any(isinstance(e, Timings) for e in effects):
 		return effects
 	return tuple(
-		e.for_run(scope, keys, identities) if isinstance(e, Timings) else e for e in effects
+		e.for_run(observed.scope, observed.keys, observed.identities)
+		if isinstance(e, Timings)
+		else e
+		for e in effects
 	)
 
 

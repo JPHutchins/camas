@@ -158,9 +158,7 @@ def run_under(
 		asyncio.run(
 			run(
 				scoped,
-				effects=keyed_to_run(
-					tuple(effects), observed.scope, observed.keys, observed.identities
-				),
+				effects=keyed_to_run(tuple(effects), observed),
 				jobs=jobs,
 				base=base,
 				leaf_color=leaf_color,
@@ -556,9 +554,7 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 				)
 
 			cli_observed: Final = timings.observed(camas_dir, cli_expanded, cli_changed)
-			effects = keyed_to_run(
-				effects, cli_observed.scope, cli_observed.keys, cli_observed.identities
-			)
+			effects = keyed_to_run(effects, cli_observed)
 
 			# Without a budget there is nothing to order against, so scope up front. With no paths
 			# named, this is the unresolved expanded tree — the same form run() resolves itself.
