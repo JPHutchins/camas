@@ -35,7 +35,8 @@ from .matrix import expand_matrix, resolve_cmd
 from .scope import with_default_paths
 from .task import task_label
 from .timings import (
-	CacheKey,  # noqa: TC001  # runtime name get_type_hints resolves; TYPE_CHECKING-only would NameError
+	CacheKey,  # runtime name get_type_hints resolves; TYPE_CHECKING-only would NameError
+	raise_identities_mismatch,
 )
 from .traversal import flatten_leaves, subtree_leaf_indices
 
@@ -425,10 +426,7 @@ async def run(
 	leaf_infos: Final = flatten_leaves(expanded)
 	leaves: Final = tuple(info.task for info in leaf_infos)
 	if identities is not None and len(identities) != len(leaves):
-		raise ValueError(
-			f"identities must be parallel to the run's leaves: "
-			f"{len(identities)} keys for {len(leaves)} leaves"
-		)
+		raise_identities_mismatch(len(identities), len(leaves))
 	index_map: Final = {id(info.task): i for i, info in enumerate(leaf_infos)}
 
 	wall_start: Final = time.perf_counter()

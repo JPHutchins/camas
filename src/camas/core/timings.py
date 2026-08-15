@@ -12,7 +12,7 @@ from enum import IntEnum
 from functools import reduce
 from itertools import groupby
 from math import isfinite
-from typing import IO, TYPE_CHECKING, Final, NamedTuple, TypeAlias
+from typing import IO, TYPE_CHECKING, Final, NamedTuple, NoReturn, TypeAlias
 
 from ..v0.completion import Errored, Finished, Skipped, Stopped
 from ..v0.task import Parallel, Sequential, Task
@@ -259,6 +259,18 @@ def leaf_key(task: Task, scope: int) -> CacheKey:
 	CacheKey(label='ruff check .', scope=0)
 	"""
 	return CacheKey(task_label(resolve_default_leaf(task)), leaf_scope(task, scope))
+
+
+def raise_identities_mismatch(identities: int, leaves: int) -> NoReturn:
+	"""Raise the error for an identities tuple not parallel to the run's leaves — shared by
+	:func:`camas.core.execution.run` and the ``Timings`` effect, so both report identically.
+
+	Raises:
+		ValueError: with both counts.
+	"""
+	raise ValueError(
+		f"identities must be parallel to the run's leaves: {identities} keys for {leaves} leaves"
+	)
 
 
 def observed(camas_dir: Path | None, expanded: TaskNode, changed: Sequence[str]) -> Observed:

@@ -4,7 +4,7 @@
 """Effect: on teardown, record the run's per-leaf durations to ``<camas_dir>/timings.txt``."""
 
 import asyncio
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, NamedTuple
@@ -54,6 +54,12 @@ class Timings:
 		scope: int = 0,
 		identities: tuple[timings.CacheKey, ...] | None = None,
 	) -> None:
+		value: object = identities
+		if isinstance(value, Mapping):
+			raise TypeError(
+				"the third argument is identities, a tuple of per-leaf cache keys parallel to the "
+				"run's leaves — the keys= label mapping this slot took before #289 is gone"
+			)
 		self._camas_dir: Final = camas_dir
 		self._scope: Final = scope
 		self._identities: Final = identities
@@ -69,10 +75,7 @@ class Timings:
 	async def setup(self, task: TaskNode) -> TimingsContext:
 		leaves = flatten_leaves(task)
 		if self._identities is not None and len(self._identities) != len(leaves):
-			raise ValueError(
-				f"identities must be parallel to the run's leaves: "
-				f"{len(self._identities)} keys for {len(leaves)} leaves"
-			)
+			timings.raise_identities_mismatch(len(self._identities), len(leaves))
 		return TimingsContext(
 			camas_dir=self._camas_dir,
 			scope=self._scope,
