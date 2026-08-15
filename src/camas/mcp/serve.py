@@ -320,13 +320,18 @@ def package_snapshot() -> Snapshot:
 	return snapshot
 
 
+RELOAD_EXIT_DELAY: Final = 1.0
+"""How long a stale server lives after answering the triggering call — long enough for the
+transport's ``to_thread`` writer to flush the response the exit is scheduled after."""
+
+
 def exit_for_reload() -> None:  # pragma: no cover  # the suite cannot survive its own process exit
-	"""End this server process so the client reconnects to a freshly-imported camas. Exiting is
-	the reload: the stdio fds survive an ``execv``, so a replaced image would hang the client on
-	the abandoned call, while a dead server closes the pipe — the one signal clients already
-	handle by reconnecting.
+	"""End this server process so the client reconnects to a freshly-imported camas. ``os._exit``
+	because ``sys.exit`` deadlocks interpreter finalization joining anyio's ``to_thread`` workers;
+	the OS closes the stdio pipe with the process, which is the reconnect signal clients already
+	handle.
 	"""
-	sys.exit(0)
+	os._exit(0)
 
 
 def serve_stdio(argv: list[str]) -> None:  # pragma: no cover
@@ -353,7 +358,8 @@ async def run_over_stdio(server: Server[object]) -> None:  # pragma: no cover
 def build_server(session: Session) -> Server[object]:
 	"""A low-level MCP ``Server`` with the camas tool handlers registered; when the camas package
 	changes, the triggering call is answered and the server exits for the client to reconnect
-	(#58).
+	(#58). The respawn command is the client's own MCP configuration — not this process's argv —
+	so an ad-hoc ``--plain`` launch comes back as the configured form.
 	"""
 	initial = package_snapshot()
 	server: Server[object] = Server(
@@ -383,7 +389,7 @@ def build_server(session: Session) -> Server[object]:
 		if task_names(session.project) != before:
 			await server.request_context.session.send_tool_list_changed()
 		if stale:
-			asyncio.get_running_loop().call_soon(exit_for_reload)
+			asyncio.get_running_loop().call_later(RELOAD_EXIT_DELAY, exit_for_reload)
 		return result
 
 	server.list_tools()(list_handler)  # type: ignore[no-untyped-call]
