@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -12,6 +13,7 @@ import pytest
 from mcp import types
 from mcp.shared.memory import create_connected_server_and_client_session
 
+import camas
 from camas import AgentFormat, Config, Parallel, Sequential, Task
 from camas.core import timings
 from camas.core.completion import RunResult, TaskResult
@@ -547,15 +549,58 @@ def test_server_reports_camas_version(tmp_path: Path) -> None:
 	from importlib.metadata import version
 
 	session = _session({"lint": PASS}, None, tmp_path)
-	opts = serve.build_server(session).create_initialization_options()
+	opts = serve.build_server(session, serve.package_snapshot(), []).create_initialization_options()
 	assert opts.server_version == version("camas")
 
 
 def test_server_advertises_instructions(tmp_path: Path) -> None:
-	server = serve.build_server(_session({"lint": PASS}, None, tmp_path))
+	server = serve.build_server(
+		_session({"lint": PASS}, None, tmp_path), serve.package_snapshot(), []
+	)
 	opts = server.create_initialization_options()
 	assert opts.instructions is not None
 	assert "camas_run" in opts.instructions
+
+
+def _fake_package(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+	"""Point ``camas.__file__`` at a scratch package so snapshot tests don't touch the real one."""
+	pkg = tmp_path / "pkg"
+	pkg.mkdir()
+	(pkg / "__init__.py").write_text("")
+	(pkg / "a.py").write_text("x = 1\n")
+	monkeypatch.setattr(camas, "__file__", str(pkg / "__init__.py"))
+	return pkg
+
+
+def test_package_snapshot_tracks_source_edits(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	pkg = _fake_package(tmp_path, monkeypatch)
+	before = serve.package_snapshot()
+	(pkg / "a.py").write_text("xx = 22\n")
+	after = serve.package_snapshot()
+	assert before != after
+	assert before.keys() == after.keys()
+
+
+def test_reexec_if_changed_replaces_the_process_only_when_stale(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	"""An unchanged package is left alone; a source edit re-executes ``camas mcp`` with the
+	original argv (#58)."""
+	calls: list[tuple[str, list[str]]] = []
+
+	def fake_execv(program: str, argv: list[str]) -> None:
+		calls.append((program, argv))
+
+	monkeypatch.setattr(os, "execv", fake_execv)
+	pkg = _fake_package(tmp_path, monkeypatch)
+	initial = serve.package_snapshot()
+	serve.reexec_if_changed(initial, ["--plain"])
+	assert calls == []
+	(pkg / "a.py").write_text("xx = 22\n")
+	serve.reexec_if_changed(initial, ["--plain"])
+	assert calls == [(sys.executable, [sys.executable, "-m", "camas", "mcp", "--plain"])]
 
 
 _VALID_TASKS = "from camas import Task\nlint = Task('ruff check .')\n"
@@ -634,7 +679,9 @@ async def test_check_via_client_reflects_fresh_disk_state(
 	tasks_py = tmp_path / "tasks.py"
 	tasks_py.write_text("from camas import Task\na = Task('echo a')\n")
 	session = Session(serve.resolve_project(tmp_path), tmp_path, Compat())
-	async with create_connected_server_and_client_session(serve.build_server(session)) as client:
+	async with create_connected_server_and_client_session(
+		serve.build_server(session, serve.package_snapshot(), [])
+	) as client:
 		tasks_py.write_text("from camas import Task\na = Task('echo a')\nb = Task('echo b')\n")
 		result = await client.call_tool("camas_check", {})
 		assert result.isError is False
@@ -746,7 +793,9 @@ async def test_call_routes_docs(tmp_path: Path) -> None:
 def test_build_server_declares_list_changed(tmp_path: Path) -> None:
 	from mcp.server.lowlevel.server import NotificationOptions
 
-	server = serve.build_server(_session({"lint": PASS}, None, tmp_path))
+	server = serve.build_server(
+		_session({"lint": PASS}, None, tmp_path), serve.package_snapshot(), []
+	)
 	opts = server.create_initialization_options(NotificationOptions(tools_changed=True))
 	assert opts.capabilities.tools is not None
 	assert opts.capabilities.tools.listChanged is True
@@ -760,7 +809,9 @@ async def test_check_via_client_refreshes_catalog_and_notifies(
 		"from camas import Task\na = Task(('python', '-c', 'pass'))\n"
 	)
 	session = Session(serve.resolve_project(tmp_path), tmp_path, Compat())
-	async with create_connected_server_and_client_session(serve.build_server(session)) as client:
+	async with create_connected_server_and_client_session(
+		serve.build_server(session, serve.package_snapshot(), [])
+	) as client:
 		first = await client.list_tools()
 		run_first = next(t for t in first.tools if t.name == "camas_run")
 		assert _task_enum(run_first.inputSchema) == ["a"]
@@ -1294,7 +1345,9 @@ async def test_in_memory_round_trip(tmp_path: Path) -> None:
 		"_ = Config(default_task=lint)\n"
 	)
 	session = Session(serve.resolve_project(tmp_path), tmp_path, Compat())
-	async with create_connected_server_and_client_session(serve.build_server(session)) as client:
+	async with create_connected_server_and_client_session(
+		serve.build_server(session, serve.package_snapshot(), [])
+	) as client:
 		listed = await client.list_tools()
 		assert {t.name for t in listed.tools} == {
 			"camas_list",
@@ -1320,7 +1373,9 @@ async def test_list_via_client_expands_matrix_on_request(tmp_path: Path) -> None
 		"from camas import Parallel, Task\nm = Parallel(Task('test {PY}'), matrix={'PY': ('3.13', '3.14')})\n"
 	)
 	session = Session(serve.resolve_project(tmp_path), tmp_path, Compat())
-	async with create_connected_server_and_client_session(serve.build_server(session)) as client:
+	async with create_connected_server_and_client_session(
+		serve.build_server(session, serve.package_snapshot(), [])
+	) as client:
 		collapsed = _text(await client.call_tool("camas_list", {}))
 		assert "[PY=3.13]" not in collapsed
 		expanded = _text(await client.call_tool("camas_list", {"expand_matrix": True}))
@@ -1389,7 +1444,9 @@ async def test_run_via_client_picks_up_new_task_without_check(tmp_path: Path) ->
 	tasks_py = tmp_path / "tasks.py"
 	tasks_py.write_text("from camas import Task\na = Task(('python', '-c', 'pass'))\n")
 	session = Session(serve.resolve_project(tmp_path), tmp_path, Compat())
-	async with create_connected_server_and_client_session(serve.build_server(session)) as client:
+	async with create_connected_server_and_client_session(
+		serve.build_server(session, serve.package_snapshot(), [])
+	) as client:
 		tasks_py.write_text(
 			"from camas import Task\n"
 			"a = Task(('python', '-c', 'pass'))\n"
@@ -1437,7 +1494,9 @@ async def test_run_via_client_reflects_filesystem_change_between_calls(tmp_path:
 	(targets / "a.txt").write_text("")
 	(tmp_path / "tasks.py").write_text(_glob_check_tasks_py())
 	session = Session(serve.resolve_project(tmp_path), tmp_path, Compat())
-	async with create_connected_server_and_client_session(serve.build_server(session)) as client:
+	async with create_connected_server_and_client_session(
+		serve.build_server(session, serve.package_snapshot(), [])
+	) as client:
 		first = await client.call_tool("camas_run", {"task": "check"})
 		assert first.isError is False
 		assert "PASSED" in _text(first)
@@ -1451,7 +1510,9 @@ async def test_run_via_client_surfaces_broken_edit_between_calls(tmp_path: Path)
 	tasks_py = tmp_path / "tasks.py"
 	tasks_py.write_text("from camas import Task\ncheck = Task(('python', '-c', 'pass'))\n")
 	session = Session(serve.resolve_project(tmp_path), tmp_path, Compat())
-	async with create_connected_server_and_client_session(serve.build_server(session)) as client:
+	async with create_connected_server_and_client_session(
+		serve.build_server(session, serve.package_snapshot(), [])
+	) as client:
 		first = await client.call_tool("camas_run", {"task": "check"})
 		assert first.isError is False
 		assert "PASSED" in _text(first)
@@ -1678,7 +1739,9 @@ async def test_fix_call_with_task_override(tmp_path: Path) -> None:
 async def test_fix_call_tool_is_in_round_trip(tmp_path: Path) -> None:
 	"""``camas_fix`` appears in the tool list via the in-memory server."""
 	session = _session({"fmt": FIX_TASK}, None, tmp_path)
-	async with create_connected_server_and_client_session(serve.build_server(session)) as client:
+	async with create_connected_server_and_client_session(
+		serve.build_server(session, serve.package_snapshot(), [])
+	) as client:
 		listed = await client.list_tools()
 		names = {t.name for t in listed.tools}
 		assert "camas_fix" in names
@@ -1687,7 +1750,9 @@ async def test_fix_call_tool_is_in_round_trip(tmp_path: Path) -> None:
 async def test_in_memory_round_trip_includes_fix_tool(tmp_path: Path) -> None:
 	"""The full round trip tool list now has 8 tools including camas_github_matrix."""
 	session = _session({"lint": PASS}, Config(default_task=PASS), tmp_path)
-	async with create_connected_server_and_client_session(serve.build_server(session)) as client:
+	async with create_connected_server_and_client_session(
+		serve.build_server(session, serve.package_snapshot(), [])
+	) as client:
 		listed = await client.list_tools()
 		assert {t.name for t in listed.tools} == {
 			"camas_list",

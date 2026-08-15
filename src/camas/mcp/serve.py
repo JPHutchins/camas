@@ -21,12 +21,14 @@ from dataclasses import dataclass, field
 from enum import Enum
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Final, NamedTuple
+from typing import TYPE_CHECKING, Any, Final, NamedTuple, TypeAlias
 
 from mcp import types
 from mcp.server.lowlevel import Server
 from mcp.server.lowlevel.server import NotificationOptions
 from pydantic import AnyUrl, BaseModel, ValidationError
+
+import camas
 
 from ..core import timings
 from ..core.budget import plan_under
@@ -295,6 +297,32 @@ def _op(operator: str, a: tuple[int, ...], b: tuple[int, ...]) -> bool:
 	return a < b
 
 
+Snapshot: TypeAlias = dict[str, tuple[int, int]]
+
+
+def package_snapshot() -> Snapshot:
+	"""This camas package's ``.py`` files as ``{relpath: (size, mtime_ns)}`` — what a source
+	checkout looks like; a wheel install's package directory never changes, so the snapshot is
+	stable there and the per-call comparison costs one small walk.
+	"""
+	root = Path(camas.__file__).parent
+	return {
+		path.relative_to(root).as_posix(): (stat.st_size, stat.st_mtime_ns)
+		for path in root.rglob("*.py")
+		for stat in (path.stat(),)
+	}
+
+
+def reexec_if_changed(initial: Snapshot, argv: Sequence[str]) -> None:
+	"""Replace this process with a freshly-imported ``camas mcp`` when the camas package has
+	changed since ``initial``. Package code cannot be re-imported soundly in place — stale
+	``Task`` classes and identity checks would leak — so the server re-executes itself and the
+	client reconnects on the closed stdio.
+	"""
+	if package_snapshot() != initial:
+		os.execv(sys.executable, [sys.executable, "-m", "camas", "mcp", *argv])
+
+
 def serve_stdio(argv: list[str]) -> None:  # pragma: no cover
 	"""Entry point for ``camas mcp``: resolve the project, build the server, serve over stdio."""
 	os.environ["NO_COLOR"] = "1"
@@ -304,7 +332,7 @@ def serve_stdio(argv: list[str]) -> None:  # pragma: no cover
 	)
 	if session.version_warning is not None:
 		print(session.version_warning, file=sys.stderr)
-	asyncio.run(run_over_stdio(build_server(session)))
+	asyncio.run(run_over_stdio(build_server(session, package_snapshot(), argv)))
 
 
 async def run_over_stdio(server: Server[object]) -> None:  # pragma: no cover
@@ -316,8 +344,10 @@ async def run_over_stdio(server: Server[object]) -> None:  # pragma: no cover
 		await server.run(read, write, options)
 
 
-def build_server(session: Session) -> Server[object]:
-	"""A low-level MCP ``Server`` with the camas tool handlers registered."""
+def build_server(session: Session, initial: Snapshot, argv: Sequence[str]) -> Server[object]:
+	"""A low-level MCP ``Server`` with the camas tool handlers registered; ``initial`` and ``argv``
+	re-exec the process when the camas package changes (#58).
+	"""
 	server: Server[object] = Server(
 		"camas",
 		version=version("camas"),
@@ -338,6 +368,7 @@ def build_server(session: Session) -> Server[object]:
 		return list(tools(task_names(session.project), session.compat))
 
 	async def call_handler(name: str, arguments: dict[str, Any]) -> types.CallToolResult:
+		reexec_if_changed(initial, argv)
 		before = task_names(session.project)
 		session.refresh()
 		result = await call(session, name, arguments)
