@@ -68,12 +68,18 @@ class Timings:
 		return Timings(self._camas_dir, scope, keys, identities)
 
 	async def setup(self, task: TaskNode) -> TimingsContext:
+		leaves = flatten_leaves(task)
+		if self._identities is not None and len(self._identities) != len(leaves):
+			raise ValueError(
+				f"identities must be parallel to the run's leaves: "
+				f"{len(self._identities)} keys for {len(leaves)} leaves"
+			)
 		return TimingsContext(
 			camas_dir=self._camas_dir,
 			scope=self._scope,
 			keys=self._keys,
 			identities=self._identities,
-			state=TimingsState(tuple(Waiting(info.task) for info in flatten_leaves(task))),
+			state=TimingsState(tuple(Waiting(info.task) for info in leaves)),
 		)
 
 	async def on_event(
@@ -84,26 +90,22 @@ class Timings:
 
 	async def teardown(self, ctxs: tuple[TimingsContext, ...]) -> None:
 		ctx: Final = ctxs[0]  # zuban: ignore[misc] # zuban defies PEP591
-		if ctx.identities:
-			leaves = [
-				(
-					ctx.identities[idx]
-					if idx < len(ctx.identities)
-					else timings.key_of(task_label(state.task), ctx.scope, ctx.keys),
-					elapsed,
-				)
-				for idx, state in enumerate(ctx.state.states)
-				if isinstance(state, Completed)
-				and (elapsed := timings.elapsed_of(state.completion)) is not None
+		completed = [
+			(idx, task_label(state.task), state.completion)
+			for idx, state in enumerate(ctx.state.states)
+			if isinstance(state, Completed)
+		]
+		leaves = (
+			[
+				(ctx.identities[idx], elapsed)
+				for idx, _, completion in completed
+				if (elapsed := timings.elapsed_of(completion)) is not None
 			]
-		else:
-			leaves = timings.observations(
-				(
-					(task_label(state.task), state.completion)
-					for state in ctx.state.states
-					if isinstance(state, Completed)
-				),
+			if ctx.identities is not None
+			else timings.observations(
+				((label, completion) for _, label, completion in completed),
 				ctx.scope,
 				ctx.keys,
 			)
+		)
 		await asyncio.to_thread(timings.record_observed, ctx.camas_dir, leaves)

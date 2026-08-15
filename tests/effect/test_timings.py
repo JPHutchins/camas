@@ -7,6 +7,8 @@ import asyncio
 from datetime import datetime
 from typing import TYPE_CHECKING, TypeVar
 
+import pytest
+
 from camas import Parallel, Sequential, Task
 from camas.core import timings
 from camas.effect.timings import Timings
@@ -139,6 +141,30 @@ def test_for_run_keys_a_configured_effect_to_the_scope_and_labels(tmp_path: Path
 		)
 	)
 	assert timings.load(tmp_path) == {cache_key("pylint .", 2): timings.TaskTiming(0.4, 1)}
+
+
+def test_setup_rejects_identities_not_parallel_to_the_leaves(tmp_path: Path) -> None:
+	"""A ``Timings`` keyed with identities is validated against the tree it is set up on, so a
+	mismatch fails loudly here rather than silently mis-keying records at teardown."""
+	a, b = _task("one"), _task("two")
+	with pytest.raises(ValueError, match="identities must be parallel"):
+		asyncio.run(
+			drive(Timings(camas_dir=tmp_path, identities=(cache_key("one"),)), Parallel(a, b), [])
+		)
+
+
+def test_identities_key_by_leaf_position_not_completion_order(tmp_path: Path) -> None:
+	"""A carried identity is the leaf's position among the run's leaves, so an earlier leaf that
+	never completed must not shift the later ones' keys."""
+	a, b = _task("first"), _task("second")
+	events: list[TaskEvent] = [
+		StartedEvent(a, 0, TS),
+		StartedEvent(b, 1, TS),
+		CompletedEvent(b, 1, Finished(0, 0.5, ()), TS),
+	]
+	identities = (cache_key("first"), cache_key("second"))
+	asyncio.run(drive(Timings(camas_dir=tmp_path, identities=identities), Parallel(a, b), events))
+	assert timings.load(tmp_path) == {cache_key("second"): timings.TaskTiming(0.5, 1)}
 
 
 def test_a_leaf_named_empty_records_nothing_rather_than_something_unreadable(

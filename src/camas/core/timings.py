@@ -248,8 +248,8 @@ class Observed(NamedTuple):
 	camas_dir: Path | None
 	scope: int
 	keys: Mapping[TaskLabel, CacheKey]
-	"""Where each leaf's observation goes, by the label it reports — see
-	:func:`observed` derives. A label with no entry is keyed by itself at this run's scope."""
+	"""Where each leaf's observation goes, by the label it reports — the mapping :func:`observed`
+	derives; a label with no entry is keyed by itself at this run's scope."""
 	identities: tuple[CacheKey, ...] | None = None
 	"""Per-leaf cache keys, parallel to the leaves of ``node`` — what :func:`camas.core.execution.run`
 	takes as its ``identities``."""
@@ -272,9 +272,10 @@ def leaf_key(task: Task, scope: int) -> CacheKey:
 
 def observed(camas_dir: Path | None, expanded: TaskNode, changed: Sequence[str]) -> Observed:
 	"""How to run and record a run of ``expanded`` scoped to ``changed`` — the one derivation of
-	everything keying and execution need, from a single scoped-leaves walk. With nothing to narrow,
-	the tree is handed back unresolved: ``run`` resolves it itself, and resolving it here as well
-	would resolve every full-run leaf twice.
+	everything keying and execution need, from a single scoped-leaves walk. Identities and ``keys``
+	come off the same pairs, so a leaf cannot be keyed one way and recorded another; with nothing
+	to narrow, the tree handed back is ``expanded`` itself — unresolved — and ``run`` resolves its
+	input either way.
 	"""
 	from .scope import scoped_leaves, scoped_tree_from_pairs
 
@@ -288,12 +289,12 @@ def observed(camas_dir: Path | None, expanded: TaskNode, changed: Sequence[str])
 		return CacheKey(task_label(scoped), leaf_scope(original, scope))
 
 	pairs = scoped_leaves(expanded, changed_t)
+	identities = tuple(keyed(original, scoped) for original, scoped in pairs)
 	keys = (
 		NO_KEYS
 		if resolved
-		else {task_label(scoped): keyed(original, scoped) for original, scoped in pairs}
+		else {task_label(scoped): key for (_, scoped), key in zip(pairs, identities, strict=True)}
 	)
-	identities = tuple(keyed(original, scoped) for original, scoped in pairs)
 	node = expanded if resolved else scoped_tree_from_pairs(expanded, pairs)
 	return Observed(camas_dir, scope, keys, identities, node)
 
