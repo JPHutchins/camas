@@ -783,7 +783,9 @@ def test_resolve_run_node_unknown_task_raises() -> None:
 		serve.resolve_run_node({"lint": PASS}, wire.RunRequest(task="x"))
 
 
-def test_resolve_run_node_applies_overrides_and_args() -> None:
+def test_resolve_run_node_applies_overrides_but_not_args() -> None:
+	"""Passthrough args are the caller's to apply — after keying is derived from the
+	pre-passthrough tree — so resolve_run_node hands back the node without them."""
 	node = Parallel(Task("test {PY}"), matrix={"PY": ("3.12", "3.13")}, name="m")
 	name, resolved = serve.resolve_run_node(
 		{"m": node}, wire.RunRequest(task="m", matrix_overrides={"PY": ["3.13"]})
@@ -796,7 +798,7 @@ def test_resolve_run_node_applies_overrides_and_args() -> None:
 	)
 	assert leaf_name == "t"
 	assert isinstance(leaf, Task)
-	assert leaf.cmd == "pytest -v"
+	assert leaf.cmd == "pytest"
 
 
 def test_resolve_run_node_requires_task() -> None:
@@ -804,13 +806,13 @@ def test_resolve_run_node_requires_task() -> None:
 		serve.resolve_run_node({"lint": PASS}, wire.RunRequest())
 
 
-def test_resolve_run_node_no_task_applies_args() -> None:
+def test_resolve_run_node_no_task_keeps_args_for_the_caller() -> None:
 	name, leaf = serve.resolve_run_node(
 		{}, wire.RunRequest(args=["-v"]), Config(default_task=Task("pytest", name="t"))
 	)
 	assert name == "t"
 	assert isinstance(leaf, Task)
-	assert leaf.cmd == "pytest -v"
+	assert leaf.cmd == "pytest"
 
 
 def _record(base: Path, leaves: list[tuple[str, float]]) -> None:
@@ -2047,3 +2049,15 @@ async def test_fix_call_paths_all_outside_repo_fixes_nothing(tmp_path: Path) -> 
 	result = await serve.call(session, "camas_fix", {"paths": ["/etc/passwd"]})
 	assert not result.isError
 	assert "nothing to fix" in _text(result)
+
+
+async def test_run_with_args_records_under_the_pre_passthrough_identity(tmp_path: Path) -> None:
+	"""The carried identity is computed before the passthrough rewrite, so a nameless leaf's
+	timing lands under its own command — the label a later budget reads — not the
+	args-appended one nothing ever reads."""
+	session = _observed_session({"lint": Task("echo hi")}, None, tmp_path)
+	result = await serve.call(session, "camas_run", {"task": "lint", "args": ["there"]})
+	assert not result.isError
+	cache = timings.load(session.camas_dir)
+	assert timings.CacheKey("echo hi", 0) in cache
+	assert timings.CacheKey("echo hi there", 0) not in cache

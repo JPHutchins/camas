@@ -22,9 +22,8 @@ from ..v0.task import Group, Task, rebuilt
 from .budget import plan_under
 from .execution import run
 from .matrix import expand_matrix
-from .scope import scope_to_changed
 from .task import task_label
-from .timings import NO_KEYS, leaf_identities, observation_keys, scope_of
+from .timings import NO_KEYS, observation_keys, observed, scope_of
 from .traversal import flatten_leaves
 
 if sys.version_info >= (3, 11):
@@ -255,7 +254,8 @@ async def run_gate(
 	budgeted = plan.node if plan is not None else expanded
 	if budgeted is None:
 		return GateOutcome("green", None, None, plan)
-	scoped = scope_to_changed(budgeted, changed)
+	keying: Final = observed(None, budgeted, changed)
+	scoped = keying.node
 	if scoped is None:
 		return GateOutcome("green", None, None, plan)
 	if uses_path_mode(scoped):
@@ -270,7 +270,7 @@ async def run_gate(
 		base=base,
 		interactive=False,
 		leaf_color=leaf_color,
-		identities=leaf_identities(budgeted, changed),
+		identities=keying.identities,
 	)
 	residual: ResidualClass = "needs_reasoning" if checks.returncode != 0 else "green"
 	return GateOutcome(

@@ -269,6 +269,7 @@ def resolve_default_effects(
 	base: Path | None = None,
 	scope: int = 0,
 	keys: Mapping[str, CacheKey] = NO_KEYS,
+	identities: tuple[CacheKey, ...] | None = None,
 ) -> tuple[Effect[Any], ...]:
 	"""The effects a bare run uses: the :class:`Config` override, else the environment default.
 
@@ -284,7 +285,7 @@ def resolve_default_effects(
 	"""
 	configured = config.effects(github=github)
 	if configured is not None:
-		return keyed_to_run(configured, scope, keys)
+		return keyed_to_run(configured, scope, keys, identities)
 	from ..effect.status import Status
 	from ..effect.termtree import Termtree
 
@@ -295,7 +296,7 @@ def resolve_default_effects(
 	if camas is not None and camas.is_dir():
 		from ..effect.timings import Timings
 
-		return (renderer, Timings(camas_dir=camas, scope=scope, keys=keys))
+		return (renderer, Timings(camas_dir=camas, scope=scope, keys=keys, identities=identities))
 	return (renderer,)
 
 
@@ -318,6 +319,7 @@ def resolve_effects(
 	base: Path | None = None,
 	scope: int = 0,
 	keys: Mapping[str, CacheKey] = NO_KEYS,
+	identities: tuple[CacheKey, ...] | None = None,
 ) -> tuple[Effect[Any], ...]:
 	"""The effects for a run: the parsed ``--effects`` expression (propagating its
 	``ValueError`` on a malformed expression), or the environment default when
@@ -325,9 +327,15 @@ def resolve_effects(
 	"""
 	if expr is None:
 		return resolve_default_effects(
-			config, github=github, agent=agent, base=base, scope=scope, keys=keys
+			config,
+			github=github,
+			agent=agent,
+			base=base,
+			scope=scope,
+			keys=keys,
+			identities=identities,
 		)
-	return keyed_to_run(parse_effects(expr, scope_effects), scope, keys)
+	return keyed_to_run(parse_effects(expr, scope_effects), scope, keys, identities)
 
 
 def keyed_to_run(

@@ -35,6 +35,9 @@ from __future__ import annotations
 
 import shlex
 import sys
+from collections.abc import (
+	Mapping,  # noqa: TC003  # runtime name get_type_hints resolves; TYPE_CHECKING-only would NameError
+)
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Final, Literal, NamedTuple
 
@@ -266,12 +269,21 @@ def scope_to_changed(node: TaskNode, changed: tuple[str, ...]) -> TaskNode | Non
 	>>> scope_to_changed(Task("cargo check", name="cargo", when="src"), ("src/a.rs",))
 	Task(cmd='cargo check', name='cargo', env={}, cwd=None, when='src')
 	"""
+	resolved: Final = {id(original): scoped for original, scoped in scoped_leaves(node, changed)}
+	return scoped_tree(node, resolved)
+
+
+def scoped_tree(node: TaskNode, resolved: Mapping[int, Task]) -> TaskNode | None:
+	"""``node`` with each leaf replaced by its resolved form: leaves with no resolution pruned,
+	emptied groups dropped. Consults no leaf's paths/when — the resolution already happened in
+	the pairing handed in, so a run's tree and its keying derive from one walk.
+	"""
 	match node:
 		case Task():
-			return _resolve_leaf(node, changed)
+			return resolved.get(id(node))
 		case Group() as group:
 			kept = tuple(
-				s for s in (scope_to_changed(c, changed) for c in group.tasks) if s is not None
+				s for s in (scoped_tree(c, resolved) for c in group.tasks) if s is not None
 			)
 			return rebuilt(group, *kept) if kept else None
 		case _:

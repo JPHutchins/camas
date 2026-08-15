@@ -40,12 +40,7 @@ from ..core.matrix import (
 	unfilled_required_axes,
 )
 from ..core.render import render_tree_lines, strip_ansi
-from ..core.scope import (
-	requested_but_unusable,
-	scope_to_changed,
-	scoped_or_default,
-	to_changed,
-)
+from ..core.scope import requested_but_unusable, scope_to_changed, to_changed
 from ..core.task import did_you_mean, task_label
 from ..main.argv import apply_passthrough
 from ..main.compose import load_py_tasks_state
@@ -705,24 +700,25 @@ async def run_for(
 		return error_result(str(e))
 	changed = to_changed(req.paths, base_for(session))
 	expanded = expand_matrix(node)
-	scoped = (
-		None if requested_but_unusable(req.paths, changed) else scope_to_paths(expanded, changed)
-	)
+	observed = timings.observed(session.camas_dir, expanded, changed)
+	scoped = None if requested_but_unusable(req.paths, changed) else observed.node
 	if scoped is None:
 		return nothing_covered_result(session, req.paths)
-	node = scoped
+	try:
+		node = apply_passthrough(scoped, tuple(req.args)) if req.args else scoped
+	except ValueError as e:
+		return error_result(str(e))
 	if req.dry_run:
 		return success(
 			with_warning(session, dry_run_text(node)), to_plan_response(node), session.compat
 		)
-	observed = timings.observed(session.camas_dir, expanded, changed)
 	result = await run(
 		node,
 		jobs=req.jobs,
 		interactive=False,
 		base=base_for(session),
 		leaf_color=leaf_color_of(config),
-		identities=timings.leaf_identities(expanded, changed),
+		identities=observed.identities,
 	)
 	logs = write_logs(create_run_log_dir(session.camas_dir, name, session.reserve_run()), result)
 	observed.record(result)
@@ -836,16 +832,15 @@ def require_filled_axes(node: TaskNode) -> None:
 def resolve_run_node(
 	tasks: Mapping[str, TaskNode], req: wire.RunRequest, config: Config | None = None
 ) -> tuple[str, TaskNode]:
-	"""The ``(name, node)`` to run: looked up by name, then matrix-overridden and
-	passthrough-appended.
+	"""The ``(name, node)`` to run: looked up by name, then matrix-overridden. Passthrough args
+	are the caller's to apply — after keying is derived from the pre-passthrough tree.
 
 	When ``task`` is omitted, resolves the project's configured default task —
 	honored identically for a normal run and a ``dry_run`` preview.
 
 	Raises:
 		ValueError: when ``req.task`` is omitted and no default is configured, names
-			no task, an override targets an unknown matrix axis, or passthrough args
-			are applied to a non-leaf task.
+			no task, or an override targets an unknown matrix axis.
 	"""
 	if req.task is None:
 		default = config.run_default() if config is not None else None
@@ -856,8 +851,6 @@ def resolve_run_node(
 		name, node = req.task, require_task(tasks, req.task)
 	if req.matrix_overrides:
 		node = override_matrix(node, {k: tuple(v) for k, v in req.matrix_overrides.items()})
-	if req.args:
-		node = apply_passthrough(node, tuple(req.args))
 	require_filled_axes(node)
 	return name, node
 
@@ -888,44 +881,39 @@ async def run_budget(
 	plan = plan_under(expanded, budget_s, timings.load(session.camas_dir), scope)
 	report = to_budget_report(plan)
 	unscoped = plan.node
-	if unscoped is not None:
-		scoped_source = (
-			None
-			if requested_but_unusable(req.paths, changed)
-			else scope_to_paths(unscoped, changed)
-		)
-		if scoped_source is None:
-			return nothing_covered_result(session, req.paths)
-		plan = plan._replace(node=scoped_source)
-	if plan.node is None:
+	if unscoped is None:
 		empty = empty_run_response()
 		text = f"{budget_headline(report)}\n\nNothing ran — no leaf fit the budget."
 		return success(with_warning(session, text), attach_budget(empty, report), session.compat)
+	keying: Final = timings.observed(session.camas_dir, unscoped, changed)
+	scoped_source = None if requested_but_unusable(req.paths, changed) else keying.node
+	if scoped_source is None:
+		return nothing_covered_result(session, req.paths)
+	run_node: Final = scoped_source
+	plan = plan._replace(node=run_node)
 	if req.dry_run:
-		resp = attach_budget(to_plan_response(plan.node), report)
+		resp = attach_budget(to_plan_response(run_node), report)
 		return success(
-			with_warning(session, f"{budget_headline(report)}\n\n{dry_run_text(plan.node)}"),
+			with_warning(session, f"{budget_headline(report)}\n\n{dry_run_text(run_node)}"),
 			resp,
 			session.compat,
 		)
 	result = await run(
-		plan.node,
+		run_node,
 		jobs=req.jobs,
 		interactive=False,
 		base=base_for(session),
 		leaf_color=leaf_color_of(config),
-		identities=timings.leaf_identities(unscoped, changed) if unscoped is not None else None,
+		identities=keying.identities,
 	)
 	logs = write_logs(create_run_log_dir(session.camas_dir, label, session.reserve_run()), result)
-	# Built here rather than beside the budget above: it walks the tree, and the dry-run and
-	# nothing-fit paths between the two return without ever recording.
-	timings.observed(session.camas_dir, expanded, changed).record(result)
+	keying.record(result)
 	resp = attach_budget(
-		attach_logs(to_run_response(plan.node, result, verbosity=req.verbosity), logs), report
+		attach_logs(to_run_response(run_node, result, verbosity=req.verbosity), logs), report
 	)
 	nudge = improve_loop_nudge(
 		any_truncated=resp.truncated,
-		any_failing_without_agent_format=has_failing_leaf_without_agent_format(plan.node, result),
+		any_failing_without_agent_format=has_failing_leaf_without_agent_format(run_node, result),
 	)
 	return success(
 		with_warning(session, f"{budget_headline(report)}\n\n{run_text(label, resp, logs)}{nudge}"),
@@ -1494,20 +1482,17 @@ async def fix_for(
 		return error_result(str(e))
 	# The node to run and how to observe it are bound together, since neither is meaningful without
 	# the other: nothing to run means nothing to record, and the path that runs always has both.
-	prepared: tuple[TaskNode, timings.Observed, tuple[timings.CacheKey, ...]] | None = None
+	prepared: timings.Observed | None = None
 	blocked = unsatisfiable_message(fix_node) if fix_node is not None else None
 	if fix_node is not None and blocked is None:
 		changed = to_changed(req.paths, base_for(session))
 		expanded = expand_matrix(fix_node)
-		scoped = scoped_or_default(expanded, req.paths, changed)
-		if scoped is not None:
-			prepared = (
-				scoped,
-				timings.observed(session.camas_dir, expanded, changed),
-				timings.leaf_identities(expanded, changed),
-			)
+		if not requested_but_unusable(req.paths, changed):
+			keying = timings.observed(session.camas_dir, expanded, changed)
+			if keying.node is not None:
+				prepared = keying
 	empty_cause: str | None
-	if prepared is None:
+	if prepared is None or prepared.node is None:
 		resp = empty_run_response()
 		empty_cause = (
 			"no fix node registered (Config.agent.fix is None)"
@@ -1517,16 +1502,16 @@ async def fix_for(
 			else "no fix leaf covers the paths"
 		)
 	else:
-		node, observed, identities = prepared
+		node: Final = prepared.node
 		result = await run(
 			node,
 			jobs=req.jobs,
 			interactive=False,
 			base=base_for(session),
 			leaf_color=leaf_color_of(config),
-			identities=identities,
+			identities=prepared.identities,
 		)
-		observed.record(result)
+		prepared.record(result)
 		resp = to_run_response(node, result)
 		empty_cause = None
 	return success(

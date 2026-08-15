@@ -30,13 +30,7 @@ from ..core.matrix import (
 	unfilled_required_axes,
 )
 from ..core.render import print_tree, render_tree_lines
-from ..core.scope import (
-	requested_but_unusable,
-	scope_to_changed,
-	scoped_or_default,
-	to_changed,
-	with_default_paths,
-)
+from ..core.scope import requested_but_unusable, scoped_or_default, to_changed
 from ..core.task import did_you_mean, task_label
 from ..v0.config import Config
 from .argv import (
@@ -124,7 +118,6 @@ def run_under(
 	budget_s: float,
 	*,
 	changed: tuple[str, ...],
-	scope: int,
 	camas_dir: Path | None,
 	effects: Sequence[Effect[Any]],
 	jobs: int | None,
@@ -144,34 +137,34 @@ def run_under(
 		print("error: -- passthrough args cannot be combined with --under", file=sys.stderr)
 		return 2
 	plan = plan_under(
-		source, budget_s, timings.load(camas_dir) if camas_dir is not None else {}, scope
+		source,
+		budget_s,
+		timings.load(camas_dir) if camas_dir is not None else {},
+		timings.scope_of(changed),
 	)
 	for line in budget_summary_lines(plan):
 		print(line)
 	if plan.node is None:
 		return 0
-	scoped = scope_to_changed(plan.node, changed) if changed else plan.node
+	observed: Final = timings.observed(camas_dir, plan.node, changed)
+	scoped = observed.node
 	if scoped is None:
 		print(f"No task leaf covers {', '.join(changed)} — nothing to run.")
 		return 0
 	if dry_run:
-		print_tree(with_default_paths(scoped), show_cmd=True)
+		print_tree(scoped, show_cmd=True)
 		return 0
-	identities: Final = timings.leaf_identities(plan.node, changed)
 	return finish_run(
 		asyncio.run(
 			run(
 				scoped,
 				effects=keyed_to_run(
-					tuple(effects),
-					scope,
-					timings.observation_keys(plan.node, changed, scope),
-					identities,
+					tuple(effects), observed.scope, observed.keys, observed.identities
 				),
 				jobs=jobs,
 				base=base,
 				leaf_color=leaf_color,
-				identities=identities,
+				identities=observed.identities,
 			)
 		)
 	)
@@ -512,8 +505,7 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 				else ()
 			)
 			cli_expanded: Final = expand_matrix(resolved)
-			cli_scope: Final = timings.scope_of(cli_changed)
-			cli_keys: Final = timings.observation_keys(cli_expanded, cli_changed, cli_scope)
+			cli_observed: Final = timings.observed(camas_dir, cli_expanded, cli_changed)
 			try:
 				effects: Final = resolve_effects(
 					args.effects,
@@ -522,8 +514,9 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 					agent=in_agent,
 					scope_effects=scope_effects,
 					base=source.parent if source is not None else None,
-					scope=cli_scope,
-					keys=cli_keys,
+					scope=cli_observed.scope,
+					keys=cli_observed.keys,
+					identities=cli_observed.identities,
 				)
 			except ValueError as e:
 				print(f"error: --effects: {e}", file=sys.stderr)
@@ -550,7 +543,6 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 						cli_expanded,
 						args.under,
 						changed=cli_changed,
-						scope=cli_scope,
 						camas_dir=camas_dir,
 						effects=effects,
 						jobs=budget_jobs,
@@ -563,7 +555,7 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 
 			if args.paths is not None:
 				# Without a budget there is nothing to order against, so scope up front.
-				scoped = scope_to_changed(cli_expanded, cli_changed)
+				scoped = cli_observed.node
 				if scoped is None:
 					print(f"No task leaf covers {', '.join(cli_changed)} — nothing to run.")
 					sys.exit(0)
@@ -579,7 +571,7 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 				print(f"error: {e}", file=sys.stderr)
 				sys.exit(2)
 			if args.dry_run:
-				print_tree(with_default_paths(task), show_cmd=True)
+				print_tree(task, show_cmd=True)
 				sys.exit(0)
 			try:
 				jobs: Final = resolve_jobs(args.jobs)
@@ -595,6 +587,7 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 							jobs=jobs,
 							base=source.parent if source is not None else None,
 							leaf_color=effective_config.leaf_color,
+							identities=cli_observed.identities,
 						)
 					)
 				)
