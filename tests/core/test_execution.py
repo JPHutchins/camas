@@ -32,7 +32,7 @@ from camas.core.leaf_state import KILL_PRESSES
 from camas.core.timings import CacheKey
 from camas.v0.completion import INTERRUPT_RC, NOT_FOUND_RC, Errored, Finished, Skipped, Stopped
 from camas.v0.leaf_state import Interrupting, LeafState, Running
-from camas.v0.task_event import CompletedEvent, OutputEvent
+from camas.v0.task_event import CompletedEvent, OutputEvent, StartedEvent
 
 if TYPE_CHECKING:
 	from collections.abc import Sequence
@@ -601,6 +601,43 @@ def test_ctrl_c_resolves_jobs_queued_leaves_as_stopped() -> None:
 	assert result.returncode == INTERRUPT_RC
 	assert len(result.results) == 4
 	assert all(isinstance(r.completion, Stopped) for r in result.results)
+
+
+class _SignalAfterStarted:
+	"""Fire SIGINT once, when a leaf's first ``StartedEvent`` fires — inside ``run_cmd``'s window
+	between the interrupt check and the subprocess registration, the gap #265 is about."""
+
+	def __init__(self) -> None:
+		self.fired = False
+
+	async def setup(self, task: TaskNode) -> None:
+		return None
+
+	async def on_event(self, event: TaskEvent, states: Sequence[LeafState], ctx: None) -> None:
+		if isinstance(event, StartedEvent) and not self.fired:
+			self.fired = True
+			os.kill(os.getpid(), signal.SIGINT)
+
+	async def teardown(self, ctxs: tuple[None, ...]) -> None:
+		return None
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal handling only")
+def test_ctrl_c_during_the_spawn_window_reaches_the_child() -> None:
+	"""#265: an interrupt landing after ``run_cmd``'s early-out check but before the subprocess
+	registers must still reach the child — the freshly spawned proc is brought in line at
+	registration instead of running to completion uninterruptedly."""
+
+	async def scenario() -> RunResult:
+		task = Task(("python", "-c", "import time; time.sleep(5)"), name="slow")
+		return await run(task, effects=(_SignalAfterStarted(),))
+
+	result = asyncio.run(scenario())
+	assert result.returncode == INTERRUPT_RC
+	assert result.results
+	stopped = result.results[0].completion
+	assert isinstance(stopped, Stopped)
+	assert stopped.returncode != 0
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal handling only")

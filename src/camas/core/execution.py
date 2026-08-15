@@ -69,6 +69,12 @@ class Interrupts:
 	count: int = 0
 	main_task: asyncio.Task[tuple[TaskResult, ...]] | None = None
 
+	def landed(self) -> bool:
+		"""Whether any Ctrl-C has arrived — askable again after an await, where the signal
+		handler may have run.
+		"""
+		return self.count > 0
+
 
 class RunContext(NamedTuple):
 	"""Run-invariant context threaded through the ``execute`` recursion."""
@@ -78,7 +84,7 @@ class RunContext(NamedTuple):
 	index_map: dict[int, int]
 	limiter: Limiter
 	interrupts: Interrupts
-	states: Sequence[LeafState]
+	states: list[LeafState]
 	base: Path | None
 	"""The frame a leaf's ``cwd`` is spawned relative to (:func:`spawn_cwd`); ``None`` when the
 	tasks source has no on-disk location to anchor to (a scope run without a ``__file__``),
@@ -133,6 +139,21 @@ else:  # pragma: no cover
 		"""No tty state to restore on Windows."""
 
 
+def interrupt_proc(
+	states: list[LeafState], leaf_index: int, proc: Signalable, presses: int
+) -> None:
+	"""Bring one proc in line with the escalation at ``presses`` Ctrl-C — SIGINT, or kill once
+	the kill press has been reached — and mark its leaf Interrupting. ``step_interrupt`` applies
+	this to every registered proc; ``run_cmd`` replays the missed presses to a proc whose
+	registration a landed interrupt missed (#265).
+	"""
+	if presses >= KILL_PRESSES:
+		proc.kill()
+	else:
+		proc.send_signal(signal.SIGINT)
+	states[leaf_index] = to_interrupting(states[leaf_index], presses)
+
+
 def step_interrupt(interrupts: Interrupts, states: list[LeafState]) -> None:
 	"""Advance escalation one Ctrl-C press: forward SIGINT, again, kill, then cancel the run."""
 	interrupts.count += 1
@@ -140,13 +161,9 @@ def step_interrupt(interrupts: Interrupts, states: list[LeafState]) -> None:
 		if interrupts.main_task is not None:  # pragma: no branch
 			interrupts.main_task.cancel()
 		return
-	kill: Final = interrupts.count == KILL_PRESSES
-	for idx, proc in tuple(interrupts.procs.items()):
-		if kill:
-			proc.kill()
-		else:
-			proc.send_signal(signal.SIGINT)
-		states[idx] = to_interrupting(states[idx], interrupts.count)
+	for leaf_index, proc in tuple(interrupts.procs.items()):
+		with suppress(ProcessLookupError):
+			interrupt_proc(states, leaf_index, proc, interrupts.count)
 
 
 async def await_run(
@@ -334,6 +351,10 @@ async def run_cmd(task: Task, leaf_index: int, ctx: RunContext) -> TaskResult:
 			)
 			return TaskResult(task_label(task), errored, leaf_identity(ctx, leaf_index))
 		ctx.interrupts.procs[leaf_index] = proc
+		if ctx.interrupts.landed() and proc.returncode is None:
+			for press in range(1, min(ctx.interrupts.count, KILL_PRESSES) + 1):
+				with suppress(ProcessLookupError):
+					interrupt_proc(ctx.states, leaf_index, proc, press)
 		output: Final[list[bytes]] = []
 		try:
 			if proc.stdout is not None:  # pragma: no branch
