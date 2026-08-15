@@ -6,18 +6,19 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from camas.mcp.docs import camas_source_dir, to_docs_response
+from camas.mcp.docs import to_docs_response
+from camas.paths import camas_package_dir
 
 
-def test_camas_source_dir_points_at_installed_package() -> None:
-	source = camas_source_dir()
+def test_camas_package_dir_points_at_installed_package() -> None:
+	source = camas_package_dir()
 	assert source.name == "camas"
 	assert (source / "__init__.py").is_file()
 
 
 def test_to_docs_response_serves_init_docstring() -> None:
 	resp = to_docs_response()
-	assert resp.source == str(camas_source_dir())
+	assert resp.source == str(camas_package_dir())
 	for token in ("Task(", "Sequential", "Parallel", "Config"):
 		assert token in resp.tutorial
 	init = (Path(resp.source) / "__init__.py").read_text(encoding="utf-8")
