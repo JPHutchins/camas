@@ -603,14 +603,18 @@ def test_ctrl_c_resolves_jobs_queued_leaves_as_stopped() -> None:
 
 
 class _SignalAfterStarted:
-	"""Fire SIGINT when a leaf's ``StartedEvent`` fires — inside ``run_cmd``'s window between the
-	interrupt check and the subprocess registration, the gap #265 is about."""
+	"""Fire SIGINT once, when a leaf's first ``StartedEvent`` fires — inside ``run_cmd``'s window
+	between the interrupt check and the subprocess registration, the gap #265 is about."""
+
+	def __init__(self) -> None:
+		self.fired = False
 
 	async def setup(self, task: TaskNode) -> None:
 		return None
 
 	async def on_event(self, event: TaskEvent, states: Sequence[LeafState], ctx: None) -> None:
-		if isinstance(event, StartedEvent):
+		if isinstance(event, StartedEvent) and not self.fired:
+			self.fired = True
 			os.kill(os.getpid(), signal.SIGINT)
 
 	async def teardown(self, ctxs: tuple[None, ...]) -> None:

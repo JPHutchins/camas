@@ -138,18 +138,18 @@ else:  # pragma: no cover
 
 
 def interrupt_proc(
-	interrupts: Interrupts, states: list[LeafState], leaf_index: int, proc: Signalable
+	states: list[LeafState], leaf_index: int, proc: Signalable, presses: int
 ) -> None:
-	"""Bring one proc in line with the escalation so far — SIGINT, or kill once the kill press
-	has been reached — and mark its leaf Interrupting. ``step_interrupt`` applies this to every
-	registered proc; ``run_cmd`` applies it to a proc whose registration a landed interrupt
-	missed (#265).
+	"""Bring one proc in line with the escalation at ``presses`` Ctrl-C — SIGINT, or kill once
+	the kill press has been reached — and mark its leaf Interrupting. ``step_interrupt`` applies
+	this to every registered proc; ``run_cmd`` replays the missed presses to a proc whose
+	registration a landed interrupt missed (#265).
 	"""
-	if interrupts.count >= KILL_PRESSES:
+	if presses >= KILL_PRESSES:
 		proc.kill()
 	else:
 		proc.send_signal(signal.SIGINT)
-	states[leaf_index] = to_interrupting(states[leaf_index], interrupts.count)
+	states[leaf_index] = to_interrupting(states[leaf_index], presses)
 
 
 def step_interrupt(interrupts: Interrupts, states: list[LeafState]) -> None:
@@ -160,7 +160,7 @@ def step_interrupt(interrupts: Interrupts, states: list[LeafState]) -> None:
 			interrupts.main_task.cancel()
 		return
 	for leaf_index, proc in tuple(interrupts.procs.items()):
-		interrupt_proc(interrupts, states, leaf_index, proc)
+		interrupt_proc(states, leaf_index, proc, interrupts.count)
 
 
 async def await_run(
@@ -349,7 +349,10 @@ async def run_cmd(task: Task, leaf_index: int, ctx: RunContext) -> TaskResult:
 			return TaskResult(task_label(task), errored, leaf_identity(ctx, leaf_index))
 		ctx.interrupts.procs[leaf_index] = proc
 		if ctx.interrupts.landed():
-			interrupt_proc(ctx.interrupts, ctx.states, leaf_index, proc)
+			for press in range(1, ctx.interrupts.count + 1):
+				if proc.returncode is not None:
+					break
+				interrupt_proc(ctx.states, leaf_index, proc, press)
 		output: Final[list[bytes]] = []
 		try:
 			if proc.stdout is not None:  # pragma: no branch
