@@ -2070,3 +2070,13 @@ async def test_run_args_on_a_multi_leaf_task_is_an_error(tmp_path: Path) -> None
 	result = await serve.call(session, "camas_run", {"task": "grp", "args": ["-x"]})
 	assert result.isError
 	assert "only apply to Task" in _text(result)
+
+
+async def test_run_budget_paths_all_outside_repo_runs_nothing(tmp_path: Path) -> None:
+	"""With a budget, unusable paths are rejected before any keying walk — nothing runs."""
+	session = _observed_session({"lint": Task("echo hi", name="lint")}, None, tmp_path)
+	result = await serve.call(
+		session, "camas_run", {"task": "lint", "paths": ["/etc/passwd"], "under": 5.0}
+	)
+	assert not result.isError
+	assert "nothing to run" in _text(result)
