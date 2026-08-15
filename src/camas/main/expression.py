@@ -616,6 +616,6 @@ def resolve_refs(
 		case Task():
 			return node
 		case Group() as group:
-			return rebuilt(group, tuple(resolve_refs(t, defs, visiting) for t in group.tasks))
+			return rebuilt(group, *(resolve_refs(t, defs, visiting) for t in group.tasks))
 		case _:
 			assert_never(node)

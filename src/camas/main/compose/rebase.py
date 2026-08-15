@@ -223,7 +223,7 @@ def rebase_tree(node: TaskNode, rel: PurePosixPath, namespace: str, *, is_root: 
 		case Group() as group:
 			return rebuilt(
 				group,
-				tuple(rebase_tree(child, rel, namespace, is_root=False) for child in group.tasks),
+				*(rebase_tree(child, rel, namespace, is_root=False) for child in group.tasks),
 				name=qualify(group.name, namespace),
 				cwd=rebase_cwd(group.cwd, rel, is_root=is_root),
 				paths=rebase_paths(group.paths, rel),

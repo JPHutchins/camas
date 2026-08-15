@@ -69,7 +69,7 @@ def assign_key_name(node: TaskNode | Ref, key: str) -> TaskNode | Ref:
 				agent_format=agent_format,
 			)
 		case Group(name=None) as group:
-			return rebuilt(group, group.tasks, name=key)
+			return rebuilt(group, *group.tasks, name=key)
 		case _:
 			return node
 
@@ -217,7 +217,7 @@ def name_scope_bindings(scope: Mapping[str, object]) -> dict[str, TaskNode]:
 			case Task():
 				return source
 			case Group() as group:
-				return rebuilt(group, tuple(promote(ch) for ch in group.tasks))
+				return rebuilt(group, *(promote(ch) for ch in group.tasks))
 			case _:
 				assert_never(source)
 

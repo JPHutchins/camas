@@ -174,7 +174,7 @@ def with_agent_format(node: TaskNode, report_dir: Path) -> FormattedNode:
 		case Group() as group:
 			formatted = tuple(with_agent_format(c, report_dir) for c in group.tasks)
 			return FormattedNode(
-				rebuilt(group, tuple(f.node for f in formatted)),
+				rebuilt(group, *(f.node for f in formatted)),
 				tuple(p for f in formatted for p in f.report_paths),
 			)
 		case _:

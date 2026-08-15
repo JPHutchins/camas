@@ -17,7 +17,7 @@ from camas.v0.completion import Completion, Errored, Finished, Skipped
 from camas.v0.config import Agent, Claude, Config
 from camas.v0.effect import Effect
 from camas.v0.leaf_state import Completed, LeafState, Running, Waiting
-from camas.v0.task import GROUP_FIELDS, Group, Parallel, Sequential, Task, TaskNode
+from camas.v0.task import GROUP_FIELDS, Group, Parallel, Sequential, Task, TaskNode, rebuilt
 from camas.v0.task_event import CompletedEvent, OutputEvent, StartedEvent, TaskEvent
 
 HEADLINE: Final = frozenset(
@@ -90,13 +90,20 @@ def test_public_types_are_defined_in_the_version_package() -> None:
 
 
 def test_group_fields_track_every_group_constructor_kwarg() -> None:
-	"""Drift guard for :func:`camas.v0.task.rebuilt`: a new Group kwarg fails here until
-	``GROUP_FIELDS`` names it — so every rebuild site carries it by construction instead of
-	by hand (the silently-dropped-field bug class #270 kills)."""
-	keywords = tuple(
-		p.name for p in inspect.signature(Group).parameters.values() if p.kind is p.KEYWORD_ONLY
-	)
-	assert keywords == GROUP_FIELDS
+	"""Drift guard for :func:`camas.v0.task.rebuilt`: a new Group kwarg — on Group itself or on
+	either subclass — fails here until ``GROUP_FIELDS`` names it, so every rebuild site carries
+	it by construction instead of by hand (the silently-dropped-field bug class #270 kills)."""
+	for cls in (Group, Sequential, Parallel):
+		keywords = tuple(
+			p.name for p in inspect.signature(cls).parameters.values() if p.kind is p.KEYWORD_ONLY
+		)
+		assert keywords == GROUP_FIELDS, cls
+
+
+def test_rebuilt_rejects_unknown_fields() -> None:
+	"""A misspelled override fails loudly, as the spelled-out constructors did before."""
+	with pytest.raises(TypeError, match="nam"):
+		rebuilt(Sequential("a"), Task("b"), nam="x")
 
 
 def test_run_cli_lazy_export_is_engine_function() -> None:

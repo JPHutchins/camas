@@ -191,7 +191,7 @@ def _compose_scope(
 				children = tuple(resolve(child, field) for child in group.tasks)
 				if all(new is old for new, old in zip(children, group.tasks, strict=True)):
 					return group
-				return rebuilt(group, children)
+				return rebuilt(group, *children)
 			case _:
 				assert_never(node)
 

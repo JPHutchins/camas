@@ -273,7 +273,7 @@ def scope_to_changed(node: TaskNode, changed: tuple[str, ...]) -> TaskNode | Non
 			kept = tuple(
 				s for s in (scope_to_changed(c, changed) for c in group.tasks) if s is not None
 			)
-			return rebuilt(group, kept) if kept else None
+			return rebuilt(group, *kept) if kept else None
 		case _:
 			assert_never(node)
 

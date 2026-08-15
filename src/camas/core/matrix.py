@@ -142,8 +142,9 @@ def specialize_node(task: TaskNode, binding: MatrixBinding, suffix: str) -> Task
 	"""Recursively specialize an entire task tree with concrete variable values.
 
 	Runs on a subtree :func:`expand_matrix` has already expanded, where no node carries a ``matrix``
-	or ``variants`` any more — so the rebuilt groups carry none (:func:`rebuilt` passes every field
-	verbatim, unexpanded trees included).
+	or ``variants`` any more — so in this pipeline the rebuilt groups carry none. (:func:`rebuilt`
+	passes every field verbatim, so a caller handing it an unexpanded tree keeps the matrix and
+	variants instead of silently losing them.)
 
 	>>> specialize_node(Task("test {X}"), (VarBinding("X", "1"),), "[X=1]")
 	Task(cmd='test 1', name='test 1 [X=1]', env={'X': '1'}, cwd=None)
@@ -154,7 +155,7 @@ def specialize_node(task: TaskNode, binding: MatrixBinding, suffix: str) -> Task
 		case Group() as group:
 			return rebuilt(
 				group,
-				tuple(specialize_node(t, binding, suffix) for t in group.tasks),
+				*(specialize_node(t, binding, suffix) for t in group.tasks),
 				name=f"{group.name} {suffix}" if group.name is not None else None,
 				env={k: substitute_in_str(v, binding) for k, v in group.env.items()},
 				cwd=substitute_cwd(group.cwd, binding),
@@ -383,7 +384,7 @@ def apply_overrides(task: TaskNode, overrides: Mapping[str, tuple[str, ...]]) ->
 		case Group() as group:
 			return rebuilt(
 				group,
-				tuple(apply_overrides(t, overrides) for t in group.tasks),
+				*(apply_overrides(t, overrides) for t in group.tasks),
 				matrix=applied(group.matrix),
 				variants=kept(group.variants),
 			)
@@ -591,15 +592,7 @@ def expand_matrix(
 				expand_matrix(t, seq_env, seq_cwd, seq_paths, seq_when) for t in tasks
 			)
 			if matrix is None and variants is None:
-				return Sequential(
-					*seq_expanded,
-					name=task.name,
-					env=env,
-					cwd=cwd,
-					help=task.help,
-					paths=paths,
-					when=when,
-				)
+				return rebuilt(task, *seq_expanded)
 			return expand_sequential_matrix(
 				seq_expanded, node_bindings(matrix, variants), task.name, env, cwd, task.help
 			)
@@ -614,15 +607,7 @@ def expand_matrix(
 				expand_matrix(t, par_env, par_cwd, par_paths, par_when) for t in tasks
 			)
 			if matrix is None and variants is None:
-				return Parallel(
-					*par_expanded,
-					name=task.name,
-					env=env,
-					cwd=cwd,
-					help=task.help,
-					paths=paths,
-					when=when,
-				)
+				return rebuilt(task, *par_expanded)
 			return expand_parallel_matrix(
 				par_expanded, node_bindings(matrix, variants), task.name, env, cwd, task.help
 			)
