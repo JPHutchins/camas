@@ -503,8 +503,8 @@ G = TypeVar("G", bound=Group)
 def rebuilt(group: G, *children: TaskNode, **changes: object) -> G:
 	"""``group`` rebuilt around ``children``: fields named in ``changes`` take the new value, every
 	other field is carried verbatim — so a Group field added later is carried by construction at
-	every rebuild site, instead of being listed (and missable) at each. A field name ``changes``
-	does not carry is a ``TypeError``, as the spelled-out constructors raised it.
+	every rebuild site, instead of being listed (and missable) at each. A ``changes`` name outside
+	:data:`GROUP_FIELDS` is a ``TypeError``, as the spelled-out constructors raised it.
 
 	>>> rebuilt(Parallel(Task("a"), matrix={"x": ("1",)}), Task("b"), Task("c"))
 	Parallel(tasks=(Task(cmd='b', name=None, env={}, cwd=None), Task(cmd='c', name=None, env={}, cwd=None)), name=None, matrix={'x': ('1',)}, env={}, cwd=None)
@@ -516,9 +516,9 @@ def rebuilt(group: G, *children: TaskNode, **changes: object) -> G:
 	Raises:
 		TypeError: a ``changes`` name outside :data:`GROUP_FIELDS`.
 	"""
-	unknown = changes.keys() - set(GROUP_FIELDS)
+	unknown = [name for name in changes if name not in GROUP_FIELDS]
 	if unknown:
-		raise TypeError(f"rebuilt() got an unexpected keyword argument {next(iter(unknown))!r}")
+		raise TypeError(f"rebuilt() got an unexpected keyword argument {unknown[0]!r}")
 	return type(group)(
 		*children,
 		**cast(

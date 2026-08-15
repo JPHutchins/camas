@@ -142,9 +142,9 @@ def specialize_node(task: TaskNode, binding: MatrixBinding, suffix: str) -> Task
 	"""Recursively specialize an entire task tree with concrete variable values.
 
 	Runs on a subtree :func:`expand_matrix` has already expanded, where no node carries a ``matrix``
-	or ``variants`` any more — so in this pipeline the rebuilt groups carry none. (:func:`rebuilt`
-	passes every field verbatim, so a caller handing it an unexpanded tree keeps the matrix and
-	variants instead of silently losing them.)
+	or ``variants`` any more — so in this pipeline the rebuilt groups carry none. (An unexpanded
+	tree is out of contract; :func:`rebuilt` carries its matrix and variants verbatim,
+	un-substituted, rather than silently dropping them.)
 
 	>>> specialize_node(Task("test {X}"), (VarBinding("X", "1"),), "[X=1]")
 	Task(cmd='test 1', name='test 1 [X=1]', env={'X': '1'}, cwd=None)

@@ -94,10 +94,11 @@ def test_group_fields_track_every_group_constructor_kwarg() -> None:
 	either subclass — fails here until ``GROUP_FIELDS`` names it, so every rebuild site carries
 	it by construction instead of by hand (the silently-dropped-field bug class #270 kills)."""
 	for cls in (Group, Sequential, Parallel):
-		keywords = tuple(
-			p.name for p in inspect.signature(cls).parameters.values() if p.kind is p.KEYWORD_ONLY
-		)
+		params = tuple(inspect.signature(cls).parameters.values())
+		keywords = tuple(p.name for p in params if p.kind is p.KEYWORD_ONLY)
 		assert keywords == GROUP_FIELDS, cls
+		positional = tuple((p.name, p.kind) for p in params if p.kind is not p.KEYWORD_ONLY)
+		assert positional == (("tasks", inspect.Parameter.VAR_POSITIONAL),), cls
 
 
 def test_rebuilt_rejects_unknown_fields() -> None:
