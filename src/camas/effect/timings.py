@@ -84,7 +84,7 @@ class Timings:
 
 	async def teardown(self, ctxs: tuple[TimingsContext, ...]) -> None:
 		ctx: Final = ctxs[0]  # zuban: ignore[misc] # zuban defies PEP591
-		if ctx.identities is not None:
+		if ctx.identities:
 			leaves = [
 				(ctx.identities[idx], elapsed)
 				for idx, state in enumerate(ctx.state.states)

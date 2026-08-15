@@ -701,8 +701,10 @@ async def run_for(
 		return error_result(str(e))
 	changed = to_changed(req.paths, base_for(session))
 	expanded = expand_matrix(node)
+	if requested_but_unusable(req.paths, changed):
+		return nothing_covered_result(session, req.paths)
 	observed = timings.observed(session.camas_dir, expanded, changed)
-	scoped = None if requested_but_unusable(req.paths, changed) else observed.node
+	scoped = observed.node
 	if scoped is None:
 		return nothing_covered_result(session, req.paths)
 	node = apply_passthrough(scoped, tuple(req.args)) if req.args else scoped
@@ -743,7 +745,7 @@ def record_gate(camas_dir: Path | None, outcome: GateOutcome, changed: tuple[str
 	``agent_format`` did to each command after scoping.
 	"""
 	if outcome.result is not None:
-		timings.Observed(camas_dir, timings.scope_of(changed), outcome.keys).record(outcome.result)
+		timings.record_observed(camas_dir, timings.leaves_of(outcome.result))
 
 
 def empty_run_response() -> wire.RunResponse:
@@ -872,11 +874,12 @@ async def run_budget(
 		empty = empty_run_response()
 		text = f"{budget_headline(report)}\n\nNothing ran — no leaf fit the budget."
 		return success(with_warning(session, text), attach_budget(empty, report), session.compat)
-	keying: Final = timings.observed(session.camas_dir, unscoped, changed)
-	scoped_source = None if requested_but_unusable(req.paths, changed) else keying.node
-	if scoped_source is None:
+	if requested_but_unusable(req.paths, changed):
 		return nothing_covered_result(session, req.paths)
-	run_node: Final = scoped_source
+	keying: Final = timings.observed(session.camas_dir, unscoped, changed)
+	if keying.node is None:
+		return nothing_covered_result(session, req.paths)
+	run_node: Final = keying.node
 	plan = plan._replace(node=run_node)
 	if req.dry_run:
 		resp = attach_budget(to_plan_response(run_node), report)

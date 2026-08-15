@@ -270,35 +270,6 @@ def leaf_key(task: Task, scope: int) -> CacheKey:
 	return CacheKey(task_label(resolve_default_leaf(task)), leaf_scope(task, scope))
 
 
-def observation_keys(
-	expanded: TaskNode, changed: tuple[str, ...], scope: int
-) -> dict[TaskLabel, CacheKey]:
-	"""The key each surviving leaf's observation belongs under, by the label that leaf will report.
-
-	Two things differ from the reported label, and both have to be undone here or the observation
-	lands where no budget looks: scoping rewrote a nameless leaf's command, and a leaf that ignores
-	the changed paths belongs at scope ``0`` rather than this run's.
-	"""
-	from .scope import scoped_leaves
-
-	return {
-		task_label(scoped): leaf_key(task, scope)
-		for task, scoped in scoped_leaves(expanded, changed)
-	}
-
-
-def leaf_identities(node: TaskNode, changed: tuple[str, ...]) -> tuple[CacheKey, ...]:
-	"""The cache key each surviving scoped leaf belongs under, in the order
-	``scope_to_changed(node, changed)`` runs them — computed from the pre-scope leaf, so a run can
-	carry its leaves' identity through every command rewrite instead of reconstructing it from the
-	labels they report.
-	"""
-	from .scope import scoped_leaves
-
-	scope = scope_of(changed)
-	return tuple(leaf_key(original, scope) for original, _scoped in scoped_leaves(node, changed))
-
-
 def observed(camas_dir: Path | None, expanded: TaskNode, changed: Sequence[str]) -> Observed:
 	"""How to run and record a run of ``expanded`` scoped to ``changed`` — the one derivation of
 	everything keying and execution need, from a single scoped-leaves walk.

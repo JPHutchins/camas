@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Final
 from camas import Parallel, Sequential, Task
 from camas.core import timings
 from camas.core.completion import RunResult, TaskResult
-from camas.core.scope import scope_to_changed, scoped_leaves
+from camas.core.scope import scoped_leaves
 from camas.core.traversal import flatten_leaves
 from camas.v0.completion import Errored, Finished, Skipped, Stopped
 
@@ -223,7 +223,7 @@ def test_a_label_a_row_cannot_carry_is_dropped_rather_than_misread(tmp_path: Pat
 	assert timings.load(tmp_path) == {cache_key("real"): timings.TaskTiming(0.5, 1)}
 
 
-def test_leaf_identities_align_with_the_scoped_run_order() -> None:
+def test_observed_identities_align_with_the_scoped_run_order() -> None:
 	"""The identities tuple is parallel to the leaves the scoped tree runs, in the same order —
 	the invariant every caller that threads identities into run() relies on."""
 	tree = Parallel(
@@ -231,12 +231,12 @@ def test_leaf_identities_align_with_the_scoped_run_order() -> None:
 		Task("pytest", name="test"),
 	)
 	changed = ("src/app.py",)
-	scoped = scope_to_changed(tree, changed)
-	assert scoped is not None
-	assert [info.task.cmd for info in flatten_leaves(scoped)] == [
+	keying = timings.observed(None, tree, changed)
+	assert keying.node is not None
+	assert [info.task.cmd for info in flatten_leaves(keying.node)] == [
 		s.cmd for _original, s in scoped_leaves(tree, changed)
 	]
-	assert len(timings.leaf_identities(tree, changed)) == len(list(flatten_leaves(scoped)))
+	assert len(keying.identities) == len(list(flatten_leaves(keying.node)))
 
 
 def test_leaves_of_prefers_the_carried_identity_over_the_label_mapping() -> None:

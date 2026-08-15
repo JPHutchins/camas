@@ -510,8 +510,20 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 				else ()
 			)
 			cli_expanded: Final = expand_matrix(resolved)
-			cli_scope: Final = timings.scope_of(cli_changed)
 			cli_requested: Final[tuple[str, ...]] = tuple(args.paths or ())
+			try:
+				effects = resolve_effects(
+					args.effects,
+					effective_config,
+					github=in_github,
+					agent=in_agent,
+					scope_effects=scope_effects,
+					base=source.parent if source is not None else None,
+				)
+			except ValueError as e:
+				print(f"error: --effects: {e}", file=sys.stderr)
+				sys.exit(2)
+
 			if requested_but_unusable(cli_requested, cli_changed):
 				# Checked ahead of both branches below, since --under exits before the scoping one is
 				# reached.
@@ -522,17 +534,7 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 				sys.exit(0)
 
 			if args.under is not None:
-				# run_under keys the Timings effects itself once the budgeted tree is known.
 				try:
-					effects = resolve_effects(
-						args.effects,
-						effective_config,
-						github=in_github,
-						agent=in_agent,
-						scope_effects=scope_effects,
-						base=source.parent if source is not None else None,
-						scope=cli_scope,
-					)
 					budget_jobs: Final = resolve_jobs(args.jobs)
 				except ValueError as e:
 					print(f"error: {e}", file=sys.stderr)
@@ -553,29 +555,16 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 				)
 
 			cli_observed: Final = timings.observed(camas_dir, cli_expanded, cli_changed)
-			try:
-				effects = resolve_effects(
-					args.effects,
-					effective_config,
-					github=in_github,
-					agent=in_agent,
-					scope_effects=scope_effects,
-					base=source.parent if source is not None else None,
-					scope=cli_observed.scope,
-					keys=cli_observed.keys,
-					identities=cli_observed.identities,
-				)
-			except ValueError as e:
-				print(f"error: --effects: {e}", file=sys.stderr)
-				sys.exit(2)
+			effects = keyed_to_run(
+				effects, cli_observed.scope, cli_observed.keys, cli_observed.identities
+			)
 
-			if args.paths is not None:
-				# Without a budget there is nothing to order against, so scope up front.
-				scoped = cli_observed.node
-				if scoped is None:
-					print(f"No task leaf covers {', '.join(cli_changed)} — nothing to run.")
-					sys.exit(0)
-				resolved = scoped
+			# Without a budget there is nothing to order against, so scope up front. With no paths
+			# named, this is the default-resolved tree — the same form run() would resolve anyway.
+			if cli_observed.node is None:
+				print(f"No task leaf covers {', '.join(cli_changed)} — nothing to run.")
+				sys.exit(0)
+			resolved = cli_observed.node
 
 			try:
 				task: Final = (

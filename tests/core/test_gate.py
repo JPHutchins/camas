@@ -215,8 +215,9 @@ async def test_gate_tags_residual_with_agent_format_kind() -> None:
 
 async def test_gate_canonical_survives_agent_format_rewriting_the_command() -> None:
 	"""``agent_format`` appends to the command *after* scoping already rewrote it, so a nameless leaf
-	reports a third label again. The map has to be keyed by what the run reports, or the observation
-	lands under something the budget cannot read — the #218 failure, one rewrite further along.
+	reports a third label again. The carried identity has to be computed before either rewrite, or
+	the observation lands under something the budget cannot read — the #218 failure, one rewrite
+	further along.
 	"""
 	leaf = Task(
 		("python", "-c", "pass", "{paths}"),
@@ -227,4 +228,4 @@ async def test_gate_canonical_survives_agent_format_rewriting_the_command() -> N
 	assert outcome.result is not None
 	reported = outcome.result.results[0].name
 	assert "--output-format sarif" in reported
-	assert outcome.keys[reported] == CacheKey("python -c pass .", 1)
+	assert outcome.result.results[0].identity == CacheKey("python -c pass .", 1)
