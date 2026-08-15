@@ -684,3 +684,13 @@ def test_fix_cli_paths_all_outside_repo_fix_nothing(
 	monkeypatch.chdir(tmp_path)
 	assert fix_cli(["--paths", "/etc/passwd"]) == 0
 	assert not (tmp_path / "fixed.txt").exists()
+
+
+def test_fix_cli_dry_run_reports_unusable_paths(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	"""A dry run always reports what it found — even when every path normalized away."""
+	(tmp_path / "tasks.py").write_text(_TIDY.format(scope="."))
+	monkeypatch.chdir(tmp_path)
+	assert fix_cli(["--dry-run", "--paths", "/etc/passwd"]) == 0
+	assert "nothing would run" in capsys.readouterr().out
