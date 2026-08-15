@@ -190,6 +190,18 @@ def subprocess_env(merged: dict[str, str], *, color: bool = True) -> dict[str, s
 	return FORCED_COLOR | base
 
 
+def drop_case_variants(overlay: dict[str, str], inherited: dict[str, str]) -> dict[str, str]:
+	"""``inherited`` minus entries whose names collide case-insensitively with an ``overlay`` key —
+	Windows env blocks are case-insensitive, so a differently-cased pre-existing entry would shadow
+	the overlay in the child.
+
+	>>> drop_case_variants({"MYPYPATH": "new"}, {"Mypypath": "old", "OTHER": "kept"})
+	{'OTHER': 'kept'}
+	"""
+	folded = {k.casefold() for k in overlay}
+	return {k: v for k, v in inherited.items() if k.casefold() not in folded}
+
+
 def spawn_cwd(base: Path | None, cwd: Path | None) -> Path | None:
 	"""A leaf's spawn-time cwd: ``cwd`` is authored relative to ``base``; an absolute ``cwd``,
 	an unset ``cwd``, or an unset ``base`` each pass through unresolved.
@@ -288,13 +300,18 @@ async def run_cmd(task: Task, leaf_index: int, ctx: RunContext) -> TaskResult:
 		await ctx.dispatch(leaf_index, StartedEvent(task, leaf_index, datetime.now()))
 		argv: Final = resolve_cmd(task.cmd)
 		cwd: Final = spawn_cwd(ctx.base, task.cwd)
+		inherited: Final = (
+			drop_case_variants(dict(task.env), dict(os.environ))
+			if sys.platform == "win32"
+			else dict(os.environ)
+		)
 		try:
 			proc: Final = await asyncio.create_subprocess_exec(
 				*argv,
 				stdin=ctx.child_stdin,
 				stdout=asyncio.subprocess.PIPE,
 				stderr=STDOUT,
-				env=subprocess_env({**os.environ, **task.env}, color=ctx.leaf_color),
+				env=subprocess_env({**inherited, **task.env}, color=ctx.leaf_color),
 				cwd=cwd,
 			)
 		except OSError as exc:

@@ -264,33 +264,60 @@ def camas_search_path() -> Path:
 
 UNRESOLVED_CAMAS: Final = {
 	"ty": "Cannot resolve imported module `camas`",
-	"mypy": 'module named "camas"',
+	"mypy": 'Cannot find implementation or library stub for module named "camas"',
 }
-"""Each checker's phrasing for the package itself — the answer that always earns a second run."""
+"""Each checker's phrasing for the package itself — the fallback when no diagnostic code appears."""
 
 DOTTED_CAMAS: Final = {
 	"ty": re.compile(r"Cannot resolve imported module `(camas\.[\w]+(?:\.[\w]+)*)`"),
-	"mypy": re.compile(r'module named "(camas\.[\w]+(?:\.[\w]+)*)"'),
+	"mypy": re.compile(
+		r'Cannot find implementation or library stub for module named "(camas\.[\w]+(?:\.[\w]+)*)"'
+	),
 }
-"""Each checker's phrasing for a submodule spelling."""
+
+DIAGNOSTIC_CODE: Final = {
+	"ty": re.compile(r"error\[unresolved-import\]"),
+	"mypy": re.compile(r"\[import-not-found\]"),
+}
+"""Each checker's structured code for the same failure — the primary trigger, which outlives prose."""
+
+CAMAS_TOKEN: Final = {
+	"ty": re.compile(r"`(camas(?:\.[\w]+)*)`"),
+	"mypy": re.compile(r'"(camas(?:\.[\w]+)*)"'),
+}
 
 
 def unresolved_camas_spellings(name: CheckerName, output: str) -> tuple[str, ...]:
-	"""Every camas spelling the checker reported unresolved: ``("camas",)`` for the package
+	r"""Every camas spelling the checker reported unresolved: ``("camas",)`` for the package
 	itself, else the dotted submodules, deduplicated in order. Empty when nothing names camas.
 
-	>>> unresolved_camas_spellings("mypy", 't.py:1: error: … stub for module named "camas"')
+	>>> unresolved_camas_spellings("mypy", 't.py:1: error: … stub for module named "camas"  [import-not-found]')
 	('camas',)
-	>>> unresolved_camas_spellings("mypy", 't.py:1: error: … stub for module named "camas.mcp"')
+	>>> unresolved_camas_spellings("mypy", 't.py:2: error: … stub for module named "numpy"  [import-not-found]\n'
+	... 't.py:3: error: … stub for module named "camas.mcp"  [import-not-found]')
 	('camas.mcp',)
 	>>> unresolved_camas_spellings("ty", "error[unresolved-import]: Cannot resolve imported module `camas.mcp`")
 	('camas.mcp',)
-	>>> unresolved_camas_spellings("mypy", 't.py:1: error: … stub for module named "camas_extra"')
+	>>> unresolved_camas_spellings("mypy", 't.py:1: error: Cannot find implementation or library stub for module named "camas"')
+	('camas',)
+	>>> unresolved_camas_spellings("mypy", 't.py:1: error: Cannot find implementation or library stub for module named "camas_extra"')
+	()
+	>>> unresolved_camas_spellings("mypy", 't.py:1: error: Duplicate module named "camas" (also at "/x/camas")')
 	()
 	"""
 	from ..core.render import strip_ansi
 
 	stripped = strip_ansi(output)
+	coded = tuple(
+		dict.fromkeys(
+			token
+			for line in stripped.splitlines()
+			if DIAGNOSTIC_CODE[name].search(line)
+			for token in CAMAS_TOKEN[name].findall(line)
+		)
+	)
+	if coded:
+		return coded
 	if UNRESOLVED_CAMAS[name] in stripped:
 		return ("camas",)
 	return tuple(dict.fromkeys(DOTTED_CAMAS[name].findall(stripped)))
@@ -303,19 +330,24 @@ def running_camas_has(module: str) -> bool:
 	True
 	>>> running_camas_has("camas.definitely_absent")
 	False
+	>>> running_camas_has("camas.mcp.wire.anything")
+	False
 	"""
-	return importlib.util.find_spec(module) is not None
+	try:
+		return importlib.util.find_spec(module) is not None
+	except ModuleNotFoundError:
+		return False
 
 
 def earns_the_told_run(name: CheckerName, output: str) -> bool:
 	"""Whether the checker's answer warrants asking it again with camas's location named: camas
 	provides something the checker could not resolve.
 
-	>>> earns_the_told_run("mypy", 't.py:1: error: … stub for module named "camas"')
+	>>> earns_the_told_run("mypy", 't.py:1: error: Cannot find implementation or library stub for module named "camas"')
 	True
-	>>> earns_the_told_run("mypy", 't.py:1: error: … stub for module named "camas.mcp"')
+	>>> earns_the_told_run("mypy", 't.py:1: error: Cannot find implementation or library stub for module named "camas.mcp"')
 	True
-	>>> earns_the_told_run("mypy", 't.py:1: error: … stub for module named "camas.mpc"')
+	>>> earns_the_told_run("mypy", 't.py:1: error: Cannot find implementation or library stub for module named "camas.mpc"')
 	False
 	>>> earns_the_told_run("ty", "error[unresolved-import]: Cannot resolve imported module `camas.mpc`")
 	False
@@ -333,17 +365,32 @@ def refuses_the_search_path(output: str) -> bool:
 	Only reachable on the second run, and only from a layout that holds camas *under* one of mypy's
 	site-packages rather than in it — where mypy can neither resolve camas nor accept being told. The
 	first run's diagnostic is the honest one there, so it is what gets reported — with the refusal
-	explained (:func:`refusal_note`). The full sentence is matched, so a tasks file echoing the words
-	into its own diagnostics cannot trip it.
+	explained (:func:`refusal_note`). The full sentence is matched on a line mypy did not emit as an
+	error, so a tasks file echoing the words into an error line cannot trip it.
 
 	>>> refuses_the_search_path("/x/site-packages is in the MYPYPATH. Please remove it.")
 	True
-	>>> refuses_the_search_path('t.py:1: error: "is in the MYPYPATH" echoed from source')
+	>>> refuses_the_search_path('t.py:1: error: "is in the MYPYPATH. Please remove it." echoed from source')
 	False
 	"""
 	from ..core.render import strip_ansi
 
-	return "is in the MYPYPATH. Please remove it." in strip_ansi(output)
+	return any(
+		"is in the MYPYPATH. Please remove it." in line and "error:" not in line
+		for line in strip_ansi(output).splitlines()
+	)
+
+
+def rejected_the_ty_flag(output: str) -> bool:
+	"""Whether ty's told run died on the flag camas added rather than on the check — an old ty
+	predating ``--extra-search-path`` keeps its first, honest answer.
+
+	>>> rejected_the_ty_flag("error: unexpected argument '--extra-search-path' found")
+	True
+	>>> rejected_the_ty_flag("error[unresolved-import]: Cannot resolve imported module `camas`")
+	False
+	"""
+	return "unexpected argument" in output and "--extra-search-path" in output
 
 
 def refusal_note(camas_root: Path) -> str:
@@ -367,6 +414,17 @@ def mypypath(inherited: str, camas_root: Path) -> str:
 	['stubs', 'site']
 	"""
 	return os.pathsep.join((*(p for p in inherited.split(os.pathsep) if p), str(camas_root)))
+
+
+def inherited_mypypath() -> str:
+	"""The environment's existing MYPYPATH value — found case-insensitively on Windows, where the
+	env block does not distinguish ``Mypypath`` from ``MYPYPATH``.
+	"""
+	return (
+		next((value for key, value in os.environ.items() if key.casefold() == "mypypath"), "")
+		if sys.platform == "win32"
+		else os.environ.get("MYPYPATH", "")
+	)
 
 
 def checker_invocation(found: FoundChecker, tasks_py: Path) -> CheckerInvocation:
@@ -423,16 +481,6 @@ def told_where_camas_is(
 			assert_never(found.name)
 
 
-def drop_case_variants(overlay: dict[str, str], inherited: Mapping[str, str]) -> dict[str, str]:
-	"""``inherited`` minus entries whose names collide case-insensitively with an ``overlay`` key.
-
-	>>> drop_case_variants({"MYPYPATH": "new"}, {"Mypypath": "old", "OTHER": "kept"})
-	{'OTHER': 'kept'}
-	"""
-	folded = {k.casefold() for k in overlay}
-	return {k: v for k, v in inherited.items() if k.casefold() not in folded}
-
-
 def merge_env(overlay: dict[str, str]) -> dict[str, str] | None:
 	"""``os.environ`` under ``overlay`` — Windows env names are case-insensitive, so existing
 	keys matching an overlay key case-insensitively are dropped first, or the child may read the
@@ -443,8 +491,12 @@ def merge_env(overlay: dict[str, str]) -> dict[str, str] | None:
 	"""
 	if not overlay:
 		return None
+	from ..core.execution import drop_case_variants
+
 	inherited = (
-		drop_case_variants(overlay, os.environ) if sys.platform == "win32" else dict(os.environ)
+		drop_case_variants(overlay, dict(os.environ))
+		if sys.platform == "win32"
+		else dict(os.environ)
 	)
 	return {**inherited, **overlay}
 
@@ -486,8 +538,10 @@ def run_typecheck(tasks_py: Path) -> TypeCheckResult:
 	camas_root = camas_search_path()
 	told = run_checker(
 		found,
-		told_where_camas_is(found, tasks_py, camas_root, os.environ.get("MYPYPATH", "")),
+		told_where_camas_is(found, tasks_py, camas_root, inherited_mypypath()),
 	)
+	if found.name == "ty" and isinstance(told, CheckerErr) and rejected_the_ty_flag(told.output):
+		return result
 	if (
 		found.name == "mypy"
 		and isinstance(told, CheckerErr)

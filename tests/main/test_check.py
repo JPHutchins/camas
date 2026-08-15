@@ -159,23 +159,33 @@ requires_sibling_mypy = pytest.mark.skipif(
 )
 
 
-def _run_real_mypy(source: Path, *args: str, env: Mapping[str, str] | None = None) -> str:
-	inherited = {k: v for k, v in os.environ.items() if k not in ("MYPYPATH", "PYTHONPATH")}
+def _run_real_checker(argv: Sequence[str], env: Mapping[str, str] | None = None) -> str:
 	proc = subprocess.run(
-		[str(_SIBLING_MYPY), *args, str(source)],
+		list(argv),
 		capture_output=True,
 		text=True,
 		encoding="utf-8",
 		errors="replace",
 		check=False,
-		env={**inherited, **env} if env else inherited,
+		env=env,
 	)
 	return proc.stdout + proc.stderr
+
+
+def _run_real_mypy(source: Path, *args: str, env: Mapping[str, str] | None = None) -> str:
+	inherited = {k: v for k, v in os.environ.items() if k not in ("MYPYPATH", "PYTHONPATH")}
+	return _run_real_checker(
+		(str(_SIBLING_MYPY), *args, str(source)),
+		{**inherited, **env} if env else inherited,
+	)
 
 
 UNRESOLVED_CAMAS: Final = (
 	'tasks.py:1: error: Cannot find implementation or library stub for module named "camas"'
 )
+
+
+TY_UNRESOLVED_CAMAS: Final = "error[unresolved-import]: Cannot resolve imported module `camas`"
 
 
 SUBMODULE_UNRESOLVED_CAMAS: Final = (
@@ -256,6 +266,7 @@ def test_a_checker_that_resolves_camas_is_never_told(
 		("ty", "error[unresolved-import]: Cannot resolve imported module `camas`"),
 		("ty", "error[unresolved-import]: Cannot resolve imported module `camas.mcp`"),
 		("mypy", UNRESOLVED_CAMAS),
+		("mypy", UNRESOLVED_CAMAS + "  [import-not-found]"),
 		("mypy", SUBMODULE_UNRESOLVED_CAMAS),
 	],
 )
@@ -380,7 +391,7 @@ def test_a_told_answer_echoing_the_refusal_words_is_still_the_answer(
 	"""
 	envs: list[Mapping[str, str] | None] = []
 	echo: Final = (
-		'tasks.py:2: error: x = "is in the MYPYPATH"  [assignment]\n'
+		'tasks.py:2: error: x = "is in the MYPYPATH. Please remove it."  [assignment]\n'
 		'tasks.py:3: error: Argument 1 has incompatible type "int"'
 	)
 
@@ -410,10 +421,33 @@ def test_a_missing_submodule_camas_does_not_have_is_not_rerun(
 	assert len(envs) == 1
 
 
+def test_an_old_ty_that_rejects_the_flag_keeps_the_first_answer(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	"""A PATH-found ty predating --extra-search-path dies on the flag camas added; its first,
+	honest unresolved-import answer is the one to report, not the CLI usage error.
+	"""
+	envs: list[Mapping[str, str] | None] = []
+	usage: Final = "error: unexpected argument '--extra-search-path' found"
+
+	monkeypatch.setattr(check_mod, "find_typechecker", _stub_found_ty)
+	monkeypatch.setattr(
+		subprocess,
+		"run",
+		_spawn_recording(envs, ((1, TY_UNRESOLVED_CAMAS), (2, usage))),
+	)
+	result = run_typecheck(tmp_path / "tasks.py")
+	assert isinstance(result, CheckerErr)
+	assert result.output == TY_UNRESOLVED_CAMAS
+
+
 def test_windows_merge_drops_case_variants_of_overlaid_keys(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-	monkeypatch.setenv("Mypypath", "stale")
+	"""A differently-cased inherited entry is read into the told value (priority kept) and dropped
+	from the child env, or Windows would resolve the stale entry over the overlay.
+	"""
+	monkeypatch.setenv("Mypypath", "stubs")
 	monkeypatch.setattr(sys, "platform", "win32")
 	envs: list[Mapping[str, str] | None] = []
 
@@ -422,7 +456,7 @@ def test_windows_merge_drops_case_variants_of_overlaid_keys(
 	assert isinstance(run_typecheck(tmp_path / "tasks.py"), CheckerOk)
 	assert envs[1] is not None
 	assert "Mypypath" not in envs[1]
-	assert "MYPYPATH" in envs[1]
+	assert envs[1]["MYPYPATH"] == f"stubs{os.pathsep}{camas_search_path()}"
 
 
 def test_camas_search_path_holds_the_running_camas() -> None:
@@ -563,16 +597,11 @@ def test_real_mypy_refuses_its_own_site_packages(tmp_path: Path) -> None:
 	source = tmp_path / "tasks.py"
 	source.write_text("from camas import Task\n")
 	site_packages: Final = Path(sysconfig.get_paths()["purelib"])
-	proc = subprocess.run(
-		[str(_SIBLING_MYPY), str(source)],
-		capture_output=True,
-		text=True,
-		encoding="utf-8",
-		errors="replace",
-		check=False,
-		env={**os.environ, "MYPYPATH": str(site_packages)},
+	output = _run_real_checker(
+		(str(_SIBLING_MYPY), str(source)),
+		{**os.environ, "MYPYPATH": str(site_packages)},
 	)
-	assert refuses_the_search_path(proc.stdout + proc.stderr)
+	assert refuses_the_search_path(output)
 
 
 @requires_ty
@@ -633,15 +662,10 @@ def test_real_ty_pins_the_unresolved_camas_spellings(
 	source = tmp_path / "tasks.py"
 	for text, earns in (("from camas import Task\n", True), ("import camas.mpc\n", False)):
 		source.write_text(text)
-		proc = subprocess.run(
-			[str(found.path), "check", str(source)],
-			capture_output=True,
-			text=True,
-			encoding="utf-8",
-			errors="replace",
-			check=False,
+		assert (
+			earns_the_told_run("ty", _run_real_checker((str(found.path), "check", str(source))))
+			== earns
 		)
-		assert earns_the_told_run("ty", proc.stdout + proc.stderr) == earns
 
 
 def test_run_typecheck_no_checker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
