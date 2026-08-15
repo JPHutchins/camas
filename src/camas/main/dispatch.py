@@ -30,7 +30,7 @@ from ..core.matrix import (
 	unfilled_required_axes,
 )
 from ..core.render import print_tree, render_tree_lines
-from ..core.scope import requested_but_unusable, scoped_or_default, to_changed
+from ..core.scope import requested_but_unusable, to_changed, with_default_paths
 from ..core.task import did_you_mean, task_label
 from ..v0.config import Config
 from .argv import (
@@ -215,7 +215,12 @@ def fix_cli(argv: list[str]) -> int:
 	requested = args.paths or (stdin or ())
 	changed = to_changed(requested, base)
 	expanded = expand_matrix(node)
-	scoped = scoped_or_default(expanded, requested, changed)
+	keying: timings.Observed | None
+	if requested_but_unusable(requested, changed):
+		keying = None
+	else:
+		keying = timings.observed(state.config.camas_path(base), expanded, changed)
+	scoped = keying.node if keying is not None else None
 	if args.dry_run:
 		if scoped is None:
 			print("No leaves cover the changed paths — nothing would run.")
@@ -223,7 +228,7 @@ def fix_cli(argv: list[str]) -> int:
 			plan = "\n".join(render_tree_lines(scoped, show_cmd=True, color=False))
 			print(f"Dry run — resolved path-scoped plan, nothing executed:\n{plan}")
 		return 0
-	if scoped is None:
+	if scoped is None or keying is None:
 		return 0
 	result = asyncio.run(
 		run(
@@ -232,10 +237,10 @@ def fix_cli(argv: list[str]) -> int:
 			jobs=None,
 			base=base,
 			leaf_color=state.config.leaf_color,
-			identities=timings.leaf_identities(expanded, changed),
+			identities=keying.identities,
 		)
 	)
-	timings.observed(state.config.camas_path(base), expanded, changed).record(result)
+	keying.record(result)
 	_ = finish_run(result)
 	return 0
 
@@ -505,23 +510,7 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 				else ()
 			)
 			cli_expanded: Final = expand_matrix(resolved)
-			cli_observed: Final = timings.observed(camas_dir, cli_expanded, cli_changed)
-			try:
-				effects: Final = resolve_effects(
-					args.effects,
-					effective_config,
-					github=in_github,
-					agent=in_agent,
-					scope_effects=scope_effects,
-					base=source.parent if source is not None else None,
-					scope=cli_observed.scope,
-					keys=cli_observed.keys,
-					identities=cli_observed.identities,
-				)
-			except ValueError as e:
-				print(f"error: --effects: {e}", file=sys.stderr)
-				sys.exit(2)
-
+			cli_scope: Final = timings.scope_of(cli_changed)
 			cli_requested: Final[tuple[str, ...]] = tuple(args.paths or ())
 			if requested_but_unusable(cli_requested, cli_changed):
 				# Checked ahead of both branches below, since --under exits before the scoping one is
@@ -533,7 +522,17 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 				sys.exit(0)
 
 			if args.under is not None:
+				# run_under keys the Timings effects itself once the budgeted tree is known.
 				try:
+					effects = resolve_effects(
+						args.effects,
+						effective_config,
+						github=in_github,
+						agent=in_agent,
+						scope_effects=scope_effects,
+						base=source.parent if source is not None else None,
+						scope=cli_scope,
+					)
 					budget_jobs: Final = resolve_jobs(args.jobs)
 				except ValueError as e:
 					print(f"error: {e}", file=sys.stderr)
@@ -553,6 +552,23 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 					)
 				)
 
+			cli_observed: Final = timings.observed(camas_dir, cli_expanded, cli_changed)
+			try:
+				effects = resolve_effects(
+					args.effects,
+					effective_config,
+					github=in_github,
+					agent=in_agent,
+					scope_effects=scope_effects,
+					base=source.parent if source is not None else None,
+					scope=cli_observed.scope,
+					keys=cli_observed.keys,
+					identities=cli_observed.identities,
+				)
+			except ValueError as e:
+				print(f"error: --effects: {e}", file=sys.stderr)
+				sys.exit(2)
+
 			if args.paths is not None:
 				# Without a budget there is nothing to order against, so scope up front.
 				scoped = cli_observed.node
@@ -571,7 +587,7 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 				print(f"error: {e}", file=sys.stderr)
 				sys.exit(2)
 			if args.dry_run:
-				print_tree(task, show_cmd=True)
+				print_tree(with_default_paths(task), show_cmd=True)
 				sys.exit(0)
 			try:
 				jobs: Final = resolve_jobs(args.jobs)

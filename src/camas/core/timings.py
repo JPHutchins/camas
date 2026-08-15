@@ -409,6 +409,11 @@ else:  # pragma: no cover
 		"""Advisory file locking is POSIX-only; a no-op on Windows."""
 
 
+def key_of(label: TaskLabel, scope: int, keys: Mapping[TaskLabel, CacheKey]) -> CacheKey:
+	"""Where a reported label belongs: its mapping entry, else itself at this run's ``scope``."""
+	return keys.get(label, CacheKey(label, scope))
+
+
 def observations(
 	reported: Iterable[tuple[TaskLabel, Completion]],
 	scope: int,
@@ -423,7 +428,7 @@ def observations(
 	mapping happens, for both the run result and the effect that watches leaf states.
 	"""
 	return [
-		(keys.get(label, CacheKey(label, scope)), elapsed)
+		(key_of(label, scope, keys), elapsed)
 		for label, completion in reported
 		if (elapsed := elapsed_of(completion)) is not None
 	]
@@ -439,7 +444,7 @@ def leaves_of(
 	"""
 	return [
 		(
-			r.identity if r.identity is not None else keys.get(r.name, CacheKey(r.name, scope)),
+			r.identity if r.identity is not None else key_of(r.name, scope, keys),
 			elapsed,
 		)
 		for r in result.results

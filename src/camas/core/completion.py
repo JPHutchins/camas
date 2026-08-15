@@ -28,7 +28,8 @@ class TaskResult(NamedTuple):
 	identity: CacheKey | None = None
 	"""The cache key this leaf's timing belongs under, computed before any command rewrite —
 	scoping, ``agent_format``, ``--`` passthrough — so recording never reconstructs identity
-	from the label the leaf happened to report. ``None`` for runs threaded without identities."""
+	from the label the leaf happened to report. ``None`` for runs threaded without identities.
+	Compare and unpack element-wise: this field is third, so 2-tuple equality no longer holds."""
 
 
 class RunResult(NamedTuple):

@@ -57,6 +57,7 @@ from ..main.state import EMPTY_STATE, LoadErr, LoadOk, TasksState
 from ..main.tasks import load_tasks
 from ..v0.completion import Errored, Finished, Skipped, Stopped
 from ..v0.config import Config
+from ..v0.task import Task
 from . import wire
 from .catalog import to_list_response
 from .docs import to_docs_response
@@ -826,7 +827,8 @@ def resolve_run_node(
 
 	Raises:
 		ValueError: when ``req.task`` is omitted and no default is configured, names
-			no task, or an override targets an unknown matrix axis.
+			no task, an override targets an unknown matrix axis, or passthrough args
+			name a non-leaf task.
 	"""
 	if req.task is None:
 		default = config.run_default() if config is not None else None
@@ -838,6 +840,8 @@ def resolve_run_node(
 	if req.matrix_overrides:
 		node = override_matrix(node, {k: tuple(v) for k, v in req.matrix_overrides.items()})
 	require_filled_axes(node)
+	if req.args and not isinstance(node, Task):
+		raise ValueError(f"pass-through args (--) only apply to Task, got {type(node).__name__}")
 	return name, node
 
 

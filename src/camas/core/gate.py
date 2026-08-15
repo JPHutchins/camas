@@ -74,7 +74,8 @@ class GateOutcome(NamedTuple):
 	keys: Mapping[TaskLabel, CacheKey] = NO_KEYS
 	"""Where each leaf that ran should be recorded, by the label it reports. Built here because only
 	the gate knows both the matrix-expanded tree its budget read from and what ``agent_format`` then
-	did to each command; see :func:`camas.core.timings.observation_keys`."""
+	did to each command; see :func:`camas.core.timings.observation_keys`. A carried identity
+	supersedes it (:func:`camas.core.timings.leaves_of`), so it keys only results without one."""
 
 
 def decision_of(residual_class: ResidualClass) -> Decision:
