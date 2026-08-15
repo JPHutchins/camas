@@ -278,14 +278,21 @@ def reject_non_tuple_identities(value: object) -> None:
 	"""Raise the error for an identities value that is neither ``None`` nor a tuple of per-leaf
 	cache keys — the one shape guard for both :func:`camas.core.execution.run` and the
 	``Timings`` constructor, so a stale shape fails loudly where it is passed, not later at
-	indexing. The parameter is ``object`` because Python enforces no declared shape at runtime.
+	indexing. The parameter is ``object`` because Python enforces no declared shape at runtime;
+	under the mypyc build, the compiled argument check on ``Timings`` raises first.
 
 	Raises:
 		ValueError: naming the expected shape and the shape received.
 	"""
-	if value is not None and not isinstance(value, tuple):
+	if value is None:
+		return
+	if not isinstance(value, tuple):
 		raise ValueError(
 			f"identities must be a tuple of per-leaf cache keys, got {type(value).__name__}"
+		)
+	if not all(isinstance(item, CacheKey) for item in value):
+		raise ValueError(
+			"identities must be a tuple of per-leaf cache keys, got a tuple of other things"
 		)
 
 

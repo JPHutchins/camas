@@ -682,6 +682,16 @@ async def test_run_rejects_identities_not_parallel_to_the_leaves() -> None:
 		await run(tree, identities=(CacheKey("only-one", 0),))
 
 
+async def test_run_rejects_identities_with_non_cache_key_elements() -> None:
+	"""A tuple of anything but CacheKeys — the trailing-comma slip ``CacheKey(...)`` alone, or
+	a rewritten mapping's items — fails at the boundary instead of at teardown."""
+	from camas.core.timings import CacheKey
+
+	tree = Parallel(Task("python -c 'pass'"), Task("python -c 'pass'", name="two"))
+	with pytest.raises(ValueError, match="must be a tuple of per-leaf cache keys"):
+		await run(tree, identities=cast("Any", (CacheKey("a", 0), "b")))
+
+
 async def test_run_rejects_identities_that_are_not_a_tuple() -> None:
 	"""A non-tuple identities value — a pre-#289-style label→key dict, whose length can even
 	match the leaf count — fails loudly at the boundary instead of KeyErroring at indexing."""
