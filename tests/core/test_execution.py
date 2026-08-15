@@ -685,6 +685,8 @@ async def test_run_rejects_identities_not_parallel_to_the_leaves() -> None:
 async def test_run_rejects_identities_with_non_cache_key_elements() -> None:
 	"""A tuple of anything but CacheKeys — the trailing-comma slip ``CacheKey(...)`` alone, or
 	a rewritten mapping's items — fails at the boundary instead of at teardown."""
+	from typing import cast
+
 	from camas.core.timings import CacheKey
 
 	tree = Parallel(Task("python -c 'pass'"), Task("python -c 'pass'", name="two"))

@@ -12,7 +12,7 @@ from enum import IntEnum
 from functools import reduce
 from itertools import groupby
 from math import isfinite
-from typing import IO, TYPE_CHECKING, Final, NamedTuple, NoReturn, TypeAlias
+from typing import IO, TYPE_CHECKING, Final, NamedTuple, NoReturn, TypeAlias, cast
 
 from ..v0.completion import Errored, Finished, Skipped, Stopped
 from ..v0.task import Parallel, Sequential, Task
@@ -290,7 +290,7 @@ def reject_non_tuple_identities(value: object) -> None:
 		raise ValueError(
 			f"identities must be a tuple of per-leaf cache keys, got {type(value).__name__}"
 		)
-	if not all(isinstance(item, CacheKey) for item in value):
+	if not all(isinstance(item, CacheKey) for item in cast("tuple[object, ...]", value)):
 		raise ValueError(
 			"identities must be a tuple of per-leaf cache keys, got a tuple of other things"
 		)
