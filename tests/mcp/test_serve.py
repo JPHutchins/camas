@@ -2061,3 +2061,12 @@ async def test_run_with_args_records_under_the_pre_passthrough_identity(tmp_path
 	cache = timings.load(session.camas_dir)
 	assert timings.CacheKey("echo hi", 0) in cache
 	assert timings.CacheKey("echo hi there", 0) not in cache
+
+
+async def test_run_args_on_a_multi_leaf_task_is_an_error(tmp_path: Path) -> None:
+	"""Passthrough args apply only to a single-leaf task; the error surfaces from the run path now
+	that resolve_run_node no longer applies them."""
+	session = _observed_session({"grp": Parallel(Task("echo a"), Task("echo b"))}, None, tmp_path)
+	result = await serve.call(session, "camas_run", {"task": "grp", "args": ["-x"]})
+	assert result.isError
+	assert "only apply to Task" in _text(result)
