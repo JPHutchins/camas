@@ -588,11 +588,12 @@ def test_package_snapshot_tracks_content_not_metadata(
 	pkg = _fake_package(tmp_path, monkeypatch)
 	edited = pkg / "a.py"
 	mtime_ns = edited.stat().st_mtime_ns
+	size = edited.stat().st_size
 	before = serve.package_snapshot()
 	edited.write_text("y = 2\n")
 	os.utime(edited, ns=(mtime_ns, mtime_ns))
 	after = serve.package_snapshot()
-	assert edited.stat().st_size == len("x = 1\n")
+	assert edited.stat().st_size == size
 	assert before != after
 
 
