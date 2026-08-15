@@ -350,9 +350,8 @@ async def run_cmd(task: Task, leaf_index: int, ctx: RunContext) -> TaskResult:
 		ctx.interrupts.procs[leaf_index] = proc
 		if ctx.interrupts.landed():
 			for press in range(1, ctx.interrupts.count + 1):
-				if proc.returncode is not None:
-					break
-				interrupt_proc(ctx.states, leaf_index, proc, press)
+				with suppress(ProcessLookupError):
+					interrupt_proc(ctx.states, leaf_index, proc, press)
 		output: Final[list[bytes]] = []
 		try:
 			if proc.stdout is not None:  # pragma: no branch
