@@ -691,7 +691,7 @@ async def test_run_rejects_identities_with_non_cache_key_elements() -> None:
 
 	tree = Parallel(Task("python -c 'pass'"), Task("python -c 'pass'", name="two"))
 	with pytest.raises(ValueError, match="must be a tuple of per-leaf cache keys"):
-		await run(tree, identities=cast("Any", (CacheKey("a", 0), "b")))
+		await run(tree, identities=cast("tuple[CacheKey, ...]", (CacheKey("a", 0), "b")))
 
 
 async def test_run_rejects_identities_that_are_not_a_tuple() -> None:
@@ -703,4 +703,7 @@ async def test_run_rejects_identities_that_are_not_a_tuple() -> None:
 
 	tree = Parallel(Task("python -c 'pass'"), Task("python -c 'pass'", name="two"))
 	with pytest.raises(ValueError, match="must be a tuple"):
-		await run(tree, identities=cast("Any", {"a": CacheKey("a", 0), "b": CacheKey("b", 0)}))
+		await run(
+			tree,
+			identities=cast("tuple[CacheKey, ...]", {"a": CacheKey("a", 0), "b": CacheKey("b", 0)}),
+		)

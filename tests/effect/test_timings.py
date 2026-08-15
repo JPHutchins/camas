@@ -159,7 +159,10 @@ def test_constructor_rejects_the_pre_289_keys_mapping_shape(tmp_path: Path) -> N
 	the mypyc build the compiled argument check raises first with a ``TypeError``, so the test
 	accepts either failure mode but pins the loudness."""
 	with pytest.raises((TypeError, ValueError)):
-		Timings(camas_dir=tmp_path, identities=cast("Any", {"lint": cache_key("lint")}))
+		Timings(
+			camas_dir=tmp_path,
+			identities=cast("tuple[timings.CacheKey, ...]", {"lint": cache_key("lint")}),
+		)
 
 
 def test_identities_key_by_leaf_position_not_completion_order(tmp_path: Path) -> None:
