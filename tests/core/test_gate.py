@@ -22,6 +22,7 @@ from camas.core.gate import (
 from camas.core.matrix import resolve_cmd
 from camas.core.task import task_label
 from camas.core.timings import CacheKey, TaskTiming
+from camas.core.traversal import flatten_leaves
 
 if TYPE_CHECKING:
 	import pytest
@@ -55,6 +56,19 @@ async def test_gate_failing_check_needs_reasoning() -> None:
 	assert decision_of(out.residual_class) == "block"
 
 
+async def test_gate_with_no_paths_carries_resolved_commands() -> None:
+	"""``GateOutcome.node`` is what the gate response renders — even a whole-tree gate must carry
+	the resolved command, not the author's ``{paths}`` template."""
+	out = await run_gate(
+		Parallel(Task(("python", "-c", "pass", "{paths}"), name="ok", paths=".")),
+		(),
+	)
+	assert out.node is not None
+	assert [info.task.cmd for info in flatten_leaves(out.node)] == [
+		("python", "-c", "pass", "."),
+	]
+
+
 async def test_gate_scoped_to_nothing_is_green_noop() -> None:
 	node = Task(("cargo", "check", "{paths}"), name="rust", paths="rust")
 	assert await run_gate(node, ("src/app.py",)) == GateOutcome("green", None, None, None)
@@ -70,6 +84,7 @@ async def test_gate_threads_base_into_run(monkeypatch: pytest.MonkeyPatch, tmp_p
 		base: Path | None = None,
 		interactive: bool = True,
 		leaf_color: bool = True,
+		identities: tuple[CacheKey, ...] | None = None,
 	) -> RunResult:
 		captured["base"] = base
 		return RunResult(0, (), 0.0)
@@ -214,8 +229,9 @@ async def test_gate_tags_residual_with_agent_format_kind() -> None:
 
 async def test_gate_canonical_survives_agent_format_rewriting_the_command() -> None:
 	"""``agent_format`` appends to the command *after* scoping already rewrote it, so a nameless leaf
-	reports a third label again. The map has to be keyed by what the run reports, or the observation
-	lands under something the budget cannot read — the #218 failure, one rewrite further along.
+	reports a third label again. The carried identity has to be computed before either rewrite, or
+	the observation lands under something the budget cannot read — the #218 failure, one rewrite
+	further along.
 	"""
 	leaf = Task(
 		("python", "-c", "pass", "{paths}"),
@@ -226,4 +242,4 @@ async def test_gate_canonical_survives_agent_format_rewriting_the_command() -> N
 	assert outcome.result is not None
 	reported = outcome.result.results[0].name
 	assert "--output-format sarif" in reported
-	assert outcome.keys[reported] == CacheKey("python -c pass .", 1)
+	assert outcome.result.results[0].identity == CacheKey("python -c pass .", 1)

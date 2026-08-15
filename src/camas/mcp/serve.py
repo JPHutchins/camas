@@ -40,12 +40,7 @@ from ..core.matrix import (
 	unfilled_required_axes,
 )
 from ..core.render import render_tree_lines, strip_ansi
-from ..core.scope import (
-	requested_but_unusable,
-	scope_to_changed,
-	scoped_or_default,
-	to_changed,
-)
+from ..core.scope import requested_but_unusable, scope_to_changed, to_changed
 from ..core.task import did_you_mean, task_label
 from ..main.argv import apply_passthrough
 from ..main.compose import load_py_tasks_state
@@ -62,6 +57,7 @@ from ..main.state import EMPTY_STATE, LoadErr, LoadOk, TasksState
 from ..main.tasks import load_tasks
 from ..v0.completion import Errored, Finished, Skipped, Stopped
 from ..v0.config import Config
+from ..v0.task import Task
 from . import wire
 from .catalog import to_list_response
 from .docs import to_docs_response
@@ -705,23 +701,24 @@ async def run_for(
 		return error_result(str(e))
 	changed = to_changed(req.paths, base_for(session))
 	expanded = expand_matrix(node)
-	scoped = (
-		None if requested_but_unusable(req.paths, changed) else scope_to_paths(expanded, changed)
-	)
+	if requested_but_unusable(req.paths, changed):
+		return nothing_covered_result(session, req.paths)
+	observed = timings.observed(session.camas_dir, expanded, changed)
+	scoped = observed.node
 	if scoped is None:
 		return nothing_covered_result(session, req.paths)
-	node = scoped
+	node = apply_passthrough(scoped, tuple(req.args)) if req.args else scoped
 	if req.dry_run:
 		return success(
 			with_warning(session, dry_run_text(node)), to_plan_response(node), session.compat
 		)
-	observed = timings.observed(session.camas_dir, expanded, changed)
 	result = await run(
 		node,
 		jobs=req.jobs,
 		interactive=False,
 		base=base_for(session),
 		leaf_color=leaf_color_of(config),
+		identities=observed.identities,
 	)
 	logs = write_logs(create_run_log_dir(session.camas_dir, name, session.reserve_run()), result)
 	observed.record(result)
@@ -738,31 +735,15 @@ async def run_for(
 	)
 
 
-def record_gate(camas_dir: Path | None, outcome: GateOutcome, changed: tuple[str, ...]) -> None:
-	"""Record what a gate run's leaves cost, under the labels a later budget will read. Shared by
-	both gate entry points — the MCP tool and the ``Stop``-hook subcommand — which otherwise differ
-	only in where they get ``under`` from, and which between them account for two of the four paths
-	that used to run leaves and observe nothing.
-
-	The gate supplies its own label map rather than deriving one: only it knows what
-	``agent_format`` did to each command after scoping.
+def record_gate(camas_dir: Path | None, outcome: GateOutcome) -> None:
+	"""Record what a gate run's leaves cost, under their carried identities — computed before any
+	rewrite, so ``agent_format`` appending to the command cannot mis-key them. Shared by both gate
+	entry points — the MCP tool and the ``Stop``-hook subcommand — which otherwise differ only in
+	where they get ``under`` from, and which between them account for two of the four paths that
+	used to run leaves and observe nothing.
 	"""
 	if outcome.result is not None:
-		timings.Observed(camas_dir, timings.scope_of(changed), outcome.keys).record(outcome.result)
-
-
-def scope_to_paths(expanded: TaskNode, changed: tuple[str, ...]) -> TaskNode | None:
-	"""``expanded`` narrowed to the ``changed`` paths — the MCP counterpart of the CLI ``--paths``.
-
-	Takes an already matrix-expanded tree, since both callers have one to build their keying from.
-	Returns it unchanged when nothing narrows it (run the whole task); the path-scoped tree when some
-	leaf covers the paths; ``None`` when there are changed paths but no leaf covers them. A request
-	that named paths of which none survived normalization — all outside the repo — is the caller's to
-	reject, since only it can tell that apart from a request that named none.
-	"""
-	if not changed:
-		return expanded
-	return scope_to_changed(expanded, changed)
+		timings.record_observed(camas_dir, timings.leaves_of(outcome.result))
 
 
 def empty_run_response() -> wire.RunResponse:
@@ -835,8 +816,8 @@ def require_filled_axes(node: TaskNode) -> None:
 def resolve_run_node(
 	tasks: Mapping[str, TaskNode], req: wire.RunRequest, config: Config | None = None
 ) -> tuple[str, TaskNode]:
-	"""The ``(name, node)`` to run: looked up by name, then matrix-overridden and
-	passthrough-appended.
+	"""The ``(name, node)`` to run: looked up by name, then matrix-overridden. Passthrough args
+	are the caller's to apply — after keying is derived from the pre-passthrough tree.
 
 	When ``task`` is omitted, resolves the project's configured default task —
 	honored identically for a normal run and a ``dry_run`` preview.
@@ -844,7 +825,7 @@ def resolve_run_node(
 	Raises:
 		ValueError: when ``req.task`` is omitted and no default is configured, names
 			no task, an override targets an unknown matrix axis, or passthrough args
-			are applied to a non-leaf task.
+			name a non-leaf task.
 	"""
 	if req.task is None:
 		default = config.run_default() if config is not None else None
@@ -855,8 +836,8 @@ def resolve_run_node(
 		name, node = req.task, require_task(tasks, req.task)
 	if req.matrix_overrides:
 		node = override_matrix(node, {k: tuple(v) for k, v in req.matrix_overrides.items()})
-	if req.args:
-		node = apply_passthrough(node, tuple(req.args))
+	if req.args and not isinstance(node, Task):
+		raise ValueError(f"pass-through args (--) only apply to Task, got {type(node).__name__}")
 	require_filled_axes(node)
 	return name, node
 
@@ -886,43 +867,40 @@ async def run_budget(
 	# before its {paths} are injected, so budgeting the scoped tree looks up a label nothing records.
 	plan = plan_under(expanded, budget_s, timings.load(session.camas_dir), scope)
 	report = to_budget_report(plan)
-	if plan.node is not None:
-		scoped_source = (
-			None
-			if requested_but_unusable(req.paths, changed)
-			else scope_to_paths(plan.node, changed)
-		)
-		if scoped_source is None:
-			return nothing_covered_result(session, req.paths)
-		plan = plan._replace(node=scoped_source)
-	if plan.node is None:
+	unscoped = plan.node
+	if unscoped is None:
 		empty = empty_run_response()
 		text = f"{budget_headline(report)}\n\nNothing ran — no leaf fit the budget."
 		return success(with_warning(session, text), attach_budget(empty, report), session.compat)
+	if requested_but_unusable(req.paths, changed):
+		return nothing_covered_result(session, req.paths)
+	keying: Final = timings.observed(session.camas_dir, unscoped, changed)
+	if keying.node is None:
+		return nothing_covered_result(session, req.paths)
+	run_node: Final = keying.node
 	if req.dry_run:
-		resp = attach_budget(to_plan_response(plan.node), report)
+		resp = attach_budget(to_plan_response(run_node), report)
 		return success(
-			with_warning(session, f"{budget_headline(report)}\n\n{dry_run_text(plan.node)}"),
+			with_warning(session, f"{budget_headline(report)}\n\n{dry_run_text(run_node)}"),
 			resp,
 			session.compat,
 		)
 	result = await run(
-		plan.node,
+		run_node,
 		jobs=req.jobs,
 		interactive=False,
 		base=base_for(session),
 		leaf_color=leaf_color_of(config),
+		identities=keying.identities,
 	)
 	logs = write_logs(create_run_log_dir(session.camas_dir, label, session.reserve_run()), result)
-	# Built here rather than beside the budget above: it walks the tree, and the dry-run and
-	# nothing-fit paths between the two return without ever recording.
-	timings.observed(session.camas_dir, expanded, changed).record(result)
+	keying.record(result)
 	resp = attach_budget(
-		attach_logs(to_run_response(plan.node, result, verbosity=req.verbosity), logs), report
+		attach_logs(to_run_response(run_node, result, verbosity=req.verbosity), logs), report
 	)
 	nudge = improve_loop_nudge(
 		any_truncated=resp.truncated,
-		any_failing_without_agent_format=has_failing_leaf_without_agent_format(plan.node, result),
+		any_failing_without_agent_format=has_failing_leaf_without_agent_format(run_node, result),
 	)
 	return success(
 		with_warning(session, f"{budget_headline(report)}\n\n{run_text(label, resp, logs)}{nudge}"),
@@ -1441,7 +1419,7 @@ async def gate_for(
 		timings=timings.load(session.camas_dir),
 		leaf_color=leaf_color_of(config),
 	)
-	record_gate(session.camas_dir, outcome, changed)
+	record_gate(session.camas_dir, outcome)
 	budget = to_budget_report(outcome.budget) if outcome.budget is not None else None
 	rerun = wire.GateRerun(task=req.task, paths=changed, under=req.under)
 	resp = to_gate_response(outcome, budget, rerun)
@@ -1490,15 +1468,16 @@ async def fix_for(
 	except ValueError as e:
 		return error_result(str(e))
 	# The node to run and how to observe it are bound together, since neither is meaningful without
-	# the other: nothing to run means nothing to record, and the path that runs always has both.
-	prepared: tuple[TaskNode, timings.Observed] | None = None
+	# the other: nothing to run means nothing to record, and a prepared bundle always has a node.
+	prepared: timings.Observed | None = None
 	blocked = unsatisfiable_message(fix_node) if fix_node is not None else None
 	if fix_node is not None and blocked is None:
 		changed = to_changed(req.paths, base_for(session))
 		expanded = expand_matrix(fix_node)
-		scoped = scoped_or_default(expanded, req.paths, changed)
-		if scoped is not None:
-			prepared = (scoped, timings.observed(session.camas_dir, expanded, changed))
+		if not requested_but_unusable(req.paths, changed):
+			keying = timings.observed(session.camas_dir, expanded, changed)
+			if keying.node is not None:
+				prepared = keying
 	empty_cause: str | None
 	if prepared is None:
 		resp = empty_run_response()
@@ -1510,15 +1489,18 @@ async def fix_for(
 			else "no fix leaf covers the paths"
 		)
 	else:
-		node, observed = prepared
+		if prepared.node is None:  # pragma: no cover  # prepared is only set with a node
+			return nothing_covered_result(session, req.paths)
+		node: Final = prepared.node
 		result = await run(
 			node,
 			jobs=req.jobs,
 			interactive=False,
 			base=base_for(session),
 			leaf_color=leaf_color_of(config),
+			identities=prepared.identities,
 		)
-		observed.record(result)
+		prepared.record(result)
 		resp = to_run_response(node, result)
 		empty_cause = None
 	return success(
@@ -1880,7 +1862,7 @@ def run_gate_cli(
 			leaf_color=leaf_color_of(config),
 		)
 	)
-	record_gate(camas_dir, outcome, changed)
+	record_gate(camas_dir, outcome)
 	budget = to_budget_report(outcome.budget) if outcome.budget is not None else None
 	rerun = wire.GateRerun(task=args.task, paths=changed, under=args.under)
 	resp = to_gate_response(outcome, budget, rerun)

@@ -7,6 +7,8 @@ import asyncio
 from datetime import datetime
 from typing import TYPE_CHECKING, TypeVar
 
+import pytest
+
 from camas import Parallel, Sequential, Task
 from camas.core import timings
 from camas.effect.timings import Timings
@@ -120,11 +122,11 @@ def test_skipped_leaf_excluded(tmp_path: Path) -> None:
 	assert cache_key("skip") not in cache
 
 
-def test_for_run_keys_a_configured_effect_to_the_scope_and_labels(tmp_path: Path) -> None:
+def test_for_run_keys_a_configured_effect_to_the_scope_and_identities(tmp_path: Path) -> None:
 	"""A ``Timings`` written out by hand — in ``--effects`` or a ``Config`` — cannot know what the run
 	it lands in is scoped to, so it records whole-tree by default. ``for_run`` is how the caller that
 	does know keys it, and without that a path-scoped run would be recorded as a whole-tree
-	observation under a label no scoped budget reads: #224, for explicitly configured effects.
+	observation: #224, for explicitly configured effects.
 	"""
 	scoped = Task(("python", "-c", "pass"), name="pylint a.py")
 	events: list[TaskEvent] = [
@@ -133,12 +135,36 @@ def test_for_run_keys_a_configured_effect_to_the_scope_and_labels(tmp_path: Path
 	]
 	asyncio.run(
 		drive(
-			Timings(camas_dir=tmp_path).for_run(2, {"pylint a.py": cache_key("pylint .", 2)}),
+			Timings(camas_dir=tmp_path).for_run(2, (cache_key("pylint .", 2),)),
 			Parallel(scoped, name="check"),
 			events,
 		)
 	)
 	assert timings.load(tmp_path) == {cache_key("pylint .", 2): timings.TaskTiming(0.4, 1)}
+
+
+def test_setup_rejects_identities_not_parallel_to_the_leaves(tmp_path: Path) -> None:
+	"""A ``Timings`` keyed with identities is validated against the tree it is set up on, so a
+	mismatch fails loudly here rather than silently mis-keying records at teardown."""
+	a, b = _task("one"), _task("two")
+	with pytest.raises(ValueError, match="identities must be parallel"):
+		asyncio.run(
+			drive(Timings(camas_dir=tmp_path, identities=(cache_key("one"),)), Parallel(a, b), [])
+		)
+
+
+def test_identities_key_by_leaf_position_not_completion_order(tmp_path: Path) -> None:
+	"""A carried identity is the leaf's position among the run's leaves, so an earlier leaf that
+	never completed must not shift the later ones' keys."""
+	a, b = _task("first"), _task("second")
+	events: list[TaskEvent] = [
+		StartedEvent(a, 0, TS),
+		StartedEvent(b, 1, TS),
+		CompletedEvent(b, 1, Finished(0, 0.5, ()), TS),
+	]
+	identities = (cache_key("first"), cache_key("second"))
+	asyncio.run(drive(Timings(camas_dir=tmp_path, identities=identities), Parallel(a, b), events))
+	assert timings.load(tmp_path) == {cache_key("second"): timings.TaskTiming(0.5, 1)}
 
 
 def test_a_leaf_named_empty_records_nothing_rather_than_something_unreadable(

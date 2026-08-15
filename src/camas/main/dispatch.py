@@ -30,13 +30,7 @@ from ..core.matrix import (
 	unfilled_required_axes,
 )
 from ..core.render import print_tree, render_tree_lines
-from ..core.scope import (
-	requested_but_unusable,
-	scope_to_changed,
-	scoped_or_default,
-	to_changed,
-	with_default_paths,
-)
+from ..core.scope import requested_but_unusable, to_changed, with_default_paths
 from ..core.task import did_you_mean, task_label
 from ..v0.config import Config
 from .argv import (
@@ -47,7 +41,7 @@ from .argv import (
 	split_passthrough,
 )
 from .compose import load_py_tasks_state, state_from_scope
-from .effects import default_effect_names, resolve_effects, running_under_agent
+from .effects import default_effect_names, keyed_to_run, resolve_effects, running_under_agent
 from .expression import parse_expression
 from .format import (
 	format_empty_variants_error,
@@ -124,7 +118,6 @@ def run_under(
 	budget_s: float,
 	*,
 	changed: tuple[str, ...],
-	scope: int,
 	camas_dir: Path | None,
 	effects: Sequence[Effect[Any]],
 	jobs: int | None,
@@ -144,13 +137,17 @@ def run_under(
 		print("error: -- passthrough args cannot be combined with --under", file=sys.stderr)
 		return 2
 	plan = plan_under(
-		source, budget_s, timings.load(camas_dir) if camas_dir is not None else {}, scope
+		source,
+		budget_s,
+		timings.load(camas_dir) if camas_dir is not None else {},
+		timings.scope_of(changed),
 	)
 	for line in budget_summary_lines(plan):
 		print(line)
 	if plan.node is None:
 		return 0
-	scoped = scope_to_changed(plan.node, changed) if changed else plan.node
+	observed: Final = timings.observed(camas_dir, plan.node, changed)
+	scoped = observed.node
 	if scoped is None:
 		print(f"No task leaf covers {', '.join(changed)} — nothing to run.")
 		return 0
@@ -158,7 +155,16 @@ def run_under(
 		print_tree(with_default_paths(scoped), show_cmd=True)
 		return 0
 	return finish_run(
-		asyncio.run(run(scoped, effects=effects, jobs=jobs, base=base, leaf_color=leaf_color))
+		asyncio.run(
+			run(
+				scoped,
+				effects=keyed_to_run(tuple(effects), observed),
+				jobs=jobs,
+				base=base,
+				leaf_color=leaf_color,
+				identities=observed.identities,
+			)
+		)
 	)
 
 
@@ -206,21 +212,34 @@ def fix_cli(argv: list[str]) -> int:
 		return 0
 	requested = args.paths or (stdin or ())
 	changed = to_changed(requested, base)
+	if requested_but_unusable(requested, changed):
+		if args.dry_run:
+			print("No leaves cover the changed paths — nothing would run.")
+		return 0
 	expanded = expand_matrix(node)
-	scoped = scoped_or_default(expanded, requested, changed)
+	keying: Final = timings.observed(state.config.camas_path(base), expanded, changed)
 	if args.dry_run:
-		if scoped is None:
+		if keying.node is None:
 			print("No leaves cover the changed paths — nothing would run.")
 		else:
-			plan = "\n".join(render_tree_lines(scoped, show_cmd=True, color=False))
+			plan = "\n".join(
+				render_tree_lines(with_default_paths(keying.node), show_cmd=True, color=False)
+			)
 			print(f"Dry run — resolved path-scoped plan, nothing executed:\n{plan}")
 		return 0
-	if scoped is None:
+	if keying.node is None:
 		return 0
 	result = asyncio.run(
-		run(scoped, effects=(), jobs=None, base=base, leaf_color=state.config.leaf_color)
+		run(
+			keying.node,
+			effects=(),
+			jobs=None,
+			base=base,
+			leaf_color=state.config.leaf_color,
+			identities=keying.identities,
+		)
 	)
-	timings.observed(state.config.camas_path(base), expanded, changed).record(result)
+	keying.record(result)
 	_ = finish_run(result)
 	return 0
 
@@ -490,24 +509,20 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 				else ()
 			)
 			cli_expanded: Final = expand_matrix(resolved)
-			cli_scope: Final = timings.scope_of(cli_changed)
-			cli_keys: Final = timings.observation_keys(cli_expanded, cli_changed, cli_scope)
+			cli_requested: Final[tuple[str, ...]] = tuple(args.paths or ())
 			try:
-				effects: Final = resolve_effects(
+				effects = resolve_effects(
 					args.effects,
 					effective_config,
 					github=in_github,
 					agent=in_agent,
 					scope_effects=scope_effects,
 					base=source.parent if source is not None else None,
-					scope=cli_scope,
-					keys=cli_keys,
 				)
 			except ValueError as e:
 				print(f"error: --effects: {e}", file=sys.stderr)
 				sys.exit(2)
 
-			cli_requested: Final[tuple[str, ...]] = tuple(args.paths or ())
 			if requested_but_unusable(cli_requested, cli_changed):
 				# Checked ahead of both branches below, since --under exits before the scoping one is
 				# reached.
@@ -528,7 +543,6 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 						cli_expanded,
 						args.under,
 						changed=cli_changed,
-						scope=cli_scope,
 						camas_dir=camas_dir,
 						effects=effects,
 						jobs=budget_jobs,
@@ -539,13 +553,15 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 					)
 				)
 
-			if args.paths is not None:
-				# Without a budget there is nothing to order against, so scope up front.
-				scoped = scope_to_changed(cli_expanded, cli_changed)
-				if scoped is None:
-					print(f"No task leaf covers {', '.join(cli_changed)} — nothing to run.")
-					sys.exit(0)
-				resolved = scoped
+			cli_observed: Final = timings.observed(camas_dir, cli_expanded, cli_changed)
+			effects = keyed_to_run(effects, cli_observed)
+
+			# Without a budget there is nothing to order against, so scope up front; with no paths
+			# named, that is every leaf at its full-run default.
+			if cli_observed.node is None:
+				print(f"No task leaf covers {', '.join(cli_changed)} — nothing to run.")
+				sys.exit(0)
+			resolved = cli_observed.node
 
 			try:
 				task: Final = (
@@ -573,6 +589,7 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 							jobs=jobs,
 							base=source.parent if source is not None else None,
 							leaf_color=effective_config.leaf_color,
+							identities=cli_observed.identities,
 						)
 					)
 				)

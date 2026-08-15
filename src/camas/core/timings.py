@@ -12,7 +12,6 @@ from enum import IntEnum
 from functools import reduce
 from itertools import groupby
 from math import isfinite
-from types import MappingProxyType
 from typing import IO, TYPE_CHECKING, Final, NamedTuple, TypeAlias
 
 from ..v0.completion import Errored, Finished, Skipped, Stopped
@@ -139,11 +138,11 @@ def estimate(
 	"""
 	match node:
 		case Task():
-			label = task_label(resolve_default_leaf(node))
-			timing = timings.get(CacheKey(label, leaf_scope(node, scope)))
+			key = leaf_key(node, scope)
+			timing = timings.get(key)
 			if timing is None:
 				return None
-			return Estimate(timing.elapsed_s, timing.samples, label, timing.elapsed_s)
+			return Estimate(timing.elapsed_s, timing.samples, key.label, timing.elapsed_s)
 		case Sequential(tasks=children):
 			parts = child_estimates(children, timings, scope)
 			return rolled_up(parts, sum(p.elapsed_s for p in parts)) if parts else None
@@ -170,11 +169,6 @@ def record(camas_dir: Path, leaves: Sequence[tuple[CacheKey, float]]) -> None:
 		handle.seek(0)
 		handle.truncate()
 		handle.write(serialize(merged))
-
-
-NO_KEYS: Final[Mapping[TaskLabel, CacheKey]] = MappingProxyType({})
-"""The empty label mapping — an unscoped run rewrites nothing, so every label keys by itself.
-Immutable so that sharing it as a default cannot become shared mutable state."""
 
 
 NO_OBSERVATIONS: Final = TaskTiming(0.0, 0)
@@ -236,51 +230,56 @@ def record_observed(camas_dir: Path | None, leaves: Sequence[tuple[CacheKey, flo
 
 
 class Observed(NamedTuple):
-	"""How one run's durations are to be recorded: where, keyed to what size of change, and under
-	which labels.
+	"""How one run is keyed and recorded: where its durations go, what size of change they describe,
+	the per-leaf identities and the tree to run with.
 
 	Built once where a run is set up, and carried to wherever the run finishes, so that no path can
-	run leaves and get part of this right. Deriving the three by hand per call site is what let a gate
+	run leaves and get part of this right. Deriving these by hand per call site is what let a gate
 	record under labels its own budget could not read — in three separate places, each found only
 	after the previous one was fixed.
 	"""
 
 	camas_dir: Path | None
 	scope: int
-	keys: Mapping[TaskLabel, CacheKey]
-	"""Where each leaf's observation goes, by the label it reports — see
-	:func:`observation_keys`. A label with no entry is keyed by itself at this run's scope."""
+	identities: tuple[CacheKey, ...] | None = None
+	"""Per-leaf cache keys, parallel to the leaves of ``node`` — what :func:`camas.core.execution.run`
+	takes as its ``identities``."""
+	node: TaskNode | None = None
+	"""The scoped tree to run; ``None`` when the changed paths cover no leaf."""
 
 	def record(self, result: RunResult) -> None:
 		"""Record ``result``'s timed leaves."""
-		record_observed(self.camas_dir, leaves_of(result, self.scope, self.keys))
+		record_observed(self.camas_dir, leaves_of(result, self.scope))
 
 
-def observation_keys(
-	expanded: TaskNode, changed: tuple[str, ...], scope: int
-) -> dict[TaskLabel, CacheKey]:
-	"""The key each surviving leaf's observation belongs under, by the label that leaf will report.
+def leaf_key(task: Task, scope: int) -> CacheKey:
+	"""The cache key ``task``'s timing belongs under — the one formula the keying inputs share.
 
-	Two things differ from the reported label, and both have to be undone here or the observation
-	lands where no budget looks: scoping rewrote a nameless leaf's command, and a leaf that ignores
-	the changed paths belongs at scope ``0`` rather than this run's.
+	>>> leaf_key(Task("ruff check {paths}", paths="."), 0)
+	CacheKey(label='ruff check .', scope=0)
 	"""
-	from .scope import scoped_leaves
-
-	return {
-		task_label(scoped): CacheKey(
-			task_label(resolve_default_leaf(task)), leaf_scope(task, scope)
-		)
-		for task, scoped in scoped_leaves(expanded, changed)
-	}
+	return CacheKey(task_label(resolve_default_leaf(task)), leaf_scope(task, scope))
 
 
 def observed(camas_dir: Path | None, expanded: TaskNode, changed: Sequence[str]) -> Observed:
-	"""How to record a run of ``expanded`` scoped to ``changed`` — the one derivation of the three
-	things that keying needs.
+	"""How to run and record a run of ``expanded`` scoped to ``changed`` — the one derivation of
+	everything keying, execution, and display need, from a single scoped-leaves walk. The tree
+	handed back is rebuilt from that walk's resolved leaves, so the commands a caller renders are
+	the ones the run executes — and the identities key the same leaves, in the same order.
 	"""
+	from .scope import scoped_leaves, scoped_tree_from_pairs
+
+	changed_t = tuple(changed)
+	narrowed: Final = bool(changed_t)
 	scope = scope_of(changed)
-	return Observed(camas_dir, scope, observation_keys(expanded, tuple(changed), scope))
+
+	def keyed(original: Task, scoped: Task) -> CacheKey:
+		return leaf_key(original, scope) if narrowed else CacheKey(task_label(scoped), 0)
+
+	pairs = scoped_leaves(expanded, changed_t)
+	identities = tuple(keyed(original, scoped) for original, scoped in pairs)
+	node = scoped_tree_from_pairs(expanded, pairs)
+	return Observed(camas_dir, scope, identities, node)
 
 
 def ensure_camas_dir(camas_dir: Path) -> None:
@@ -382,28 +381,27 @@ else:  # pragma: no cover
 def observations(
 	reported: Iterable[tuple[TaskLabel, Completion]],
 	scope: int,
-	keys: Mapping[TaskLabel, CacheKey],
 ) -> list[tuple[CacheKey, float]]:
-	"""The recordable observations among ``reported`` — each leaf's label as it ran, paired with how
-	it completed.
-
-	A leaf reports the label it ran under, which for a scoped ``{paths}`` leaf with no ``name`` is the
-	command with those paths already in it. ``keys`` — from :func:`observation_keys` — says where that
-	belongs instead, so what a scoped run records is what a later budget can read. The one place that
-	mapping happens, for both the run result and the effect that watches leaf states.
+	"""The recordable observations among ``reported`` — each leaf's label as it ran, keyed at
+	``scope``, paired with how long it took.
 	"""
 	return [
-		(keys.get(label, CacheKey(label, scope)), elapsed)
+		(CacheKey(label, scope), elapsed)
 		for label, completion in reported
 		if (elapsed := elapsed_of(completion)) is not None
 	]
 
 
-def leaves_of(
-	result: RunResult, scope: int = 0, keys: Mapping[TaskLabel, CacheKey] = NO_KEYS
-) -> list[tuple[CacheKey, float]]:
-	"""``result``'s timed leaves as observations at ``scope``."""
-	return observations(((r.name, r.completion) for r in result.results), scope, keys)
+def leaves_of(result: RunResult, scope: int = 0) -> list[tuple[CacheKey, float]]:
+	"""``result``'s timed leaves as observations at ``scope``, in result order. A carried identity
+	is taken as the key outright — it was computed from the same pre-rewrite tree — and only
+	results without one key by the label they report.
+	"""
+	return [
+		(r.identity if r.identity is not None else CacheKey(r.name, scope), elapsed)
+		for r in result.results
+		if (elapsed := elapsed_of(r.completion)) is not None
+	]
 
 
 def observation(elapsed_s: str, samples: str) -> TaskTiming | None:

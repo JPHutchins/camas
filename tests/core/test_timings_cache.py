@@ -3,11 +3,13 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from camas import Parallel, Sequential, Task
 from camas.core import timings
 from camas.core.completion import RunResult, TaskResult
+from camas.core.scope import scoped_leaves
+from camas.core.traversal import flatten_leaves
 from camas.v0.completion import Errored, Finished, Skipped, Stopped
 
 if TYPE_CHECKING:
@@ -37,7 +39,7 @@ def test_ensure_camas_dir_creates_dir_and_gitignore(tmp_path: Path) -> None:
 
 
 def test_record_run_writes_each_leaf(tmp_path: Path) -> None:
-	timings.Observed(tmp_path, 0, {}).record(
+	timings.Observed(tmp_path, 0).record(
 		_result(
 			TaskResult("lint", Finished(0, 0.1, ())),
 			TaskResult("test", Finished(0, 2.0, ())),
@@ -56,22 +58,20 @@ def test_record_averages_repeated_runs(tmp_path: Path) -> None:
 
 
 def test_record_counts_stopped_leaf(tmp_path: Path) -> None:
-	timings.Observed(tmp_path, 0, {}).record(
+	timings.Observed(tmp_path, 0).record(
 		_result(TaskResult("x", Stopped(130, 0.3, ())), elapsed=0.3)
 	)
 	assert timings.load(tmp_path)[cache_key("x")].elapsed_s == 0.3
 
 
 def test_record_skips_run_with_no_timed_leaf(tmp_path: Path) -> None:
-	timings.Observed(tmp_path, 0, {}).record(
-		_result(TaskResult("s", Skipped(1, "blk")), elapsed=0.0)
-	)
+	timings.Observed(tmp_path, 0).record(_result(TaskResult("s", Skipped(1, "blk")), elapsed=0.0))
 	assert timings.load(tmp_path) == {}
 	assert not (tmp_path / timings.CACHE_NAME).exists()
 
 
 def test_record_skips_errored_leaf(tmp_path: Path) -> None:
-	timings.Observed(tmp_path, 0, {}).record(
+	timings.Observed(tmp_path, 0).record(
 		_result(TaskResult("ghost", Errored(127, "no such file or directory: ghost")), elapsed=0.0),
 	)
 	assert timings.load(tmp_path) == {}
@@ -219,3 +219,60 @@ def test_a_label_a_row_cannot_carry_is_dropped_rather_than_misread(tmp_path: Pat
 		],
 	)
 	assert timings.load(tmp_path) == {cache_key("real"): timings.TaskTiming(0.5, 1)}
+
+
+def test_observed_identities_align_with_the_scoped_run_order() -> None:
+	"""The identities tuple is parallel to the leaves the scoped tree runs, in the same order —
+	the invariant every caller that threads identities into run() relies on."""
+	tree = Parallel(
+		Sequential(Task("ruff check {paths}", paths="."), Task("mypy .", name="types")),
+		Task("pytest", name="test"),
+	)
+	changed = ("src/app.py",)
+	keying = timings.observed(None, tree, changed)
+	assert keying.node is not None
+	assert [info.task.cmd for info in flatten_leaves(keying.node)] == [
+		s.cmd for _original, s in scoped_leaves(tree, changed)
+	]
+	assert keying.identities is not None
+	assert len(keying.identities) == len(list(flatten_leaves(keying.node)))
+
+
+def test_observed_with_no_paths_hands_back_the_resolved_tree() -> None:
+	"""The tree ``observed`` hands back is what a caller renders — a whole-tree fix or gate response
+	shows the executed command, not the author's ``{paths}`` template."""
+	tree = Parallel(
+		Task("ruff check --fix {paths}", paths="."),
+		Task("mypy .", name="types"),
+	)
+	keying = timings.observed(None, tree, ())
+	assert keying.node is not None
+	assert [info.task.cmd for info in flatten_leaves(keying.node)] == [
+		"ruff check --fix .",
+		"mypy .",
+	]
+	assert keying.identities is not None
+	assert len(keying.identities) == 2
+
+
+def test_leaves_of_prefers_the_carried_identity_over_the_reported_label() -> None:
+	"""A rewrite the identity was computed for (agent_format, passthrough) changes the reported
+	label; the carried identity keeps the observation under the key a later budget reads."""
+	key: Final = cache_key("ruff check .")
+	result = _result(
+		TaskResult(
+			"claude-code-agent -- ruff check src/app.py",
+			Finished(0, 1.5, ()),
+			key,
+		),
+		elapsed=1.5,
+	)
+	assert timings.leaves_of(result, 0) == [(key, 1.5)]
+
+
+def test_leaves_of_without_identity_keys_by_the_reported_label() -> None:
+	result = _result(
+		TaskResult("mypy .", Finished(0, 1.5, ())),
+		elapsed=1.5,
+	)
+	assert timings.leaves_of(result, 2) == [(cache_key("mypy .", 2), 1.5)]

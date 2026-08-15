@@ -22,10 +22,7 @@ from ..v0.task import Group, Task, rebuilt
 from .budget import plan_under
 from .execution import run
 from .matrix import expand_matrix
-from .scope import scope_to_changed
-from .task import task_label
-from .timings import NO_KEYS, observation_keys, scope_of
-from .traversal import flatten_leaves
+from .timings import observed, scope_of
 
 if sys.version_info >= (3, 11):
 	from typing import assert_never
@@ -38,7 +35,7 @@ if TYPE_CHECKING:
 	from ..v0.task import TaskNode
 	from .budget import BudgetPlan
 	from .completion import RunResult
-	from .timings import CacheKey, TaskLabel, TaskTiming
+	from .timings import CacheKey, TaskTiming
 
 
 ResidualClass: TypeAlias = Literal["green", "needs_reasoning"]
@@ -72,10 +69,6 @@ class GateOutcome(NamedTuple):
 	"""Each leaf's path-mode report file, DFS order aligned with ``node``'s leaves — set for a
 	leaf whose ``agent_format.args`` used :data:`REPORT_TOKEN`, ``None`` for every other leaf.
 	"""
-	keys: Mapping[TaskLabel, CacheKey] = NO_KEYS
-	"""Where each leaf that ran should be recorded, by the label it reports. Built here because only
-	the gate knows both the matrix-expanded tree its budget read from and what ``agent_format`` then
-	did to each command; see :func:`camas.core.timings.observation_keys`."""
 
 
 def decision_of(residual_class: ResidualClass) -> Decision:
@@ -255,7 +248,8 @@ async def run_gate(
 	budgeted = plan.node if plan is not None else expanded
 	if budgeted is None:
 		return GateOutcome("green", None, None, plan)
-	scoped = scope_to_changed(budgeted, changed)
+	keying: Final = observed(None, budgeted, changed)
+	scoped = keying.node
 	if scoped is None:
 		return GateOutcome("green", None, None, plan)
 	if uses_path_mode(scoped):
@@ -265,7 +259,12 @@ async def run_gate(
 		report_dir = Path(tempfile.gettempdir())
 	formatted = with_agent_format(scoped, report_dir)
 	checks = await run(
-		formatted.node, jobs=jobs, base=base, interactive=False, leaf_color=leaf_color
+		formatted.node,
+		jobs=jobs,
+		base=base,
+		interactive=False,
+		leaf_color=leaf_color,
+		identities=keying.identities,
 	)
 	residual: ResidualClass = "needs_reasoning" if checks.returncode != 0 else "green"
 	return GateOutcome(
@@ -274,23 +273,4 @@ async def run_gate(
 		checks,
 		plan,
 		formatted.report_paths,
-		as_reported(observation_keys(expanded, changed, scope), scoped, formatted.node),
 	)
-
-
-def as_reported(
-	keys: Mapping[TaskLabel, CacheKey], scoped: TaskNode, formatted: TaskNode
-) -> dict[TaskLabel, CacheKey]:
-	"""``keys`` re-keyed by the label each leaf reports *after* ``agent_format`` appended its
-	arguments, which is a second rewrite of the same command that scoping already rewrote.
-
-	A nameless leaf is labelled by its command, so ``pylint src/a.py`` becomes
-	``pylint src/a.py --output-format sarif`` and a map keyed by the former misses. The two trees
-	differ only in those commands — :func:`with_agent_format` prunes nothing — so their leaves
-	correspond one to one.
-	"""
-	return {
-		task_label(after.task): key
-		for before, after in zip(flatten_leaves(scoped), flatten_leaves(formatted), strict=True)
-		if (key := keys.get(task_label(before.task))) is not None
-	}

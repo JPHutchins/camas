@@ -249,6 +249,7 @@ def test_interrupted_run_prints_banner_and_exits_130(
 		jobs: object = None,
 		base: object = None,
 		leaf_color: bool = True,
+		identities: object = None,
 	) -> RunResult:
 		return RunResult(returncode=130, results=(), elapsed=0.0, interrupt_count=3)
 
@@ -301,7 +302,6 @@ def test_run_under_dry_run_shows_plan(tmp_path: Path, capsys: pytest.CaptureFixt
 		source,
 		1.0,
 		changed=(),
-		scope=0,
 		camas_dir=camas,
 		effects=(),
 		jobs=None,
@@ -324,7 +324,6 @@ def test_run_under_executes_selected(tmp_path: Path, capsys: pytest.CaptureFixtu
 		source,
 		1.0,
 		changed=(),
-		scope=0,
 		camas_dir=camas,
 		effects=(),
 		jobs=None,
@@ -343,7 +342,6 @@ def test_run_under_all_over_budget_runs_nothing(
 		Parallel(Task("echo slow", name="slow")),
 		0.5,
 		changed=(),
-		scope=0,
 		camas_dir=camas,
 		effects=(),
 		jobs=None,
@@ -608,13 +606,12 @@ def test_run_under_with_paths_reads_the_observation_it_recorded(
 	camas.mkdir()
 	source = Parallel(Task(("python", "-c", "pass", "{paths}"), paths="."))
 	observed = timings.observed(camas, source, ("a.py",))
-	effects = (Timings(camas_dir=camas).for_run(observed.scope, observed.keys),)
+	effects = (Timings(camas_dir=camas).for_run(observed.scope, observed.identities),)
 	assert (
 		run_under(
 			source,
 			60.0,
 			changed=("a.py",),
-			scope=observed.scope,
 			camas_dir=camas,
 			effects=effects,
 			jobs=None,
@@ -629,7 +626,6 @@ def test_run_under_with_paths_reads_the_observation_it_recorded(
 			source,
 			60.0,
 			changed=("a.py",),
-			scope=observed.scope,
 			camas_dir=camas,
 			effects=effects,
 			jobs=None,
@@ -652,7 +648,6 @@ def test_run_under_reports_when_no_leaf_covers_the_changed_paths(
 			source,
 			60.0,
 			changed=("docs/readme.md",),
-			scope=1,
 			camas_dir=camas,
 			effects=(),
 			jobs=None,
@@ -678,3 +673,24 @@ def test_paths_that_all_fall_outside_the_repo_run_nothing_even_under_a_budget(
 			["check", "--paths", "/etc/passwd", "--under", "60"],
 		)
 	assert "nothing to run" in capsys.readouterr().out
+
+
+def test_fix_cli_paths_all_outside_repo_fix_nothing(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	"""Paths that all normalize away are not the same as passing none — running the whole fix
+	tree over an unrelated edit is what the scoping was asked to prevent."""
+	(tmp_path / "tasks.py").write_text(_TIDY.format(scope="."))
+	monkeypatch.chdir(tmp_path)
+	assert fix_cli(["--paths", "/etc/passwd"]) == 0
+	assert not (tmp_path / "fixed.txt").exists()
+
+
+def test_fix_cli_dry_run_reports_unusable_paths(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	"""A dry run always reports what it found — even when every path normalized away."""
+	(tmp_path / "tasks.py").write_text(_TIDY.format(scope="."))
+	monkeypatch.chdir(tmp_path)
+	assert fix_cli(["--dry-run", "--paths", "/etc/passwd"]) == 0
+	assert "nothing would run" in capsys.readouterr().out

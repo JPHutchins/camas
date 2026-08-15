@@ -35,6 +35,9 @@ from __future__ import annotations
 
 import shlex
 import sys
+from collections.abc import (
+	Mapping,  # noqa: TC003  # runtime name get_type_hints resolves; TYPE_CHECKING-only would NameError
+)
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Final, Literal, NamedTuple
 
@@ -95,28 +98,6 @@ def requested_but_unusable(paths: Sequence[str], changed: Sequence[str]) -> bool
 	False
 	"""
 	return bool(paths) and not changed
-
-
-def scoped_or_default(
-	expanded: TaskNode, requested: Sequence[str], changed: Sequence[str]
-) -> TaskNode | None:
-	"""``expanded`` narrowed to ``changed``, or its full-run form when nothing narrows it, or ``None``
-	when paths were named and none of them survived normalization.
-
-	The three-way answer the fix paths need, in one place: both the CLI's ``camas mcp fix`` and the
-	MCP's ``camas_fix`` were spelling it out character for character, in different layers.
-
-	>>> node = Task("tidy {paths}", paths=".")
-	>>> scoped_or_default(node, ["a.py"], ("a.py",)).cmd
-	'tidy a.py'
-	>>> scoped_or_default(node, [], ()).cmd
-	'tidy .'
-	>>> scoped_or_default(node, ["/etc/passwd"], ()) is None
-	True
-	"""
-	if requested_but_unusable(requested, changed):
-		return None
-	return scope_to_changed(expanded, tuple(changed)) if changed else with_default_paths(expanded)
 
 
 def _within(path: str, prefix: str) -> bool:
@@ -266,12 +247,27 @@ def scope_to_changed(node: TaskNode, changed: tuple[str, ...]) -> TaskNode | Non
 	>>> scope_to_changed(Task("cargo check", name="cargo", when="src"), ("src/a.rs",))
 	Task(cmd='cargo check', name='cargo', env={}, cwd=None, when='src')
 	"""
+	return scoped_tree_from_pairs(node, scoped_leaves(node, changed))
+
+
+def scoped_tree_from_pairs(node: TaskNode, pairs: Sequence[tuple[Task, Task]]) -> TaskNode | None:
+	"""``scoped_tree`` from a precomputed pairing — the form :func:`camas.core.timings.observed`
+	uses, so its one walk feeds both the tree and the keying.
+	"""
+	return scoped_tree(node, {id(original): scoped for original, scoped in pairs})
+
+
+def scoped_tree(node: TaskNode, resolved: Mapping[int, Task]) -> TaskNode | None:
+	"""``node`` with each leaf replaced by its resolved form: leaves with no resolution pruned,
+	emptied groups dropped. Consults no leaf's paths/when — the resolution already happened in
+	the pairing handed in, so a run's tree and its keying derive from one walk.
+	"""
 	match node:
 		case Task():
-			return _resolve_leaf(node, changed)
+			return resolved.get(id(node))
 		case Group() as group:
 			kept = tuple(
-				s for s in (scope_to_changed(c, changed) for c in group.tasks) if s is not None
+				s for s in (scoped_tree(c, resolved) for c in group.tasks) if s is not None
 			)
 			return rebuilt(group, *kept) if kept else None
 		case _:

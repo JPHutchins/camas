@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from camas import Config
+from camas.core.timings import Observed
 from camas.effect.status import Status
 from camas.effect.summary import Summary
 from camas.effect.termtree import Termtree
@@ -25,6 +26,7 @@ from camas.main.effects import (
 	eval_value,
 	format_effect_call,
 	format_effects_expr,
+	keyed_to_run,
 	parse_effects,
 	reachable_classes,
 	resolve_default_effects,
@@ -347,16 +349,15 @@ def test_running_under_agent_false_when_unset(monkeypatch: pytest.MonkeyPatch) -
 	assert running_under_agent() is False
 
 
-def test_configured_timings_is_keyed_to_the_run(tmp_path: Path) -> None:
+def test_configured_timings_survives_resolution_and_keys_at_the_run(tmp_path: Path) -> None:
 	"""A ``Config`` may name its own effects, including a ``Timings`` that cannot know what the run is
-	scoped to. Resolving replaces it with one that does, instead of leaving every scoped run recorded
-	as a whole-tree observation.
+	scoped to. Resolution hands the configured tuple back verbatim — keying happens once, at the run
+	site (:func:`keyed_to_run` with the run's own bundle), so no scoped run is recorded as a
+	whole-tree observation.
 	"""
 	from camas.effect.timings import Timings
 
 	configured = (Summary(), Timings(camas_dir=tmp_path))
-	resolved = resolve_default_effects(
-		Config(default_effects=configured), github=False, scope=2, keys={}
-	)
-	assert resolved[0] is configured[0]
-	assert resolved[1] is not configured[1]
+	resolved = resolve_default_effects(Config(default_effects=configured), github=False)
+	assert resolved == configured
+	assert keyed_to_run(resolved, Observed(None, 2))[1] is not configured[1]
