@@ -669,7 +669,10 @@ def test_live_server_answers_then_dies_when_the_package_changes(tmp_path: Path) 
 			)
 			server.stdin.flush()
 			assert f'"id":{call_id}' in _readline(server.stdout)
-		probe = Path(package_dir) / "_stale_probe.py"
+		# Unique per process: the CI matrix runs this suite concurrently in several venvs against
+		# the same source tree, so a shared probe name would land in every other leaf's startup
+		# snapshot and nobody's would ever change.
+		probe = Path(package_dir) / f"_stale_probe_{os.getpid()}.py"
 		try:
 			probe.write_text("")
 		except OSError:  # pragma: no cover  # only a read-only install (nix store) takes this
