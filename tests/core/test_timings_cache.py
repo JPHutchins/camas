@@ -236,6 +236,7 @@ def test_observed_identities_align_with_the_scoped_run_order() -> None:
 	assert [info.task.cmd for info in flatten_leaves(keying.node)] == [
 		s.cmd for _original, s in scoped_leaves(tree, changed)
 	]
+	assert keying.identities is not None
 	assert len(keying.identities) == len(list(flatten_leaves(keying.node)))
 
 

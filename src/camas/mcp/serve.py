@@ -735,14 +735,12 @@ async def run_for(
 	)
 
 
-def record_gate(camas_dir: Path | None, outcome: GateOutcome, changed: tuple[str, ...]) -> None:
-	"""Record what a gate run's leaves cost, under the labels a later budget will read. Shared by
-	both gate entry points — the MCP tool and the ``Stop``-hook subcommand — which otherwise differ
-	only in where they get ``under`` from, and which between them account for two of the four paths
-	that used to run leaves and observe nothing.
-
-	The gate supplies its own label map rather than deriving one: only it knows what
-	``agent_format`` did to each command after scoping.
+def record_gate(camas_dir: Path | None, outcome: GateOutcome) -> None:
+	"""Record what a gate run's leaves cost, under their carried identities — computed before any
+	rewrite, so ``agent_format`` appending to the command cannot mis-key them. Shared by both gate
+	entry points — the MCP tool and the ``Stop``-hook subcommand — which otherwise differ only in
+	where they get ``under`` from, and which between them account for two of the four paths that
+	used to run leaves and observe nothing.
 	"""
 	if outcome.result is not None:
 		timings.record_observed(camas_dir, timings.leaves_of(outcome.result))
@@ -1422,7 +1420,7 @@ async def gate_for(
 		timings=timings.load(session.camas_dir),
 		leaf_color=leaf_color_of(config),
 	)
-	record_gate(session.camas_dir, outcome, changed)
+	record_gate(session.camas_dir, outcome)
 	budget = to_budget_report(outcome.budget) if outcome.budget is not None else None
 	rerun = wire.GateRerun(task=req.task, paths=changed, under=req.under)
 	resp = to_gate_response(outcome, budget, rerun)
@@ -1863,7 +1861,7 @@ def run_gate_cli(
 			leaf_color=leaf_color_of(config),
 		)
 	)
-	record_gate(camas_dir, outcome, changed)
+	record_gate(camas_dir, outcome)
 	budget = to_budget_report(outcome.budget) if outcome.budget is not None else None
 	rerun = wire.GateRerun(task=args.task, paths=changed, under=args.under)
 	resp = to_gate_response(outcome, budget, rerun)

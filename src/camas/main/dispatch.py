@@ -214,25 +214,22 @@ def fix_cli(argv: list[str]) -> int:
 		return 0
 	requested = args.paths or (stdin or ())
 	changed = to_changed(requested, base)
-	expanded = expand_matrix(node)
-	keying: timings.Observed | None
 	if requested_but_unusable(requested, changed):
-		keying = None
-	else:
-		keying = timings.observed(state.config.camas_path(base), expanded, changed)
-	scoped = keying.node if keying is not None else None
+		return 0
+	expanded = expand_matrix(node)
+	keying: Final = timings.observed(state.config.camas_path(base), expanded, changed)
 	if args.dry_run:
-		if scoped is None:
+		if keying.node is None:
 			print("No leaves cover the changed paths — nothing would run.")
 		else:
-			plan = "\n".join(render_tree_lines(scoped, show_cmd=True, color=False))
+			plan = "\n".join(render_tree_lines(keying.node, show_cmd=True, color=False))
 			print(f"Dry run — resolved path-scoped plan, nothing executed:\n{plan}")
 		return 0
-	if scoped is None or keying is None:
+	if keying.node is None:
 		return 0
 	result = asyncio.run(
 		run(
-			scoped,
+			keying.node,
 			effects=(),
 			jobs=None,
 			base=base,

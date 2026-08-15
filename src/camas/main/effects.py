@@ -285,7 +285,7 @@ def resolve_default_effects(
 	"""
 	configured = config.effects(github=github)
 	if configured is not None:
-		return keyed_to_run(configured, scope, keys, identities)
+		return configured
 	from ..effect.status import Status
 	from ..effect.termtree import Termtree
 

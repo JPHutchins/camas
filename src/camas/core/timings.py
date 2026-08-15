@@ -249,8 +249,8 @@ class Observed(NamedTuple):
 	scope: int
 	keys: Mapping[TaskLabel, CacheKey]
 	"""Where each leaf's observation goes, by the label it reports — see
-	:func:`observation_keys`. A label with no entry is keyed by itself at this run's scope."""
-	identities: tuple[CacheKey, ...] = ()
+	:func:`observed` derives. A label with no entry is keyed by itself at this run's scope."""
+	identities: tuple[CacheKey, ...] | None = None
 	"""Per-leaf cache keys, parallel to the leaves of ``node`` — what :func:`camas.core.execution.run`
 	takes as its ``identities``."""
 	node: TaskNode | None = None
@@ -272,15 +272,18 @@ def leaf_key(task: Task, scope: int) -> CacheKey:
 
 def observed(camas_dir: Path | None, expanded: TaskNode, changed: Sequence[str]) -> Observed:
 	"""How to run and record a run of ``expanded`` scoped to ``changed`` — the one derivation of
-	everything keying and execution need, from a single scoped-leaves walk.
+	everything keying and execution need, from a single scoped-leaves walk. With nothing to narrow,
+	the tree is handed back unresolved: ``run`` resolves it itself, and resolving it here as well
+	would resolve every full-run leaf twice.
 	"""
-	from .scope import scoped_leaves, scoped_tree
+	from .scope import scoped_leaves, scoped_tree_from_pairs
 
+	changed_t = tuple(changed)
 	scope = scope_of(changed)
-	pairs = scoped_leaves(expanded, tuple(changed))
+	pairs = scoped_leaves(expanded, changed_t)
 	keys = {task_label(scoped): leaf_key(original, scope) for original, scoped in pairs}
 	identities = tuple(leaf_key(original, scope) for original, _scoped in pairs)
-	node = scoped_tree(expanded, {id(original): scoped for original, scoped in pairs})
+	node = expanded if not changed_t else scoped_tree_from_pairs(expanded, pairs)
 	return Observed(camas_dir, scope, keys, identities, node)
 
 
@@ -394,7 +397,7 @@ def observations(
 	it completed.
 
 	A leaf reports the label it ran under, which for a scoped ``{paths}`` leaf with no ``name`` is the
-	command with those paths already in it. ``keys`` — from :func:`observation_keys` — says where that
+	command with those paths already in it. ``keys`` — the mapping :func:`observed` derives alongside the identities — says where that
 	belongs instead, so what a scoped run records is what a later budget can read. The one place that
 	mapping happens, for both the run result and the effect that watches leaf states.
 	"""

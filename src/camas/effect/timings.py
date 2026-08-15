@@ -42,7 +42,7 @@ class Timings:
 
 	``scope`` is how many changed paths narrowed this run, keying each observation to the size of
 	change it was measured on — see :class:`camas.core.timings.CacheKey`. ``keys`` says where the label a
-	scoped leaf reports belongs instead — see :func:`camas.core.timings.observation_keys`. Neither is knowable at construction when this effect
+	scoped leaf reports belongs instead — see :func:`camas.core.timings.observed`. Neither is knowable at construction when this effect
 	is written out by hand in ``--effects`` or a ``Config``, so :func:`for_run` supplies them.
 	"""
 

@@ -247,8 +247,14 @@ def scope_to_changed(node: TaskNode, changed: tuple[str, ...]) -> TaskNode | Non
 	>>> scope_to_changed(Task("cargo check", name="cargo", when="src"), ("src/a.rs",))
 	Task(cmd='cargo check', name='cargo', env={}, cwd=None, when='src')
 	"""
-	resolved: Final = {id(original): scoped for original, scoped in scoped_leaves(node, changed)}
-	return scoped_tree(node, resolved)
+	return scoped_tree_from_pairs(node, scoped_leaves(node, changed))
+
+
+def scoped_tree_from_pairs(node: TaskNode, pairs: Sequence[tuple[Task, Task]]) -> TaskNode | None:
+	"""``scoped_tree`` from a precomputed pairing — the form :func:`camas.core.timings.observed`
+	uses, so its one walk feeds both the tree and the keying.
+	"""
+	return scoped_tree(node, {id(original): scoped for original, scoped in pairs})
 
 
 def scoped_tree(node: TaskNode, resolved: Mapping[int, Task]) -> TaskNode | None:
