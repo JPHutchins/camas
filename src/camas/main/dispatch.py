@@ -556,8 +556,8 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 			cli_observed: Final = timings.observed(camas_dir, cli_expanded, cli_changed)
 			effects = keyed_to_run(effects, cli_observed)
 
-			# Without a budget there is nothing to order against, so scope up front. With no paths
-			# named, this is the unresolved expanded tree — the same form run() resolves itself.
+			# Without a budget there is nothing to order against, so scope up front; with no paths
+			# named, that is every leaf at its full-run default.
 			if cli_observed.node is None:
 				print(f"No task leaf covers {', '.join(cli_changed)} — nothing to run.")
 				sys.exit(0)

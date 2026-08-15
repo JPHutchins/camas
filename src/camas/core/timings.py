@@ -12,7 +12,6 @@ from enum import IntEnum
 from functools import reduce
 from itertools import groupby
 from math import isfinite
-from types import MappingProxyType
 from typing import IO, TYPE_CHECKING, Final, NamedTuple, TypeAlias
 
 from ..v0.completion import Errored, Finished, Skipped, Stopped
@@ -172,11 +171,6 @@ def record(camas_dir: Path, leaves: Sequence[tuple[CacheKey, float]]) -> None:
 		handle.write(serialize(merged))
 
 
-NO_KEYS: Final[Mapping[TaskLabel, CacheKey]] = MappingProxyType({})
-"""The empty label mapping — an unscoped run rewrites nothing, so every label keys by itself.
-Immutable so that sharing it as a default cannot become shared mutable state."""
-
-
 NO_OBSERVATIONS: Final = TaskTiming(0.0, 0)
 """The neutral value for :meth:`TaskTiming.fold` — folding the first duration into it yields that
 duration with one sample, so a key absent from the cache needs no separate case."""
@@ -237,19 +231,16 @@ def record_observed(camas_dir: Path | None, leaves: Sequence[tuple[CacheKey, flo
 
 class Observed(NamedTuple):
 	"""How one run is keyed and recorded: where its durations go, what size of change they describe,
-	where each leaf belongs — and the tree and identities to run with.
+	the per-leaf identities and the tree to run with.
 
 	Built once where a run is set up, and carried to wherever the run finishes, so that no path can
-	run leaves and get part of this right. Deriving the three by hand per call site is what let a gate
+	run leaves and get part of this right. Deriving these by hand per call site is what let a gate
 	record under labels its own budget could not read — in three separate places, each found only
 	after the previous one was fixed.
 	"""
 
 	camas_dir: Path | None
 	scope: int
-	keys: Mapping[TaskLabel, CacheKey]
-	"""Where each leaf's observation goes, by the label it reports — the mapping :func:`observed`
-	derives; a label with no entry is keyed by itself at this run's scope."""
 	identities: tuple[CacheKey, ...] | None = None
 	"""Per-leaf cache keys, parallel to the leaves of ``node`` — what :func:`camas.core.execution.run`
 	takes as its ``identities``."""
@@ -258,7 +249,7 @@ class Observed(NamedTuple):
 
 	def record(self, result: RunResult) -> None:
 		"""Record ``result``'s timed leaves."""
-		record_observed(self.camas_dir, leaves_of(result, self.scope, self.keys))
+		record_observed(self.camas_dir, leaves_of(result, self.scope))
 
 
 def leaf_key(task: Task, scope: int) -> CacheKey:
@@ -272,31 +263,23 @@ def leaf_key(task: Task, scope: int) -> CacheKey:
 
 def observed(camas_dir: Path | None, expanded: TaskNode, changed: Sequence[str]) -> Observed:
 	"""How to run and record a run of ``expanded`` scoped to ``changed`` — the one derivation of
-	everything keying and execution need, from a single scoped-leaves walk. Identities and ``keys``
-	come off the same pairs, so a leaf cannot be keyed one way and recorded another; with nothing
-	to narrow, the tree handed back is ``expanded`` itself — unresolved — and ``run`` resolves its
-	input either way.
+	everything keying, execution, and display need, from a single scoped-leaves walk. The tree
+	handed back is rebuilt from that walk's resolved leaves, so the commands a caller renders are
+	the ones the run executes — and the identities key the same leaves, in the same order.
 	"""
 	from .scope import scoped_leaves, scoped_tree_from_pairs
 
 	changed_t = tuple(changed)
-	resolved: Final = not changed_t
+	narrowed: Final = bool(changed_t)
 	scope = scope_of(changed)
 
 	def keyed(original: Task, scoped: Task) -> CacheKey:
-		if not resolved:
-			return leaf_key(original, scope)
-		return CacheKey(task_label(scoped), leaf_scope(original, scope))
+		return leaf_key(original, scope) if narrowed else CacheKey(task_label(scoped), 0)
 
 	pairs = scoped_leaves(expanded, changed_t)
 	identities = tuple(keyed(original, scoped) for original, scoped in pairs)
-	keys = (
-		NO_KEYS
-		if resolved
-		else {task_label(scoped): key for (_, scoped), key in zip(pairs, identities, strict=True)}
-	)
-	node = expanded if resolved else scoped_tree_from_pairs(expanded, pairs)
-	return Observed(camas_dir, scope, keys, identities, node)
+	node = scoped_tree_from_pairs(expanded, pairs)
+	return Observed(camas_dir, scope, identities, node)
 
 
 def ensure_camas_dir(camas_dir: Path) -> None:
@@ -395,44 +378,27 @@ else:  # pragma: no cover
 		"""Advisory file locking is POSIX-only; a no-op on Windows."""
 
 
-def key_of(label: TaskLabel, scope: int, keys: Mapping[TaskLabel, CacheKey]) -> CacheKey:
-	"""Where a reported label belongs: its mapping entry, else itself at this run's ``scope``."""
-	return keys.get(label, CacheKey(label, scope))
-
-
 def observations(
 	reported: Iterable[tuple[TaskLabel, Completion]],
 	scope: int,
-	keys: Mapping[TaskLabel, CacheKey],
 ) -> list[tuple[CacheKey, float]]:
-	"""The recordable observations among ``reported`` — each leaf's label as it ran, paired with how
-	it completed.
-
-	A leaf reports the label it ran under, which for a scoped ``{paths}`` leaf with no ``name`` is the
-	command with those paths already in it. ``keys`` — the mapping :func:`observed` derives alongside the identities — says where that
-	belongs instead, so what a scoped run records is what a later budget can read. The one place that
-	mapping happens, for both the run result and the effect that watches leaf states.
+	"""The recordable observations among ``reported`` — each leaf's label as it ran, keyed at
+	``scope``, paired with how long it took.
 	"""
 	return [
-		(key_of(label, scope, keys), elapsed)
+		(CacheKey(label, scope), elapsed)
 		for label, completion in reported
 		if (elapsed := elapsed_of(completion)) is not None
 	]
 
 
-def leaves_of(
-	result: RunResult, scope: int = 0, keys: Mapping[TaskLabel, CacheKey] = NO_KEYS
-) -> list[tuple[CacheKey, float]]:
+def leaves_of(result: RunResult, scope: int = 0) -> list[tuple[CacheKey, float]]:
 	"""``result``'s timed leaves as observations at ``scope``, in result order. A carried identity
-	is taken as the key outright — it was computed from the same pre-rewrite tree ``scope`` and
-	``keys`` describe, so it overrides both — and only results without one go through the label
-	mapping.
+	is taken as the key outright — it was computed from the same pre-rewrite tree — and only
+	results without one key by the label they report.
 	"""
 	return [
-		(
-			r.identity if r.identity is not None else key_of(r.name, scope, keys),
-			elapsed,
-		)
+		(r.identity if r.identity is not None else CacheKey(r.name, scope), elapsed)
 		for r in result.results
 		if (elapsed := elapsed_of(r.completion)) is not None
 	]

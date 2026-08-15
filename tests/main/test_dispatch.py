@@ -606,7 +606,7 @@ def test_run_under_with_paths_reads_the_observation_it_recorded(
 	camas.mkdir()
 	source = Parallel(Task(("python", "-c", "pass", "{paths}"), paths="."))
 	observed = timings.observed(camas, source, ("a.py",))
-	effects = (Timings(camas_dir=camas).for_run(observed.scope, observed.keys),)
+	effects = (Timings(camas_dir=camas).for_run(observed.scope, observed.identities),)
 	assert (
 		run_under(
 			source,

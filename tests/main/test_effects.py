@@ -360,4 +360,4 @@ def test_configured_timings_survives_resolution_and_keys_at_the_run(tmp_path: Pa
 	configured = (Summary(), Timings(camas_dir=tmp_path))
 	resolved = resolve_default_effects(Config(default_effects=configured), github=False)
 	assert resolved == configured
-	assert keyed_to_run(resolved, Observed(None, 2, {}))[1] is not configured[1]
+	assert keyed_to_run(resolved, Observed(None, 2))[1] is not configured[1]

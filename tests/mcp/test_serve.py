@@ -1629,6 +1629,20 @@ async def test_fix_call_with_registered_fix_and_paths(tmp_path: Path) -> None:
 	assert not result.isError
 
 
+async def test_fix_call_full_run_reports_resolved_commands(tmp_path: Path) -> None:
+	"""A full-tree fix (no paths) must report each leaf's command with ``{paths}`` resolved — the
+	form the run executed, not the template the author wrote."""
+	fix = Task(("python", "-c", "print('fixed')", "{paths}"), name="fmt", paths=".", mutates=True)
+	cfg = Config(agent=Claude(fix=fix))
+	session = _session({"fmt": fix}, cfg, tmp_path, rich=True)
+	result = await serve.call(session, "camas_fix", {})
+	assert not result.isError
+	assert result.structuredContent is not None
+	command = result.structuredContent["leaves"][0]["command"]
+	assert "{paths}" not in command
+	assert command.endswith(" .")
+
+
 async def test_fix_call_load_error(tmp_path: Path) -> None:
 	session = Session(
 		LoadErr(source=tmp_path / "tasks.py", exception=RuntimeError("boom")), tmp_path, Compat()

@@ -407,7 +407,8 @@ async def run(
 	"""Execute a task tree, dispatching events to every effect.
 
 	Raises:
-		ValueError: when ``jobs`` is provided and less than 1.
+		ValueError: when ``jobs`` is provided and less than 1, or when ``identities``
+			is provided and not parallel to the run's leaves.
 		BaseExceptionGroup: every error raised by Effects during setup,
 			on_event, or teardown, collected per phase.
 
