@@ -705,10 +705,7 @@ async def run_for(
 	scoped = None if requested_but_unusable(req.paths, changed) else observed.node
 	if scoped is None:
 		return nothing_covered_result(session, req.paths)
-	try:
-		node = apply_passthrough(scoped, tuple(req.args)) if req.args else scoped
-	except ValueError as e:
-		return error_result(str(e))
+	node = apply_passthrough(scoped, tuple(req.args)) if req.args else scoped
 	if req.dry_run:
 		return success(
 			with_warning(session, dry_run_text(node)), to_plan_response(node), session.compat

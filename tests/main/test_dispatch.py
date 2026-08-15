@@ -673,3 +673,14 @@ def test_paths_that_all_fall_outside_the_repo_run_nothing_even_under_a_budget(
 			["check", "--paths", "/etc/passwd", "--under", "60"],
 		)
 	assert "nothing to run" in capsys.readouterr().out
+
+
+def test_fix_cli_paths_all_outside_repo_fix_nothing(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	"""Paths that all normalize away are not the same as passing none — running the whole fix
+	tree over an unrelated edit is what the scoping was asked to prevent."""
+	(tmp_path / "tasks.py").write_text(_TIDY.format(scope="."))
+	monkeypatch.chdir(tmp_path)
+	assert fix_cli(["--paths", "/etc/passwd"]) == 0
+	assert not (tmp_path / "fixed.txt").exists()
