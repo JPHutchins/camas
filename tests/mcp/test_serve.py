@@ -629,9 +629,20 @@ def test_live_server_answers_then_dies_when_the_package_changes(tmp_path: Path) 
 	"""Drive the real stdio server over JSON-RPC: a stale package is answered, then the process
 	exits so the client sees EOF — the two contract halves the in-memory transport cannot
 	exercise (its exit is faked and it has no ``to_thread`` writer hop)."""
-	from camas.paths import camas_package_dir
-
 	(tmp_path / "tasks.py").write_text("from camas import Task\nlint = Task('echo hi')\n")
+	# The spawned server resolves ``camas`` in *its* environment, which under the CI matrix is an
+	# installed copy whose directory need not be the one this test process imports from — so ask
+	# the server's own interpreter where its package lives before deciding where the probe goes.
+	package_dir = subprocess.run(
+		[
+			sys.executable,
+			"-c",
+			"from camas.paths import camas_package_dir; print(camas_package_dir())",
+		],
+		capture_output=True,
+		text=True,
+		check=True,
+	).stdout.strip()
 	server = subprocess.Popen(
 		[sys.executable, "-m", "camas", "mcp", "--plain"],
 		cwd=tmp_path,
@@ -658,7 +669,7 @@ def test_live_server_answers_then_dies_when_the_package_changes(tmp_path: Path) 
 			)
 			server.stdin.flush()
 			assert f'"id":{call_id}' in _readline(server.stdout)
-		probe = Path(camas_package_dir()) / "_stale_probe.py"
+		probe = Path(package_dir) / "_stale_probe.py"
 		try:
 			probe.write_text("")
 		except OSError:  # pragma: no cover  # only a read-only install (nix store) takes this
