@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, TypeVar, cast
 
 import pytest
 
@@ -150,6 +150,18 @@ def test_setup_rejects_identities_not_parallel_to_the_leaves(tmp_path: Path) -> 
 	with pytest.raises(ValueError, match="identities must be parallel"):
 		asyncio.run(
 			drive(Timings(camas_dir=tmp_path, identities=(cache_key("one"),)), Parallel(a, b), [])
+		)
+
+
+def test_constructor_rejects_the_pre_289_keys_mapping_shape(tmp_path: Path) -> None:
+	"""The third slot carries identities now; a dict — the label→key mapping the slot took before
+	#289 — fails loudly at construction instead of mis-parsing as a short identities tuple. Under
+	the mypyc build the compiled argument check raises first with a ``TypeError``, so the test
+	accepts either failure mode but pins the loudness."""
+	with pytest.raises((TypeError, ValueError)):
+		Timings(
+			camas_dir=tmp_path,
+			identities=cast("tuple[timings.CacheKey, ...]", {"lint": cache_key("lint")}),
 		)
 
 

@@ -12,7 +12,7 @@ from enum import IntEnum
 from functools import reduce
 from itertools import groupby
 from math import isfinite
-from typing import IO, TYPE_CHECKING, Final, NamedTuple, TypeAlias
+from typing import IO, TYPE_CHECKING, Final, NamedTuple, NoReturn, TypeAlias, cast
 
 from ..v0.completion import Errored, Finished, Skipped, Stopped
 from ..v0.task import Parallel, Sequential, Task
@@ -259,6 +259,41 @@ def leaf_key(task: Task, scope: int) -> CacheKey:
 	CacheKey(label='ruff check .', scope=0)
 	"""
 	return CacheKey(task_label(resolve_default_leaf(task)), leaf_scope(task, scope))
+
+
+def raise_identities_mismatch(identities_count: int, leaves_count: int) -> NoReturn:
+	"""Raise the error for an identities tuple not parallel to the run's leaves — shared by
+	:func:`camas.core.execution.run` and the ``Timings`` effect, so both report identically.
+
+	Raises:
+		ValueError: with both counts.
+	"""
+	raise ValueError(
+		f"identities must be parallel to the run's leaves: "
+		f"{identities_count} keys for {leaves_count} leaves"
+	)
+
+
+def reject_non_tuple_identities(value: object) -> None:
+	"""Raise the error for an identities value that is neither ``None`` nor a tuple of per-leaf
+	cache keys — the one shape guard for both :func:`camas.core.execution.run` and the
+	``Timings`` constructor, so a stale shape fails loudly where it is passed, not later at
+	indexing. The parameter is ``object`` because Python enforces no declared shape at runtime;
+	under the mypyc build, the compiled argument check on ``Timings`` raises first.
+
+	Raises:
+		ValueError: naming the expected shape and the shape received.
+	"""
+	if value is None:
+		return
+	if not isinstance(value, tuple):
+		raise ValueError(
+			f"identities must be a tuple of per-leaf cache keys, got {type(value).__name__}"
+		)
+	if not all(isinstance(item, CacheKey) for item in cast("tuple[object, ...]", value)):
+		raise ValueError(
+			"identities must be a tuple of per-leaf cache keys, got a tuple of other things"
+		)
 
 
 def observed(camas_dir: Path | None, expanded: TaskNode, changed: Sequence[str]) -> Observed:
