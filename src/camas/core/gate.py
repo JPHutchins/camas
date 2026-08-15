@@ -18,7 +18,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Final, Literal, NamedTuple, TypeAlias
 
-from ..v0.task import Group, Task
+from ..v0.task import Group, Task, rebuilt
 from .budget import plan_under
 from .execution import run
 from .matrix import expand_matrix
@@ -174,17 +174,7 @@ def with_agent_format(node: TaskNode, report_dir: Path) -> FormattedNode:
 		case Group() as group:
 			formatted = tuple(with_agent_format(c, report_dir) for c in group.tasks)
 			return FormattedNode(
-				type(group)(
-					*(f.node for f in formatted),
-					name=group.name,
-					matrix=group.matrix,
-					variants=group.variants,
-					env=group.env,
-					cwd=group.cwd,
-					help=group.help,
-					paths=group.paths,
-					when=group.when,
-				),
+				rebuilt(group, *(f.node for f in formatted)),
 				tuple(p for f in formatted for p in f.report_paths),
 			)
 		case _:

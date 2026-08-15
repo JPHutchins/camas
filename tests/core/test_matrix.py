@@ -341,3 +341,15 @@ def test_when_dot_opts_out_of_cwd_fallback() -> None:
 
 def test_absolute_cwd_has_no_when_fallback() -> None:
 	assert _leaf(expand_matrix(Task("cargo build", cwd=Path.cwd()))).when is None
+
+
+def test_no_matrix_expansion_preserves_a_group_subclass() -> None:
+	"""The no-matrix branches rebuild through `rebuilt`, which constructs ``type(task)`` — a
+	subclass of Sequential/Parallel keeps its type across expansion, where the pre-refactor
+	sites normalized to the base class. (The matrix branches fabricate per-binding containers,
+	which is a different operation and stays base-class.)"""
+
+	class Tagged(Sequential): ...
+
+	expanded = expand_matrix(Tagged(Task("echo hi", name="leaf")))
+	assert type(expanded) is Tagged
