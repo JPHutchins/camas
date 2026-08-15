@@ -152,7 +152,7 @@ def run_under(
 		print(f"No task leaf covers {', '.join(changed)} — nothing to run.")
 		return 0
 	if dry_run:
-		print_tree(scoped, show_cmd=True)
+		print_tree(with_default_paths(scoped), show_cmd=True)
 		return 0
 	return finish_run(
 		asyncio.run(
@@ -215,6 +215,8 @@ def fix_cli(argv: list[str]) -> int:
 	requested = args.paths or (stdin or ())
 	changed = to_changed(requested, base)
 	if requested_but_unusable(requested, changed):
+		if args.dry_run:
+			print("No leaves cover the changed paths — nothing would run.")
 		return 0
 	expanded = expand_matrix(node)
 	keying: Final = timings.observed(state.config.camas_path(base), expanded, changed)
@@ -222,7 +224,9 @@ def fix_cli(argv: list[str]) -> int:
 		if keying.node is None:
 			print("No leaves cover the changed paths — nothing would run.")
 		else:
-			plan = "\n".join(render_tree_lines(keying.node, show_cmd=True, color=False))
+			plan = "\n".join(
+				render_tree_lines(with_default_paths(keying.node), show_cmd=True, color=False)
+			)
 			print(f"Dry run — resolved path-scoped plan, nothing executed:\n{plan}")
 		return 0
 	if keying.node is None:
@@ -557,7 +561,7 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 			)
 
 			# Without a budget there is nothing to order against, so scope up front. With no paths
-			# named, this is the default-resolved tree — the same form run() would resolve anyway.
+			# named, this is the unresolved expanded tree — the same form run() resolves itself.
 			if cli_observed.node is None:
 				print(f"No task leaf covers {', '.join(cli_changed)} — nothing to run.")
 				sys.exit(0)

@@ -335,7 +335,7 @@ def resolve_effects(
 			keys=keys,
 			identities=identities,
 		)
-	return keyed_to_run(parse_effects(expr, scope_effects), scope, keys, identities)
+	return parse_effects(expr, scope_effects)
 
 
 def keyed_to_run(

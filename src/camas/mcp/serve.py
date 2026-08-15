@@ -836,9 +836,9 @@ def resolve_run_node(
 		name, node = req.task, require_task(tasks, req.task)
 	if req.matrix_overrides:
 		node = override_matrix(node, {k: tuple(v) for k, v in req.matrix_overrides.items()})
-	require_filled_axes(node)
 	if req.args and not isinstance(node, Task):
 		raise ValueError(f"pass-through args (--) only apply to Task, got {type(node).__name__}")
+	require_filled_axes(node)
 	return name, node
 
 
@@ -1469,7 +1469,7 @@ async def fix_for(
 	except ValueError as e:
 		return error_result(str(e))
 	# The node to run and how to observe it are bound together, since neither is meaningful without
-	# the other: nothing to run means nothing to record, and the path that runs always has both.
+	# the other: nothing to run means nothing to record, and a prepared bundle always has a node.
 	prepared: timings.Observed | None = None
 	blocked = unsatisfiable_message(fix_node) if fix_node is not None else None
 	if fix_node is not None and blocked is None:
@@ -1480,7 +1480,7 @@ async def fix_for(
 			if keying.node is not None:
 				prepared = keying
 	empty_cause: str | None
-	if prepared is None or prepared.node is None:
+	if prepared is None:
 		resp = empty_run_response()
 		empty_cause = (
 			"no fix node registered (Config.agent.fix is None)"
@@ -1490,6 +1490,8 @@ async def fix_for(
 			else "no fix leaf covers the paths"
 		)
 	else:
+		if prepared.node is None:  # pragma: no cover  # prepared is only set with a node
+			return nothing_covered_result(session, req.paths)
 		node: Final = prepared.node
 		result = await run(
 			node,

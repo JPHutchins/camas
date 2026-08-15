@@ -279,11 +279,17 @@ def observed(camas_dir: Path | None, expanded: TaskNode, changed: Sequence[str])
 	from .scope import scoped_leaves, scoped_tree_from_pairs
 
 	changed_t = tuple(changed)
+	resolved: Final = not changed_t
 	scope = scope_of(changed)
+
+	def keyed(original: Task, scoped: Task) -> CacheKey:
+		label = task_label(scoped) if resolved else task_label(resolve_default_leaf(original))
+		return CacheKey(label, leaf_scope(original, scope))
+
 	pairs = scoped_leaves(expanded, changed_t)
-	keys = {task_label(scoped): leaf_key(original, scope) for original, scoped in pairs}
-	identities = tuple(leaf_key(original, scope) for original, _scoped in pairs)
-	node = expanded if not changed_t else scoped_tree_from_pairs(expanded, pairs)
+	keys = {task_label(scoped): keyed(original, scoped) for original, scoped in pairs}
+	identities = tuple(keyed(original, scoped) for original, scoped in pairs)
+	node = expanded if resolved else scoped_tree_from_pairs(expanded, pairs)
 	return Observed(camas_dir, scope, keys, identities, node)
 
 
