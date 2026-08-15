@@ -18,7 +18,7 @@ else:  # pragma: no cover
 
 from ..v0.config import Agent, Claude, Config
 from ..v0.effect import Effect
-from ..v0.task import Group, Parallel, Sequential, Task, TaskNode
+from ..v0.task import Group, Parallel, Sequential, Task, TaskNode, rebuilt
 from .expression import Ref, parse_task_value, resolve_refs
 from .state import LoadOk
 
@@ -69,17 +69,7 @@ def assign_key_name(node: TaskNode | Ref, key: str) -> TaskNode | Ref:
 				agent_format=agent_format,
 			)
 		case Group(name=None) as group:
-			return type(group)(
-				*group.tasks,
-				name=key,
-				matrix=group.matrix,
-				variants=group.variants,
-				env=group.env,
-				cwd=group.cwd,
-				help=group.help,
-				paths=group.paths,
-				when=group.when,
-			)
+			return rebuilt(group, group.tasks, name=key)
 		case _:
 			return node
 
@@ -227,17 +217,7 @@ def name_scope_bindings(scope: Mapping[str, object]) -> dict[str, TaskNode]:
 			case Task():
 				return source
 			case Group() as group:
-				return type(group)(
-					*(promote(ch) for ch in group.tasks),
-					name=group.name,
-					matrix=group.matrix,
-					variants=group.variants,
-					env=group.env,
-					cwd=group.cwd,
-					help=group.help,
-					paths=group.paths,
-					when=group.when,
-				)
+				return rebuilt(group, tuple(promote(ch) for ch in group.tasks))
 			case _:
 				assert_never(source)
 

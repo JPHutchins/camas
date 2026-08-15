@@ -14,7 +14,7 @@ if sys.version_info >= (3, 11):
 else:  # pragma: no cover
 	from typing_extensions import assert_never
 
-from ...v0.task import Group, Task
+from ...v0.task import Group, Task, rebuilt
 
 if TYPE_CHECKING:
 	from ...v0.task import PathScope, TaskNode, WhenPredicate
@@ -221,14 +221,11 @@ def rebase_tree(node: TaskNode, rel: PurePosixPath, namespace: str, *, is_root: 
 				agent_format=agent_format,
 			)
 		case Group() as group:
-			return type(group)(
-				*(rebase_tree(child, rel, namespace, is_root=False) for child in group.tasks),
+			return rebuilt(
+				group,
+				tuple(rebase_tree(child, rel, namespace, is_root=False) for child in group.tasks),
 				name=qualify(group.name, namespace),
-				matrix=group.matrix,
-				variants=group.variants,
-				env=group.env,
 				cwd=rebase_cwd(group.cwd, rel, is_root=is_root),
-				help=group.help,
 				paths=rebase_paths(group.paths, rel),
 				when=rebase_when(group.when, rel),
 			)

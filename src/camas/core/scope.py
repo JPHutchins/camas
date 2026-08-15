@@ -43,7 +43,7 @@ if sys.version_info >= (3, 11):
 else:  # pragma: no cover
 	from typing_extensions import assert_never
 
-from ..v0.task import Group, Task
+from ..v0.task import Group, Task, rebuilt
 from .task import task_label
 
 if TYPE_CHECKING:
@@ -273,21 +273,7 @@ def scope_to_changed(node: TaskNode, changed: tuple[str, ...]) -> TaskNode | Non
 			kept = tuple(
 				s for s in (scope_to_changed(c, changed) for c in group.tasks) if s is not None
 			)
-			return (
-				type(group)(
-					*kept,
-					name=group.name,
-					matrix=group.matrix,
-					variants=group.variants,
-					env=group.env,
-					cwd=group.cwd,
-					help=group.help,
-					paths=group.paths,
-					when=group.when,
-				)
-				if kept
-				else None
-			)
+			return rebuilt(group, kept) if kept else None
 		case _:
 			assert_never(node)
 

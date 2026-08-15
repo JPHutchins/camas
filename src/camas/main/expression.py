@@ -17,7 +17,7 @@ else:  # pragma: no cover
 	from typing_extensions import assert_never
 
 from ..core.task import did_you_mean
-from ..v0.task import AgentFormat, Group, OutputKind, Parallel, Sequential, Task, TaskNode
+from ..v0.task import AgentFormat, Group, OutputKind, Parallel, Sequential, Task, TaskNode, rebuilt
 
 if TYPE_CHECKING:
 	from collections.abc import Mapping
@@ -616,16 +616,6 @@ def resolve_refs(
 		case Task():
 			return node
 		case Group() as group:
-			return type(group)(
-				*(resolve_refs(t, defs, visiting) for t in group.tasks),
-				name=group.name,
-				matrix=group.matrix,
-				variants=group.variants,
-				env=group.env,
-				cwd=group.cwd,
-				help=group.help,
-				paths=group.paths,
-				when=group.when,
-			)
+			return rebuilt(group, tuple(resolve_refs(t, defs, visiting) for t in group.tasks))
 		case _:
 			assert_never(node)

@@ -17,7 +17,7 @@ if sys.version_info >= (3, 11):
 else:  # pragma: no cover
 	from typing_extensions import assert_never
 
-from ..v0.task import Group, Parallel, Sequential, Task, TaskNode
+from ..v0.task import Group, Parallel, Sequential, Task, TaskNode, rebuilt
 from .task import MatrixBinding, VarBinding, node_label, task_label
 
 if TYPE_CHECKING:
@@ -142,8 +142,8 @@ def specialize_node(task: TaskNode, binding: MatrixBinding, suffix: str) -> Task
 	"""Recursively specialize an entire task tree with concrete variable values.
 
 	Runs on a subtree :func:`expand_matrix` has already expanded, where no node carries a ``matrix``
-	or ``variants`` any more — so the rebuilt groups pass neither, and a caller handing it an
-	unexpanded tree would silently lose them.
+	or ``variants`` any more — so the rebuilt groups carry none (:func:`rebuilt` passes every field
+	verbatim, unexpanded trees included).
 
 	>>> specialize_node(Task("test {X}"), (VarBinding("X", "1"),), "[X=1]")
 	Task(cmd='test 1', name='test 1 [X=1]', env={'X': '1'}, cwd=None)
@@ -152,8 +152,9 @@ def specialize_node(task: TaskNode, binding: MatrixBinding, suffix: str) -> Task
 		case Task():
 			return specialize_task(task, binding, suffix)
 		case Group() as group:
-			return type(group)(
-				*(specialize_node(t, binding, suffix) for t in group.tasks),
+			return rebuilt(
+				group,
+				tuple(specialize_node(t, binding, suffix) for t in group.tasks),
 				name=f"{group.name} {suffix}" if group.name is not None else None,
 				env={k: substitute_in_str(v, binding) for k, v in group.env.items()},
 				cwd=substitute_cwd(group.cwd, binding),
@@ -380,16 +381,11 @@ def apply_overrides(task: TaskNode, overrides: Mapping[str, tuple[str, ...]]) ->
 		case Task():
 			return task
 		case Group() as group:
-			return type(group)(
-				*(apply_overrides(t, overrides) for t in group.tasks),
-				name=group.name,
+			return rebuilt(
+				group,
+				tuple(apply_overrides(t, overrides) for t in group.tasks),
 				matrix=applied(group.matrix),
 				variants=kept(group.variants),
-				env=group.env,
-				cwd=group.cwd,
-				help=group.help,
-				paths=group.paths,
-				when=group.when,
 			)
 		case _:
 			assert_never(task)

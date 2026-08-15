@@ -9,10 +9,11 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Final, Literal, NamedTuple, TypeAlias, cast
+from typing import TYPE_CHECKING, Final, Literal, NamedTuple, TypeAlias, TypeVar, cast
 
 if TYPE_CHECKING:
 	from collections.abc import Callable, Mapping
+	from typing import Any
 
 
 PathScope: TypeAlias = "Callable[[tuple[str, ...]], tuple[str, ...]]"
@@ -489,6 +490,35 @@ class Parallel(Group):  # pyrefly: ignore[bad-class-definition]
 
 
 TaskNode: TypeAlias = Task | Sequential | Parallel
+
+
+GROUP_FIELDS: Final = ("name", "matrix", "variants", "env", "cwd", "help", "paths", "when")
+"""Every ``Group.__init__`` keyword other than the variadic tasks, in signature order — the drift
+test fails when a new field lands on Group but not here."""
+
+
+G = TypeVar("G", bound=Group)
+
+
+def rebuilt(group: G, children: tuple[TaskNode, ...], **changes: object) -> G:
+	"""``group`` rebuilt around ``children``: fields named in ``changes`` take the new value, every
+	other field is carried verbatim — so a Group field added later is carried by construction at
+	every rebuild site, instead of being listed (and missable) at each.
+
+	>>> rebuilt(Parallel(Task("a"), matrix={"x": ("1",)}), (Task("b"), Task("c")))
+	Parallel(tasks=(Task(cmd='b', name=None, env={}, cwd=None), Task(cmd='c', name=None, env={}, cwd=None)), name=None, matrix={'x': ('1',)}, env={}, cwd=None)
+	>>> rebuilt(Sequential("a"), (Task("b"),), paths=".")
+	Sequential(tasks=(Task(cmd='b', name=None, env={}, cwd=None),), name=None, matrix=None, env={}, cwd=None, paths='.')
+	>>> rebuilt(Sequential("a", name="n"), (Task("b"),), name=None)
+	Sequential(tasks=(Task(cmd='b', name=None, env={}, cwd=None),), name=None, matrix=None, env={}, cwd=None)
+	"""
+	return type(group)(
+		*children,
+		**cast(
+			"dict[str, Any]",
+			{field: changes.get(field, getattr(group, field)) for field in GROUP_FIELDS},
+		),
+	)
 
 
 class ProjectRef(NamedTuple):

@@ -18,7 +18,7 @@ else:  # pragma: no cover
 	from typing_extensions import assert_never
 
 from ...v0.config import Claude, Config
-from ...v0.task import Group, Parallel, ProjectRef, Sequential, Task
+from ...v0.task import Group, Parallel, ProjectRef, Sequential, Task, rebuilt
 from ..effects import running_under_agent
 from ..state import LoadErr, LoadOk
 from ..tasks import (
@@ -191,17 +191,7 @@ def _compose_scope(
 				children = tuple(resolve(child, field) for child in group.tasks)
 				if all(new is old for new, old in zip(children, group.tasks, strict=True)):
 					return group
-				return type(group)(
-					*children,
-					name=group.name,
-					matrix=group.matrix,
-					variants=group.variants,
-					env=group.env,
-					cwd=group.cwd,
-					help=group.help,
-					paths=group.paths,
-					when=group.when,
-				)
+				return rebuilt(group, children)
 			case _:
 				assert_never(node)
 
