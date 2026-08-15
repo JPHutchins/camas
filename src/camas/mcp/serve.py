@@ -878,7 +878,6 @@ async def run_budget(
 	if keying.node is None:
 		return nothing_covered_result(session, req.paths)
 	run_node: Final = keying.node
-	plan = plan._replace(node=run_node)
 	if req.dry_run:
 		resp = attach_budget(to_plan_response(run_node), report)
 		return success(

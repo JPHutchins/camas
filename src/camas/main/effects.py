@@ -269,7 +269,6 @@ def resolve_default_effects(
 	base: Path | None = None,
 	scope: int = 0,
 	keys: Mapping[str, CacheKey] = NO_KEYS,
-	identities: tuple[CacheKey, ...] | None = None,
 ) -> tuple[Effect[Any], ...]:
 	"""The effects a bare run uses: the :class:`Config` override, else the environment default.
 
@@ -296,7 +295,7 @@ def resolve_default_effects(
 	if camas is not None and camas.is_dir():
 		from ..effect.timings import Timings
 
-		return (renderer, Timings(camas_dir=camas, scope=scope, keys=keys, identities=identities))
+		return (renderer, Timings(camas_dir=camas, scope=scope, keys=keys))
 	return (renderer,)
 
 
@@ -319,7 +318,6 @@ def resolve_effects(
 	base: Path | None = None,
 	scope: int = 0,
 	keys: Mapping[str, CacheKey] = NO_KEYS,
-	identities: tuple[CacheKey, ...] | None = None,
 ) -> tuple[Effect[Any], ...]:
 	"""The effects for a run: the parsed ``--effects`` expression (propagating its
 	``ValueError`` on a malformed expression), or the environment default when
@@ -333,7 +331,6 @@ def resolve_effects(
 			base=base,
 			scope=scope,
 			keys=keys,
-			identities=identities,
 		)
 	return parse_effects(expr, scope_effects)
 

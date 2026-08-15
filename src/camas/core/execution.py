@@ -423,6 +423,11 @@ async def run(
 	expanded: Final = with_default_paths(expand_matrix(task))
 	leaf_infos: Final = flatten_leaves(expanded)
 	leaves: Final = tuple(info.task for info in leaf_infos)
+	if identities is not None and len(identities) != len(leaves):
+		raise ValueError(
+			f"identities must be parallel to the run's leaves: "
+			f"{len(identities)} keys for {len(leaves)} leaves"
+		)
 	index_map: Final = {id(info.task): i for i, info in enumerate(leaf_infos)}
 
 	wall_start: Final = time.perf_counter()
