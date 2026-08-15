@@ -37,6 +37,7 @@ from .task import task_label
 from .timings import (
 	CacheKey,  # runtime name get_type_hints resolves; TYPE_CHECKING-only would NameError
 	raise_identities_mismatch,
+	reject_non_tuple_identities,
 )
 from .traversal import flatten_leaves, subtree_leaf_indices
 
@@ -425,6 +426,7 @@ async def run(
 	expanded: Final = with_default_paths(expand_matrix(task))
 	leaf_infos: Final = flatten_leaves(expanded)
 	leaves: Final = tuple(info.task for info in leaf_infos)
+	reject_non_tuple_identities(identities)
 	if identities is not None and len(identities) != len(leaves):
 		raise_identities_mismatch(len(identities), len(leaves))
 	index_map: Final = {id(info.task): i for i, info in enumerate(leaf_infos)}

@@ -680,3 +680,15 @@ async def test_run_rejects_identities_not_parallel_to_the_leaves() -> None:
 	tree = Parallel(Task("python -c 'pass'"), Task("python -c 'pass'", name="two"))
 	with pytest.raises(ValueError, match="parallel"):
 		await run(tree, identities=(CacheKey("only-one", 0),))
+
+
+async def test_run_rejects_identities_that_are_not_a_tuple() -> None:
+	"""A non-tuple identities value — a pre-#289-style label→key dict, whose length can even
+	match the leaf count — fails loudly at the boundary instead of KeyErroring at indexing."""
+	from typing import cast
+
+	from camas.core.timings import CacheKey
+
+	tree = Parallel(Task("python -c 'pass'"), Task("python -c 'pass'", name="two"))
+	with pytest.raises(ValueError, match="must be a tuple"):
+		await run(tree, identities=cast("Any", {"a": CacheKey("a", 0), "b": CacheKey("b", 0)}))

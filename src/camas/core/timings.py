@@ -261,7 +261,7 @@ def leaf_key(task: Task, scope: int) -> CacheKey:
 	return CacheKey(task_label(resolve_default_leaf(task)), leaf_scope(task, scope))
 
 
-def raise_identities_mismatch(identities: int, leaves: int) -> NoReturn:
+def raise_identities_mismatch(identities_count: int, leaves_count: int) -> NoReturn:
 	"""Raise the error for an identities tuple not parallel to the run's leaves — shared by
 	:func:`camas.core.execution.run` and the ``Timings`` effect, so both report identically.
 
@@ -269,8 +269,24 @@ def raise_identities_mismatch(identities: int, leaves: int) -> NoReturn:
 		ValueError: with both counts.
 	"""
 	raise ValueError(
-		f"identities must be parallel to the run's leaves: {identities} keys for {leaves} leaves"
+		f"identities must be parallel to the run's leaves: "
+		f"{identities_count} keys for {leaves_count} leaves"
 	)
+
+
+def reject_non_tuple_identities(value: object) -> None:
+	"""Raise the error for an identities value that is neither ``None`` nor a tuple of per-leaf
+	cache keys — the one shape guard for both :func:`camas.core.execution.run` and the
+	``Timings`` constructor, so a stale shape fails loudly where it is passed, not later at
+	indexing. The parameter is ``object`` because Python enforces no declared shape at runtime.
+
+	Raises:
+		ValueError: naming the expected shape and the shape received.
+	"""
+	if value is not None and not isinstance(value, tuple):
+		raise ValueError(
+			f"identities must be a tuple of per-leaf cache keys, got {type(value).__name__}"
+		)
 
 
 def observed(camas_dir: Path | None, expanded: TaskNode, changed: Sequence[str]) -> Observed:
