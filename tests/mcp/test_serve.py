@@ -641,7 +641,8 @@ def test_live_server_answers_then_dies_when_the_package_changes(tmp_path: Path) 
 		text=True,
 		bufsize=1,
 	)
-	assert server.stdin is not None and server.stdout is not None
+	assert server.stdin is not None
+	assert server.stdout is not None
 	try:
 		server.stdin.write(
 			'{"jsonrpc":"2.0","id":0,"method":"initialize","params":'
@@ -660,7 +661,7 @@ def test_live_server_answers_then_dies_when_the_package_changes(tmp_path: Path) 
 		probe = Path(camas_package_dir()) / "_stale_probe.py"
 		try:
 			probe.write_text("")
-		except OSError:
+		except OSError:  # pragma: no cover  # only a read-only install (nix store) takes this
 			pytest.skip("package directory is not writable (read-only install)")
 		try:
 			server.stdin.write(
@@ -674,7 +675,7 @@ def test_live_server_answers_then_dies_when_the_package_changes(tmp_path: Path) 
 			probe.unlink(missing_ok=True)
 	finally:
 		if server.poll() is None:
-			server.kill()
+			server.kill()  # pragma: no cover  # only a wedged server takes this
 	assert server.returncode == 0
 
 
