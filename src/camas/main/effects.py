@@ -331,7 +331,10 @@ def resolve_effects(
 
 
 def keyed_to_run(
-	effects: tuple[Effect[Any], ...], scope: int, keys: Mapping[str, CacheKey]
+	effects: tuple[Effect[Any], ...],
+	scope: int,
+	keys: Mapping[str, CacheKey],
+	identities: tuple[CacheKey, ...] | None = None,
 ) -> tuple[Effect[Any], ...]:
 	"""``effects`` with every ``Timings`` keyed to this run's scope and labels. A ``Timings`` spelled
 	out in a ``Config`` or in ``--effects`` cannot carry either — so without this it would record a
@@ -344,7 +347,9 @@ def keyed_to_run(
 
 	if not any(isinstance(e, Timings) for e in effects):
 		return effects
-	return tuple(e.for_run(scope, keys) if isinstance(e, Timings) else e for e in effects)
+	return tuple(
+		e.for_run(scope, keys, identities) if isinstance(e, Timings) else e for e in effects
+	)
 
 
 def format_effect_call(effect: Effect[Any]) -> str:

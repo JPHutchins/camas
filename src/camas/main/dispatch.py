@@ -47,7 +47,7 @@ from .argv import (
 	split_passthrough,
 )
 from .compose import load_py_tasks_state, state_from_scope
-from .effects import default_effect_names, resolve_effects, running_under_agent
+from .effects import default_effect_names, keyed_to_run, resolve_effects, running_under_agent
 from .expression import parse_expression
 from .format import (
 	format_empty_variants_error,
@@ -157,8 +157,23 @@ def run_under(
 	if dry_run:
 		print_tree(with_default_paths(scoped), show_cmd=True)
 		return 0
+	identities: Final = timings.leaf_identities(plan.node, changed)
 	return finish_run(
-		asyncio.run(run(scoped, effects=effects, jobs=jobs, base=base, leaf_color=leaf_color))
+		asyncio.run(
+			run(
+				scoped,
+				effects=keyed_to_run(
+					tuple(effects),
+					scope,
+					timings.observation_keys(plan.node, changed, scope),
+					identities,
+				),
+				jobs=jobs,
+				base=base,
+				leaf_color=leaf_color,
+				identities=identities,
+			)
+		)
 	)
 
 
@@ -218,7 +233,14 @@ def fix_cli(argv: list[str]) -> int:
 	if scoped is None:
 		return 0
 	result = asyncio.run(
-		run(scoped, effects=(), jobs=None, base=base, leaf_color=state.config.leaf_color)
+		run(
+			scoped,
+			effects=(),
+			jobs=None,
+			base=base,
+			leaf_color=state.config.leaf_color,
+			identities=timings.leaf_identities(expanded, changed),
+		)
 	)
 	timings.observed(state.config.camas_path(base), expanded, changed).record(result)
 	_ = finish_run(result)

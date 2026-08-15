@@ -656,3 +656,17 @@ def test_suppress_and_restore_ctrl_c_echo(monkeypatch: pytest.MonkeyPatch) -> No
 		finally:
 			os.close(master)
 			os.close(slave)
+
+
+async def test_run_stamps_each_result_with_its_carried_identity() -> None:
+	"""The identity tuple is parallel to the leaves: index i's TaskResult carries identity i,
+	regardless of what the leaf's command was rewritten to report."""
+	from camas.core.timings import CacheKey
+
+	tree = Parallel(
+		Task("python -c 'print(1)'"),
+		Task("python -c 'print(2)'", name="two"),
+	)
+	identities = (CacheKey("python -c 'print(1)'", 0), CacheKey("two", 0))
+	result = await run(tree, identities=identities)
+	assert tuple(r.identity for r in result.results) == identities

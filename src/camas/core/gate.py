@@ -24,7 +24,7 @@ from .execution import run
 from .matrix import expand_matrix
 from .scope import scope_to_changed
 from .task import task_label
-from .timings import NO_KEYS, observation_keys, scope_of
+from .timings import NO_KEYS, leaf_identities, observation_keys, scope_of
 from .traversal import flatten_leaves
 
 if sys.version_info >= (3, 11):
@@ -265,7 +265,12 @@ async def run_gate(
 		report_dir = Path(tempfile.gettempdir())
 	formatted = with_agent_format(scoped, report_dir)
 	checks = await run(
-		formatted.node, jobs=jobs, base=base, interactive=False, leaf_color=leaf_color
+		formatted.node,
+		jobs=jobs,
+		base=base,
+		interactive=False,
+		leaf_color=leaf_color,
+		identities=leaf_identities(budgeted, changed),
 	)
 	residual: ResidualClass = "needs_reasoning" if checks.returncode != 0 else "green"
 	return GateOutcome(

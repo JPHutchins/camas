@@ -275,6 +275,21 @@ def observation_keys(
 	}
 
 
+def leaf_identities(node: TaskNode, changed: tuple[str, ...]) -> tuple[CacheKey, ...]:
+	"""The cache key each surviving scoped leaf belongs under, in the order
+	``scope_to_changed(node, changed)`` runs them — computed from the pre-scope leaf, so a run can
+	carry its leaves' identity through every command rewrite instead of reconstructing it from the
+	labels they report.
+	"""
+	from .scope import scoped_leaves
+
+	scope = scope_of(changed)
+	return tuple(
+		CacheKey(task_label(resolve_default_leaf(original)), leaf_scope(original, scope))
+		for original, _scoped in scoped_leaves(node, changed)
+	)
+
+
 def observed(camas_dir: Path | None, expanded: TaskNode, changed: Sequence[str]) -> Observed:
 	"""How to record a run of ``expanded`` scoped to ``changed`` — the one derivation of the three
 	things that keying needs.
@@ -402,8 +417,18 @@ def observations(
 def leaves_of(
 	result: RunResult, scope: int = 0, keys: Mapping[TaskLabel, CacheKey] = NO_KEYS
 ) -> list[tuple[CacheKey, float]]:
-	"""``result``'s timed leaves as observations at ``scope``."""
-	return observations(((r.name, r.completion) for r in result.results), scope, keys)
+	"""``result``'s timed leaves as observations at ``scope`` — a carried identity is taken as the
+	key outright, and only results without one go through the label mapping.
+	"""
+	carried = [
+		(r.identity, elapsed)
+		for r in result.results
+		if r.identity is not None and (elapsed := elapsed_of(r.completion)) is not None
+	]
+	mapped = observations(
+		((r.name, r.completion) for r in result.results if r.identity is None), scope, keys
+	)
+	return carried + mapped
 
 
 def observation(elapsed_s: str, samples: str) -> TaskTiming | None:

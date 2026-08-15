@@ -722,6 +722,7 @@ async def run_for(
 		interactive=False,
 		base=base_for(session),
 		leaf_color=leaf_color_of(config),
+		identities=timings.leaf_identities(expanded, changed),
 	)
 	logs = write_logs(create_run_log_dir(session.camas_dir, name, session.reserve_run()), result)
 	observed.record(result)
@@ -886,11 +887,12 @@ async def run_budget(
 	# before its {paths} are injected, so budgeting the scoped tree looks up a label nothing records.
 	plan = plan_under(expanded, budget_s, timings.load(session.camas_dir), scope)
 	report = to_budget_report(plan)
-	if plan.node is not None:
+	unscoped = plan.node
+	if unscoped is not None:
 		scoped_source = (
 			None
 			if requested_but_unusable(req.paths, changed)
-			else scope_to_paths(plan.node, changed)
+			else scope_to_paths(unscoped, changed)
 		)
 		if scoped_source is None:
 			return nothing_covered_result(session, req.paths)
@@ -912,6 +914,7 @@ async def run_budget(
 		interactive=False,
 		base=base_for(session),
 		leaf_color=leaf_color_of(config),
+		identities=timings.leaf_identities(unscoped, changed) if unscoped is not None else None,
 	)
 	logs = write_logs(create_run_log_dir(session.camas_dir, label, session.reserve_run()), result)
 	# Built here rather than beside the budget above: it walks the tree, and the dry-run and
@@ -1491,14 +1494,18 @@ async def fix_for(
 		return error_result(str(e))
 	# The node to run and how to observe it are bound together, since neither is meaningful without
 	# the other: nothing to run means nothing to record, and the path that runs always has both.
-	prepared: tuple[TaskNode, timings.Observed] | None = None
+	prepared: tuple[TaskNode, timings.Observed, tuple[timings.CacheKey, ...]] | None = None
 	blocked = unsatisfiable_message(fix_node) if fix_node is not None else None
 	if fix_node is not None and blocked is None:
 		changed = to_changed(req.paths, base_for(session))
 		expanded = expand_matrix(fix_node)
 		scoped = scoped_or_default(expanded, req.paths, changed)
 		if scoped is not None:
-			prepared = (scoped, timings.observed(session.camas_dir, expanded, changed))
+			prepared = (
+				scoped,
+				timings.observed(session.camas_dir, expanded, changed),
+				timings.leaf_identities(expanded, changed),
+			)
 	empty_cause: str | None
 	if prepared is None:
 		resp = empty_run_response()
@@ -1510,13 +1517,14 @@ async def fix_for(
 			else "no fix leaf covers the paths"
 		)
 	else:
-		node, observed = prepared
+		node, observed, identities = prepared
 		result = await run(
 			node,
 			jobs=req.jobs,
 			interactive=False,
 			base=base_for(session),
 			leaf_color=leaf_color_of(config),
+			identities=identities,
 		)
 		observed.record(result)
 		resp = to_run_response(node, result)

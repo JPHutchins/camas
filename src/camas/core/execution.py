@@ -34,6 +34,9 @@ from .leaf_state import KILL_PRESSES, next_state, to_interrupting
 from .matrix import expand_matrix, resolve_cmd
 from .scope import with_default_paths
 from .task import task_label
+from .timings import (
+	CacheKey,  # noqa: TC001  # runtime name get_type_hints resolves; TYPE_CHECKING-only would NameError
+)
 from .traversal import flatten_leaves, subtree_leaf_indices
 
 if TYPE_CHECKING:
@@ -87,6 +90,9 @@ class RunContext(NamedTuple):
 	leaf_color: bool
 	"""``Config.leaf_color``: whether camas forces color on in the leaf environment
 	(:func:`subprocess_env`)."""
+	identities: tuple[CacheKey, ...] | None
+	"""Per-leaf cache keys, parallel to ``leaves``, computed before any command rewrite; ``None``
+	when the run was threaded without them."""
 
 
 if sys.platform != "win32":
@@ -287,6 +293,11 @@ def spawn_error_message(exc: OSError, argv: Sequence[str], cwd: Path | None) -> 
 	return f"{reason}: {target}"
 
 
+def leaf_identity(ctx: RunContext, leaf_index: int) -> CacheKey | None:
+	"""The carried cache key for ``leaf_index``, when the run was threaded with identities."""
+	return ctx.identities[leaf_index] if ctx.identities is not None else None
+
+
 async def run_cmd(task: Task, leaf_index: int, ctx: RunContext) -> TaskResult:
 	"""Run one leaf as a subprocess, dispatching Started/Output/Completed events."""
 	async with ctx.limiter:
@@ -295,7 +306,7 @@ async def run_cmd(task: Task, leaf_index: int, ctx: RunContext) -> TaskResult:
 			await ctx.dispatch(
 				leaf_index, CompletedEvent(task, leaf_index, stopped, datetime.now())
 			)
-			return TaskResult(task_label(task), stopped)
+			return TaskResult(task_label(task), stopped, leaf_identity(ctx, leaf_index))
 		start_pc: Final = time.perf_counter()
 		await ctx.dispatch(leaf_index, StartedEvent(task, leaf_index, datetime.now()))
 		argv: Final = resolve_cmd(task.cmd)
@@ -319,7 +330,7 @@ async def run_cmd(task: Task, leaf_index: int, ctx: RunContext) -> TaskResult:
 			await ctx.dispatch(
 				leaf_index, CompletedEvent(task, leaf_index, errored, datetime.now())
 			)
-			return TaskResult(task_label(task), errored)
+			return TaskResult(task_label(task), errored, leaf_identity(ctx, leaf_index))
 		ctx.interrupts.procs[leaf_index] = proc
 		output: Final[list[bytes]] = []
 		try:
@@ -340,7 +351,7 @@ async def run_cmd(task: Task, leaf_index: int, ctx: RunContext) -> TaskResult:
 			else Finished(rc, elapsed, output)
 		)
 		await ctx.dispatch(leaf_index, CompletedEvent(task, leaf_index, completion, datetime.now()))
-		return TaskResult(task_label(task), completion)
+		return TaskResult(task_label(task), completion, leaf_identity(ctx, leaf_index))
 
 
 async def skip_subtree(child: TaskNode, skip: Skipped, ctx: RunContext) -> tuple[TaskResult, ...]:
@@ -348,7 +359,7 @@ async def skip_subtree(child: TaskNode, skip: Skipped, ctx: RunContext) -> tuple
 	results: tuple[TaskResult, ...] = ()
 	for idx in subtree_leaf_indices(child, ctx.index_map):
 		await ctx.dispatch(idx, CompletedEvent(ctx.leaves[idx], idx, skip, datetime.now()))
-		results = (*results, TaskResult(task_label(ctx.leaves[idx]), skip))
+		results = (*results, TaskResult(task_label(ctx.leaves[idx]), skip, leaf_identity(ctx, idx)))
 	return results
 
 
@@ -391,6 +402,7 @@ async def run(
 	interactive: bool = True,
 	base: Path | None = None,
 	leaf_color: bool = True,
+	identities: tuple[CacheKey, ...] | None = None,
 ) -> RunResult:
 	"""Execute a task tree, dispatching events to every effect.
 
@@ -450,6 +462,7 @@ async def run(
 		base,
 		None if interactive else DEVNULL,
 		leaf_color,
+		identities,
 	)
 	loop: Final = asyncio.get_running_loop()
 
