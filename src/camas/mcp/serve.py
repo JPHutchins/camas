@@ -28,7 +28,7 @@ from mcp.server.lowlevel import Server
 from mcp.server.lowlevel.server import NotificationOptions
 from pydantic import AnyUrl, BaseModel, ValidationError
 
-import camas
+from camas.paths import camas_package_dir
 
 from ..core import timings
 from ..core.budget import plan_under
@@ -297,30 +297,36 @@ def _op(operator: str, a: tuple[int, ...], b: tuple[int, ...]) -> bool:
 	return a < b
 
 
-Snapshot: TypeAlias = dict[str, tuple[int, int]]
+Snapshot: TypeAlias = dict[str, str]
 
 
 def package_snapshot() -> Snapshot:
-	"""This camas package's ``.py`` files as ``{relpath: (size, mtime_ns)}`` — what a source
-	checkout looks like; a wheel install's package directory never changes, so the snapshot is
-	stable there and the per-call comparison costs one small walk.
+	"""This camas package's ``.py`` files as ``{relpath: sha256}`` — content identity, so a
+	same-size edit or a restored mtime still changes it and a ``touch`` does not. ``os.walk``
+	because it never follows directory symlinks on the Python versions camas supports; a file
+	deleted mid-walk simply drops out, which is itself a change.
 	"""
-	root = Path(camas.__file__).parent
-	return {
-		path.relative_to(root).as_posix(): (stat.st_size, stat.st_mtime_ns)
-		for path in root.rglob("*.py")
-		for stat in (path.stat(),)
-	}
+	root = camas_package_dir()
+	snapshot: Snapshot = {}
+	for dirpath, _, filenames in os.walk(root):
+		for name in filenames:
+			if not name.endswith(".py"):
+				continue
+			path = Path(dirpath) / name
+			with suppress(OSError):
+				snapshot[path.relative_to(root).as_posix()] = hashlib.sha256(
+					path.read_bytes()
+				).hexdigest()
+	return snapshot
 
 
-def reexec_if_changed(initial: Snapshot, argv: Sequence[str]) -> None:
-	"""Replace this process with a freshly-imported ``camas mcp`` when the camas package has
-	changed since ``initial``. Package code cannot be re-imported soundly in place — stale
-	``Task`` classes and identity checks would leak — so the server re-executes itself and the
-	client reconnects on the closed stdio.
+def exit_for_reload() -> None:  # pragma: no cover  # the suite cannot survive its own process exit
+	"""End this server process so the client reconnects to a freshly-imported camas. Exiting is
+	the reload: the stdio fds survive an ``execv``, so a replaced image would hang the client on
+	the abandoned call, while a dead server closes the pipe — the one signal clients already
+	handle by reconnecting.
 	"""
-	if package_snapshot() != initial:
-		os.execv(sys.executable, [sys.executable, "-m", "camas", "mcp", *argv])
+	sys.exit(0)
 
 
 def serve_stdio(argv: list[str]) -> None:  # pragma: no cover
@@ -332,7 +338,7 @@ def serve_stdio(argv: list[str]) -> None:  # pragma: no cover
 	)
 	if session.version_warning is not None:
 		print(session.version_warning, file=sys.stderr)
-	asyncio.run(run_over_stdio(build_server(session, package_snapshot(), argv)))
+	asyncio.run(run_over_stdio(build_server(session)))
 
 
 async def run_over_stdio(server: Server[object]) -> None:  # pragma: no cover
@@ -344,10 +350,12 @@ async def run_over_stdio(server: Server[object]) -> None:  # pragma: no cover
 		await server.run(read, write, options)
 
 
-def build_server(session: Session, initial: Snapshot, argv: Sequence[str]) -> Server[object]:
-	"""A low-level MCP ``Server`` with the camas tool handlers registered; ``initial`` and ``argv``
-	re-exec the process when the camas package changes (#58).
+def build_server(session: Session) -> Server[object]:
+	"""A low-level MCP ``Server`` with the camas tool handlers registered; when the camas package
+	changes, the triggering call is answered and the server exits for the client to reconnect
+	(#58).
 	"""
+	initial = package_snapshot()
 	server: Server[object] = Server(
 		"camas",
 		version=version("camas"),
@@ -368,12 +376,14 @@ def build_server(session: Session, initial: Snapshot, argv: Sequence[str]) -> Se
 		return list(tools(task_names(session.project), session.compat))
 
 	async def call_handler(name: str, arguments: dict[str, Any]) -> types.CallToolResult:
-		reexec_if_changed(initial, argv)
+		stale = package_snapshot() != initial
 		before = task_names(session.project)
 		session.refresh()
 		result = await call(session, name, arguments)
 		if task_names(session.project) != before:
 			await server.request_context.session.send_tool_list_changed()
+		if stale:
+			asyncio.get_running_loop().call_soon(exit_for_reload)
 		return result
 
 	server.list_tools()(list_handler)  # type: ignore[no-untyped-call]
