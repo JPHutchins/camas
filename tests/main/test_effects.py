@@ -357,8 +357,6 @@ def test_configured_timings_survives_resolution_and_keys_at_the_run(tmp_path: Pa
 	from camas.effect.timings import Timings
 
 	configured = (Summary(), Timings(camas_dir=tmp_path))
-	resolved = resolve_default_effects(
-		Config(default_effects=configured), github=False, scope=2, keys={}
-	)
+	resolved = resolve_default_effects(Config(default_effects=configured), github=False)
 	assert resolved == configured
 	assert keyed_to_run(resolved, 2, {})[1] is not configured[1]

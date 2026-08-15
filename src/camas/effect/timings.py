@@ -86,7 +86,12 @@ class Timings:
 		ctx: Final = ctxs[0]  # zuban: ignore[misc] # zuban defies PEP591
 		if ctx.identities:
 			leaves = [
-				(ctx.identities[idx], elapsed)
+				(
+					ctx.identities[idx]
+					if idx < len(ctx.identities)
+					else timings.key_of(task_label(state.task), ctx.scope, ctx.keys),
+					elapsed,
+				)
 				for idx, state in enumerate(ctx.state.states)
 				if isinstance(state, Completed)
 				and (elapsed := timings.elapsed_of(state.completion)) is not None

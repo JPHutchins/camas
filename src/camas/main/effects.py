@@ -9,7 +9,6 @@ import ast
 import functools
 from typing import TYPE_CHECKING, Any
 
-from ..core.timings import NO_KEYS
 from ..v0.effect import Effect
 from .expression import format_syntax_error
 from .mypyc import MISSING, signature_fields_from_source
@@ -267,20 +266,16 @@ def resolve_default_effects(
 	github: bool,
 	agent: bool = False,
 	base: Path | None = None,
-	scope: int = 0,
-	keys: Mapping[str, CacheKey] = NO_KEYS,
 ) -> tuple[Effect[Any], ...]:
 	"""The effects a bare run uses: the :class:`Config` override, else the environment default.
 
 	The renderer is ``Status(output_mode="github")`` under GitHub Actions, the line-oriented
 	``Status`` for an agent, else the live ``Termtree``. A project whose camas directory exists
-	also gets ``Timings`` to record per-leaf durations, keyed to ``scope`` — how many changed paths
-	``--paths`` narrowed this run to — so a scoped run is not recorded as a whole-tree one, and to
-	``keys`` so a scoped leaf is recorded where a budget reads.
+	also gets a ``Timings`` to record per-leaf durations.
 
-	A ``Config`` that names its own effects, or an explicit ``--effects``, may include a ``Timings``
-	written without either, since neither is knowable where it is written; both are keyed to this run
-	by :func:`keyed_to_run` rather than left recording every scoped run as a whole-tree one.
+	The returned ``Timings`` is deliberately unkeyed — scope, labels, and identities are only
+	knowable where a run is set up, so the run site keys it once with :func:`keyed_to_run`. A
+	resolver that keyed here would hand the run a half-keyed effect it must re-key anyway.
 	"""
 	configured = config.effects(github=github)
 	if configured is not None:
@@ -295,7 +290,7 @@ def resolve_default_effects(
 	if camas is not None and camas.is_dir():
 		from ..effect.timings import Timings
 
-		return (renderer, Timings(camas_dir=camas, scope=scope, keys=keys))
+		return (renderer, Timings(camas_dir=camas))
 	return (renderer,)
 
 
@@ -316,22 +311,13 @@ def resolve_effects(
 	agent: bool = False,
 	scope_effects: Mapping[str, type[Effect[Any]]] = {},
 	base: Path | None = None,
-	scope: int = 0,
-	keys: Mapping[str, CacheKey] = NO_KEYS,
 ) -> tuple[Effect[Any], ...]:
 	"""The effects for a run: the parsed ``--effects`` expression (propagating its
 	``ValueError`` on a malformed expression), or the environment default when
 	``--effects`` was omitted (``expr is None``).
 	"""
 	if expr is None:
-		return resolve_default_effects(
-			config,
-			github=github,
-			agent=agent,
-			base=base,
-			scope=scope,
-			keys=keys,
-		)
+		return resolve_default_effects(config, github=github, agent=agent, base=base)
 	return parse_effects(expr, scope_effects)
 
 
