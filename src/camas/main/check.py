@@ -19,7 +19,6 @@ import traceback
 from pathlib import Path
 from typing import TYPE_CHECKING, Final, Literal, NamedTuple, TypeAlias
 
-from ..core.render import strip_ansi
 from ..paths import camas_package_dir
 
 if sys.version_info >= (3, 11):
@@ -262,14 +261,10 @@ def camas_search_path() -> Path:
 
 
 UNRESOLVED_CAMAS: Final = {
-	"ty": "Cannot resolve imported module `camas`",
-	"mypy": 'module named "camas"',
+	"ty": ("Cannot resolve imported module `camas`", "Cannot resolve imported module `camas."),
+	"mypy": ('module named "camas"', 'module named "camas.'),
 }
-"""Each checker's phrasing for #277 — the only answer that earns a second run.
-
-Neither form matches a module that merely begins with ``camas`` (mypy's ``camas_extra``), nor a
-submodule of a camas the checker did find: no search path resolves either. A camas missing entirely
-still matches through a submodule import, because both tools name the parent too."""
+"""Each checker's phrasing for #277: exact for the package, dot-bounded for a submodule spelling."""
 
 
 def cannot_resolve_camas(name: CheckerName, output: str) -> bool:
@@ -294,13 +289,20 @@ def cannot_resolve_camas(name: CheckerName, output: str) -> bool:
 	>>> cannot_resolve_camas("ty", "error[unresolved-import]: Cannot resolve imported module `camas`")
 	True
 	>>> cannot_resolve_camas("mypy", 't.py:1: error: … stub for module named "camas.mcp"')
-	False
+	True
+	>>> cannot_resolve_camas("ty", "error[unresolved-import]: Cannot resolve imported module `camas.mcp`")
+	True
 	>>> cannot_resolve_camas("mypy", 't.py:1: error: … stub for module named "camas_extra"')
+	False
+	>>> cannot_resolve_camas("ty", "error[unresolved-import]: Cannot resolve imported module `camas_extra`")
 	False
 	>>> cannot_resolve_camas("ty", "error[invalid-assignment]: `int` is not assignable to `str`")
 	False
 	"""
-	return UNRESOLVED_CAMAS[name] in strip_ansi(output)
+	from ..core.render import strip_ansi
+
+	stripped = strip_ansi(output)
+	return any(phrase in stripped for phrase in UNRESOLVED_CAMAS[name])
 
 
 def refuses_the_search_path(output: str) -> bool:
@@ -310,14 +312,26 @@ def refuses_the_search_path(output: str) -> bool:
 
 	Only reachable on the second run, and only from a layout that holds camas *under* one of mypy's
 	site-packages rather than in it — where mypy can neither resolve camas nor accept being told. The
-	first run's diagnostic is the honest one there, so it is what gets reported.
+	first run's diagnostic is the honest one there, so it is what gets reported — with the refusal
+	explained (:func:`refusal_note`).
 
 	>>> refuses_the_search_path("/x/site-packages is in the MYPYPATH. Please remove it.")
 	True
 	>>> refuses_the_search_path('t.py:1: error: Name "x" is undefined')
 	False
 	"""
+	from ..core.render import strip_ansi
+
 	return "is in the MYPYPATH" in strip_ansi(output)
+
+
+def refusal_note(camas_root: Path) -> str:
+	"""Appended to the kept first answer when the told run is refused."""
+	return (
+		f"camas is installed at {camas_root}, but mypy refuses to search a directory at or under "
+		"its own site-packages; run mypy directly, or install camas somewhere mypy can be told "
+		"about (e.g. pipx)"
+	)
 
 
 def mypypath(inherited: str, camas_root: Path) -> str:
@@ -396,7 +410,7 @@ def run_checker(found: FoundChecker, invocation: CheckerInvocation) -> CheckerOk
 		encoding="utf-8",
 		errors="replace",
 		check=False,
-		env={**os.environ, **invocation.env},
+		env={**os.environ, **invocation.env} if invocation.env else None,
 	)
 	if proc.returncode == 0:
 		return CheckerOk(name=found.name)
@@ -412,8 +426,8 @@ def run_typecheck(tasks_py: Path) -> TypeCheckResult:
 	answer is the first run's, and camas's own location is never even resolved.
 
 	A mypy that will neither resolve camas nor accept being told about it — camas installed *under*
-	one of mypy's site-packages — keeps its first answer, which is the diagnostic camas gave before
-	any of this existed.
+	one of mypy's site-packages — keeps its first answer, the diagnostic camas gave before any of
+	this existed, with the refusal explained.
 	"""
 	found = find_typechecker()
 	if found is None:
@@ -425,7 +439,12 @@ def run_typecheck(tasks_py: Path) -> TypeCheckResult:
 		found,
 		told_where_camas_is(found, tasks_py, camas_search_path(), os.environ.get("MYPYPATH", "")),
 	)
-	return result if isinstance(told, CheckerErr) and refuses_the_search_path(told.output) else told
+	if isinstance(told, CheckerErr) and refuses_the_search_path(told.output):
+		return CheckerErr(
+			name=result.name,
+			output=result.output + "\n" + refusal_note(camas_search_path()),
+		)
+	return told
 
 
 def deepest_user_frame(exc: Exception, tasks_py: Path) -> traceback.FrameSummary | None:

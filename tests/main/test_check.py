@@ -6,6 +6,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import sysconfig
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
 from unittest.mock import patch
@@ -25,11 +26,13 @@ from camas.main.check import (
 	CheckerOk,
 	FoundChecker,
 	camas_search_path,
+	cannot_resolve_camas,
 	checker_invocation,
 	deepest_user_frame,
 	describe_check_help,
 	find_typechecker,
 	format_minimal_trace,
+	refusal_note,
 	report_eval_error,
 	run_typecheck,
 	run_typecheck_only,
@@ -147,8 +150,35 @@ def test_checker_priority_is_ty_then_mypy() -> None:
 EXE_SUFFIX: Final = ".exe" if sys.platform == "win32" else ""
 
 
+_SIBLING_MYPY: Final = Path(sys.executable).parent / f"mypy{EXE_SUFFIX}"
+
+requires_sibling_mypy = pytest.mark.skipif(
+	not _SIBLING_MYPY.is_file(),
+	reason="the pins run the mypy beside this interpreter, whose environment is the hermetic control",
+)
+
+
+def _run_real_mypy(source: Path, *args: str) -> str:
+	env = {k: v for k, v in os.environ.items() if k not in ("MYPYPATH", "PYTHONPATH")}
+	proc = subprocess.run(
+		[str(_SIBLING_MYPY), *args, str(source)],
+		capture_output=True,
+		text=True,
+		encoding="utf-8",
+		errors="replace",
+		check=False,
+		env=env,
+	)
+	return proc.stdout + proc.stderr
+
+
 UNRESOLVED_CAMAS: Final = (
 	'tasks.py:1: error: Cannot find implementation or library stub for module named "camas"'
+)
+
+
+SUBMODULE_UNRESOLVED_CAMAS: Final = (
+	'tasks.py:1: error: Cannot find implementation or library stub for module named "camas.mcp"'
 )
 
 
@@ -211,15 +241,16 @@ def test_a_checker_that_resolves_camas_is_never_told(
 	assert isinstance(run_typecheck(tmp_path / "tasks.py"), CheckerOk)
 	assert len(argvs) == 1
 	assert "--extra-search-path" not in argvs[0]
-	assert envs[0] is not None
-	assert "MYPYPATH" not in envs[0]
+	assert envs[0] is None
 
 
 @pytest.mark.parametrize(
 	("name", "unresolved"),
 	[
 		("ty", "error[unresolved-import]: Cannot resolve imported module `camas`"),
+		("ty", "error[unresolved-import]: Cannot resolve imported module `camas.mcp`"),
 		("mypy", UNRESOLVED_CAMAS),
+		("mypy", SUBMODULE_UNRESOLVED_CAMAS),
 	],
 )
 def test_a_checker_that_cannot_find_camas_is_told_and_rerun(
@@ -250,6 +281,7 @@ def test_a_checker_that_cannot_find_camas_is_told_and_rerun(
 	monkeypatch.setattr(subprocess, "run", spawn)
 	assert isinstance(run_typecheck(tmp_path / "tasks.py"), CheckerOk)
 	assert len(argvs) == 2
+	assert envs[0] is None
 	told: Final = str(camas_search_path())
 	assert told in argvs[1] or (envs[1] is not None and told in envs[1]["MYPYPATH"])
 
@@ -301,7 +333,7 @@ def test_a_refused_hint_keeps_the_answer_mypy_gave_without_it(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
 	"""camas installed *under* one of mypy's site-packages: mypy resolves neither camas nor the
-	telling, and the first diagnostic is the one camas reported before any of this existed.
+	telling. The first diagnostic stands — camas IS installed there, so the refusal is explained.
 	"""
 	envs: list[Mapping[str, str] | None] = []
 	refusal: Final = "/anywhere/site-packages is in the MYPYPATH. Please remove it."
@@ -312,7 +344,7 @@ def test_a_refused_hint_keeps_the_answer_mypy_gave_without_it(
 	)
 	result = run_typecheck(tmp_path / "tasks.py")
 	assert isinstance(result, CheckerErr)
-	assert result.output == UNRESOLVED_CAMAS
+	assert result.output == UNRESOLVED_CAMAS + "\n" + refusal_note(camas_search_path())
 	assert len(envs) == 2
 
 
@@ -432,6 +464,43 @@ def test_run_typecheck_fails(tmp_path: Path) -> None:
 	assert "int" in result.output
 
 
+@requires_sibling_mypy
+@pytest.mark.parametrize(
+	("source_text", "args", "earns"),
+	[
+		("from camas import Task\n", ("--no-site-packages",), True),
+		("from camas.mcp import wire\n", ("--no-site-packages",), True),
+		("from camas import Task\n", (), False),
+		("import camas_extra\n", (), False),
+	],
+)
+def test_real_mypy_pins_the_unresolved_camas_phrases(
+	source_text: str, args: tuple[str, ...], earns: bool, tmp_path: Path
+) -> None:
+	source = tmp_path / "tasks.py"
+	source.write_text(source_text)
+	assert cannot_resolve_camas("mypy", _run_real_mypy(source, *args)) == earns
+
+
+@requires_sibling_mypy
+def test_real_mypy_refusal_keeps_the_first_answer_with_the_note(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	source = tmp_path / "tasks.py"
+	source.write_text("import camas.definitely_absent\n")
+	site_packages: Final = Path(sysconfig.get_paths()["purelib"])
+	monkeypatch.delenv("MYPYPATH", raising=False)
+	monkeypatch.delenv("PYTHONPATH", raising=False)
+	monkeypatch.setattr(
+		check_mod, "find_typechecker", lambda: FoundChecker(name="mypy", path=_SIBLING_MYPY)
+	)
+	monkeypatch.setattr(check_mod, "camas_search_path", lambda: site_packages)
+	result = run_typecheck(source)
+	assert isinstance(result, CheckerErr)
+	assert cannot_resolve_camas("mypy", result.output)
+	assert refusal_note(site_packages) in result.output
+
+
 @requires_ty
 def test_run_typecheck_resolves_camas_when_the_checkers_own_env_lacks_it(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -465,6 +534,17 @@ def test_the_isolated_env_really_cannot_resolve_camas_on_its_own(
 	assert any(
 		"camas" in line and "resolve" in line.lower() for line in result.output.splitlines()
 	), result.output
+
+
+@requires_ty
+def test_run_typecheck_resolves_a_submodule_import_when_the_checkers_own_env_lacks_it(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	"""The dotted spelling is #277 too: with the package absent, ty names only ``camas.mcp``."""
+	monkeypatch.chdir(tmp_path)
+	_isolate_the_checkers_environment(monkeypatch, tmp_path / "env")
+	(tmp_path / "tasks.py").write_text("import camas.mcp\n")
+	assert isinstance(run_typecheck(tmp_path / "tasks.py"), CheckerOk)
 
 
 def test_run_typecheck_no_checker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
