@@ -29,6 +29,7 @@ from camas.core.execution import (
 	unusable_cwd,
 )
 from camas.core.leaf_state import KILL_PRESSES
+from camas.core.timings import CacheKey
 from camas.v0.completion import INTERRUPT_RC, NOT_FOUND_RC, Errored, Finished, Skipped, Stopped
 from camas.v0.leaf_state import Interrupting, LeafState, Running
 from camas.v0.task_event import CompletedEvent, OutputEvent
@@ -661,7 +662,6 @@ def test_suppress_and_restore_ctrl_c_echo(monkeypatch: pytest.MonkeyPatch) -> No
 async def test_run_stamps_each_result_with_its_carried_identity() -> None:
 	"""The identity tuple is parallel to the leaves: index i's TaskResult carries identity i,
 	regardless of what the leaf's command was rewritten to report."""
-	from camas.core.timings import CacheKey
 
 	tree = Parallel(
 		Task("python -c 'print(1)'"),
@@ -675,7 +675,6 @@ async def test_run_stamps_each_result_with_its_carried_identity() -> None:
 async def test_run_rejects_identities_not_parallel_to_the_leaves() -> None:
 	"""The identities tuple is load-bearing: a mismatch is a clear error at the boundary, not an
 	opaque IndexError halfway through the run."""
-	from camas.core.timings import CacheKey
 
 	tree = Parallel(Task("python -c 'pass'"), Task("python -c 'pass'", name="two"))
 	with pytest.raises(ValueError, match="parallel"):
@@ -687,8 +686,6 @@ async def test_run_rejects_identities_with_non_cache_key_elements() -> None:
 	a rewritten mapping's items — fails at the boundary instead of at teardown."""
 	from typing import cast
 
-	from camas.core.timings import CacheKey
-
 	tree = Parallel(Task("python -c 'pass'"), Task("python -c 'pass'", name="two"))
 	with pytest.raises(ValueError, match="must be a tuple of per-leaf cache keys"):
 		await run(tree, identities=cast("tuple[CacheKey, ...]", (CacheKey("a", 0), "b")))
@@ -698,8 +695,6 @@ async def test_run_rejects_identities_that_are_not_a_tuple() -> None:
 	"""A non-tuple identities value — a pre-#289-style label→key dict, whose length can even
 	match the leaf count — fails loudly at the boundary instead of KeyErroring at indexing."""
 	from typing import cast
-
-	from camas.core.timings import CacheKey
 
 	tree = Parallel(Task("python -c 'pass'"), Task("python -c 'pass'", name="two"))
 	with pytest.raises(ValueError, match="must be a tuple"):
