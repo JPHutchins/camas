@@ -77,14 +77,14 @@ async def test_reverted_package_keeps_the_server_up(
 ) -> None:
 	"""The exit re-checks the snapshot when it fires: a package reverted before the timer ran
 	keeps the server up instead of exiting on a stale observation."""
-	monkeypatch.setattr(serve, "RELOAD_EXIT_DELAY", 0.5)
+	monkeypatch.setattr(serve, "RELOAD_EXIT_DELAY", 1.0)
 	pkg = _fake_package(tmp_path, monkeypatch)
 	session = _session({"lint": PASS}, None, tmp_path)
 	async with create_connected_server_and_client_session(serve.build_server(session)) as client:
 		(pkg / "a.py").write_text("y = 2\n")
 		assert not (await client.call_tool("camas_list", {})).isError
 		(pkg / "a.py").write_text("x = 1\n")
-		await asyncio.sleep(0.6)
+		await asyncio.sleep(1.1)
 	assert reload_exits == []
 
 
@@ -111,10 +111,10 @@ async def test_slow_concurrent_calls_rearm_until_idle(
 	the exit fires exactly once the server is idle."""
 	monkeypatch.setattr(serve, "RELOAD_EXIT_DELAY", 0.05)
 	monkeypatch.setattr(serve, "call", functools.partial(_slow_call, [0]))
-	_fake_package(tmp_path, monkeypatch)
+	pkg = _fake_package(tmp_path, monkeypatch)
 	session = _session({"lint": PASS}, None, tmp_path)
 	async with create_connected_server_and_client_session(serve.build_server(session)) as client:
-		(tmp_path / "pkg" / "a.py").write_text("y = 2\n")
+		(pkg / "a.py").write_text("y = 2\n")
 		await asyncio.gather(
 			client.call_tool("camas_list", {}),
 			client.call_tool("camas_list", {}),
@@ -233,6 +233,7 @@ def _rpc(
 	server.stdin.flush()
 	line = _readline(server, stderr_chunks=stderr_chunks)
 	assert f'"id":{call_id}' in line
+	assert '"error"' not in line
 	return line
 
 
@@ -296,4 +297,8 @@ def test_live_server_answers_then_dies_when_the_package_changes(tmp_path: Path) 
 	finally:
 		if server.poll() is None:
 			server.kill()  # pragma: no cover  # only a wedged server takes this
+		server.wait()
+		server.stdin.close()
+		server.stdout.close()
+		server.stderr.close()
 	assert server.returncode == 0

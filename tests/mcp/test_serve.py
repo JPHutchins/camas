@@ -602,7 +602,7 @@ async def test_stale_package_answers_the_call_then_schedules_reload(
 	response, so the client reconnects on the closed pipe instead of hanging (#58). The
 	in-memory transport has no writer hop to flush, so the delay is shrunk to keep the suite
 	fast."""
-	monkeypatch.setattr(serve, "RELOAD_EXIT_DELAY", 0.05)
+	monkeypatch.setattr(serve, "RELOAD_EXIT_DELAY", 0.3)
 	pkg = _fake_package(tmp_path, monkeypatch)
 	session = _session({"lint": PASS}, None, tmp_path)
 	async with create_connected_server_and_client_session(serve.build_server(session)) as client:

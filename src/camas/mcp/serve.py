@@ -314,7 +314,7 @@ def package_snapshot() -> Snapshot:
 			if not name.endswith((".py", ".so", ".pyd")):
 				continue
 			path = Path(dirpath) / name
-			with suppress(OSError):
+			with suppress(FileNotFoundError):
 				snapshot[path.relative_to(root).as_posix()] = hashlib.sha256(
 					path.read_bytes()
 				).hexdigest()
@@ -404,8 +404,8 @@ def build_server(session: Session) -> Server[object]:
 		stale = False
 		try:
 			active_calls += 1
-			stale = (await asyncio.to_thread(package_snapshot)) != initial
 			before = task_names(session.project)
+			stale = (await asyncio.to_thread(package_snapshot)) != initial
 			session.refresh()
 			result = await call(session, name, arguments)
 			if task_names(session.project) != before:
