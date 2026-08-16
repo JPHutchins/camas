@@ -9,12 +9,10 @@ import asyncio
 import functools
 import os
 import queue
-import secrets
 import select
 import subprocess
 import sys
 import threading
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -28,6 +26,7 @@ from camas.mcp.serve import Compat, Session
 from camas.mcp.serve import call as _dispatch
 
 if TYPE_CHECKING:
+	from pathlib import Path
 	from typing import IO
 
 	from camas.v0.task import TaskNode
@@ -71,6 +70,22 @@ def _fake_package(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 	(pkg / "a.py").write_text("x = 1\n")
 	monkeypatch.setattr(camas, "__file__", str(pkg / "__init__.py"))
 	return pkg
+
+
+async def test_reverted_package_keeps_the_server_up(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reload_exits: list[int]
+) -> None:
+	"""The exit re-checks the snapshot when it fires: a package reverted before the timer ran
+	keeps the server up instead of exiting on a stale observation."""
+	monkeypatch.setattr(serve, "RELOAD_EXIT_DELAY", 0.5)
+	pkg = _fake_package(tmp_path, monkeypatch)
+	session = _session({"lint": PASS}, None, tmp_path)
+	async with create_connected_server_and_client_session(serve.build_server(session)) as client:
+		(pkg / "a.py").write_text("y = 2\n")
+		assert not (await client.call_tool("camas_list", {})).isError
+		(pkg / "a.py").write_text("x = 1\n")
+		await asyncio.sleep(0.6)
+	assert reload_exits == []
 
 
 async def test_stale_package_schedules_reload_even_when_the_call_raises(
@@ -158,11 +173,21 @@ def _readline(server: subprocess.Popen[str], timeout: float = 15.0) -> str:
 
 
 def _stderr(server: subprocess.Popen[str]) -> str:
-	"""The server's stderr, when it has written any within a short wait."""
+	"""The server's stderr, drained as far as it has written — a bounded read, because a live
+	server that wrote anything must not make the diagnostic path block until it dies."""
 	if server.stderr is None:  # pragma: no cover  # callers always pass stderr=PIPE
 		return ""
-	ready, _, _ = select.select([server.stderr], [], [], 1.0)
-	return server.stderr.read() if ready else ""
+	fd = server.stderr.fileno()
+	data = b""
+	while True:
+		ready, _, _ = select.select([fd], [], [], 0.05)
+		if not ready:
+			break
+		chunk = os.read(fd, 4096)
+		if not chunk:  # pragma: no cover  # EOF on a dead server's pipe
+			break
+		data += chunk
+	return data.decode(errors="replace")
 
 
 def _rpc(server: subprocess.Popen[str], call_id: int) -> str:
@@ -184,21 +209,21 @@ def test_live_server_answers_then_dies_when_the_package_changes(tmp_path: Path) 
 	exits so the client sees EOF — the two contract halves the in-memory transport cannot
 	exercise (its exit is faked and it has no ``to_thread`` writer hop)."""
 	(tmp_path / "tasks.py").write_text("from camas import Task\nlint = Task('echo hi')\n")
-	# The spawned server resolves ``camas`` in *its* environment, which under the CI matrix is an
-	# installed copy whose directory need not be the one this test process imports from — so ask
-	# the server's own interpreter where its package lives before deciding where the probe goes.
-	package_dir = subprocess.run(
-		[
-			sys.executable,
-			"-c",
-			"from camas.paths import camas_package_dir; print(camas_package_dir())",
-		],
-		capture_output=True,
-		text=True,
-		check=True,
-	).stdout.strip()
+	# The server boots through a bootstrap that points camas.__file__ at a scratch directory this
+	# test owns, so the staleness probe lands there — the package itself imports normally (the
+	# mypyc layouts that broke the private-copy approach are untouched) and no shared tree is
+	# ever written.
+	scratch = tmp_path / "scratch"
+	scratch.mkdir()
+	bootstrap = (
+		"import camas, pathlib, sys; "
+		"scratch = pathlib.Path(sys.argv[1]); "
+		"(scratch / '__init__.py').write_text(''); "
+		"camas.__file__ = str(scratch / '__init__.py'); "
+		"from camas.mcp.serve import serve_stdio; serve_stdio(sys.argv[2:])"
+	)
 	server = subprocess.Popen(
-		[sys.executable, "-m", "camas", "mcp", "--plain"],
+		[sys.executable, "-c", bootstrap, str(scratch), "--plain"],
 		cwd=tmp_path,
 		stdin=subprocess.PIPE,
 		stdout=subprocess.PIPE,
@@ -208,6 +233,16 @@ def test_live_server_answers_then_dies_when_the_package_changes(tmp_path: Path) 
 	)
 	assert server.stdin is not None
 	assert server.stdout is not None
+	# Drain stderr continuously so a chatty server cannot deadlock itself on a full pipe.
+	assert server.stderr is not None
+	stderr_chunks: list[bytes] = []
+	stderr_fd = server.stderr.fileno()
+
+	def drain() -> None:
+		for chunk in iter(lambda: os.read(stderr_fd, 4096), b""):
+			stderr_chunks.append(chunk)  # pragma: no cover  # noqa: PERF402
+
+	threading.Thread(target=drain, daemon=True).start()
 	try:
 		server.stdin.write(
 			'{"jsonrpc":"2.0","id":0,"method":"initialize","params":'
@@ -218,15 +253,8 @@ def test_live_server_answers_then_dies_when_the_package_changes(tmp_path: Path) 
 		assert '"id":0' in _readline(server)
 		for call_id in (1, 2):
 			_rpc(server, call_id)
-		# Unique per process and per run: the CI matrix runs this suite concurrently in several
-		# venvs against the same source tree, so a shared probe would land in other leaves'
-		# startup snapshots, and a pid-recycled leftover with identical content would mask the
-		# staleness trigger.
-		probe = Path(package_dir) / f"_stale_probe_{os.getpid()}.py"
-		try:
-			probe.write_text(secrets.token_hex(8))
-		except OSError:  # pragma: no cover  # only a read-only install (nix store) takes this
-			pytest.skip("package directory is not writable (read-only install)")
+		probe = scratch / "_stale_probe.py"
+		probe.write_text("")
 		try:
 			_rpc(server, 3)
 			server.wait(timeout=15)

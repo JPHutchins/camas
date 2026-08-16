@@ -311,7 +311,7 @@ def package_snapshot() -> Snapshot:
 	snapshot: Snapshot = {}
 	for dirpath, _, filenames in os.walk(root):
 		for name in filenames:
-			if not name.endswith((".py", ".so")):
+			if not name.endswith((".py", ".so", ".pyd")):
 				continue
 			path = Path(dirpath) / name
 			with suppress(OSError):
@@ -374,7 +374,9 @@ def build_server(session: Session) -> Server[object]:
 		if active_calls:
 			pending_exit = asyncio.get_running_loop().call_later(RELOAD_EXIT_DELAY, schedule_exit)
 			return
-		exit_for_reload()
+		if package_snapshot() != initial:
+			exit_for_reload()
+		# the package reverted since the stale call — stay up
 
 	server: Server[object] = Server(
 		"camas",
@@ -399,8 +401,8 @@ def build_server(session: Session) -> Server[object]:
 		nonlocal pending_exit, active_calls
 		if pending_exit is not None:
 			pending_exit.cancel()
+		stale = (await asyncio.to_thread(package_snapshot)) != initial
 		active_calls += 1
-		stale = package_snapshot() != initial
 		try:
 			before = task_names(session.project)
 			session.refresh()
