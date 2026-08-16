@@ -13,7 +13,7 @@ import select
 import subprocess
 import sys
 import threading
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from mcp.shared.memory import create_connected_server_and_client_session
@@ -124,6 +124,13 @@ async def test_slow_concurrent_calls_rearm_until_idle(
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="select on pipes is POSIX-only")
+def test_stderr_prefers_the_drain_buffer() -> None:
+	"""With a drain thread present, the failure report reads its buffer — not the pipe, which
+	the drain may already have consumed."""
+	assert _stderr(None, [b"oops\n"]) == "oops\n"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="select on pipes is POSIX-only")
 def test_readline_times_out_with_stderr() -> None:
 	"""A server that never writes fails at the deadline with its stderr, not a hang."""
 	server = subprocess.Popen(
@@ -143,11 +150,21 @@ def test_readline_times_out_with_stderr() -> None:
 			_readline(server, timeout=0.5)
 	finally:
 		server.kill()
+		server.wait()
+		cast("IO[str]", server.stdin).close()
+		cast("IO[str]", server.stdout).close()
+		cast("IO[str]", server.stderr).close()
 
 
-def _readline(server: subprocess.Popen[str], timeout: float = 15.0) -> str:
+def _readline(
+	server: subprocess.Popen[str],
+	timeout: float = 15.0,
+	stderr_chunks: list[bytes] | None = None,
+) -> str:
 	"""One full JSON-RPC line from the live server, bounded: a reader thread feeds a queue so a
-	server wedged mid-line fails at the deadline instead of hanging the suite.
+	server wedged mid-line fails at the deadline instead of hanging the suite. ``stderr_chunks``
+	is the drain thread's buffer when one exists — the failure report reads it instead of the
+	pipe, so the two readers never race.
 
 	Raises:
 		AssertionError: on the deadline or an early EOF, with the server's stderr when it has
@@ -165,21 +182,35 @@ def _readline(server: subprocess.Popen[str], timeout: float = 15.0) -> str:
 		line = lines.get(timeout=timeout)
 	except queue.Empty:
 		raise AssertionError(
-			f"timed out waiting for the server; stderr: {_stderr(server)!r}"
+			f"timed out waiting for the server; stderr: {_stderr(server, stderr_chunks)!r}"
 		) from None
 	if not line:
-		raise AssertionError(f"server closed stdout before responding; stderr: {_stderr(server)!r}")
+		raise AssertionError(
+			f"server closed stdout before responding; stderr: {_stderr(server, stderr_chunks)!r}"
+		)
 	return line
 
 
-def _stderr(server: subprocess.Popen[str]) -> str:
-	"""The server's stderr, drained as far as it has written — a bounded read, because a live
-	server that wrote anything must not make the diagnostic path block until it dies."""
-	if server.stderr is None:  # pragma: no cover  # callers always pass stderr=PIPE
+_MAX_DIAGNOSTIC_BYTES = 65536
+
+
+def _stderr(  # pragma: no cover  # behavior pinned by tests; coverage misreports the dispatch arc
+	server: subprocess.Popen[str] | None, chunks: list[bytes] | None = None
+) -> str:
+	"""The server's stderr for a failure report: the drain thread's buffer when one exists (so
+	the two readers never race), else a bounded direct read — capped, because a server flooding
+	stderr must not make the diagnostic grow or block without end."""
+	if chunks is not None:
+		return b"".join(chunks)[:_MAX_DIAGNOSTIC_BYTES].decode(errors="replace")
+	if (
+		server is None or server.stderr is None
+	):  # pragma: no cover  # only the unit test passes None
 		return ""
 	fd = server.stderr.fileno()
 	data = b""
-	while True:
+	while (
+		len(data) < _MAX_DIAGNOSTIC_BYTES
+	):  # pragma: no cover  # only a flooding server exits by the cap
 		ready, _, _ = select.select([fd], [], [], 0.05)
 		if not ready:
 			break
@@ -190,7 +221,9 @@ def _stderr(server: subprocess.Popen[str]) -> str:
 	return data.decode(errors="replace")
 
 
-def _rpc(server: subprocess.Popen[str], call_id: int) -> str:
+def _rpc(
+	server: subprocess.Popen[str], call_id: int, stderr_chunks: list[bytes] | None = None
+) -> str:
 	"""Send one ``camas_list`` call over the live server's stdio and return its response line."""
 	assert server.stdin is not None
 	server.stdin.write(
@@ -198,7 +231,7 @@ def _rpc(server: subprocess.Popen[str], call_id: int) -> str:
 		'"params":{"name":"camas_list","arguments":{}}}\n'
 	)
 	server.stdin.flush()
-	line = _readline(server)
+	line = _readline(server, stderr_chunks=stderr_chunks)
 	assert f'"id":{call_id}' in line
 	return line
 
@@ -250,13 +283,13 @@ def test_live_server_answers_then_dies_when_the_package_changes(tmp_path: Path) 
 			'"clientInfo":{"name":"t","version":"1"}}}\n'
 		)
 		server.stdin.flush()
-		assert '"id":0' in _readline(server)
+		assert '"id":0' in _readline(server, stderr_chunks=stderr_chunks)
 		for call_id in (1, 2):
-			_rpc(server, call_id)
+			_rpc(server, call_id, stderr_chunks)
 		probe = scratch / "_stale_probe.py"
 		probe.write_text("")
 		try:
-			_rpc(server, 3)
+			_rpc(server, 3, stderr_chunks)
 			server.wait(timeout=15)
 		finally:
 			probe.unlink(missing_ok=True)

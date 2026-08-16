@@ -401,9 +401,10 @@ def build_server(session: Session) -> Server[object]:
 		nonlocal pending_exit, active_calls
 		if pending_exit is not None:
 			pending_exit.cancel()
-		stale = (await asyncio.to_thread(package_snapshot)) != initial
-		active_calls += 1
+		stale = False
 		try:
+			active_calls += 1
+			stale = (await asyncio.to_thread(package_snapshot)) != initial
 			before = task_names(session.project)
 			session.refresh()
 			result = await call(session, name, arguments)
