@@ -9,11 +9,12 @@ import asyncio
 import functools
 import os
 import queue
+import secrets
 import select
-import shutil
 import subprocess
 import sys
 import threading
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -27,7 +28,6 @@ from camas.mcp.serve import Compat, Session
 from camas.mcp.serve import call as _dispatch
 
 if TYPE_CHECKING:
-	from pathlib import Path
 	from typing import IO
 
 	from camas.v0.task import TaskNode
@@ -158,7 +158,7 @@ def _readline(server: subprocess.Popen[str], timeout: float = 15.0) -> str:
 
 def _stderr(server: subprocess.Popen[str]) -> str:
 	"""The server's stderr, when it has written any within a short wait."""
-	if server.stderr is None:
+	if server.stderr is None:  # pragma: no cover  # callers always pass stderr=PIPE
 		return ""
 	ready, _, _ = select.select([server.stderr], [], [], 1.0)
 	return server.stderr.read() if ready else ""
@@ -182,18 +182,23 @@ def test_live_server_answers_then_dies_when_the_package_changes(tmp_path: Path) 
 	"""Drive the real stdio server over JSON-RPC: a stale package is answered, then the process
 	exits so the client sees EOF — the two contract halves the in-memory transport cannot
 	exercise (its exit is faked and it has no ``to_thread`` writer hop)."""
-	from camas.paths import camas_package_dir
-
 	(tmp_path / "tasks.py").write_text("from camas import Task\nlint = Task('echo hi')\n")
-	# The spawned server imports camas from a private copy of the package (PYTHONPATH), so the
-	# staleness probe lands in a tree this test owns — no shared-tree races with the concurrent
-	# matrix leaves, no read-only-install skip, no pid-unique probe names.
-	package_copy = tmp_path / "camas"
-	shutil.copytree(camas_package_dir(), package_copy)
+	# The spawned server resolves ``camas`` in *its* environment, which under the CI matrix is an
+	# installed copy whose directory need not be the one this test process imports from — so ask
+	# the server's own interpreter where its package lives before deciding where the probe goes.
+	package_dir = subprocess.run(
+		[
+			sys.executable,
+			"-c",
+			"from camas.paths import camas_package_dir; print(camas_package_dir())",
+		],
+		capture_output=True,
+		text=True,
+		check=True,
+	).stdout.strip()
 	server = subprocess.Popen(
 		[sys.executable, "-m", "camas", "mcp", "--plain"],
 		cwd=tmp_path,
-		env={**os.environ, "PYTHONPATH": str(tmp_path)},
 		stdin=subprocess.PIPE,
 		stdout=subprocess.PIPE,
 		stderr=subprocess.PIPE,
@@ -212,8 +217,15 @@ def test_live_server_answers_then_dies_when_the_package_changes(tmp_path: Path) 
 		assert '"id":0' in _readline(server)
 		for call_id in (1, 2):
 			_rpc(server, call_id)
-		probe = package_copy / "_stale_probe.py"
-		probe.write_text("")
+		# Unique per process and per run: the CI matrix runs this suite concurrently in several
+		# venvs against the same source tree, so a shared probe would land in other leaves'
+		# startup snapshots, and a pid-recycled leftover with identical content would mask the
+		# staleness trigger.
+		probe = Path(package_dir) / f"_stale_probe_{os.getpid()}.py"
+		try:
+			probe.write_text(secrets.token_hex(8))
+		except OSError:  # pragma: no cover  # only a read-only install (nix store) takes this
+			pytest.skip("package directory is not writable (read-only install)")
 		try:
 			_rpc(server, 3)
 			server.wait(timeout=15)
