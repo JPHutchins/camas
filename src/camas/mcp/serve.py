@@ -301,16 +301,17 @@ Snapshot: TypeAlias = dict[str, str]
 
 
 def package_snapshot() -> Snapshot:
-	"""This camas package's ``.py`` files as ``{relpath: sha256}`` — content identity, so a
-	same-size edit or a restored mtime still changes it and a ``touch`` does not. ``os.walk``
-	because it never follows directory symlinks on the Python versions camas supports; a file
-	deleted mid-walk simply drops out, which is itself a change.
+	"""This camas package's source files as ``{relpath: sha256}`` — content identity, so a
+	same-size edit or a restored mtime still changes it and a ``touch`` does not; ``.so`` files
+	count too, since an in-place mypyc wheel upgrade rewrites only those. ``os.walk`` because it
+	never follows directory symlinks on the Python versions camas supports; a file deleted
+	mid-walk simply drops out, which is itself a change.
 	"""
 	root = camas_package_dir()
 	snapshot: Snapshot = {}
 	for dirpath, _, filenames in os.walk(root):
 		for name in filenames:
-			if not name.endswith(".py"):
+			if not name.endswith((".py", ".so")):
 				continue
 			path = Path(dirpath) / name
 			with suppress(OSError):
@@ -328,8 +329,8 @@ transport's ``to_thread`` writer to flush the response the exit is scheduled aft
 def exit_for_reload() -> None:  # pragma: no cover  # the suite cannot survive its own process exit
 	"""End this server process so the client reconnects to a freshly-imported camas. ``os._exit``
 	because ``sys.exit`` deadlocks interpreter finalization joining anyio's ``to_thread`` workers;
-	the OS closes the stdio pipe with the process, which is the reconnect signal clients already
-	handle.
+	the OS closes the stdio pipe with the process, and the client restarts the server on that
+	EOF — the exit code is ``0`` because the death is deliberate, not a crash.
 	"""
 	os._exit(0)
 
@@ -359,12 +360,22 @@ def build_server(session: Session) -> Server[object]:
 	"""A low-level MCP ``Server`` with the camas tool handlers registered; when the camas package
 	changes, the triggering call is answered and the server exits for the client to reconnect
 	(#58). The respawn command is the client's own MCP configuration — not this process's argv —
-	so an ad-hoc ``--plain`` launch comes back as the configured form. Every new call cancels a
-	pending exit, so the server dies only once the client has been idle since the last stale
-	call — an in-flight call is never killed and its response always has its flush window.
+	so an ad-hoc ``--plain`` launch comes back as the configured form. A new call cancels a
+	pending exit, and the exit itself re-arms while any call is in flight — so the server dies
+	only once the client has been idle since the last stale call and every response has had its
+	flush window.
 	"""
 	initial = package_snapshot()
 	pending_exit: asyncio.TimerHandle | None = None
+	active_calls = 0
+
+	def schedule_exit() -> None:
+		nonlocal pending_exit, active_calls
+		if active_calls:
+			pending_exit = asyncio.get_running_loop().call_later(RELOAD_EXIT_DELAY, schedule_exit)
+			return
+		exit_for_reload()
+
 	server: Server[object] = Server(
 		"camas",
 		version=version("camas"),
@@ -385,10 +396,10 @@ def build_server(session: Session) -> Server[object]:
 		return list(tools(task_names(session.project), session.compat))
 
 	async def call_handler(name: str, arguments: dict[str, Any]) -> types.CallToolResult:
-		nonlocal pending_exit
+		nonlocal pending_exit, active_calls
 		if pending_exit is not None:
 			pending_exit.cancel()
-			pending_exit = None
+		active_calls += 1
 		stale = package_snapshot() != initial
 		try:
 			before = task_names(session.project)
@@ -397,9 +408,12 @@ def build_server(session: Session) -> Server[object]:
 			if task_names(session.project) != before:
 				await server.request_context.session.send_tool_list_changed()
 		finally:
+			active_calls -= 1
 			if stale:
+				if pending_exit is not None:
+					pending_exit.cancel()
 				pending_exit = asyncio.get_running_loop().call_later(
-					RELOAD_EXIT_DELAY, exit_for_reload
+					RELOAD_EXIT_DELAY, schedule_exit
 				)
 		return result
 

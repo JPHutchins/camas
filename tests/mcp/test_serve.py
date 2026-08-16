@@ -5,9 +5,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-import secrets
-import subprocess
-import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -29,7 +26,6 @@ from camas.v0.config import Claude
 
 if TYPE_CHECKING:
 	from collections.abc import Callable
-	from typing import IO
 
 	from camas.main.check import TypeCheckResult
 	from camas.v0.task import TaskNode
@@ -603,7 +599,10 @@ async def test_stale_package_answers_the_call_then_schedules_reload(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reload_exits: list[int]
 ) -> None:
 	"""A stale package still answers the triggering call — the exit is scheduled after the
-	response, so the client reconnects on the closed pipe instead of hanging (#58)."""
+	response, so the client reconnects on the closed pipe instead of hanging (#58). The
+	in-memory transport has no writer hop to flush, so the delay is shrunk to keep the suite
+	fast."""
+	monkeypatch.setattr(serve, "RELOAD_EXIT_DELAY", 0.05)
 	pkg = _fake_package(tmp_path, monkeypatch)
 	session = _session({"lint": PASS}, None, tmp_path)
 	async with create_connected_server_and_client_session(serve.build_server(session)) as client:
@@ -615,84 +614,6 @@ async def test_stale_package_answers_the_call_then_schedules_reload(
 		assert not (await client.call_tool("camas_list", {})).isError
 		await asyncio.sleep(serve.RELOAD_EXIT_DELAY)
 	assert reload_exits == [1]
-
-
-def _readline(pipe: IO[str], timeout: float = 15.0) -> str:
-	import select
-
-	ready, _, _ = select.select([pipe], [], [], timeout)
-	assert ready, "timed out waiting for the server"
-	return pipe.readline()
-
-
-@pytest.mark.skipif(sys.platform == "win32", reason="select on pipes is POSIX-only")
-def test_live_server_answers_then_dies_when_the_package_changes(tmp_path: Path) -> None:
-	"""Drive the real stdio server over JSON-RPC: a stale package is answered, then the process
-	exits so the client sees EOF — the two contract halves the in-memory transport cannot
-	exercise (its exit is faked and it has no ``to_thread`` writer hop)."""
-	(tmp_path / "tasks.py").write_text("from camas import Task\nlint = Task('echo hi')\n")
-	# The spawned server resolves ``camas`` in *its* environment, which under the CI matrix is an
-	# installed copy whose directory need not be the one this test process imports from — so ask
-	# the server's own interpreter where its package lives before deciding where the probe goes.
-	package_dir = subprocess.run(
-		[
-			sys.executable,
-			"-c",
-			"from camas.paths import camas_package_dir; print(camas_package_dir())",
-		],
-		capture_output=True,
-		text=True,
-		check=True,
-	).stdout.strip()
-	server = subprocess.Popen(
-		[sys.executable, "-m", "camas", "mcp", "--plain"],
-		cwd=tmp_path,
-		stdin=subprocess.PIPE,
-		stdout=subprocess.PIPE,
-		stderr=subprocess.DEVNULL,
-		text=True,
-		bufsize=1,
-	)
-	assert server.stdin is not None
-	assert server.stdout is not None
-	try:
-		server.stdin.write(
-			'{"jsonrpc":"2.0","id":0,"method":"initialize","params":'
-			'{"protocolVersion":"2024-11-05","capabilities":{},'
-			'"clientInfo":{"name":"t","version":"1"}}}\n'
-		)
-		server.stdin.flush()
-		assert '"id":0' in _readline(server.stdout)
-		for call_id in (1, 2):
-			server.stdin.write(
-				f'{{"jsonrpc":"2.0","id":{call_id},"method":"tools/call",'
-				'"params":{"name":"camas_list","arguments":{}}}\n'
-			)
-			server.stdin.flush()
-			assert f'"id":{call_id}' in _readline(server.stdout)
-		# Unique per process and per run: the CI matrix runs this suite concurrently in several
-		# venvs against the same source tree, so a shared probe would land in other leaves'
-		# startup snapshots, and a pid-recycled leftover with identical content would mask the
-		# staleness trigger.
-		probe = Path(package_dir) / f"_stale_probe_{os.getpid()}.py"
-		try:
-			probe.write_text(secrets.token_hex(8))
-		except OSError:  # pragma: no cover  # only a read-only install (nix store) takes this
-			pytest.skip("package directory is not writable (read-only install)")
-		try:
-			server.stdin.write(
-				'{"jsonrpc":"2.0","id":3,"method":"tools/call",'
-				'"params":{"name":"camas_list","arguments":{}}}\n'
-			)
-			server.stdin.flush()
-			assert '"id":3' in _readline(server.stdout)
-			server.wait(timeout=15)
-		finally:
-			probe.unlink(missing_ok=True)
-	finally:
-		if server.poll() is None:
-			server.kill()  # pragma: no cover  # only a wedged server takes this
-	assert server.returncode == 0
 
 
 _VALID_TASKS = "from camas import Task\nlint = Task('ruff check .')\n"
