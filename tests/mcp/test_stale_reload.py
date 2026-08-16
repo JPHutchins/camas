@@ -134,7 +134,8 @@ def _readline(server: subprocess.Popen[str], timeout: float = 15.0) -> str:
 	server wedged mid-line fails at the deadline instead of hanging the suite.
 
 	Raises:
-		AssertionError: on the deadline, with the server's stderr when it has written any.
+		AssertionError: on the deadline or an early EOF, with the server's stderr when it has
+			written any.
 	"""
 	assert server.stdout is not None
 	stdout: IO[str] = server.stdout
@@ -145,14 +146,22 @@ def _readline(server: subprocess.Popen[str], timeout: float = 15.0) -> str:
 
 	threading.Thread(target=reader, daemon=True).start()
 	try:
-		return lines.get(timeout=timeout)
+		line = lines.get(timeout=timeout)
 	except queue.Empty:
-		detail = ""
-		if server.stderr is not None:
-			ready, _, _ = select.select([server.stderr], [], [], 0)
-			if ready:
-				detail = server.stderr.read()
-		raise AssertionError(f"timed out waiting for the server; stderr: {detail!r}") from None
+		raise AssertionError(
+			f"timed out waiting for the server; stderr: {_stderr(server)!r}"
+		) from None
+	if not line:
+		raise AssertionError(f"server closed stdout before responding; stderr: {_stderr(server)!r}")
+	return line
+
+
+def _stderr(server: subprocess.Popen[str]) -> str:
+	"""The server's stderr, when it has written any within a short wait."""
+	if server.stderr is None:
+		return ""
+	ready, _, _ = select.select([server.stderr], [], [], 1.0)
+	return server.stderr.read() if ready else ""
 
 
 def _rpc(server: subprocess.Popen[str], call_id: int) -> str:
