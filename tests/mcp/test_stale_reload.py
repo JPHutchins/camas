@@ -108,6 +108,7 @@ async def test_slow_concurrent_calls_rearm_until_idle(
 	assert reload_exits == [1]
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="select on pipes is POSIX-only")
 def test_readline_times_out_with_stderr() -> None:
 	"""A server that never writes fails at the deadline with its stderr, not a hang."""
 	server = subprocess.Popen(
