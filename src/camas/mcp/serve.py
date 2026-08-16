@@ -359,9 +359,12 @@ def build_server(session: Session) -> Server[object]:
 	"""A low-level MCP ``Server`` with the camas tool handlers registered; when the camas package
 	changes, the triggering call is answered and the server exits for the client to reconnect
 	(#58). The respawn command is the client's own MCP configuration — not this process's argv —
-	so an ad-hoc ``--plain`` launch comes back as the configured form.
+	so an ad-hoc ``--plain`` launch comes back as the configured form. Every new call cancels a
+	pending exit, so the server dies only once the client has been idle since the last stale
+	call — an in-flight call is never killed and its response always has its flush window.
 	"""
 	initial = package_snapshot()
+	pending_exit: asyncio.TimerHandle | None = None
 	server: Server[object] = Server(
 		"camas",
 		version=version("camas"),
@@ -382,14 +385,22 @@ def build_server(session: Session) -> Server[object]:
 		return list(tools(task_names(session.project), session.compat))
 
 	async def call_handler(name: str, arguments: dict[str, Any]) -> types.CallToolResult:
+		nonlocal pending_exit
+		if pending_exit is not None:
+			pending_exit.cancel()
+			pending_exit = None
 		stale = package_snapshot() != initial
-		before = task_names(session.project)
-		session.refresh()
-		result = await call(session, name, arguments)
-		if task_names(session.project) != before:
-			await server.request_context.session.send_tool_list_changed()
-		if stale:
-			asyncio.get_running_loop().call_later(RELOAD_EXIT_DELAY, exit_for_reload)
+		try:
+			before = task_names(session.project)
+			session.refresh()
+			result = await call(session, name, arguments)
+			if task_names(session.project) != before:
+				await server.request_context.session.send_tool_list_changed()
+		finally:
+			if stale:
+				pending_exit = asyncio.get_running_loop().call_later(
+					RELOAD_EXIT_DELAY, exit_for_reload
+				)
 		return result
 
 	server.list_tools()(list_handler)  # type: ignore[no-untyped-call]

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import secrets
 import subprocess
 import sys
 from pathlib import Path
@@ -27,7 +28,7 @@ from camas.v0.completion import Errored, Finished, Skipped, Stopped
 from camas.v0.config import Claude
 
 if TYPE_CHECKING:
-	from collections.abc import Callable, Iterator
+	from collections.abc import Callable
 	from typing import IO
 
 	from camas.main.check import TypeCheckResult
@@ -573,14 +574,12 @@ def _fake_package(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 @pytest.fixture(autouse=True)
-def reload_exits() -> Iterator[list[int]]:
+def reload_exits(monkeypatch: pytest.MonkeyPatch) -> list[int]:
 	"""Record scheduled reload exits instead of letting one kill the test process — an edit
 	landing in the real camas tree mid-suite must stay harmless."""
 	exits: list[int] = []
-	monkeypatch = pytest.MonkeyPatch()
 	monkeypatch.setattr(serve, "exit_for_reload", lambda: exits.append(1))
-	yield exits
-	monkeypatch.undo()
+	return exits
 
 
 def test_package_snapshot_tracks_content_not_metadata(
@@ -611,6 +610,8 @@ async def test_stale_package_answers_the_call_then_schedules_reload(
 		assert not (await client.call_tool("camas_list", {})).isError
 		assert reload_exits == []
 		(pkg / "a.py").write_text("y = 2\n")
+		assert not (await client.call_tool("camas_list", {})).isError
+		# a new call cancels the pending exit and re-arms it after its own response
 		assert not (await client.call_tool("camas_list", {})).isError
 		await asyncio.sleep(serve.RELOAD_EXIT_DELAY)
 	assert reload_exits == [1]
@@ -669,12 +670,13 @@ def test_live_server_answers_then_dies_when_the_package_changes(tmp_path: Path) 
 			)
 			server.stdin.flush()
 			assert f'"id":{call_id}' in _readline(server.stdout)
-		# Unique per process: the CI matrix runs this suite concurrently in several venvs against
-		# the same source tree, so a shared probe name would land in every other leaf's startup
-		# snapshot and nobody's would ever change.
+		# Unique per process and per run: the CI matrix runs this suite concurrently in several
+		# venvs against the same source tree, so a shared probe would land in other leaves'
+		# startup snapshots, and a pid-recycled leftover with identical content would mask the
+		# staleness trigger.
 		probe = Path(package_dir) / f"_stale_probe_{os.getpid()}.py"
 		try:
-			probe.write_text("")
+			probe.write_text(secrets.token_hex(8))
 		except OSError:  # pragma: no cover  # only a read-only install (nix store) takes this
 			pytest.skip("package directory is not writable (read-only install)")
 		try:
