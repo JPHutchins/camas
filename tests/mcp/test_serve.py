@@ -12,6 +12,7 @@ import pytest
 from mcp import types
 from mcp.shared.memory import create_connected_server_and_client_session
 
+import camas
 from camas import AgentFormat, Config, Parallel, Sequential, Task
 from camas.core import timings
 from camas.core.completion import RunResult, TaskResult
@@ -556,6 +557,63 @@ def test_server_advertises_instructions(tmp_path: Path) -> None:
 	opts = server.create_initialization_options()
 	assert opts.instructions is not None
 	assert "camas_run" in opts.instructions
+
+
+def _fake_package(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+	"""Point ``camas.__file__`` at a scratch package so snapshot tests don't touch the real one."""
+	pkg = tmp_path / "pkg"
+	pkg.mkdir()
+	(pkg / "__init__.py").write_text("")
+	(pkg / "a.py").write_text("x = 1\n")
+	monkeypatch.setattr(camas, "__file__", str(pkg / "__init__.py"))
+	return pkg
+
+
+@pytest.fixture(autouse=True)
+def reload_exits(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+	"""Record scheduled reload exits instead of letting one kill the test process — an edit
+	landing in the real camas tree mid-suite must stay harmless."""
+	exits: list[int] = []
+	monkeypatch.setattr(serve, "exit_for_reload", lambda: exits.append(1))
+	return exits
+
+
+def test_package_snapshot_tracks_content_not_metadata(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	"""Content identity: a same-size edit whose mtime is restored still changes the snapshot,
+	so a metadata-only comparison cannot mask it."""
+	pkg = _fake_package(tmp_path, monkeypatch)
+	edited = pkg / "a.py"
+	mtime_ns = edited.stat().st_mtime_ns
+	size = edited.stat().st_size
+	before = serve.package_snapshot()
+	edited.write_text("y = 2\n")
+	os.utime(edited, ns=(mtime_ns, mtime_ns))
+	after = serve.package_snapshot()
+	assert edited.stat().st_size == size
+	assert before != after
+
+
+async def test_stale_package_answers_the_call_then_schedules_reload(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reload_exits: list[int]
+) -> None:
+	"""A stale package still answers the triggering call — the exit is scheduled after the
+	response, so the client reconnects on the closed pipe instead of hanging (#58). The
+	in-memory transport has no writer hop to flush, so the delay is shrunk to keep the suite
+	fast."""
+	monkeypatch.setattr(serve, "RELOAD_EXIT_DELAY", 0.3)
+	pkg = _fake_package(tmp_path, monkeypatch)
+	session = _session({"lint": PASS}, None, tmp_path)
+	async with create_connected_server_and_client_session(serve.build_server(session)) as client:
+		assert not (await client.call_tool("camas_list", {})).isError
+		assert reload_exits == []
+		(pkg / "a.py").write_text("y = 2\n")
+		assert not (await client.call_tool("camas_list", {})).isError
+		# a new call cancels the pending exit and re-arms it after its own response
+		assert not (await client.call_tool("camas_list", {})).isError
+		await asyncio.sleep(serve.RELOAD_EXIT_DELAY)
+	assert reload_exits == [1]
 
 
 _VALID_TASKS = "from camas import Task\nlint = Task('ruff check .')\n"

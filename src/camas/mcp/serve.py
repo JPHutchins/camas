@@ -21,12 +21,14 @@ from dataclasses import dataclass, field
 from enum import Enum
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Final, NamedTuple
+from typing import TYPE_CHECKING, Any, Final, NamedTuple, TypeAlias
 
 from mcp import types
 from mcp.server.lowlevel import Server
 from mcp.server.lowlevel.server import NotificationOptions
 from pydantic import AnyUrl, BaseModel, ValidationError
+
+from camas.paths import camas_package_dir
 
 from ..core import timings
 from ..core.budget import plan_under
@@ -295,6 +297,44 @@ def _op(operator: str, a: tuple[int, ...], b: tuple[int, ...]) -> bool:
 	return a < b
 
 
+Snapshot: TypeAlias = dict[str, str]
+
+
+def package_snapshot() -> Snapshot:
+	"""This camas package's source files as ``{relpath: sha256}`` — content identity, so a
+	same-size edit or a restored mtime still changes it and a ``touch`` does not; ``.so`` files
+	count too, since an in-place mypyc wheel upgrade rewrites only those. ``os.walk`` because it
+	never follows directory symlinks on the Python versions camas supports; a file deleted
+	mid-walk simply drops out, which is itself a change.
+	"""
+	root = camas_package_dir()
+	snapshot: Snapshot = {}
+	for dirpath, _, filenames in os.walk(root):
+		for name in filenames:
+			if not name.endswith((".py", ".so", ".pyd")):
+				continue
+			path = Path(dirpath) / name
+			with suppress(FileNotFoundError):
+				snapshot[path.relative_to(root).as_posix()] = hashlib.sha256(
+					path.read_bytes()
+				).hexdigest()
+	return snapshot
+
+
+RELOAD_EXIT_DELAY: Final = 1.0
+"""How long a stale server lives after answering the triggering call — long enough for the
+transport's ``to_thread`` writer to flush the response the exit is scheduled after."""
+
+
+def exit_for_reload() -> None:  # pragma: no cover  # the suite cannot survive its own process exit
+	"""End this server process so the client reconnects to a freshly-imported camas. ``os._exit``
+	because ``sys.exit`` deadlocks interpreter finalization joining anyio's ``to_thread`` workers;
+	the OS closes the stdio pipe with the process, and the client restarts the server on that
+	EOF — the exit code is ``0`` because the death is deliberate, not a crash.
+	"""
+	os._exit(0)
+
+
 def serve_stdio(argv: list[str]) -> None:  # pragma: no cover
 	"""Entry point for ``camas mcp``: resolve the project, build the server, serve over stdio."""
 	os.environ["NO_COLOR"] = "1"
@@ -317,7 +357,27 @@ async def run_over_stdio(server: Server[object]) -> None:  # pragma: no cover
 
 
 def build_server(session: Session) -> Server[object]:
-	"""A low-level MCP ``Server`` with the camas tool handlers registered."""
+	"""A low-level MCP ``Server`` with the camas tool handlers registered; when the camas package
+	changes, the triggering call is answered and the server exits for the client to reconnect
+	(#58). The respawn command is the client's own MCP configuration — not this process's argv —
+	so an ad-hoc ``--plain`` launch comes back as the configured form. A new call cancels a
+	pending exit, and the exit itself re-arms while any call is in flight — so the server dies
+	only once the client has been idle since the last stale call and every response has had its
+	flush window.
+	"""
+	initial = package_snapshot()
+	pending_exit: asyncio.TimerHandle | None = None
+	active_calls = 0
+
+	def schedule_exit() -> None:
+		nonlocal pending_exit, active_calls
+		if active_calls:
+			pending_exit = asyncio.get_running_loop().call_later(RELOAD_EXIT_DELAY, schedule_exit)
+			return
+		if package_snapshot() != initial:
+			exit_for_reload()
+		# the package reverted since the stale call — stay up
+
 	server: Server[object] = Server(
 		"camas",
 		version=version("camas"),
@@ -338,11 +398,26 @@ def build_server(session: Session) -> Server[object]:
 		return list(tools(task_names(session.project), session.compat))
 
 	async def call_handler(name: str, arguments: dict[str, Any]) -> types.CallToolResult:
-		before = task_names(session.project)
-		session.refresh()
-		result = await call(session, name, arguments)
-		if task_names(session.project) != before:
-			await server.request_context.session.send_tool_list_changed()
+		nonlocal pending_exit, active_calls
+		if pending_exit is not None:
+			pending_exit.cancel()
+		stale = False
+		try:
+			active_calls += 1
+			before = task_names(session.project)
+			stale = (await asyncio.to_thread(package_snapshot)) != initial
+			session.refresh()
+			result = await call(session, name, arguments)
+			if task_names(session.project) != before:
+				await server.request_context.session.send_tool_list_changed()
+		finally:
+			active_calls -= 1
+			if stale:
+				if pending_exit is not None:
+					pending_exit.cancel()
+				pending_exit = asyncio.get_running_loop().call_later(
+					RELOAD_EXIT_DELAY, schedule_exit
+				)
 		return result
 
 	server.list_tools()(list_handler)  # type: ignore[no-untyped-call]
