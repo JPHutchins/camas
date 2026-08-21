@@ -34,6 +34,8 @@ ci = Sequential(
 )
 ```
 
+Nodes also compose with operators: `check | integration` appends `integration` to the `Parallel` (a right-side `Parallel` contributes its children), and `check + integration` is a `Sequential` that runs the whole `check` group first.
+
 The animated tree above is from a live test fixture — [see the walkthrough](#walkthrough).
 
 ## Install

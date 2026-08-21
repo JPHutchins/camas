@@ -363,6 +363,24 @@ class Task:
 		)
 		return f"Task({', '.join(parts)})"
 
+	def __or__(self, other: TaskNode | str) -> Parallel:
+		"""``|`` composes nodes in parallel: a :class:`Parallel` of this leaf and ``other``
+		(a right-side ``Parallel`` contributes its children).
+
+		>>> (Task("format") | Task("lint")).tasks == (Task("format"), Task("lint"))
+		True
+		"""
+		return _parallel_of(self, other)
+
+	def __add__(self, other: TaskNode | str) -> Sequential:
+		"""``+`` composes nodes in sequence: a :class:`Sequential` of this leaf then ``other``
+		(a right-side ``Sequential`` contributes its children).
+
+		>>> (Task("build") + Task("test")).tasks == (Task("build"), Task("test"))
+		True
+		"""
+		return _sequential_of(self, other)
+
 
 @dataclass(frozen=True, slots=True, init=False, repr=False)
 class Group:
@@ -478,6 +496,25 @@ class Sequential(Group):  # pyrefly: ignore[bad-class-definition]
 
 	__slots__ = ()
 
+	def __or__(self, other: TaskNode | str) -> Parallel:
+		"""``|`` composes in parallel: a :class:`Parallel` of this whole group and ``other``
+		(a right-side ``Parallel`` contributes its children and carries its fields).
+
+		>>> seq = Sequential("build", "test")
+		>>> (seq | "lint").tasks == (seq, Task("lint"))
+		True
+		"""
+		return _parallel_of(self, other)
+
+	def __add__(self, other: TaskNode | str) -> Sequential:
+		"""``+`` appends ``other`` to this sequence (a right-side ``Sequential`` contributes
+		its children); this group's fields and subclass carry.
+
+		>>> (Sequential("build") + "test").tasks == (Task("build"), Task("test"))
+		True
+		"""
+		return _sequential_of(self, other)
+
 
 class Parallel(Group):  # pyrefly: ignore[bad-class-definition]
 	"""A group of tasks that run concurrently.
@@ -487,6 +524,25 @@ class Parallel(Group):  # pyrefly: ignore[bad-class-definition]
 	"""
 
 	__slots__ = ()
+
+	def __or__(self, other: TaskNode | str) -> Parallel:
+		"""``|`` appends ``other`` to this group (a right-side ``Parallel`` contributes its
+		children); this group's fields and subclass carry.
+
+		>>> (Parallel("format") | "lint").tasks == (Task("format"), Task("lint"))
+		True
+		"""
+		return _parallel_of(self, other)
+
+	def __add__(self, other: TaskNode | str) -> Sequential:
+		"""``+`` builds a :class:`Sequential` that runs this whole group first, then ``other``
+		(a right-side ``Sequential`` contributes its children).
+
+		>>> check = Parallel("format")
+		>>> (check + "integration").tasks == (check, Task("integration"))
+		True
+		"""
+		return _sequential_of(self, other)
 
 
 TaskNode: TypeAlias = Task | Sequential | Parallel
@@ -526,6 +582,37 @@ def rebuilt(group: G, *children: TaskNode, **changes: object) -> G:
 			{field: changes.get(field, getattr(group, field)) for field in GROUP_FIELDS},
 		),
 	)
+
+
+def _node(child: TaskNode | str) -> TaskNode:
+	"""A ``str`` child as its :class:`Task` — the coercion the group constructors apply."""
+	return Task(cmd=child) if isinstance(child, str) else child
+
+
+def _parallel_of(left: TaskNode | str, right: TaskNode | str) -> Parallel:
+	"""The ``|`` composition — see :meth:`Sequential.__or__` and :meth:`Parallel.__or__`."""
+	if isinstance(left, Parallel):
+		return rebuilt(
+			left,
+			*left.tasks,
+			*(right.tasks if isinstance(right, Parallel) else (_node(right),)),
+		)
+	if isinstance(right, Parallel):
+		return rebuilt(right, _node(left), *right.tasks)
+	return Parallel(_node(left), _node(right))
+
+
+def _sequential_of(left: TaskNode | str, right: TaskNode | str) -> Sequential:
+	"""The ``+`` composition — see :meth:`Sequential.__add__` and :meth:`Parallel.__add__`."""
+	if isinstance(left, Sequential):
+		return rebuilt(
+			left,
+			*left.tasks,
+			*(right.tasks if isinstance(right, Sequential) else (_node(right),)),
+		)
+	if isinstance(right, Sequential):
+		return rebuilt(right, _node(left), *right.tasks)
+	return Sequential(_node(left), _node(right))
 
 
 class ProjectRef(NamedTuple):

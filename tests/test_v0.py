@@ -147,3 +147,78 @@ def test_importing_v0_does_not_load_the_engine() -> None:
 		check=False,
 	)
 	assert result.returncode == 0, f"importing camas.v0 loaded the engine: {result.stdout}"
+
+
+def test_or_appends_to_a_parallel() -> None:
+	assert Parallel("format", "lint") | "integration" == Parallel("format", "lint", "integration")
+
+
+def test_or_builds_a_parallel_from_two_leaves() -> None:
+	assert Task("a") | Task("b") == Parallel("a", "b")
+
+
+def test_or_flattens_a_right_parallel() -> None:
+	assert Parallel("a") | Parallel("b", "c") == Parallel("a", "b", "c")
+
+
+def test_or_nests_a_sequential_as_one_child() -> None:
+	seq = Sequential("build", "test")
+	assert seq | "lint" == Parallel(seq, Task("lint"))
+
+
+def test_add_appends_to_a_sequential() -> None:
+	assert Sequential("build") + "test" == Sequential("build", "test")
+
+
+def test_add_flattens_a_right_sequential() -> None:
+	assert Sequential("a") + Sequential("b", "c") == Sequential("a", "b", "c")
+
+
+def test_add_coerces_a_parallel_to_a_sequential() -> None:
+	"""``Parallel(...) + integration`` runs the whole group first, then the new node —
+	the coercion #298 asks for."""
+	check = Parallel("format", "lint")
+	assert check + "integration" == Sequential(check, Task("integration"))
+
+
+def test_composition_is_associative() -> None:
+	a, b, c = Task("a"), Task("b"), Task("c")
+	assert (a | b) | c == a | (b | c)
+	assert (a + b) + c == a + (b + c)
+
+
+def test_operators_leave_their_operands_unchanged() -> None:
+	check = Parallel("format")
+	_ = check | "lint"
+	_ = check + "integration"
+	assert check == Parallel("format")
+
+
+def test_parallel_operand_carries_its_fields_and_subclass() -> None:
+	class Named(Parallel):  # pyrefly: ignore[bad-class-definition]
+		__slots__ = ()
+
+	check = Named("format", name="check", paths=".")
+	ci = check | "lint"
+	assert type(ci) is Named
+	assert ci == Named("format", "lint", name="check", paths=".")
+
+
+def test_left_parallel_wins_when_both_sides_are_parallels() -> None:
+	"""Both sides flatten; the fields of the right-side Parallel have no home, so the
+	left's carry — the documented tie-break."""
+	assert Parallel("a", name="left") | Parallel("b", name="right") == Parallel(
+		"a", "b", name="left"
+	)
+
+
+def test_right_parallel_carries_when_the_left_is_a_leaf() -> None:
+	assert Task("a") | Parallel("b", name="check") == Parallel("a", "b", name="check")
+
+
+def test_sequential_operand_carries_its_fields_and_subclass() -> None:
+	class Staged(Sequential):  # pyrefly: ignore[bad-class-definition]
+		__slots__ = ()
+
+	staged = Staged("b", name="stage")
+	assert Parallel("a") + staged == Staged(Parallel("a"), "b", name="stage")
