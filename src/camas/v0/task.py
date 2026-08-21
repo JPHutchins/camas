@@ -508,7 +508,9 @@ class Sequential(Group):  # pyrefly: ignore[bad-class-definition]
 
 	def __add__(self, other: TaskNode | str) -> Sequential:
 		"""``+`` appends ``other`` to this sequence (a right-side ``Sequential`` contributes
-		its children); this group's fields and subclass carry.
+		its children); this group's fields and subclass carry. ``+`` binds tighter than ``|``
+		and chains group left-associatively — parenthesize to control a mixed chain's shape
+		or to carry a trailing group's fields.
 
 		>>> (Sequential("build") + "test").tasks == (Task("build"), Task("test"))
 		True
@@ -536,7 +538,9 @@ class Parallel(Group):  # pyrefly: ignore[bad-class-definition]
 
 	def __add__(self, other: TaskNode | str) -> Sequential:
 		"""``+`` builds a :class:`Sequential` that runs this whole group first, then ``other``
-		(a right-side ``Sequential`` contributes its children).
+		(a right-side ``Sequential`` contributes its children). ``+`` binds tighter than ``|``
+		and chains group left-associatively — parenthesize to control a mixed chain's shape
+		or to carry a trailing group's fields.
 
 		>>> check = Parallel("format")
 		>>> (check + "integration").tasks == (check, Task("integration"))
@@ -584,9 +588,24 @@ def rebuilt(group: G, *children: TaskNode, **changes: object) -> G:
 	)
 
 
-def _node(child: TaskNode | str) -> TaskNode:
-	"""A ``str`` child as its :class:`Task` — the coercion the group constructors apply."""
-	return Task(cmd=child) if isinstance(child, str) else child
+def _node(child: object) -> TaskNode:
+	"""A composition operand as a task node: a ``str`` as its :class:`Task`, a task node (a
+	:class:`Project` reference included — it resolves in the loader) as itself, anything else
+	a :class:`TypeError` naming the operand. ``object``-typed so the guard is the check, not
+	the annotation.
+
+	Raises:
+		TypeError: when ``child`` is neither a node nor a string.
+	"""
+	if isinstance(child, str):
+		return Task(cmd=child)
+	if isinstance(child, (Task, Sequential, Parallel)):
+		return child
+	if isinstance(child, ProjectRef):
+		return cast("TaskNode", child)
+	raise TypeError(
+		f"cannot compose {child!r} of type {type(child).__name__}: a child is a task node or str"
+	)
 
 
 def _parallel_of(left: TaskNode | str, right: TaskNode | str) -> Parallel:

@@ -7,7 +7,7 @@ import inspect
 import subprocess
 import sys
 from types import ModuleType
-from typing import Final
+from typing import Final, cast
 
 import pytest
 
@@ -17,7 +17,16 @@ from camas.v0.completion import Completion, Errored, Finished, Skipped
 from camas.v0.config import Agent, Claude, Config
 from camas.v0.effect import Effect
 from camas.v0.leaf_state import Completed, LeafState, Running, Waiting
-from camas.v0.task import GROUP_FIELDS, Group, Parallel, Sequential, Task, TaskNode, rebuilt
+from camas.v0.task import (
+	GROUP_FIELDS,
+	Group,
+	Parallel,
+	Project,
+	Sequential,
+	Task,
+	TaskNode,
+	rebuilt,
+)
 from camas.v0.task_event import CompletedEvent, OutputEvent, StartedEvent, TaskEvent
 
 HEADLINE: Final = frozenset(
@@ -185,6 +194,19 @@ def test_composition_is_associative() -> None:
 	a, b, c = Task("a"), Task("b"), Task("c")
 	assert (a | b) | c == a | (b | c)
 	assert (a + b) + c == a + (b + c)
+	left_named = Parallel("a", name="n")
+	assert (left_named | Parallel("b")) | Parallel("c") == left_named | (
+		Parallel("b") | Parallel("c")
+	)
+
+
+def test_add_chains_group_left_associatively() -> None:
+	"""``t + p + s`` is ``(t + p) + s``: ``s`` flattens into the field-less intermediate,
+	so its fields drop — parenthesize to carry them."""
+	t, p, s = Task("t"), Parallel("p"), Sequential("s", name="stage")
+	assert (t + p) + s == Sequential(t, p, "s")
+	assert t + p + s == Sequential(t, p, "s")
+	assert t + (p + s) == Sequential(t, p, "s", name="stage")
 
 
 def test_operators_leave_their_operands_unchanged() -> None:
@@ -222,3 +244,13 @@ def test_sequential_operand_carries_its_fields_and_subclass() -> None:
 
 	staged = Staged("b", name="stage")
 	assert Parallel("a") + staged == Staged(Parallel("a"), "b", name="stage")
+
+
+def test_composition_rejects_non_nodes_loudly() -> None:
+	with pytest.raises(TypeError, match="None"):
+		_ = Task("a") | cast("TaskNode", None)
+
+
+def test_or_composes_a_project_reference() -> None:
+	"""A :class:`Project` reference is a node for composition — the loader resolves it."""
+	assert Task("a") | Project("libs") == Parallel(Task("a"), Project("libs"))
