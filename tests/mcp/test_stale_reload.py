@@ -177,10 +177,13 @@ def _readline(
 	def reader() -> None:
 		lines.put(stdout.readline())
 
-	threading.Thread(target=reader, daemon=True).start()
+	reader_thread = threading.Thread(target=reader, daemon=True)
+	reader_thread.start()
 	try:
 		line = lines.get(timeout=timeout)
 	except queue.Empty:
+		stdout.close()
+		reader_thread.join(timeout=1)
 		raise AssertionError(
 			f"timed out waiting for the server; stderr: {_stderr(server, stderr_chunks)!r}"
 		) from None
