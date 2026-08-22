@@ -91,20 +91,24 @@ async def test_reverted_package_keeps_the_server_up(
 async def test_mid_call_change_arms_the_exit(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reload_exits: list[int]
 ) -> None:
-	"""A package change landing while the call runs is caught by the exit-time re-sample — the
-	call-start sample alone would leave the old import serving one extra call."""
+	"""A package change landing while a call runs is caught by the fire-time probe — the
+	change flips mid-dispatch, so no call-start sample exists to miss it."""
 	monkeypatch.setattr(serve, "RELOAD_EXIT_DELAY", 0.05)
 	_fake_package(tmp_path, monkeypatch)
 	session = _session({"lint": PASS}, None, tmp_path)
 	initial = serve.package_snapshot()
-	calls = 0
+	changed = False
 
 	def snapshot() -> dict[str, str]:
-		nonlocal calls
-		calls += 1
-		return {"changed": "1"} if calls >= 3 else initial
+		return {"changed": "1"} if changed else initial
+
+	async def mid_call_change(session: Session, name: str, arguments: dict[str, Any]) -> Any:
+		nonlocal changed
+		changed = True
+		return await _dispatch(session, name, arguments)
 
 	monkeypatch.setattr(serve, "package_snapshot", snapshot)
+	monkeypatch.setattr(serve, "call", mid_call_change)
 	async with create_connected_server_and_client_session(serve.build_server(session)) as client:
 		assert not (await client.call_tool("camas_list", {})).isError
 		await asyncio.sleep(serve.RELOAD_EXIT_DELAY + 0.05)
