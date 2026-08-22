@@ -88,6 +88,33 @@ async def test_reverted_package_keeps_the_server_up(
 	assert reload_exits == []
 
 
+async def test_mid_call_change_arms_the_exit(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reload_exits: list[int]
+) -> None:
+	"""A package change landing before the fire-time probe runs is caught — the call-end timer
+	is armed unconditionally, so the flip needs no call-start sample."""
+	monkeypatch.setattr(serve, "RELOAD_EXIT_DELAY", 0.05)
+	_fake_package(tmp_path, monkeypatch)
+	session = _session({"lint": PASS}, None, tmp_path)
+	initial = serve.package_snapshot()
+	changed = False
+
+	def snapshot() -> dict[str, str]:
+		return {"changed": "1"} if changed else initial
+
+	async def mid_call_change(session: Session, name: str, arguments: dict[str, Any]) -> Any:
+		nonlocal changed
+		changed = True
+		return await _dispatch(session, name, arguments)
+
+	monkeypatch.setattr(serve, "package_snapshot", snapshot)
+	monkeypatch.setattr(serve, "call", mid_call_change)
+	async with create_connected_server_and_client_session(serve.build_server(session)) as client:
+		assert not (await client.call_tool("camas_list", {})).isError
+		await asyncio.sleep(serve.RELOAD_EXIT_DELAY + 0.05)
+	assert reload_exits == [1]
+
+
 async def test_stale_package_schedules_reload_even_when_the_call_raises(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reload_exits: list[int]
 ) -> None:
@@ -100,15 +127,16 @@ async def test_stale_package_schedules_reload_even_when_the_call_raises(
 	async with create_connected_server_and_client_session(serve.build_server(session)) as client:
 		(pkg / "a.py").write_text("y = 2\n")
 		assert (await client.call_tool("camas_list", {})).isError
-		await asyncio.sleep(serve.RELOAD_EXIT_DELAY)
+		await asyncio.sleep(serve.RELOAD_EXIT_DELAY + 0.05)
 	assert reload_exits == [1]
 
 
-async def test_slow_concurrent_calls_rearm_until_idle(
+async def test_concurrent_calls_exit_after_the_last_finishes(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reload_exits: list[int]
 ) -> None:
-	"""The exit re-arms while a call is in flight — a slow concurrent call is never killed, and
-	the exit fires exactly once the server is idle."""
+	"""A timer firing while a call is in flight is dropped — the slow concurrent call is never
+	killed, and the exit fires only after the last call arms a fresh timer and the client is
+	idle."""
 	monkeypatch.setattr(serve, "RELOAD_EXIT_DELAY", 0.05)
 	monkeypatch.setattr(serve, "call", functools.partial(_slow_call, [0]))
 	pkg = _fake_package(tmp_path, monkeypatch)
@@ -221,20 +249,32 @@ def _stderr(  # pragma: no cover  # behavior pinned by tests; coverage misreport
 	return data.decode(errors="replace")
 
 
-def _rpc(
-	server: subprocess.Popen[str], call_id: int, stderr_chunks: list[bytes] | None = None
-) -> str:
-	"""Send one ``camas_list`` call over the live server's stdio and return its response line."""
+def _send_rpc(server: subprocess.Popen[str], call_id: int) -> None:
+	"""Write one ``camas_list`` call over the live server's stdio."""
 	assert server.stdin is not None
 	server.stdin.write(
 		f'{{"jsonrpc":"2.0","id":{call_id},"method":"tools/call",'
 		'"params":{"name":"camas_list","arguments":{}}}\n'
 	)
 	server.stdin.flush()
+
+
+def _read_rpc(
+	server: subprocess.Popen[str], call_id: int, stderr_chunks: list[bytes] | None = None
+) -> str:
+	"""Read one ``camas_list`` response and assert it answers ``call_id`` without an error."""
 	line = _readline(server, stderr_chunks=stderr_chunks)
 	assert f'"id":{call_id}' in line
 	assert '"error"' not in line
 	return line
+
+
+def _rpc(
+	server: subprocess.Popen[str], call_id: int, stderr_chunks: list[bytes] | None = None
+) -> str:
+	"""Send one ``camas_list`` call over the live server's stdio and return its response line."""
+	_send_rpc(server, call_id)
+	return _read_rpc(server, call_id, stderr_chunks)
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="select on pipes is POSIX-only")
@@ -288,9 +328,12 @@ def test_live_server_answers_then_dies_when_the_package_changes(tmp_path: Path) 
 		for call_id in (1, 2):
 			_rpc(server, call_id, stderr_chunks)
 		probe = scratch / "_stale_probe.py"
+		# Call 3 goes out before the probe file exists, so a call-2 exit timer firing into the
+		# dispatch gap probes an unchanged package and stays up.
+		_send_rpc(server, 3)
 		probe.write_text("")
 		try:
-			_rpc(server, 3, stderr_chunks)
+			_read_rpc(server, 3, stderr_chunks)
 			server.wait(timeout=15)
 		finally:
 			probe.unlink(missing_ok=True)
