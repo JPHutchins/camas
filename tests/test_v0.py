@@ -6,7 +6,7 @@ from __future__ import annotations
 import inspect
 import subprocess
 import sys
-from types import ModuleType
+from types import MappingProxyType, ModuleType
 from typing import Final, cast
 
 import pytest
@@ -118,6 +118,9 @@ def test_a_fresh_plain_left_operand_adopts_the_right_fields() -> None:
 	breaks this assert."""
 	assert Parallel("a") | Parallel("b", name="n") == Parallel("a", "b", name="n")
 	assert Sequential("a") + Sequential("b", name="n") == Sequential("a", "b", name="n")
+	assert Parallel("a", env=cast("dict[str, str]", MappingProxyType({}))) | Parallel(
+		"b", name="n"
+	) == Parallel("a", "b", name="n")
 
 
 def test_rebuilt_rejects_unknown_fields() -> None:
@@ -224,6 +227,8 @@ def test_composition_is_associative() -> None:
 	)
 	assert (a | b) | Parallel("c", name="n") == a | (b | Parallel("c", name="n"))
 	assert (a + b) + Sequential("c", name="n") == a + (b + Sequential("c", name="n"))
+	assert (a | b) | Parallel("c", matrix={}) == a | (b | Parallel("c", matrix={}))
+	assert (a + b) + Sequential("c", matrix={}) == a + (b + Sequential("c", matrix={}))
 
 	class Named(Parallel):  # pyrefly: ignore[bad-class-definition]
 		__slots__ = ()

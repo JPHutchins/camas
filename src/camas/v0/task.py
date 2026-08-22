@@ -444,7 +444,7 @@ class Group:
 		put = object.__setattr__
 		put(self, "tasks", tuple(Task(cmd=t) if isinstance(t, str) else t for t in tasks))
 		put(self, "name", name)
-		put(self, "matrix", matrix)
+		put(self, "matrix", matrix or None)
 		put(self, "variants", variants)
 		put(self, "env", env if env is not None else {})
 		put(self, "cwd", Path(cwd) if isinstance(cwd, str) else cwd)
@@ -509,9 +509,11 @@ class Sequential(Group):  # pyrefly: ignore[bad-class-definition]
 
 	def __add__(self, other: TaskNode | str) -> Sequential:
 		"""``+`` appends ``other`` to this sequence (a right-side ``Sequential`` contributes
-		its children). Fields and type carry from the operand that brings them — the left's,
-		falling back to the right's when only the right carries any — fields, or a distinct type. ``+`` binds tighter than
-		``|`` — parenthesize a mixed chain to control its shape.
+		its children). Fields and type carry from the operand that brings them: the left's,
+		except when the left carries only constructor defaults and the right carries fields or
+		a non-plain (subclass) type — then the right's. A subclass operand must accept the
+		Group constructor kwargs for its type to carry. ``+`` binds tighter than ``|`` —
+		parenthesize a mixed chain to control its shape.
 
 		>>> (Sequential("build") + "test").tasks == (Task("build"), Task("test"))
 		True
@@ -530,8 +532,10 @@ class Parallel(Group):  # pyrefly: ignore[bad-class-definition]
 
 	def __or__(self, other: TaskNode | str) -> Parallel:
 		"""``|`` appends ``other`` to this group (a right-side ``Parallel`` contributes its
-		children). Fields and type carry from the operand that brings them — the left's,
-		falling back to the right's when only the right carries any — fields, or a distinct type.
+		children). Fields and type carry from the operand that brings them: the left's, except
+		when the left carries only constructor defaults and the right carries fields or a
+		non-plain (subclass) type — then the right's. A subclass operand must accept the Group
+		constructor kwargs for its type to carry.
 
 		>>> (Parallel("format") | "lint").tasks == (Task("format"), Task("lint"))
 		True
@@ -643,7 +647,10 @@ def _nodes(children: tuple[TaskNode, ...]) -> tuple[TaskNode, ...]:
 
 def _fieldless(group: Group) -> bool:
 	"""Whether every :data:`GROUP_FIELDS` value is the constructor default."""
-	return all(getattr(group, field) in (None, {}) for field in GROUP_FIELDS)
+	return all(
+		getattr(group, field) is None or (field == "env" and not getattr(group, field))
+		for field in GROUP_FIELDS
+	)
 
 
 def _parallel_of(left: TaskNode | str, right: TaskNode | str) -> Parallel:
