@@ -111,6 +111,15 @@ def test_group_fields_track_every_group_constructor_kwarg() -> None:
 		assert positional == (("tasks", inspect.Parameter.VAR_POSITIONAL),), cls
 
 
+def test_a_fresh_plain_left_operand_adopts_the_right_fields() -> None:
+	"""The tie-break's default table, pinned through public behavior: a freshly constructed
+	plain group counts as fieldless, so the right operand's fields adopt — a new Group field
+	whose stored default is neither ``None`` nor ``{}`` makes the fresh left fieldful and
+	breaks this assert."""
+	assert Parallel("a") | Parallel("b", name="n") == Parallel("a", "b", name="n")
+	assert Sequential("a") + Sequential("b", name="n") == Sequential("a", "b", name="n")
+
+
 def test_rebuilt_rejects_unknown_fields() -> None:
 	"""A misspelled override fails loudly, as the spelled-out constructors did before."""
 	with pytest.raises(TypeError, match="nam"):
@@ -215,6 +224,15 @@ def test_composition_is_associative() -> None:
 	)
 	assert (a | b) | Parallel("c", name="n") == a | (b | Parallel("c", name="n"))
 	assert (a + b) + Sequential("c", name="n") == a + (b + Sequential("c", name="n"))
+
+	class Named(Parallel):  # pyrefly: ignore[bad-class-definition]
+		__slots__ = ()
+
+	class Staged(Sequential):  # pyrefly: ignore[bad-class-definition]
+		__slots__ = ()
+
+	assert (a | b) | Named("c") == a | (b | Named("c"))
+	assert (a + b) + Staged("c") == a + (b + Staged("c"))
 
 
 def test_operators_leave_their_operands_unchanged() -> None:

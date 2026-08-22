@@ -510,7 +510,7 @@ class Sequential(Group):  # pyrefly: ignore[bad-class-definition]
 	def __add__(self, other: TaskNode | str) -> Sequential:
 		"""``+`` appends ``other`` to this sequence (a right-side ``Sequential`` contributes
 		its children). Fields and type carry from the operand that brings them — the left's,
-		falling back to the right's when only the right has any. ``+`` binds tighter than
+		falling back to the right's when only the right carries any — fields, or a distinct type. ``+`` binds tighter than
 		``|`` — parenthesize a mixed chain to control its shape.
 
 		>>> (Sequential("build") + "test").tasks == (Task("build"), Task("test"))
@@ -531,7 +531,7 @@ class Parallel(Group):  # pyrefly: ignore[bad-class-definition]
 	def __or__(self, other: TaskNode | str) -> Parallel:
 		"""``|`` appends ``other`` to this group (a right-side ``Parallel`` contributes its
 		children). Fields and type carry from the operand that brings them — the left's,
-		falling back to the right's when only the right has any.
+		falling back to the right's when only the right carries any — fields, or a distinct type.
 
 		>>> (Parallel("format") | "lint").tasks == (Task("format"), Task("lint"))
 		True
@@ -651,10 +651,11 @@ def _parallel_of(left: TaskNode | str, right: TaskNode | str) -> Parallel:
 	left_node, right_node = _node(left), _node(right)
 	if isinstance(left_node, Parallel):
 		if isinstance(right_node, Parallel):
-			carrier = (
-				right_node if _fieldless(left_node) and not _fieldless(right_node) else left_node
-			)
-			return rebuilt(carrier, *_nodes(left_node.tasks), *_nodes(right_node.tasks))
+			if _fieldless(left_node) and (
+				not _fieldless(right_node) or type(right_node) is not Parallel
+			):
+				return rebuilt(right_node, *_nodes(left_node.tasks), *_nodes(right_node.tasks))
+			return rebuilt(left_node, *_nodes(left_node.tasks), *_nodes(right_node.tasks))
 		return rebuilt(left_node, *_nodes(left_node.tasks), right_node)
 	if isinstance(right_node, Parallel):
 		return rebuilt(right_node, left_node, *_nodes(right_node.tasks))
@@ -666,10 +667,11 @@ def _sequential_of(left: TaskNode | str, right: TaskNode | str) -> Sequential:
 	left_node, right_node = _node(left), _node(right)
 	if isinstance(left_node, Sequential):
 		if isinstance(right_node, Sequential):
-			carrier = (
-				right_node if _fieldless(left_node) and not _fieldless(right_node) else left_node
-			)
-			return rebuilt(carrier, *_nodes(left_node.tasks), *_nodes(right_node.tasks))
+			if _fieldless(left_node) and (
+				not _fieldless(right_node) or type(right_node) is not Sequential
+			):
+				return rebuilt(right_node, *_nodes(left_node.tasks), *_nodes(right_node.tasks))
+			return rebuilt(left_node, *_nodes(left_node.tasks), *_nodes(right_node.tasks))
 		return rebuilt(left_node, *_nodes(left_node.tasks), right_node)
 	if isinstance(right_node, Sequential):
 		return rebuilt(right_node, left_node, *_nodes(right_node.tasks))

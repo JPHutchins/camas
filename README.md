@@ -34,7 +34,7 @@ ci = Sequential(
 )
 ```
 
-Nodes also compose with operators (in `tasks.py` — the `camas '<expr>'` expression surface does not yet accept them): `ci | "integration"` is a `Parallel` of the whole `ci` group and the integration task (a right-side `Parallel` contributes its children), and `ci + "integration"` is a `Sequential` that runs the whole `ci` group first. `+` binds tighter than `|` — parenthesize a mixed chain to control its shape.
+Nodes also compose with operators (in `tasks.py` — the `camas '<expr>'` expression surface does not yet accept them): `ci | "integration"` is a `Parallel` of the whole `ci` group and the integration task (a right-side `Parallel` contributes its children), and `ci + "integration"` is a `Sequential` that flattens `ci`'s tasks in, then the integration task. `+` binds tighter than `|` — parenthesize a mixed chain to control its shape.
 
 The animated tree above is from a live test fixture — [see the walkthrough](#walkthrough).
 
