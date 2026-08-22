@@ -114,8 +114,8 @@ def test_group_fields_track_every_group_constructor_kwarg() -> None:
 def test_a_fresh_plain_left_operand_adopts_the_right_fields() -> None:
 	"""The tie-break's default table, pinned through public behavior: a freshly constructed
 	plain group counts as fieldless, so the right operand's fields adopt — a new Group field
-	whose stored default is neither ``None`` nor ``{}`` makes the fresh left fieldful and
-	breaks this assert."""
+	whose stored default is not ``None`` (or, for ``env``, not empty) makes the fresh left
+	fieldful and breaks this assert."""
 	assert Parallel("a") | Parallel("b", name="n") == Parallel("a", "b", name="n")
 	assert Sequential("a") + Sequential("b", name="n") == Sequential("a", "b", name="n")
 	assert Parallel("a", env=cast("dict[str, str]", MappingProxyType({}))) | Parallel(

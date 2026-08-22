@@ -646,7 +646,9 @@ def _nodes(children: tuple[TaskNode, ...]) -> tuple[TaskNode, ...]:
 
 
 def _fieldless(group: Group) -> bool:
-	"""Whether every :data:`GROUP_FIELDS` value is the constructor default."""
+	"""Whether every :data:`GROUP_FIELDS` value is the constructor default: ``None``, or an
+	empty mapping for ``env``.
+	"""
 	return all(
 		getattr(group, field) is None or (field == "env" and not getattr(group, field))
 		for field in GROUP_FIELDS
