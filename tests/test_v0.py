@@ -198,15 +198,8 @@ def test_composition_is_associative() -> None:
 	assert (left_named | Parallel("b")) | Parallel("c") == left_named | (
 		Parallel("b") | Parallel("c")
 	)
-
-
-def test_add_chains_group_left_associatively() -> None:
-	"""``t + p + s`` is ``(t + p) + s``: ``s`` flattens into the field-less intermediate,
-	so its fields drop — parenthesize to carry them."""
-	t, p, s = Task("t"), Parallel("p"), Sequential("s", name="stage")
-	assert (t + p) + s == Sequential(t, p, "s")
-	assert t + p + s == Sequential(t, p, "s")
-	assert t + (p + s) == Sequential(t, p, "s", name="stage")
+	assert (a | b) | Parallel("c", name="n") == a | (b | Parallel("c", name="n"))
+	assert (a + b) + Sequential("c", name="n") == a + (b + Sequential("c", name="n"))
 
 
 def test_operators_leave_their_operands_unchanged() -> None:
@@ -216,7 +209,7 @@ def test_operators_leave_their_operands_unchanged() -> None:
 	assert check == Parallel("format")
 
 
-def test_parallel_operand_carries_its_fields_and_subclass() -> None:
+def test_parallel_operand_carries_its_fields_and_type() -> None:
 	class Named(Parallel):  # pyrefly: ignore[bad-class-definition]
 		__slots__ = ()
 
@@ -238,7 +231,7 @@ def test_right_parallel_carries_when_the_left_is_a_leaf() -> None:
 	assert Task("a") | Parallel("b", name="check") == Parallel("a", "b", name="check")
 
 
-def test_sequential_operand_carries_its_fields_and_subclass() -> None:
+def test_sequential_operand_carries_its_fields_and_type() -> None:
 	class Staged(Sequential):  # pyrefly: ignore[bad-class-definition]
 		__slots__ = ()
 
@@ -251,6 +244,18 @@ def test_composition_rejects_non_nodes_loudly() -> None:
 		_ = Task("a") | cast("TaskNode", None)
 
 
+def test_composition_reguards_a_group_operands_children() -> None:
+	"""A group built through the lenient constructor can hold a non-node child; composition
+	re-checks its children instead of carrying the broken tree along."""
+	with pytest.raises(TypeError, match="None"):
+		_ = Parallel("a") | Parallel(cast("TaskNode", None))
+
+
 def test_or_composes_a_project_reference() -> None:
 	"""A :class:`Project` reference is a node for composition — the loader resolves it."""
 	assert Task("a") | Project("libs") == Parallel(Task("a"), Project("libs"))
+
+
+def test_project_references_compose_on_the_left() -> None:
+	assert Project("libs") | Task("lint") == Parallel(Project("libs"), Task("lint"))
+	assert Project("libs") + "lint" == Sequential(Project("libs"), "lint")

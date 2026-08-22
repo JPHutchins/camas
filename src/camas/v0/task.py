@@ -9,7 +9,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Final, Literal, NamedTuple, TypeAlias, TypeVar, cast
+from typing import TYPE_CHECKING, Final, Literal, NamedTuple, TypeAlias, TypeVar, cast, get_args
 
 if TYPE_CHECKING:
 	from collections.abc import Callable, Mapping
@@ -365,7 +365,7 @@ class Task:
 
 	def __or__(self, other: TaskNode | str) -> Parallel:
 		"""``|`` composes nodes in parallel: a :class:`Parallel` of this leaf and ``other``
-		(a right-side ``Parallel`` contributes its children).
+		(a right-side ``Parallel`` contributes its children and carries its fields).
 
 		>>> (Task("format") | Task("lint")).tasks == (Task("format"), Task("lint"))
 		True
@@ -374,7 +374,8 @@ class Task:
 
 	def __add__(self, other: TaskNode | str) -> Sequential:
 		"""``+`` composes nodes in sequence: a :class:`Sequential` of this leaf then ``other``
-		(a right-side ``Sequential`` contributes its children).
+		(a right-side ``Sequential`` contributes its children and carries its fields). ``+``
+		binds tighter than ``|`` — parenthesize a mixed chain to control its shape.
 
 		>>> (Task("build") + Task("test")).tasks == (Task("build"), Task("test"))
 		True
@@ -508,9 +509,9 @@ class Sequential(Group):  # pyrefly: ignore[bad-class-definition]
 
 	def __add__(self, other: TaskNode | str) -> Sequential:
 		"""``+`` appends ``other`` to this sequence (a right-side ``Sequential`` contributes
-		its children); this group's fields and subclass carry. ``+`` binds tighter than ``|``
-		and chains group left-associatively — parenthesize to control a mixed chain's shape
-		or to carry a trailing group's fields.
+		its children). Fields and type carry from the operand that brings them — the left's,
+		falling back to the right's when only the right has any. ``+`` binds tighter than
+		``|`` — parenthesize a mixed chain to control its shape.
 
 		>>> (Sequential("build") + "test").tasks == (Task("build"), Task("test"))
 		True
@@ -529,7 +530,8 @@ class Parallel(Group):  # pyrefly: ignore[bad-class-definition]
 
 	def __or__(self, other: TaskNode | str) -> Parallel:
 		"""``|`` appends ``other`` to this group (a right-side ``Parallel`` contributes its
-		children); this group's fields and subclass carry.
+		children). Fields and type carry from the operand that brings them — the left's,
+		falling back to the right's when only the right has any.
 
 		>>> (Parallel("format") | "lint").tasks == (Task("format"), Task("lint"))
 		True
@@ -538,9 +540,8 @@ class Parallel(Group):  # pyrefly: ignore[bad-class-definition]
 
 	def __add__(self, other: TaskNode | str) -> Sequential:
 		"""``+`` builds a :class:`Sequential` that runs this whole group first, then ``other``
-		(a right-side ``Sequential`` contributes its children). ``+`` binds tighter than ``|``
-		and chains group left-associatively — parenthesize to control a mixed chain's shape
-		or to carry a trailing group's fields.
+		(a right-side ``Sequential`` contributes its children and carries its fields). ``+``
+		binds tighter than ``|`` — parenthesize a mixed chain to control its shape.
 
 		>>> check = Parallel("format")
 		>>> (check + "integration").tasks == (check, Task("integration"))
@@ -588,6 +589,33 @@ def rebuilt(group: G, *children: TaskNode, **changes: object) -> G:
 	)
 
 
+@dataclass(frozen=True, slots=True)
+class ProjectRef:
+	"""A :func:`Project` reference before the loader resolves it; never reaches the engine."""
+
+	path: str
+
+	def __or__(self, other: TaskNode | str) -> Parallel:
+		"""Composes like a task node — see :meth:`Task.__or__`."""
+		return _parallel_of(cast("TaskNode", self), other)
+
+	def __add__(self, other: TaskNode | str) -> Sequential:
+		"""Composes like a task node — see :meth:`Task.__add__`."""
+		return _sequential_of(cast("TaskNode", self), other)
+
+
+def Project(path: str) -> TaskNode:  # noqa: N802  # constructor-style factory, like Task/Parallel
+	"""Another ``tasks.py`` as a task node — a private, immutable child project, referenced by
+	``path`` relative to the importing file (a directory resolves its ``tasks.py``). Runs what a
+	bare ``camas`` runs in that directory; bound at module scope, its tasks mount under the
+	binding's name for dotted dispatch (``libs``, ``libs.search.lint``).
+	"""
+	return cast("TaskNode", ProjectRef(path))
+
+
+_NODE_KINDS: Final = (*get_args(TaskNode), ProjectRef)
+
+
 def _node(child: object) -> TaskNode:
 	"""A composition operand as a task node: a ``str`` as its :class:`Task`, a task node (a
 	:class:`Project` reference included — it resolves in the loader) as itself, anything else
@@ -599,51 +627,50 @@ def _node(child: object) -> TaskNode:
 	"""
 	if isinstance(child, str):
 		return Task(cmd=child)
-	if isinstance(child, (Task, Sequential, Parallel)):
-		return child
-	if isinstance(child, ProjectRef):
+	if isinstance(child, _NODE_KINDS):
 		return cast("TaskNode", child)
 	raise TypeError(
 		f"cannot compose {child!r} of type {type(child).__name__}: a child is a task node or str"
 	)
 
 
+def _nodes(children: tuple[TaskNode, ...]) -> tuple[TaskNode, ...]:
+	"""Every child back through the operand guard — a group operand's children came through the
+	lenient constructor, so composition re-checks them.
+	"""
+	return tuple(_node(child) for child in children)
+
+
+def _fieldless(group: Group) -> bool:
+	"""Whether every :data:`GROUP_FIELDS` value is the constructor default."""
+	return all(getattr(group, field) in (None, {}) for field in GROUP_FIELDS)
+
+
 def _parallel_of(left: TaskNode | str, right: TaskNode | str) -> Parallel:
 	"""The ``|`` composition — see :meth:`Sequential.__or__` and :meth:`Parallel.__or__`."""
-	if isinstance(left, Parallel):
-		return rebuilt(
-			left,
-			*left.tasks,
-			*(right.tasks if isinstance(right, Parallel) else (_node(right),)),
-		)
-	if isinstance(right, Parallel):
-		return rebuilt(right, _node(left), *right.tasks)
-	return Parallel(_node(left), _node(right))
+	left_node, right_node = _node(left), _node(right)
+	if isinstance(left_node, Parallel):
+		if isinstance(right_node, Parallel):
+			carrier = (
+				right_node if _fieldless(left_node) and not _fieldless(right_node) else left_node
+			)
+			return rebuilt(carrier, *_nodes(left_node.tasks), *_nodes(right_node.tasks))
+		return rebuilt(left_node, *_nodes(left_node.tasks), right_node)
+	if isinstance(right_node, Parallel):
+		return rebuilt(right_node, left_node, *_nodes(right_node.tasks))
+	return Parallel(left_node, right_node)
 
 
 def _sequential_of(left: TaskNode | str, right: TaskNode | str) -> Sequential:
 	"""The ``+`` composition — see :meth:`Sequential.__add__` and :meth:`Parallel.__add__`."""
-	if isinstance(left, Sequential):
-		return rebuilt(
-			left,
-			*left.tasks,
-			*(right.tasks if isinstance(right, Sequential) else (_node(right),)),
-		)
-	if isinstance(right, Sequential):
-		return rebuilt(right, _node(left), *right.tasks)
-	return Sequential(_node(left), _node(right))
-
-
-class ProjectRef(NamedTuple):
-	"""A :func:`Project` reference before the loader resolves it; never reaches the engine."""
-
-	path: str
-
-
-def Project(path: str) -> TaskNode:  # noqa: N802  # constructor-style factory, like Task/Parallel
-	"""Another ``tasks.py`` as a task node — a private, immutable child project, referenced by
-	``path`` relative to the importing file (a directory resolves its ``tasks.py``). Runs what a
-	bare ``camas`` runs in that directory; bound at module scope, its tasks mount under the
-	binding's name for dotted dispatch (``libs``, ``libs.search.lint``).
-	"""
-	return cast("TaskNode", ProjectRef(path))
+	left_node, right_node = _node(left), _node(right)
+	if isinstance(left_node, Sequential):
+		if isinstance(right_node, Sequential):
+			carrier = (
+				right_node if _fieldless(left_node) and not _fieldless(right_node) else left_node
+			)
+			return rebuilt(carrier, *_nodes(left_node.tasks), *_nodes(right_node.tasks))
+		return rebuilt(left_node, *_nodes(left_node.tasks), right_node)
+	if isinstance(right_node, Sequential):
+		return rebuilt(right_node, left_node, *_nodes(right_node.tasks))
+	return Sequential(left_node, right_node)
