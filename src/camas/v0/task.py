@@ -9,7 +9,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Final, Literal, NamedTuple, TypeAlias, TypeVar, cast
+from typing import TYPE_CHECKING, Final, Literal, NamedTuple, TypeAlias, TypeVar, cast, get_args
 
 if TYPE_CHECKING:
 	from collections.abc import Callable, Mapping
@@ -363,6 +363,25 @@ class Task:
 		)
 		return f"Task({', '.join(parts)})"
 
+	def __or__(self, other: TaskNode | str) -> Parallel:
+		"""``|`` composes nodes in parallel: a :class:`Parallel` of this leaf and ``other``
+		(a right-side ``Parallel`` contributes its children and carries its fields).
+
+		>>> (Task("format") | Task("lint")).tasks == (Task("format"), Task("lint"))
+		True
+		"""
+		return _parallel_of(self, other)
+
+	def __add__(self, other: TaskNode | str) -> Sequential:
+		"""``+`` composes nodes in sequence: a :class:`Sequential` of this leaf then ``other``
+		(a right-side ``Sequential`` contributes its children and carries its fields). ``+``
+		binds tighter than ``|`` — parenthesize a mixed chain to control its shape.
+
+		>>> (Task("build") + Task("test")).tasks == (Task("build"), Task("test"))
+		True
+		"""
+		return _sequential_of(self, other)
+
 
 @dataclass(frozen=True, slots=True, init=False, repr=False)
 class Group:
@@ -425,7 +444,7 @@ class Group:
 		put = object.__setattr__
 		put(self, "tasks", tuple(Task(cmd=t) if isinstance(t, str) else t for t in tasks))
 		put(self, "name", name)
-		put(self, "matrix", matrix)
+		put(self, "matrix", matrix or None)
 		put(self, "variants", variants)
 		put(self, "env", env if env is not None else {})
 		put(self, "cwd", Path(cwd) if isinstance(cwd, str) else cwd)
@@ -478,6 +497,29 @@ class Sequential(Group):  # pyrefly: ignore[bad-class-definition]
 
 	__slots__ = ()
 
+	def __or__(self, other: TaskNode | str) -> Parallel:
+		"""``|`` composes in parallel: a :class:`Parallel` of this whole group and ``other``
+		(a right-side ``Parallel`` contributes its children and carries its fields).
+
+		>>> seq = Sequential("build", "test")
+		>>> (seq | "lint").tasks == (seq, Task("lint"))
+		True
+		"""
+		return _parallel_of(self, other)
+
+	def __add__(self, other: TaskNode | str) -> Sequential:
+		"""``+`` appends ``other`` to this sequence (a right-side ``Sequential`` contributes
+		its children). Fields and type carry from the operand that brings them: the left's,
+		except when the left carries only constructor defaults and the right carries fields or
+		a non-plain (subclass) type — then the right's. A subclass operand must accept the
+		Group constructor kwargs for its type to carry. ``+`` binds tighter than ``|`` —
+		parenthesize a mixed chain to control its shape.
+
+		>>> (Sequential("build") + "test").tasks == (Task("build"), Task("test"))
+		True
+		"""
+		return _sequential_of(self, other)
+
 
 class Parallel(Group):  # pyrefly: ignore[bad-class-definition]
 	"""A group of tasks that run concurrently.
@@ -487,6 +529,29 @@ class Parallel(Group):  # pyrefly: ignore[bad-class-definition]
 	"""
 
 	__slots__ = ()
+
+	def __or__(self, other: TaskNode | str) -> Parallel:
+		"""``|`` appends ``other`` to this group (a right-side ``Parallel`` contributes its
+		children). Fields and type carry from the operand that brings them: the left's, except
+		when the left carries only constructor defaults and the right carries fields or a
+		non-plain (subclass) type — then the right's. A subclass operand must accept the Group
+		constructor kwargs for its type to carry.
+
+		>>> (Parallel("format") | "lint").tasks == (Task("format"), Task("lint"))
+		True
+		"""
+		return _parallel_of(self, other)
+
+	def __add__(self, other: TaskNode | str) -> Sequential:
+		"""``+`` builds a :class:`Sequential` that runs this whole group first, then ``other``
+		(a right-side ``Sequential`` contributes its children and carries its fields). ``+``
+		binds tighter than ``|`` — parenthesize a mixed chain to control its shape.
+
+		>>> check = Parallel("format")
+		>>> (check + "integration").tasks == (check, Task("integration"))
+		True
+		"""
+		return _sequential_of(self, other)
 
 
 TaskNode: TypeAlias = Task | Sequential | Parallel
@@ -528,10 +593,19 @@ def rebuilt(group: G, *children: TaskNode, **changes: object) -> G:
 	)
 
 
-class ProjectRef(NamedTuple):
+@dataclass(frozen=True, slots=True)
+class ProjectRef:
 	"""A :func:`Project` reference before the loader resolves it; never reaches the engine."""
 
 	path: str
+
+	def __or__(self, other: TaskNode | str) -> Parallel:
+		"""Composes like a task node — see :meth:`Task.__or__`."""
+		return _parallel_of(cast("TaskNode", self), other)
+
+	def __add__(self, other: TaskNode | str) -> Sequential:
+		"""Composes like a task node — see :meth:`Task.__add__`."""
+		return _sequential_of(cast("TaskNode", self), other)
 
 
 def Project(path: str) -> TaskNode:  # noqa: N802  # constructor-style factory, like Task/Parallel
@@ -541,3 +615,73 @@ def Project(path: str) -> TaskNode:  # noqa: N802  # constructor-style factory, 
 	binding's name for dotted dispatch (``libs``, ``libs.search.lint``).
 	"""
 	return cast("TaskNode", ProjectRef(path))
+
+
+_NODE_KINDS: Final = (*get_args(TaskNode), ProjectRef)
+
+
+def _node(child: object) -> TaskNode:
+	"""A composition operand as a task node: a ``str`` as its :class:`Task`, a task node (a
+	:class:`Project` reference included — it resolves in the loader) as itself, anything else
+	a :class:`TypeError` naming the operand. ``object``-typed so the guard is the check, not
+	the annotation.
+
+	Raises:
+		TypeError: when ``child`` is neither a node nor a string.
+	"""
+	if isinstance(child, str):
+		return Task(cmd=child)
+	if isinstance(child, _NODE_KINDS):
+		return cast("TaskNode", child)
+	raise TypeError(
+		f"cannot compose {child!r} of type {type(child).__name__}: a child is a task node or str"
+	)
+
+
+def _nodes(children: tuple[TaskNode, ...]) -> tuple[TaskNode, ...]:
+	"""Every child back through the operand guard — a group operand's children came through the
+	lenient constructor, so composition re-checks them.
+	"""
+	return tuple(_node(child) for child in children)
+
+
+def _fieldless(group: Group) -> bool:
+	"""Whether every :data:`GROUP_FIELDS` value is the constructor default: ``None``, or an
+	empty mapping for ``env``.
+	"""
+	return all(
+		getattr(group, field) is None or (field == "env" and not getattr(group, field))
+		for field in GROUP_FIELDS
+	)
+
+
+def _parallel_of(left: TaskNode | str, right: TaskNode | str) -> Parallel:
+	"""The ``|`` composition — see :meth:`Sequential.__or__` and :meth:`Parallel.__or__`."""
+	left_node, right_node = _node(left), _node(right)
+	if isinstance(left_node, Parallel):
+		if isinstance(right_node, Parallel):
+			if _fieldless(left_node) and (
+				not _fieldless(right_node) or type(right_node) is not Parallel
+			):
+				return rebuilt(right_node, *_nodes(left_node.tasks), *_nodes(right_node.tasks))
+			return rebuilt(left_node, *_nodes(left_node.tasks), *_nodes(right_node.tasks))
+		return rebuilt(left_node, *_nodes(left_node.tasks), right_node)
+	if isinstance(right_node, Parallel):
+		return rebuilt(right_node, left_node, *_nodes(right_node.tasks))
+	return Parallel(left_node, right_node)
+
+
+def _sequential_of(left: TaskNode | str, right: TaskNode | str) -> Sequential:
+	"""The ``+`` composition — see :meth:`Sequential.__add__` and :meth:`Parallel.__add__`."""
+	left_node, right_node = _node(left), _node(right)
+	if isinstance(left_node, Sequential):
+		if isinstance(right_node, Sequential):
+			if _fieldless(left_node) and (
+				not _fieldless(right_node) or type(right_node) is not Sequential
+			):
+				return rebuilt(right_node, *_nodes(left_node.tasks), *_nodes(right_node.tasks))
+			return rebuilt(left_node, *_nodes(left_node.tasks), *_nodes(right_node.tasks))
+		return rebuilt(left_node, *_nodes(left_node.tasks), right_node)
+	if isinstance(right_node, Sequential):
+		return rebuilt(right_node, left_node, *_nodes(right_node.tasks))
+	return Sequential(left_node, right_node)
