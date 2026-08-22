@@ -612,7 +612,7 @@ async def test_stale_package_answers_the_call_then_schedules_reload(
 		assert not (await client.call_tool("camas_list", {})).isError
 		# a new call cancels the pending exit and re-arms it after its own response
 		assert not (await client.call_tool("camas_list", {})).isError
-		await asyncio.sleep(serve.RELOAD_EXIT_DELAY)
+		await asyncio.sleep(serve.RELOAD_EXIT_DELAY + 0.05)
 	assert reload_exits == [1]
 
 
