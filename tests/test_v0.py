@@ -10,6 +10,7 @@ from types import ModuleType
 from typing import Final, cast
 
 import pytest
+from typing_extensions import assert_type
 
 import camas
 import camas.v0
@@ -160,6 +161,20 @@ def test_importing_v0_does_not_load_the_engine() -> None:
 
 def test_or_appends_to_a_parallel() -> None:
 	assert Parallel("format", "lint") | "integration" == Parallel("format", "lint", "integration")
+
+
+def test_operators_assert_their_declared_types() -> None:
+	"""#298's acceptance contract: each operator's static return type — ``assert_type`` is a
+	runtime no-op enforced by every checker in the CI battery, so this test fails at analysis
+	time if an operator's declared type drifts."""
+	check = Parallel("format", "lint", "types", "tests")
+	assert_type(check | "integration", Parallel)
+	assert_type(check + "integration", Sequential)
+	assert_type(Task("format") | Task("lint"), Parallel)
+	assert_type(Task("build") + Task("test"), Sequential)
+	assert_type(Sequential("build") | "lint", Parallel)
+	assert_type(Project("libs") | "lint", Parallel)
+	assert_type(Project("libs") + "lint", Sequential)
 
 
 def test_or_builds_a_parallel_from_two_leaves() -> None:
