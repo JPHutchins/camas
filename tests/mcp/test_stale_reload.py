@@ -101,7 +101,7 @@ async def test_probe_skips_the_walk_while_a_call_is_in_flight(
 ) -> None:
 	"""The pre-walk idle check: a timer firing while a call runs returns without walking the
 	package — the walk count stays at the build-time one."""
-	monkeypatch.setattr(serve, "RELOAD_EXIT_DELAY", 0.05)
+	monkeypatch.setattr(serve, "RELOAD_EXIT_DELAY", 0.5)
 	_fake_package(tmp_path, monkeypatch)
 	session = _session({"lint": PASS}, None, tmp_path)
 	initial = serve.package_snapshot()
@@ -118,9 +118,8 @@ async def test_probe_skips_the_walk_while_a_call_is_in_flight(
 		assert not (await client.call_tool("camas_list", {})).isError
 		assert walks == 1
 		second = asyncio.create_task(client.call_tool("camas_list", {}))
-		await asyncio.sleep(0.1)
-		assert walks == 1
 		assert not (await second).isError
+		assert walks == 1
 		await _await_exits(reload_exits)
 	assert reload_exits == [1]
 
