@@ -363,9 +363,8 @@ def build_server(session: Session) -> Server[object]:
 	so an ad-hoc ``--plain`` launch comes back as the configured form. A new call cancels a
 	pending exit, and the exit itself re-arms while any call is in flight — so the server dies
 	only once the client has been idle since the last stale call and every response has had its
-	flush window. The exit decision defers one loop iteration past the timer, so a request the
-	SDK has just dispatched — whose handler has not yet cancelled the exit — is never the one
-	the exit kills (#297).
+	flush window. A request the SDK dispatches after the timer fires is not covered — the
+	client's transparent reconnect is the recovery (#297).
 	"""
 	initial = package_snapshot()
 	pending_exit: asyncio.TimerHandle | None = None
@@ -376,15 +375,9 @@ def build_server(session: Session) -> Server[object]:
 		if active_calls:
 			pending_exit = asyncio.get_running_loop().call_later(RELOAD_EXIT_DELAY, schedule_exit)
 			return
-		pending_exit = asyncio.get_running_loop().call_later(0, exit_after_tick)
-
-	def exit_after_tick() -> None:
-		"""The exit decision, one loop iteration after the timer: a handler the SDK dispatched
-		in the gap has run its entry by now — it cancels this handle — and a reverted package
-		keeps the server up.
-		"""
 		if package_snapshot() != initial:
 			exit_for_reload()
+		# the package reverted since the stale call — stay up
 
 	server: Server[object] = Server(
 		"camas",
