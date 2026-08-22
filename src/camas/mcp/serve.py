@@ -362,9 +362,10 @@ def build_server(session: Session) -> Server[object]:
 	(#58). The respawn command is the client's own MCP configuration — not this process's argv —
 	so an ad-hoc ``--plain`` launch comes back as the configured form. A new call cancels a
 	pending exit, and the exit itself re-arms while any call is in flight — so the server dies
-	only once the client has been idle since the last stale call and every response has had its
-	flush window. A request the SDK dispatches after the timer fires is not covered — the
-	client's transparent reconnect is the recovery (#297).
+	only once no tools/call has run since the last stale call and every response has had up to
+	``RELOAD_EXIT_DELAY`` to flush. A request whose handler has not run when the exit is
+	decided is not covered — recovery is the client's transparent reconnect, which #297 tracks
+	as not yet working.
 	"""
 	initial = package_snapshot()
 	pending_exit: asyncio.TimerHandle | None = None
@@ -413,7 +414,7 @@ def build_server(session: Session) -> Server[object]:
 				await server.request_context.session.send_tool_list_changed()
 		finally:
 			active_calls -= 1
-			if stale:
+			if stale or (await asyncio.to_thread(package_snapshot)) != initial:
 				if pending_exit is not None:
 					pending_exit.cancel()
 				pending_exit = asyncio.get_running_loop().call_later(
