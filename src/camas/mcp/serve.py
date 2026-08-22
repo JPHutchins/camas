@@ -377,9 +377,11 @@ def build_server(session: Session) -> Server[object]:
 		asyncio.get_running_loop().create_task(probe_and_exit())
 
 	async def probe_and_exit() -> None:
+		changed = False
 		with suppress(OSError):
-			if (await asyncio.to_thread(package_snapshot)) != initial:
-				exit_for_reload()
+			changed = (await asyncio.to_thread(package_snapshot)) != initial
+		if changed and not active_calls:
+			exit_for_reload()
 
 	server: Server[object] = Server(
 		"camas",
