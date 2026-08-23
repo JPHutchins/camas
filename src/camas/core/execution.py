@@ -56,6 +56,9 @@ Limiter: TypeAlias = "asyncio.Semaphore | nullcontext[None]"
 class Signalable(Protocol):
 	"""The subset of ``asyncio.subprocess.Process`` the interrupt path drives."""
 
+	@property
+	def returncode(self) -> int | None: ...
+
 	def send_signal(self, sig: int, /) -> None: ...
 	def kill(self) -> None: ...
 
@@ -74,6 +77,29 @@ class Interrupts:
 		handler may have run.
 		"""
 		return self.count > 0
+
+	def register(self, states: list[LeafState], leaf_index: int, proc: Signalable) -> None:
+		"""Store a live leaf proc; a landed interrupt that missed its registration — the
+		spawn-window Ctrl-C — replays the missed presses now. A child reaped in that window
+		owns the Interrupting mark only when its returncode is SIGINT's death signature
+		(:func:`died_of_sigint`); any other reaped child exited on its own and keeps its own
+		attribution. A natural death reaped but not yet delivered by the watcher's callback
+		still reads ``None`` and is marked — that sub-window cannot be told from a group kill.
+		On Windows SIGINT is not a sendable signal, so the replayed presses 1-2 are
+		suppressed no-ops; the kill press delivers a real kill. The mark lands either way —
+		the interrupted spawn reads Stopped.
+		"""
+		self.procs[leaf_index] = proc
+		if not self.landed():
+			return
+		returncode = proc.returncode
+		presses = min(self.count, KILL_PRESSES)
+		if not owns_mark(returncode):
+			return
+		if returncode is None:
+			for press in range(1, presses + 1):
+				signal_press(proc, press)
+		states[leaf_index] = to_interrupting(states[leaf_index], presses)
 
 
 class RunContext(NamedTuple):
@@ -139,45 +165,106 @@ else:  # pragma: no cover
 		"""No tty state to restore on Windows."""
 
 
-def interrupt_proc(
-	states: list[LeafState], leaf_index: int, proc: Signalable, presses: int
-) -> None:
-	"""Bring one proc in line with the escalation at ``presses`` Ctrl-C — SIGINT, or kill once
-	the kill press has been reached — and mark its leaf Interrupting. ``step_interrupt`` applies
-	this to every registered proc; ``run_cmd`` replays the missed presses to a proc whose
-	registration a landed interrupt missed (#265).
+def signal_press(proc: Signalable, presses: int) -> None:
+	"""One escalation step — SIGINT, or kill once the kill press has been reached — best
+	effort: a gone transport's raise (or Windows rejecting SIGINT) is suppressed here, the
+	one place the delivery policy owns it. ``presses`` is the 1-based press number this step
+	delivers — SIGINT below ``KILL_PRESSES``, kill from it on.
 	"""
-	if presses >= KILL_PRESSES:
-		proc.kill()
-	else:
-		proc.send_signal(signal.SIGINT)
-	states[leaf_index] = to_interrupting(states[leaf_index], presses)
+	with suppress(OSError, ValueError):
+		if presses >= KILL_PRESSES:
+			proc.kill()
+		else:
+			proc.send_signal(signal.SIGINT)
+
+
+WINDOWS_CTRL_C_EXIT: Final = 0xC000013A
+"""STATUS_CONTROL_C_EXIT — the Windows console's death signature for the same group kill the
+POSIX signatures name."""
+
+SIGINT_DEATH_SIGNATURES: Final = (
+	(WINDOWS_CTRL_C_EXIT,) if sys.platform == "win32" else (-signal.SIGINT, INTERRUPT_RC)
+)
+"""The platform's SIGINT death signatures — the reaped-child returncodes a landed interrupt
+honestly owns."""
+
+
+def died_of_sigint(returncode: int | None) -> bool:
+	"""Whether a reaped child's returncode is one of :data:`SIGINT_DEATH_SIGNATURES` — the
+	negative signal and the 128 + signal KeyboardInterrupt teardown exit on POSIX, the console
+	kill code on Windows — the only reaped children a landed interrupt honestly owns. A child
+	that exits 130 on its own is indistinguishable from that teardown and reads Stopped in the
+	same window.
+	"""
+	return returncode in SIGINT_DEATH_SIGNATURES
+
+
+def owns_mark(returncode: int | None) -> bool:
+	"""Whether a proc's returncode allows the Interrupting mark — live (``None``), or reaped
+	with SIGINT's death signature (:func:`died_of_sigint`).
+	"""
+	return returncode is None or died_of_sigint(returncode)
 
 
 def step_interrupt(interrupts: Interrupts, states: list[LeafState]) -> None:
-	"""Advance escalation one Ctrl-C press: forward SIGINT, again, kill, then cancel the run."""
+	"""Advance escalation one Ctrl-C press: forward SIGINT, again, kill, then cancel the run.
+	A child reaped without SIGINT's death signature exited on its own and keeps its own
+	attribution; one reaped with it owns the mark without signals — the press's group kill.
+	A reaped-but-undelivered natural death reads ``None`` at the probe and is marked too —
+	the sub-window the two cannot be told apart.
+	"""
 	interrupts.count += 1
 	if interrupts.count > KILL_PRESSES:
 		if interrupts.main_task is not None:  # pragma: no branch
 			interrupts.main_task.cancel()
 		return
 	for leaf_index, proc in tuple(interrupts.procs.items()):
-		with suppress(ProcessLookupError):
-			interrupt_proc(states, leaf_index, proc, interrupts.count)
+		returncode = proc.returncode
+		if not owns_mark(returncode):
+			continue
+		if returncode is None:
+			signal_press(proc, interrupts.count)
+		states[leaf_index] = to_interrupting(states[leaf_index], interrupts.count)
 
 
 async def await_run(
-	main_task: asyncio.Task[tuple[TaskResult, ...]], interrupts: Interrupts
+	main_task: asyncio.Task[tuple[TaskResult, ...]],
+	interrupts: Interrupts,
+	states: list[LeafState],
 ) -> tuple[TaskResult, ...]:
-	"""Await the run task; a 4th Ctrl-C cancels it, a Windows ``KeyboardInterrupt`` kills tracked leaves."""
+	"""Await the run task; a 4th Ctrl-C cancels it. A cancellation of the awaiting task
+	itself — a client dropping a served run — kills the tracked leaves, cancels the run, and
+	re-raises; the count having passed ``KILL_PRESSES`` is what tells the two apart (3.11+
+	cancels the awaited task when the waiter is cancelled, so ``main_task.cancelled()`` is
+	true in both cases). A ``KeyboardInterrupt`` caught here is a host outside
+	``asyncio.run`` — whose own handler owns Ctrl-C on 3.11+ — interrupting the coroutine
+	directly; it kills the tracked leaves, marks them like the other sites do, and awaits the
+	run's unwind before returning.
+
+	Raises:
+		asyncio.CancelledError: when the awaiting task is cancelled before the 4th press —
+			the client's cancellation, re-raised, not the press's.
+	"""
 	try:
 		return await main_task
 	except asyncio.CancelledError:
+		if interrupts.count <= KILL_PRESSES:
+			for proc in tuple(interrupts.procs.values()):
+				signal_press(proc, KILL_PRESSES)
+			main_task.cancel()
+			raise
 		return ()
 	except KeyboardInterrupt:  # pragma: no cover
 		interrupts.count += 1
-		for proc in tuple(interrupts.procs.values()):
-			proc.kill()
+		for leaf_index, proc in tuple(interrupts.procs.items()):
+			returncode = proc.returncode
+			if not owns_mark(returncode):
+				continue
+			if returncode is None:
+				signal_press(proc, KILL_PRESSES)
+			states[leaf_index] = to_interrupting(states[leaf_index], interrupts.count)
+		main_task.cancel()
+		await asyncio.gather(main_task, return_exceptions=True)
 		return ()
 
 
@@ -350,11 +437,7 @@ async def run_cmd(task: Task, leaf_index: int, ctx: RunContext) -> TaskResult:
 				leaf_index, CompletedEvent(task, leaf_index, errored, datetime.now())
 			)
 			return TaskResult(task_label(task), errored, leaf_identity(ctx, leaf_index))
-		ctx.interrupts.procs[leaf_index] = proc
-		if ctx.interrupts.landed() and proc.returncode is None:
-			for press in range(1, min(ctx.interrupts.count, KILL_PRESSES) + 1):
-				with suppress(ProcessLookupError):
-					interrupt_proc(ctx.states, leaf_index, proc, press)
+		ctx.interrupts.register(ctx.states, leaf_index, proc)
 		output: Final[list[bytes]] = []
 		try:
 			if proc.stdout is not None:  # pragma: no branch
@@ -511,7 +594,7 @@ async def run(
 			raise BaseExceptionGroup("setup errors", setup_errors)
 		main_task: Final = loop.create_task(execute(expanded, ctx))
 		interrupts.main_task = main_task
-		results = await await_run(main_task, interrupts)
+		results = await await_run(main_task, interrupts, states)
 	finally:
 		if sigint_handled:  # pragma: no branch
 			loop.remove_signal_handler(signal.SIGINT)
