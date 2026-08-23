@@ -532,6 +532,16 @@ async def test_run_call_unknown_matrix_axis_is_tool_error(tmp_path: Path) -> Non
 	assert "NOPE" in _text(result)
 
 
+async def test_run_call_unknown_matrix_axis_names_the_tasks_that_declare_it(tmp_path: Path) -> None:
+	leaf = Task("build {PY}")
+	matrixed = Parallel(leaf, matrix={"PY": ("3.13",)}, name="test")
+	session = _session({"test": matrixed, "build": leaf}, None, tmp_path)
+	result = await serve.run_call(session, {"task": "build", "matrix_overrides": {"PY": ["3.13"]}})
+	assert result.isError is True
+	assert "unknown matrix axis 'PY' on task 'build' (known: none)" in _text(result)
+	assert "tasks that expand across 'PY': test" in _text(result)
+
+
 async def test_run_call_concurrent_runs_use_distinct_log_dirs(tmp_path: Path) -> None:
 	session = _session({"bad": FAIL}, None, tmp_path)
 	r1, r2 = await asyncio.gather(

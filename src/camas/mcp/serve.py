@@ -38,6 +38,7 @@ from ..core.hook_event import NO_EVENT, HookEvent, event_from_stdin
 from ..core.matrix import (
 	empty_variant_labels,
 	expand_matrix,
+	overridable_axes,
 	override_matrix,
 	unfilled_required_axes,
 )
@@ -869,6 +870,38 @@ def required_axes_message(names: tuple[str, ...]) -> str:
 	)
 
 
+def override_axes(
+	tasks: Mapping[str, TaskNode],
+	name: str,
+	node: TaskNode,
+	overrides: Mapping[str, tuple[str, ...]],
+) -> TaskNode:
+	"""``override_matrix`` whose unknown-axis error also names every task that does declare the
+	axis, so the caller is pointed at the task the override belongs on instead of guessing.
+
+	Raises:
+		ValueError: when an override key matches no axis on ``node`` — the unknown axis, the
+			chosen task, its known axes, and the tasks whose matrix declares the axis.
+	"""
+	axes: Final = overridable_axes(node)
+	unknown: Final = next((key for key in overrides if key not in axes), None)
+
+	if unknown is not None:
+		known = ", ".join(sorted(axes)) or "none"
+		carriers = sorted(
+			n for n, candidate in tasks.items() if unknown in overridable_axes(candidate)
+		)
+		hint = (
+			f"; tasks that expand across {unknown!r}: {', '.join(carriers)}"
+			if carriers
+			else f"; no task declares an axis named {unknown!r}"
+		)
+
+		raise ValueError(f"unknown matrix axis {unknown!r} on task {name!r} (known: {known}){hint}")
+
+	return override_matrix(node, overrides)
+
+
 def unsatisfiable_message(node: TaskNode) -> str | None:
 	"""Why ``node`` would expand to no leaves — a required matrix axis left unfilled, or a
 	``variants=()`` that declares no bundle — or ``None`` when it is runnable.
@@ -918,7 +951,9 @@ def resolve_run_node(
 	else:
 		name, node = req.task, require_task(tasks, req.task)
 	if req.matrix_overrides:
-		node = override_matrix(node, {k: tuple(v) for k, v in req.matrix_overrides.items()})
+		node = override_axes(
+			tasks, name, node, {k: tuple(v) for k, v in req.matrix_overrides.items()}
+		)
 	if req.args and not isinstance(node, Task):
 		raise ValueError(f"pass-through args (--) only apply to Task, got {type(node).__name__}")
 	require_filled_axes(node)
@@ -939,7 +974,9 @@ async def run_budget(
 		source = budget_source(tasks, config, req.task)
 		label = req.task or source.name or "default task"
 		if req.matrix_overrides:
-			source = override_matrix(source, {k: tuple(v) for k, v in req.matrix_overrides.items()})
+			source = override_axes(
+				tasks, label, source, {k: tuple(v) for k, v in req.matrix_overrides.items()}
+			)
 		require_filled_axes(source)
 	except ValueError as e:
 		return error_result(str(e))
@@ -1656,7 +1693,9 @@ def resolve_github_matrix_node(
 			)
 		name, node = default.name or "default task", default
 	if req.matrix_overrides:
-		node = override_matrix(node, {k: tuple(v) for k, v in req.matrix_overrides.items()})
+		node = override_axes(
+			tasks, name, node, {k: tuple(v) for k, v in req.matrix_overrides.items()}
+		)
 	return name, node
 
 
