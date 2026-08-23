@@ -567,6 +567,21 @@ def test_register_replays_the_missed_presses() -> None:
 	assert states == [Interrupting(a, t0, b"", 2)]
 
 
+def test_register_replays_a_single_press() -> None:
+	"""The dominant real interruption — one Ctrl-C in the spawn window — sends exactly one
+	SIGINT and marks the leaf at one press."""
+	a = Task("a")
+	t0 = datetime(2026, 1, 1)
+	proc = FakeProc()
+	interrupts = Interrupts(procs={}, count=1)
+	states: list[LeafState] = [Running(a, t0, b"")]
+
+	interrupts.register(states, 0, proc)
+	assert proc.signals == [signal.SIGINT]
+	assert proc.killed is False
+	assert states == [Interrupting(a, t0, b"", 1)]
+
+
 def test_register_bounds_the_replay_at_kill_presses() -> None:
 	a = Task("a")
 	t0 = datetime(2026, 1, 1)
@@ -685,6 +700,28 @@ def test_step_interrupt_suppresses_the_transport_raises() -> None:
 		step_interrupt(interrupts, states)
 	assert interrupts.count == KILL_PRESSES
 	assert states == [Interrupting(a, t0, b"", KILL_PRESSES)]
+
+
+def test_keyboard_interrupt_teardown_kills_live_procs_and_skips_reaped() -> None:
+	"""The Windows Ctrl-C path applies the same delivery policy as the other two sites: a
+	live proc is killed, a reaped child is left alone."""
+
+	async def scenario() -> tuple[tuple[TaskResult, ...], bool, bool]:
+		async def raises_keyboard_interrupt() -> tuple[TaskResult, ...]:
+			raise KeyboardInterrupt
+
+		live = FakeProc()
+		reaped = FakeProc(returncode=0)
+		interrupts = Interrupts(procs={0: live, 1: reaped})
+		# The KeyboardInterrupt must land in the awaiting frame, not inside a task — a task's
+		# BaseException escapes the loop instead of reaching ``await main_task``.
+		results = await await_run(raises_keyboard_interrupt(), interrupts)
+		return results, live.killed, reaped.killed
+
+	results, live_killed, reaped_killed = asyncio.run(scenario())
+	assert results == ()
+	assert live_killed is True
+	assert reaped_killed is False
 
 
 def test_fourth_press_cancels_run_and_await_run_returns_empty() -> None:
