@@ -371,6 +371,10 @@ def build_server(session: Session) -> Server[object]:
 	probe_task: asyncio.Task[None] | None = None
 	active_calls = 0
 
+	def retrieve_probe_exception(task: asyncio.Task[None]) -> None:
+		if not task.cancelled():
+			task.exception()  # retrieve a dead probe's failure — no unretrieved log, even idle
+
 	async def probe_and_exit() -> None:
 		await asyncio.sleep(RELOAD_EXIT_DELAY)
 		if active_calls:
@@ -412,12 +416,10 @@ def build_server(session: Session) -> Server[object]:
 		finally:
 			active_calls -= 1
 			if probe_task is not None:
-				if probe_task.done():
-					probe_task.exception()  # retrieve a dead probe's failure — no unretrieved log
-				else:
-					probe_task.cancel()
+				probe_task.cancel()
 				probe_task = None
 			probe_task = asyncio.get_running_loop().create_task(probe_and_exit())
+			probe_task.add_done_callback(retrieve_probe_exception)
 		return result
 
 	server.list_tools()(list_handler)  # type: ignore[no-untyped-call]

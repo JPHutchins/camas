@@ -75,18 +75,28 @@ def _fake_package(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 async def test_reverted_package_keeps_the_server_up(
-	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reload_exits: list[int]
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reload_exits: list[int], wait_until: Any
 ) -> None:
 	"""The exit re-checks the snapshot when it fires: a package reverted before the timer ran
 	keeps the server up instead of exiting on a stale observation."""
 	monkeypatch.setattr(serve, "RELOAD_EXIT_DELAY", 1.0)
 	pkg = _fake_package(tmp_path, monkeypatch)
 	session = _session({"lint": PASS}, None, tmp_path)
+	real_snapshot = serve.package_snapshot
+	walks = 0
+
+	def counting_snapshot() -> dict[str, str]:
+		nonlocal walks
+		walks += 1
+		return real_snapshot()
+
+	monkeypatch.setattr(serve, "package_snapshot", counting_snapshot)
 	async with create_connected_server_and_client_session(serve.build_server(session)) as client:
 		(pkg / "a.py").write_text("y = 2\n")
 		assert not (await client.call_tool("camas_list", {})).isError
 		(pkg / "a.py").write_text("x = 1\n")
 		await asyncio.sleep(1.1)
+		await wait_until(lambda: walks >= 2)  # the fire-time walk ran before the assert
 	assert reload_exits == []
 
 
