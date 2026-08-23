@@ -416,7 +416,9 @@ def leaf_result(ctx: RunContext, leaf_index: int, completion: Completion) -> Tas
 	"""The TaskResult a leaf's completion produces — the one construction every completion
 	path shares.
 	"""
-	return TaskResult(task_label(ctx.leaves[leaf_index]), completion, leaf_identity(ctx, leaf_index))
+	return TaskResult(
+		task_label(ctx.leaves[leaf_index]), completion, leaf_identity(ctx, leaf_index)
+	)
 
 
 async def run_cmd(task: Task, leaf_index: int, ctx: RunContext) -> TaskResult:
