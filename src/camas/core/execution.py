@@ -182,15 +182,21 @@ WINDOWS_CTRL_C_EXIT: Final = 0xC000013A
 """STATUS_CONTROL_C_EXIT — the Windows console's death signature for the same group kill the
 POSIX signatures name."""
 
+SIGINT_DEATH_SIGNATURES: Final = (
+	(WINDOWS_CTRL_C_EXIT,) if sys.platform == "win32" else (-signal.SIGINT, INTERRUPT_RC)
+)
+"""The platform's SIGINT death signatures — the reaped-child returncodes a landed interrupt
+honestly owns."""
+
 
 def died_of_sigint(returncode: int | None) -> bool:
-	"""Whether a reaped child's returncode is SIGINT's death signature — the negative signal,
-	the 128 + signal exit a KeyboardInterrupt teardown produces, or Windows'
-	STATUS_CONTROL_C_EXIT — the only reaped children a landed interrupt honestly owns. A child
+	"""Whether a reaped child's returncode is one of :data:`SIGINT_DEATH_SIGNATURES` — the
+	negative signal and the 128 + signal KeyboardInterrupt teardown exit on POSIX, the console
+	kill code on Windows — the only reaped children a landed interrupt honestly owns. A child
 	that exits 130 on its own is indistinguishable from that teardown and reads Stopped in the
 	same window.
 	"""
-	return returncode in (-signal.SIGINT, INTERRUPT_RC, WINDOWS_CTRL_C_EXIT)
+	return returncode in SIGINT_DEATH_SIGNATURES
 
 
 def owns_mark(returncode: int | None) -> bool:
@@ -227,12 +233,13 @@ async def await_run(
 	states: list[LeafState],
 ) -> tuple[TaskResult, ...]:
 	"""Await the run task; a 4th Ctrl-C cancels it. A cancellation of the awaiting task
-	itself — a client dropping a served run — cancels the run and re-raises; the count having
-	passed ``KILL_PRESSES`` is what tells the two apart (3.11+ cancels the awaited task when
-	the waiter is cancelled, so ``main_task.cancelled()`` is true in both cases). A
-	``KeyboardInterrupt`` caught here is a host outside ``asyncio.run`` — whose own handler
-	owns Ctrl-C on 3.11+ — interrupting the coroutine directly; it escalates the tracked
-	leaves and marks them like the other sites do.
+	itself — a client dropping a served run — kills the tracked leaves, cancels the run, and
+	re-raises; the count having passed ``KILL_PRESSES`` is what tells the two apart (3.11+
+	cancels the awaited task when the waiter is cancelled, so ``main_task.cancelled()`` is
+	true in both cases). A ``KeyboardInterrupt`` caught here is a host outside
+	``asyncio.run`` — whose own handler owns Ctrl-C on 3.11+ — interrupting the coroutine
+	directly; it kills the tracked leaves, marks them like the other sites do, and awaits the
+	run's unwind before returning.
 
 	Raises:
 		asyncio.CancelledError: when the awaiting task is cancelled before the 4th press —
@@ -242,6 +249,8 @@ async def await_run(
 		return await main_task
 	except asyncio.CancelledError:
 		if interrupts.count <= KILL_PRESSES:
+			for proc in tuple(interrupts.procs.values()):
+				signal_press(proc, KILL_PRESSES)
 			main_task.cancel()
 			raise
 		return ()
@@ -252,8 +261,10 @@ async def await_run(
 			if not owns_mark(returncode):
 				continue
 			if returncode is None:
-				signal_press(proc, interrupts.count)
+				signal_press(proc, KILL_PRESSES)
 			states[leaf_index] = to_interrupting(states[leaf_index], interrupts.count)
+		main_task.cancel()
+		await asyncio.gather(main_task, return_exceptions=True)
 		return ()
 
 

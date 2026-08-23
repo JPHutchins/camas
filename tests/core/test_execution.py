@@ -17,7 +17,7 @@ import pytest
 
 from camas import Parallel, Sequential, Task
 from camas.core.execution import (
-	WINDOWS_CTRL_C_EXIT,
+	SIGINT_DEATH_SIGNATURES,
 	Interrupts,
 	Signalable,
 	await_run,
@@ -582,7 +582,7 @@ def test_register_replays_the_missed_presses(
 	assert states == [Interrupting(a, t0, b"", presses)]
 
 
-@pytest.mark.parametrize("returncode", [-signal.SIGINT, INTERRUPT_RC, WINDOWS_CTRL_C_EXIT])
+@pytest.mark.parametrize("returncode", list(SIGINT_DEATH_SIGNATURES))
 def test_register_marks_interrupting_but_skips_signals_for_a_group_killed_child(
 	returncode: int,
 ) -> None:
@@ -644,7 +644,7 @@ def test_step_interrupt_skips_a_reaped_child() -> None:
 	assert states == [Running(a, t0, b"")]
 
 
-@pytest.mark.parametrize("returncode", [-signal.SIGINT, INTERRUPT_RC, WINDOWS_CTRL_C_EXIT])
+@pytest.mark.parametrize("returncode", list(SIGINT_DEATH_SIGNATURES))
 def test_step_interrupt_marks_a_group_killed_reaped_child(returncode: int) -> None:
 	"""A child the press's group SIGINT killed before the handler dispatched is reaped with
 	SIGINT's death signature; it owns the mark without a signal attempt — the reaped state
@@ -706,21 +706,26 @@ def test_fourth_press_cancels_run_and_await_run_returns_empty() -> None:
 	assert results == ()
 
 
-def test_await_run_re_raises_an_external_cancellation() -> None:
-	"""A client cancelling the awaiting task — not the press-4 path, which cancels the run
-	task first — must not be swallowed: the run is cancelled and the cancellation re-raised."""
+@pytest.mark.parametrize("count", [0, 1, 2, KILL_PRESSES])
+def test_await_run_re_raises_an_external_cancellation(count: int) -> None:
+	"""A client cancelling the awaiting task — not the press-4 path, which passes
+	KILL_PRESSES first — must not be swallowed: the tracked leaves are killed, the run is
+	cancelled, and the cancellation re-raised, at every count on the boundary's client side."""
 
-	async def scenario() -> bool:
+	async def scenario() -> tuple[bool, bool]:
 		main = asyncio.ensure_future(_forever())
-		interrupts = Interrupts(procs={}, main_task=main)
+		proc = FakeProc()
+		interrupts = Interrupts(procs={0: proc}, count=count, main_task=main)
 		await_task = asyncio.ensure_future(await_run(main, interrupts, []))
 		await asyncio.sleep(0)
 		await_task.cancel()
 		with pytest.raises(asyncio.CancelledError):
 			await await_task
-		return main.cancelled()
+		return main.cancelled(), proc.killed
 
-	assert asyncio.run(scenario()) is True
+	cancelled, killed = asyncio.run(scenario())
+	assert cancelled is True
+	assert killed is True
 
 
 class _SignalAfterOutputs:
