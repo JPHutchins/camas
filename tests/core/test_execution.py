@@ -501,13 +501,27 @@ class FakeProc:
 
 class RaisingProc(FakeProc):
 	"""A proc whose transport is already gone — ``send_signal`` raises ``ValueError`` (the
-	Windows SIGINT rejection) and ``kill`` raises ``ProcessLookupError``, so every branch of
-	the ``(OSError, ValueError)`` suppress lists is load-bearing in the pins."""
+	Windows SIGINT rejection) and ``kill`` raises ``ProcessLookupError``; the
+	OSError-on-``send_signal`` branch is pinned by ``RecordingRaisingProc``."""
 
 	def send_signal(self, sig: int, /) -> None:
 		raise ValueError
 
 	def kill(self) -> None:
+		raise ProcessLookupError
+
+
+class RecordingRaisingProc(FakeProc):
+	"""A proc whose transport is already gone but whose record shows what was attempted —
+	each call records first, then raises ``ProcessLookupError``, the production raise for a
+	reaped child, so the pins prove both the suppress and the skip."""
+
+	def send_signal(self, sig: int, /) -> None:
+		self.signals.append(sig)
+		raise ProcessLookupError
+
+	def kill(self) -> None:
+		self.killed = True
 		raise ProcessLookupError
 
 
@@ -618,29 +632,48 @@ def test_step_interrupt_skips_a_reaped_child() -> None:
 	exited before it could be touched."""
 	a = Task("a")
 	t0 = datetime(2026, 1, 1)
-	interrupts = Interrupts(procs={0: FakeProc(returncode=0)}, count=0)
+	proc = FakeProc(returncode=0)
+	interrupts = Interrupts(procs={0: proc}, count=0)
 	states: list[LeafState] = [Running(a, t0, b"")]
 
 	step_interrupt(interrupts, states)
 	assert interrupts.count == 1
+	assert proc.signals == []
 	assert states == [Running(a, t0, b"")]
 
 
 @pytest.mark.parametrize("returncode", [-signal.SIGINT, INTERRUPT_RC])
 def test_step_interrupt_marks_a_group_killed_reaped_child(returncode: int) -> None:
 	"""A child the press's group SIGINT killed before the handler dispatched is reaped with
-	SIGINT's death signature; it owns the mark without signals, the same Stopped the same
-	kill earns at register."""
+	SIGINT's death signature; it owns the mark, and the attempted signal raises the
+	production ProcessLookupError and is suppressed — the same Stopped the same kill earns
+	at register."""
 	a = Task("a")
 	t0 = datetime(2026, 1, 1)
-	proc = RaisingProc(returncode=returncode)
+	proc = RecordingRaisingProc(returncode=returncode)
 	interrupts = Interrupts(procs={0: proc}, count=0)
 	states: list[LeafState] = [Running(a, t0, b"")]
 
 	step_interrupt(interrupts, states)
-	assert proc.signals == []
+	assert proc.signals == [signal.SIGINT]
 	assert proc.killed is False
 	assert states == [Interrupting(a, t0, b"", 1)]
+
+
+def test_step_interrupt_records_the_kill_attempt_of_a_gone_transport() -> None:
+	"""Escalating to the kill press on a gone transport records each attempted call — two
+	SIGINT sends and the kill — before each raises, and the mark still lands."""
+	a = Task("a")
+	t0 = datetime(2026, 1, 1)
+	proc = RecordingRaisingProc()
+	interrupts = Interrupts(procs={0: proc}, count=0)
+	states: list[LeafState] = [Running(a, t0, b"")]
+
+	for _ in range(KILL_PRESSES):
+		step_interrupt(interrupts, states)
+	assert proc.signals == [signal.SIGINT, signal.SIGINT]
+	assert proc.killed is True
+	assert states == [Interrupting(a, t0, b"", KILL_PRESSES)]
 
 
 def test_step_interrupt_suppresses_the_transport_raises() -> None:
