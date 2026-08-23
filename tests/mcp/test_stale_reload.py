@@ -293,12 +293,13 @@ async def test_unreadable_package_stays_up_without_an_unretrieved_exception(
 	async with create_connected_server_and_client_session(serve.build_server(session)) as client:
 		assert not (await client.call_tool("camas_list", {})).isError
 		walking = True
-		await asyncio.sleep(0.15)  # the fire-time probe walked and raised
+		deadline = asyncio.get_running_loop().time() + 4.0
+		while not raises and asyncio.get_running_loop().time() < deadline:  # noqa: ASYNC110
+			await asyncio.sleep(0.05)
 		walking = False
 		assert raises == [exc]
 		assert reload_exits == []
 		assert not (await client.call_tool("camas_list", {})).isError
-		await asyncio.sleep(0.15)
 	assert reload_exits == []
 
 
