@@ -18,6 +18,7 @@ import pytest
 
 from camas import Parallel, Sequential, Task
 from camas.core.execution import (
+	SIGINT_DEATH_SIGNATURES,
 	Interrupts,
 	RunContext,
 	Signalable,
@@ -490,7 +491,8 @@ def test_run_base_none_preserves_process_cwd() -> None:
 class FakeProc:
 	"""Records the signals an interrupt escalation would send to a leaf subprocess."""
 
-	def __init__(self) -> None:
+	def __init__(self, returncode: int | None = None) -> None:
+		self.returncode = returncode
 		self.signals: list[int] = []
 		self.killed = False
 
@@ -499,6 +501,32 @@ class FakeProc:
 
 	def kill(self) -> None:
 		self.killed = True
+
+
+class RaisingProc(FakeProc):
+	"""A proc whose transport is already gone — ``send_signal`` raises ``ValueError`` (the
+	Windows SIGINT rejection) and ``kill`` raises ``ProcessLookupError``; the
+	OSError-on-``send_signal`` branch is pinned by ``RecordingRaisingProc``."""
+
+	def send_signal(self, sig: int, /) -> None:
+		raise ValueError
+
+	def kill(self) -> None:
+		raise ProcessLookupError
+
+
+class RecordingRaisingProc(FakeProc):
+	"""A proc whose transport is already gone but whose record shows what was attempted —
+	each call records first, then raises ``ProcessLookupError``, the production raise for a
+	reaped child, so the pins prove both the suppress and the skip."""
+
+	def send_signal(self, sig: int, /) -> None:
+		self.signals.append(sig)
+		raise ProcessLookupError
+
+	def kill(self) -> None:
+		self.killed = True
+		raise ProcessLookupError
 
 
 async def _forever() -> tuple[TaskResult, ...]:
@@ -530,6 +558,140 @@ def test_step_interrupt_forwards_twice_then_kills() -> None:
 	]
 
 
+@pytest.mark.parametrize(
+	("count", "signals", "killed", "presses"),
+	[
+		(1, [signal.SIGINT], False, 1),
+		(2, [signal.SIGINT, signal.SIGINT], False, 2),
+		(4, [signal.SIGINT, signal.SIGINT], True, KILL_PRESSES),
+	],
+)
+def test_register_replays_the_missed_presses(
+	count: int, signals: list[int], killed: bool, presses: int
+) -> None:
+	"""A landed interrupt that missed registration replays the missed presses now — one
+	SIGINT per press, a kill from the kill press on, and the leaf marked at the replayed
+	count."""
+	a = Task("a")
+	t0 = datetime(2026, 1, 1)
+	proc = FakeProc()
+	interrupts = Interrupts(procs={}, count=count)
+	states: list[LeafState] = [Running(a, t0, b"")]
+
+	interrupts.register(states, 0, proc)
+	assert interrupts.procs[0] is proc
+	assert proc.signals == signals
+	assert proc.killed is killed
+	assert states == [Interrupting(a, t0, b"", presses)]
+
+
+@pytest.mark.parametrize("returncode", list(SIGINT_DEATH_SIGNATURES))
+def test_register_marks_interrupting_but_skips_signals_for_a_group_killed_child(
+	returncode: int,
+) -> None:
+	"""A child the terminal's group SIGINT killed in the spawn window is already reaped with
+	SIGINT's death signature; its signals are skipped, but the Interrupting attribution
+	stands."""
+	a = Task("a")
+	t0 = datetime(2026, 1, 1)
+	proc = FakeProc(returncode=returncode)
+	interrupts = Interrupts(procs={}, count=1)
+	states: list[LeafState] = [Running(a, t0, b"")]
+
+	interrupts.register(states, 0, proc)
+	assert proc.signals == []
+	assert proc.killed is False
+	assert states == [Interrupting(a, t0, b"", 1)]
+
+
+@pytest.mark.parametrize("returncode", [0, -signal.SIGSEGV, -signal.SIGABRT, -signal.SIGTERM])
+def test_register_leaves_a_reaped_child_without_the_signature_to_its_own_attribution(
+	returncode: int,
+) -> None:
+	"""A naturally-exited child, or a non-SIGINT signal death (a segfault, abort, external
+	SIGTERM), keeps its own attribution: the replay neither signals nor marks it."""
+	a = Task("a")
+	t0 = datetime(2026, 1, 1)
+	proc = FakeProc(returncode=returncode)
+	interrupts = Interrupts(procs={}, count=1)
+	states: list[LeafState] = [Running(a, t0, b"")]
+
+	interrupts.register(states, 0, proc)
+	assert proc.signals == []
+	assert proc.killed is False
+	assert states == [Running(a, t0, b"")]
+
+
+def test_register_suppresses_the_transport_raises() -> None:
+	a = Task("a")
+	t0 = datetime(2026, 1, 1)
+	interrupts = Interrupts(procs={}, count=KILL_PRESSES)
+	states: list[LeafState] = [Running(a, t0, b"")]
+
+	interrupts.register(states, 0, RaisingProc())
+	assert states == [Interrupting(a, t0, b"", KILL_PRESSES)]
+
+
+def test_step_interrupt_skips_a_reaped_child() -> None:
+	"""A reaped child is left to its own attribution — the press lands, but the child
+	exited before it could be touched."""
+	a = Task("a")
+	t0 = datetime(2026, 1, 1)
+	proc = FakeProc(returncode=0)
+	interrupts = Interrupts(procs={0: proc}, count=0)
+	states: list[LeafState] = [Running(a, t0, b"")]
+
+	step_interrupt(interrupts, states)
+	assert interrupts.count == 1
+	assert proc.signals == []
+	assert states == [Running(a, t0, b"")]
+
+
+@pytest.mark.parametrize("returncode", list(SIGINT_DEATH_SIGNATURES))
+def test_step_interrupt_marks_a_group_killed_reaped_child(returncode: int) -> None:
+	"""A child the press's group SIGINT killed before the handler dispatched is reaped with
+	SIGINT's death signature; it owns the mark without a signal attempt — the reaped state
+	makes the attempt a production no-op, the same mark-only split register uses."""
+	a = Task("a")
+	t0 = datetime(2026, 1, 1)
+	proc = RecordingRaisingProc(returncode=returncode)
+	interrupts = Interrupts(procs={0: proc}, count=0)
+	states: list[LeafState] = [Running(a, t0, b"")]
+
+	step_interrupt(interrupts, states)
+	assert proc.signals == []
+	assert proc.killed is False
+	assert states == [Interrupting(a, t0, b"", 1)]
+
+
+def test_step_interrupt_records_the_kill_attempt_of_a_gone_transport() -> None:
+	"""Escalating to the kill press on a gone transport records each attempted call — two
+	SIGINT sends and the kill — before each raises, and the mark still lands."""
+	a = Task("a")
+	t0 = datetime(2026, 1, 1)
+	proc = RecordingRaisingProc()
+	interrupts = Interrupts(procs={0: proc}, count=0)
+	states: list[LeafState] = [Running(a, t0, b"")]
+
+	for _ in range(KILL_PRESSES):
+		step_interrupt(interrupts, states)
+	assert proc.signals == [signal.SIGINT, signal.SIGINT]
+	assert proc.killed is True
+	assert states == [Interrupting(a, t0, b"", KILL_PRESSES)]
+
+
+def test_step_interrupt_suppresses_the_transport_raises() -> None:
+	a = Task("a")
+	t0 = datetime(2026, 1, 1)
+	interrupts = Interrupts(procs={0: RaisingProc()})
+	states: list[LeafState] = [Running(a, t0, b"")]
+
+	for _ in range(KILL_PRESSES):
+		step_interrupt(interrupts, states)
+	assert interrupts.count == KILL_PRESSES
+	assert states == [Interrupting(a, t0, b"", KILL_PRESSES)]
+
+
 def test_fourth_press_cancels_run_and_await_run_returns_empty() -> None:
 	async def scenario() -> tuple[bool, tuple[TaskResult, ...]]:
 		main = asyncio.ensure_future(_forever())
@@ -539,7 +701,7 @@ def test_fourth_press_cancels_run_and_await_run_returns_empty() -> None:
 		states: list[LeafState] = [Running(Task("x"), datetime(2026, 1, 1), b"")]
 		for _ in range(4):
 			step_interrupt(interrupts, states)
-		results = await await_run(main, interrupts)
+		results = await await_run(main, interrupts, states)
 		return main.cancelled(), results
 
 	cancelled, results = asyncio.run(scenario())
@@ -589,6 +751,28 @@ def test_recovered_results_rebuilds_every_leaf_after_the_cancel() -> None:
 	assert results[2].completion.elapsed == 0.0
 	assert [e.leaf_index for e in events] == [1, 2]
 	assert all(isinstance(e, CompletedEvent) for e in events)
+
+
+@pytest.mark.parametrize("count", [0, 1, 2, KILL_PRESSES])
+def test_await_run_re_raises_an_external_cancellation(count: int) -> None:
+	"""A client cancelling the awaiting task — not the press-4 path, which passes
+	KILL_PRESSES first — must not be swallowed: the tracked leaves are killed, the run is
+	cancelled, and the cancellation re-raised, at every count on the boundary's client side."""
+
+	async def scenario() -> tuple[bool, bool]:
+		main = asyncio.ensure_future(_forever())
+		proc = FakeProc()
+		interrupts = Interrupts(procs={0: proc}, count=count, main_task=main)
+		await_task = asyncio.ensure_future(await_run(main, interrupts, []))
+		await asyncio.sleep(0)
+		await_task.cancel()
+		with pytest.raises(asyncio.CancelledError):
+			await await_task
+		return main.cancelled(), proc.killed
+
+	cancelled, killed = asyncio.run(scenario())
+	assert cancelled is True
+	assert killed is True
 
 
 class _SignalAfterOutputs:
