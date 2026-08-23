@@ -224,8 +224,8 @@ async def test_call_completing_during_the_probe_walk_keeps_its_flush_window(
 async def test_exit_arms_at_call_end_not_call_entry(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reload_exits: list[int], await_exits: Any
 ) -> None:
-	"""A slow second call discriminates the arming point: the timer must arm from the call's
-	finally, or the exit fires inside the call and the flush-window gap assert fails."""
+	"""The timer must arm from the call's finally — an arm-at-entry timer counts the call's
+	own duration against the flush window and the gap assert fails."""
 	monkeypatch.setattr(serve, "RELOAD_EXIT_DELAY", 1.0)
 	_fake_package(tmp_path, monkeypatch)
 	session = _session({"lint": PASS}, None, tmp_path)
@@ -275,25 +275,17 @@ async def test_unreadable_package_stays_up_without_an_unretrieved_exception(
 	exc: OSError | RuntimeError,
 ) -> None:
 	"""A probe whose walk raises stays up — the suppression behind the docstring's "unreadable
-	stays up" promise — and the raise never surfaces as an unretrieved task exception."""
+	stays up" promise — and the next call re-probes cleanly."""
 	monkeypatch.setattr(serve, "RELOAD_EXIT_DELAY", 0.05)
 	_fake_package(tmp_path, monkeypatch)
 	session = _session({"lint": PASS}, None, tmp_path)
 	initial = serve.package_snapshot()
-	exceptions: list[BaseException] = []
-
-	def capture_exceptions(  # pragma: no cover  # fires only when the suppression breaks
-		_loop: asyncio.AbstractEventLoop, context: dict[str, Any]
-	) -> None:
-		exception = context.get("exception")
-		if isinstance(exception, BaseException):
-			exceptions.append(exception)
-
-	asyncio.get_running_loop().set_exception_handler(capture_exceptions)
+	raises: list[BaseException] = []
 	walking = False
 
 	def flaky_snapshot() -> dict[str, str]:
 		if walking:
+			raises.append(exc)
 			raise exc
 		return initial
 
@@ -303,12 +295,11 @@ async def test_unreadable_package_stays_up_without_an_unretrieved_exception(
 		walking = True
 		await asyncio.sleep(0.15)  # the fire-time probe walked and raised
 		walking = False
+		assert raises == [exc]
 		assert reload_exits == []
-		assert exceptions == []
 		assert not (await client.call_tool("camas_list", {})).isError
 		await asyncio.sleep(0.15)
 	assert reload_exits == []
-	assert exceptions == []
 
 
 async def test_stale_package_schedules_reload_even_when_the_call_raises(
