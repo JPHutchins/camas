@@ -369,16 +369,18 @@ def build_server(session: Session) -> Server[object]:
 	"""
 	initial = package_snapshot()
 	pending_exit: asyncio.TimerHandle | None = None
+	probe_task: asyncio.Task[None] | None = None
 	active_calls = 0
 
 	def schedule_exit() -> None:
+		nonlocal probe_task
 		if active_calls:
 			return
-		asyncio.get_running_loop().create_task(probe_and_exit())
+		probe_task = asyncio.get_running_loop().create_task(probe_and_exit())
 
 	async def probe_and_exit() -> None:
 		changed = False
-		with suppress(OSError):
+		with suppress(OSError, RuntimeError):
 			changed = (await asyncio.to_thread(package_snapshot)) != initial
 		if changed and not active_calls:
 			exit_for_reload()
@@ -403,7 +405,7 @@ def build_server(session: Session) -> Server[object]:
 		return list(tools(task_names(session.project), session.compat))
 
 	async def call_handler(name: str, arguments: dict[str, Any]) -> types.CallToolResult:
-		nonlocal pending_exit, active_calls
+		nonlocal pending_exit, probe_task, active_calls
 		try:
 			active_calls += 1
 			before = task_names(session.project)
@@ -413,6 +415,9 @@ def build_server(session: Session) -> Server[object]:
 				await server.request_context.session.send_tool_list_changed()
 		finally:
 			active_calls -= 1
+			if probe_task is not None:
+				probe_task.cancel()
+				probe_task = None
 			if pending_exit is not None:
 				pending_exit.cancel()
 			pending_exit = asyncio.get_running_loop().call_later(RELOAD_EXIT_DELAY, schedule_exit)

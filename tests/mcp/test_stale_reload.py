@@ -89,15 +89,8 @@ async def test_reverted_package_keeps_the_server_up(
 	assert reload_exits == []
 
 
-async def _await_exits(reload_exits: list[int], timeout: float = 2.0) -> None:
-	"""Await the recorded exit instead of racing a sleep margin against the probe's thread hop."""
-	deadline = asyncio.get_running_loop().time() + timeout
-	while not reload_exits and asyncio.get_running_loop().time() < deadline:  # noqa: ASYNC110
-		await asyncio.sleep(0.05)
-
-
 async def test_probe_skips_the_walk_while_a_call_is_in_flight(
-	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reload_exits: list[int]
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reload_exits: list[int], await_exits: Any
 ) -> None:
 	"""The pre-walk idle check: a timer firing while a call runs returns without walking the
 	package — the walk count stays at the build-time one."""
@@ -113,19 +106,27 @@ async def test_probe_skips_the_walk_while_a_call_is_in_flight(
 		return {"changed": "1"} if walks > 1 else initial
 
 	monkeypatch.setattr(serve, "package_snapshot", counting_snapshot)
-	monkeypatch.setattr(serve, "call", functools.partial(_slow_call, [0]))
+	calls = 0
+
+	async def timed_call(session: Session, name: str, arguments: dict[str, Any]) -> Any:
+		nonlocal calls
+		calls += 1
+		await asyncio.sleep(0.3 if calls == 1 else serve.RELOAD_EXIT_DELAY + 0.2)
+		return await _dispatch(session, name, arguments)
+
+	monkeypatch.setattr(serve, "call", timed_call)
 	async with create_connected_server_and_client_session(serve.build_server(session)) as client:
 		assert not (await client.call_tool("camas_list", {})).isError
 		assert walks == 1
 		second = asyncio.create_task(client.call_tool("camas_list", {}))
 		assert not (await second).isError
 		assert walks == 1
-		await _await_exits(reload_exits)
+		await await_exits(reload_exits)
 	assert reload_exits == [1]
 
 
 async def test_mid_call_change_arms_the_exit(
-	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reload_exits: list[int]
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reload_exits: list[int], await_exits: Any
 ) -> None:
 	"""A package change landing before the fire-time probe runs is caught — the call-end timer
 	is armed unconditionally, so the flip needs no call-start sample."""
@@ -147,15 +148,15 @@ async def test_mid_call_change_arms_the_exit(
 	monkeypatch.setattr(serve, "call", mid_call_change)
 	async with create_connected_server_and_client_session(serve.build_server(session)) as client:
 		assert not (await client.call_tool("camas_list", {})).isError
-		await _await_exits(reload_exits)
+		await await_exits(reload_exits)
 	assert reload_exits == [1]
 
 
 async def test_call_arriving_during_the_probe_walk_survives(
-	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reload_exits: list[int]
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reload_exits: list[int], await_exits: Any
 ) -> None:
-	"""The idle re-check happens after the off-loop walk: a call that arrives while the probe
-	runs is in flight at decision time, so the exit waits for the next idle gap."""
+	"""The idle re-check happens after the off-loop walk: a call in flight when the walk
+	returns changed is never the one the exit kills — the exit waits for the next idle gap."""
 	monkeypatch.setattr(serve, "RELOAD_EXIT_DELAY", 0.05)
 	_fake_package(tmp_path, monkeypatch)
 	session = _session({"lint": PASS}, None, tmp_path)
@@ -175,13 +176,56 @@ async def test_call_arriving_during_the_probe_walk_survives(
 		await asyncio.sleep(0.4)
 		second = asyncio.create_task(client.call_tool("camas_list", {}))
 		assert not (await first).isError
+		await asyncio.sleep(0.3)  # the walk returned; the slow call is still in flight
+		assert reload_exits == []
 		assert not (await second).isError
-		await _await_exits(reload_exits)
+		await await_exits(reload_exits)
+	assert reload_exits == [1]
+
+
+async def test_call_completing_during_the_probe_walk_keeps_its_flush_window(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reload_exits: list[int], await_exits: Any
+) -> None:
+	"""A probe spawned before a call never decides the exit for a session that has seen a
+	call since — the call's finally cancels the probe task and arms a fresh timer, so the
+	call keeps its flush window."""
+	monkeypatch.setattr(serve, "RELOAD_EXIT_DELAY", 0.05)
+	_fake_package(tmp_path, monkeypatch)
+	session = _session({"lint": PASS}, None, tmp_path)
+	initial = serve.package_snapshot()
+	entered = 0
+
+	def slow_snapshot() -> dict[str, str]:
+		nonlocal entered
+		time.sleep(0.5)
+		entered += 1
+		return {"changed": "1"} if entered > 1 else initial
+
+	calls = 0
+
+	async def slow_then_fast(session: Session, name: str, arguments: dict[str, Any]) -> Any:
+		nonlocal calls
+		calls += 1
+		if calls == 1:
+			await asyncio.sleep(0.3)
+		return await _dispatch(session, name, arguments)
+
+	monkeypatch.setattr(serve, "package_snapshot", slow_snapshot)
+	monkeypatch.setattr(serve, "call", slow_then_fast)
+	async with create_connected_server_and_client_session(serve.build_server(session)) as client:
+		first = asyncio.create_task(client.call_tool("camas_list", {}))
+		await asyncio.sleep(0.4)  # call 1 ended, its timer fired, the walk runs
+		second = asyncio.create_task(client.call_tool("camas_list", {}))
+		assert not (await first).isError
+		assert not (await second).isError
+		await asyncio.sleep(0.45)  # the cancelled walk would have decided here
+		assert reload_exits == []
+		await await_exits(reload_exits)
 	assert reload_exits == [1]
 
 
 async def test_stale_package_schedules_reload_even_when_the_call_raises(
-	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reload_exits: list[int]
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reload_exits: list[int], await_exits: Any
 ) -> None:
 	"""A raising handler cannot strand the server on stale code — the exit arms in the
 	``finally``, and the client gets the tool error before the reconnect."""
@@ -192,12 +236,12 @@ async def test_stale_package_schedules_reload_even_when_the_call_raises(
 	async with create_connected_server_and_client_session(serve.build_server(session)) as client:
 		(pkg / "a.py").write_text("y = 2\n")
 		assert (await client.call_tool("camas_list", {})).isError
-		await _await_exits(reload_exits)
+		await await_exits(reload_exits)
 	assert reload_exits == [1]
 
 
 async def test_concurrent_calls_exit_after_the_last_finishes(
-	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reload_exits: list[int]
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reload_exits: list[int], await_exits: Any
 ) -> None:
 	"""A timer firing while a call is in flight is dropped — the slow concurrent call is never
 	killed, and the exit fires only after the last call arms a fresh timer and the client is
@@ -212,7 +256,7 @@ async def test_concurrent_calls_exit_after_the_last_finishes(
 			client.call_tool("camas_list", {}),
 			client.call_tool("camas_list", {}),
 		)
-		await _await_exits(reload_exits)
+		await await_exits(reload_exits)
 	assert reload_exits == [1]
 
 
@@ -388,11 +432,14 @@ def test_live_server_answers_then_dies_when_the_package_changes(tmp_path: Path) 
 		# Call 3's finally cancels the pending call-2 timer and arms a fresh one, so the exit
 		# probe runs only after call 3 is answered; sending call 3 before the file exists
 		# additionally keeps an early fire (parent stalled between send and write) probing an
-		# unchanged package.
+		# unchanged package — and call 4 guarantees a fresh timer once the marker exists, so a
+		# stall-consumed probe cannot leave the test hanging.
 		_send_rpc(server, 3)
 		probe.write_text("")
 		try:
 			_read_rpc(server, 3, stderr_chunks)
+			_send_rpc(server, 4)
+			_read_rpc(server, 4, stderr_chunks)
 			server.wait(timeout=15)
 		finally:
 			probe.unlink(missing_ok=True)
