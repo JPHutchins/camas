@@ -91,11 +91,11 @@ class Interrupts:
 			return
 		returncode = proc.returncode
 		presses = min(self.count, KILL_PRESSES)
-		if returncode is not None and not died_of_sigint(returncode):
+		if not owns_mark(returncode):
 			return
 		if returncode is None:
 			for press in range(1, presses + 1):
-				with suppress(ProcessLookupError, ValueError):
+				with suppress(OSError, ValueError):
 					signal_press(proc, press)
 		states[leaf_index] = to_interrupting(states[leaf_index], presses)
 
@@ -180,6 +180,13 @@ def died_of_sigint(returncode: int | None) -> bool:
 	return returncode in (-signal.SIGINT, INTERRUPT_RC)
 
 
+def owns_mark(returncode: int | None) -> bool:
+	"""Whether a proc's returncode allows the Interrupting mark — live (``None``), or reaped
+	with SIGINT's death signature (:func:`died_of_sigint`).
+	"""
+	return returncode is None or died_of_sigint(returncode)
+
+
 def interrupt_proc(
 	states: list[LeafState], leaf_index: int, proc: Signalable, presses: int
 ) -> None:
@@ -188,7 +195,7 @@ def interrupt_proc(
 	liveness first: ``step_interrupt`` applies this to every registered proc the press owns,
 	the register replay splits the pair only to mark once after its press loop.
 	"""
-	with suppress(ProcessLookupError, ValueError):
+	with suppress(OSError, ValueError):
 		signal_press(proc, presses)
 	states[leaf_index] = to_interrupting(states[leaf_index], presses)
 
@@ -206,8 +213,7 @@ def step_interrupt(interrupts: Interrupts, states: list[LeafState]) -> None:
 			interrupts.main_task.cancel()
 		return
 	for leaf_index, proc in tuple(interrupts.procs.items()):
-		returncode = proc.returncode
-		if returncode is not None and not died_of_sigint(returncode):
+		if not owns_mark(proc.returncode):
 			continue
 		interrupt_proc(states, leaf_index, proc, interrupts.count)
 

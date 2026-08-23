@@ -500,11 +500,12 @@ class FakeProc:
 
 
 class RaisingProc(FakeProc):
-	"""A proc whose transport is already gone — every signal raises, as the suppress paths
-	pin."""
+	"""A proc whose transport is already gone — ``send_signal`` raises ``ValueError`` (the
+	Windows SIGINT rejection) and ``kill`` raises ``ProcessLookupError``, so every branch of
+	the ``(OSError, ValueError)`` suppress lists is load-bearing in the pins."""
 
 	def send_signal(self, sig: int, /) -> None:
-		raise ProcessLookupError
+		raise ValueError
 
 	def kill(self) -> None:
 		raise ProcessLookupError
@@ -584,7 +585,7 @@ def test_register_marks_interrupting_but_skips_signals_for_a_group_killed_child(
 	assert states == [Interrupting(a, t0, b"", 1)]
 
 
-@pytest.mark.parametrize("returncode", [0, -signal.SIGSEGV])
+@pytest.mark.parametrize("returncode", [0, -signal.SIGSEGV, -signal.SIGKILL, -signal.SIGTERM])
 def test_register_leaves_a_reaped_child_without_the_signature_to_its_own_attribution(
 	returncode: int,
 ) -> None:
@@ -602,7 +603,7 @@ def test_register_leaves_a_reaped_child_without_the_signature_to_its_own_attribu
 	assert states == [Running(a, t0, b"")]
 
 
-def test_register_suppresses_the_lookup_error() -> None:
+def test_register_suppresses_the_transport_raises() -> None:
 	a = Task("a")
 	t0 = datetime(2026, 1, 1)
 	interrupts = Interrupts(procs={}, count=KILL_PRESSES)
@@ -642,7 +643,7 @@ def test_step_interrupt_marks_a_group_killed_reaped_child(returncode: int) -> No
 	assert states == [Interrupting(a, t0, b"", 1)]
 
 
-def test_step_interrupt_suppresses_the_lookup_error() -> None:
+def test_step_interrupt_suppresses_the_transport_raises() -> None:
 	a = Task("a")
 	t0 = datetime(2026, 1, 1)
 	interrupts = Interrupts(procs={0: RaisingProc()})
