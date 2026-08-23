@@ -81,17 +81,18 @@ class Interrupts:
 	def register(self, states: list[LeafState], leaf_index: int, proc: Signalable) -> None:
 		"""Store a live leaf proc; a landed interrupt that missed its registration — the
 		spawn-window Ctrl-C — replays the missed presses now. A child reaped in that window
-		with a signal returncode was killed by the terminal's group SIGINT, so its leaf is
-		marked Interrupting without signals; one reaped with a normal returncode exited on
-		its own and keeps its own attribution.
+		owns the Interrupting mark only when its returncode is SIGINT's death signature
+		(:func:`died_of_sigint`); any other reaped child exited on its own and keeps its own
+		attribution.
 		"""
 		self.procs[leaf_index] = proc
 		if not self.landed():
 			return
+		returncode = proc.returncode
 		presses = min(self.count, KILL_PRESSES)
-		if proc.returncode is not None and proc.returncode >= 0:
+		if returncode is not None and not died_of_sigint(returncode):
 			return
-		if proc.returncode is None:
+		if returncode is None:
 			for press in range(1, presses + 1):
 				with suppress(ProcessLookupError):
 					signal_press(proc, press)
@@ -169,13 +170,21 @@ def signal_press(proc: Signalable, presses: int) -> None:
 		proc.send_signal(signal.SIGINT)
 
 
+def died_of_sigint(returncode: int | None) -> bool:
+	"""Whether a reaped child's returncode is SIGINT's death signature — the negative signal,
+	or the 128 + signal exit a KeyboardInterrupt teardown produces — the only reaped children
+	a landed interrupt honestly owns.
+	"""
+	return returncode in (-signal.SIGINT, 128 + signal.SIGINT)
+
+
 def interrupt_proc(
 	states: list[LeafState], leaf_index: int, proc: Signalable, presses: int
 ) -> None:
 	"""Signal one proc at ``presses`` Ctrl-C and mark its leaf Interrupting — the signal
-	suppressed when the proc is already gone, the mark unconditional. ``step_interrupt``
-	applies this to every live registered proc; the register replay splits the pair only to
-	mark once after its press loop.
+	suppressed when the proc is already gone, the mark unconditional. Callers gate on
+	liveness first: ``step_interrupt`` applies this to every registered proc the press owns,
+	the register replay splits the pair only to mark once after its press loop.
 	"""
 	with suppress(ProcessLookupError):
 		signal_press(proc, presses)
@@ -184,8 +193,8 @@ def interrupt_proc(
 
 def step_interrupt(interrupts: Interrupts, states: list[LeafState]) -> None:
 	"""Advance escalation one Ctrl-C press: forward SIGINT, again, kill, then cancel the run.
-	A reaped child is left to its own attribution — it exited before this press could touch
-	it.
+	A child reaped without SIGINT's death signature exited on its own and keeps its own
+	attribution; one reaped with it owns the mark without signals — the press's group kill.
 	"""
 	interrupts.count += 1
 	if interrupts.count > KILL_PRESSES:
@@ -193,8 +202,10 @@ def step_interrupt(interrupts: Interrupts, states: list[LeafState]) -> None:
 			interrupts.main_task.cancel()
 		return
 	for leaf_index, proc in tuple(interrupts.procs.items()):
-		if proc.returncode is None:
-			interrupt_proc(states, leaf_index, proc, interrupts.count)
+		returncode = proc.returncode
+		if returncode is not None and not died_of_sigint(returncode):
+			continue
+		interrupt_proc(states, leaf_index, proc, interrupts.count)
 
 
 async def await_run(
