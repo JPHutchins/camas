@@ -17,6 +17,7 @@ import pytest
 
 from camas import Parallel, Sequential, Task
 from camas.core.execution import (
+	WINDOWS_CTRL_C_EXIT,
 	Interrupts,
 	Signalable,
 	await_run,
@@ -581,7 +582,7 @@ def test_register_replays_the_missed_presses(
 	assert states == [Interrupting(a, t0, b"", presses)]
 
 
-@pytest.mark.parametrize("returncode", [-signal.SIGINT, INTERRUPT_RC])
+@pytest.mark.parametrize("returncode", [-signal.SIGINT, INTERRUPT_RC, WINDOWS_CTRL_C_EXIT])
 def test_register_marks_interrupting_but_skips_signals_for_a_group_killed_child(
 	returncode: int,
 ) -> None:
@@ -643,7 +644,7 @@ def test_step_interrupt_skips_a_reaped_child() -> None:
 	assert states == [Running(a, t0, b"")]
 
 
-@pytest.mark.parametrize("returncode", [-signal.SIGINT, INTERRUPT_RC])
+@pytest.mark.parametrize("returncode", [-signal.SIGINT, INTERRUPT_RC, WINDOWS_CTRL_C_EXIT])
 def test_step_interrupt_marks_a_group_killed_reaped_child(returncode: int) -> None:
 	"""A child the press's group SIGINT killed before the handler dispatched is reaped with
 	SIGINT's death signature; it owns the mark without a signal attempt — the reaped state
@@ -697,12 +698,29 @@ def test_fourth_press_cancels_run_and_await_run_returns_empty() -> None:
 		states: list[LeafState] = [Running(Task("x"), datetime(2026, 1, 1), b"")]
 		for _ in range(4):
 			step_interrupt(interrupts, states)
-		results = await await_run(main, interrupts)
+		results = await await_run(main, interrupts, states)
 		return main.cancelled(), results
 
 	cancelled, results = asyncio.run(scenario())
 	assert cancelled is True
 	assert results == ()
+
+
+def test_await_run_re_raises_an_external_cancellation() -> None:
+	"""A client cancelling the awaiting task — not the press-4 path, which cancels the run
+	task first — must not be swallowed: the run is cancelled and the cancellation re-raised."""
+
+	async def scenario() -> bool:
+		main = asyncio.ensure_future(_forever())
+		interrupts = Interrupts(procs={}, main_task=main)
+		await_task = asyncio.ensure_future(await_run(main, interrupts, []))
+		await asyncio.sleep(0)
+		await_task.cancel()
+		with pytest.raises(asyncio.CancelledError):
+			await await_task
+		return main.cancelled()
+
+	assert asyncio.run(scenario()) is True
 
 
 class _SignalAfterOutputs:
