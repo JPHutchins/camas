@@ -228,7 +228,8 @@ async def await_run(
 	main_task: Awaitable[tuple[TaskResult, ...]], interrupts: Interrupts
 ) -> tuple[TaskResult, ...]:
 	"""Await the run task; a 4th Ctrl-C cancels it, a Windows ``KeyboardInterrupt`` kills the
-	tracked leaves that are still live — the same no-signal policy for a reaped child."""
+	tracked leaves that are still live — the same no-signal policy for a reaped child.
+	"""
 	try:
 		return await main_task
 	except asyncio.CancelledError:
