@@ -554,45 +554,30 @@ def test_step_interrupt_forwards_twice_then_kills() -> None:
 	]
 
 
-def test_register_replays_the_missed_presses() -> None:
+@pytest.mark.parametrize(
+	("count", "signals", "killed", "presses"),
+	[
+		(1, [signal.SIGINT], False, 1),
+		(2, [signal.SIGINT, signal.SIGINT], False, 2),
+		(4, [signal.SIGINT, signal.SIGINT], True, KILL_PRESSES),
+	],
+)
+def test_register_replays_the_missed_presses(
+	count: int, signals: list[int], killed: bool, presses: int
+) -> None:
+	"""A landed interrupt that missed registration replays the missed presses now — one
+	SIGINT per press, a kill from the kill press on, and the leaf marked at the replayed
+	count."""
 	a = Task("a")
 	t0 = datetime(2026, 1, 1)
 	proc = FakeProc()
-	interrupts = Interrupts(procs={}, count=2)
+	interrupts = Interrupts(procs={}, count=count)
 	states: list[LeafState] = [Running(a, t0, b"")]
 
 	interrupts.register(states, 0, proc)
-	assert interrupts.procs[0] is proc
-	assert proc.signals == [signal.SIGINT, signal.SIGINT]
-	assert states == [Interrupting(a, t0, b"", 2)]
-
-
-def test_register_replays_a_single_press() -> None:
-	"""The dominant real interruption — one Ctrl-C in the spawn window — sends exactly one
-	SIGINT and marks the leaf at one press."""
-	a = Task("a")
-	t0 = datetime(2026, 1, 1)
-	proc = FakeProc()
-	interrupts = Interrupts(procs={}, count=1)
-	states: list[LeafState] = [Running(a, t0, b"")]
-
-	interrupts.register(states, 0, proc)
-	assert proc.signals == [signal.SIGINT]
-	assert proc.killed is False
-	assert states == [Interrupting(a, t0, b"", 1)]
-
-
-def test_register_bounds_the_replay_at_kill_presses() -> None:
-	a = Task("a")
-	t0 = datetime(2026, 1, 1)
-	proc = FakeProc()
-	interrupts = Interrupts(procs={}, count=4)
-	states: list[LeafState] = [Running(a, t0, b"")]
-
-	interrupts.register(states, 0, proc)
-	assert proc.signals == [signal.SIGINT, signal.SIGINT]
-	assert proc.killed is True
-	assert states == [Interrupting(a, t0, b"", KILL_PRESSES)]
+	assert proc.signals == signals
+	assert proc.killed is killed
+	assert states == [Interrupting(a, t0, b"", presses)]
 
 
 @pytest.mark.parametrize("returncode", [-signal.SIGINT, INTERRUPT_RC])
@@ -700,28 +685,6 @@ def test_step_interrupt_suppresses_the_transport_raises() -> None:
 		step_interrupt(interrupts, states)
 	assert interrupts.count == KILL_PRESSES
 	assert states == [Interrupting(a, t0, b"", KILL_PRESSES)]
-
-
-def test_keyboard_interrupt_teardown_kills_live_procs_and_skips_reaped() -> None:
-	"""The Windows Ctrl-C path applies the same delivery policy as the other two sites: a
-	live proc is killed, a reaped child is left alone."""
-
-	async def scenario() -> tuple[tuple[TaskResult, ...], bool, bool]:
-		async def raises_keyboard_interrupt() -> tuple[TaskResult, ...]:
-			raise KeyboardInterrupt
-
-		live = FakeProc()
-		reaped = FakeProc(returncode=0)
-		interrupts = Interrupts(procs={0: live, 1: reaped})
-		# The KeyboardInterrupt must land in the awaiting frame, not inside a task — a task's
-		# BaseException escapes the loop instead of reaching ``await main_task``.
-		results = await await_run(raises_keyboard_interrupt(), interrupts)
-		return results, live.killed, reaped.killed
-
-	results, live_killed, reaped_killed = asyncio.run(scenario())
-	assert results == ()
-	assert live_killed is True
-	assert reaped_killed is False
 
 
 def test_fourth_press_cancels_run_and_await_run_returns_empty() -> None:

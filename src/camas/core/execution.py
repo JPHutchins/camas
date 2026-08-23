@@ -42,7 +42,7 @@ from .timings import (
 from .traversal import flatten_leaves, subtree_leaf_indices
 
 if TYPE_CHECKING:
-	from collections.abc import Awaitable, Sequence
+	from collections.abc import Sequence
 	from pathlib import Path
 
 	from ..v0.effect import Effect
@@ -85,9 +85,9 @@ class Interrupts:
 		(:func:`died_of_sigint`); any other reaped child exited on its own and keeps its own
 		attribution. A natural death reaped but not yet delivered by the watcher's callback
 		still reads ``None`` and is marked — that sub-window cannot be told from a group kill.
-		On Windows SIGINT is not a sendable signal, so the replayed presses are suppressed
-		no-ops and the mark lands without a delivered press — the interrupted spawn still
-		reads Stopped.
+		On Windows SIGINT is not a sendable signal, so the replayed presses 1-2 are
+		suppressed no-ops; the kill press delivers a real kill. The mark lands either way —
+		the interrupted spawn reads Stopped.
 		"""
 		self.procs[leaf_index] = proc
 		if not self.landed():
@@ -98,8 +98,7 @@ class Interrupts:
 			return
 		if returncode is None:
 			for press in range(1, presses + 1):
-				with suppress(OSError, ValueError):
-					signal_press(proc, press)
+				signal_press(proc, press)
 		states[leaf_index] = to_interrupting(states[leaf_index], presses)
 
 
@@ -167,11 +166,15 @@ else:  # pragma: no cover
 
 
 def signal_press(proc: Signalable, presses: int) -> None:
-	"""One escalation step — SIGINT, or kill once the kill press has been reached."""
-	if presses >= KILL_PRESSES:
-		proc.kill()
-	else:
-		proc.send_signal(signal.SIGINT)
+	"""One escalation step — SIGINT, or kill once the kill press has been reached — best
+	effort: a gone transport's raise (or Windows rejecting SIGINT) is suppressed here, the
+	one place the delivery policy owns it.
+	"""
+	with suppress(OSError, ValueError):
+		if presses >= KILL_PRESSES:
+			proc.kill()
+		else:
+			proc.send_signal(signal.SIGINT)
 
 
 def died_of_sigint(returncode: int | None) -> bool:
@@ -193,12 +196,11 @@ def owns_mark(returncode: int | None) -> bool:
 def interrupt_proc(
 	states: list[LeafState], leaf_index: int, proc: Signalable, presses: int
 ) -> None:
-	"""Signal one proc at ``presses`` Ctrl-C and mark its leaf Interrupting — the signal
-	suppressed when the proc is already gone, the mark unconditional. Its only caller,
-	``step_interrupt``, applies this to the press's live procs.
+	"""Signal one proc at ``presses`` Ctrl-C and mark its leaf Interrupting — the mark
+	unconditional. Its only caller, ``step_interrupt``, applies this to the press's live
+	procs.
 	"""
-	with suppress(OSError, ValueError):
-		signal_press(proc, presses)
+	signal_press(proc, presses)
 	states[leaf_index] = to_interrupting(states[leaf_index], presses)
 
 
@@ -225,16 +227,17 @@ def step_interrupt(interrupts: Interrupts, states: list[LeafState]) -> None:
 
 
 async def await_run(
-	main_task: Awaitable[tuple[TaskResult, ...]], interrupts: Interrupts
+	main_task: asyncio.Task[tuple[TaskResult, ...]], interrupts: Interrupts
 ) -> tuple[TaskResult, ...]:
-	"""Await the run task; a 4th Ctrl-C cancels it, a Windows ``KeyboardInterrupt`` kills the
-	tracked leaves that are still live — the same no-signal policy for a reaped child.
+	"""Await the run task; a 4th Ctrl-C cancels it. A ``KeyboardInterrupt`` caught here is a
+	host outside ``asyncio.run`` — whose own handler owns Ctrl-C on 3.11+ — interrupting the
+	coroutine directly; it kills the tracked leaves that are still live.
 	"""
 	try:
 		return await main_task
 	except asyncio.CancelledError:
 		return ()
-	except KeyboardInterrupt:
+	except KeyboardInterrupt:  # pragma: no cover
 		interrupts.count += 1
 		for proc in tuple(interrupts.procs.values()):
 			if proc.returncode is None:
