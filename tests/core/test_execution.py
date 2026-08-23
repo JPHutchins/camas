@@ -565,12 +565,12 @@ def test_register_bounds_the_replay_at_kill_presses() -> None:
 	assert states == [Interrupting(a, t0, b"", KILL_PRESSES)]
 
 
-def test_register_marks_interrupting_but_skips_signals_for_a_reaped_child() -> None:
-	"""A child that died in the spawn window — the terminal's group SIGINT — is already
-	reaped; its signals are skipped, but the Interrupting attribution stands."""
+def test_register_marks_interrupting_but_skips_signals_for_a_group_killed_child() -> None:
+	"""A child the terminal's group SIGINT killed in the spawn window is already reaped with
+	a signal returncode; its signals are skipped, but the Interrupting attribution stands."""
 	a = Task("a")
 	t0 = datetime(2026, 1, 1)
-	proc = FakeProc(returncode=0)
+	proc = FakeProc(returncode=-signal.SIGINT)
 	interrupts = Interrupts(procs={}, count=1)
 	states: list[LeafState] = [Running(a, t0, b"")]
 
@@ -580,14 +580,42 @@ def test_register_marks_interrupting_but_skips_signals_for_a_reaped_child() -> N
 	assert states == [Interrupting(a, t0, b"", 1)]
 
 
-def test_register_suppresses_the_lookup_error() -> None:
+def test_register_leaves_a_naturally_dead_child_to_its_own_attribution() -> None:
+	"""A child reaped with a normal returncode exited on its own; the replay neither signals
+	nor marks it, so it reads Finished, not a misreported Stopped."""
 	a = Task("a")
 	t0 = datetime(2026, 1, 1)
+	proc = FakeProc(returncode=0)
 	interrupts = Interrupts(procs={}, count=1)
 	states: list[LeafState] = [Running(a, t0, b"")]
 
+	interrupts.register(states, 0, proc)
+	assert proc.signals == []
+	assert proc.killed is False
+	assert states == [Running(a, t0, b"")]
+
+
+def test_register_suppresses_the_lookup_error() -> None:
+	a = Task("a")
+	t0 = datetime(2026, 1, 1)
+	interrupts = Interrupts(procs={}, count=KILL_PRESSES)
+	states: list[LeafState] = [Running(a, t0, b"")]
+
 	interrupts.register(states, 0, RaisingProc())
-	assert states == [Interrupting(a, t0, b"", 1)]
+	assert states == [Interrupting(a, t0, b"", KILL_PRESSES)]
+
+
+def test_step_interrupt_skips_a_reaped_child() -> None:
+	"""A reaped child is left to its own attribution — the press lands, but the child
+	exited before it could be touched."""
+	a = Task("a")
+	t0 = datetime(2026, 1, 1)
+	interrupts = Interrupts(procs={0: FakeProc(returncode=0)}, count=0)
+	states: list[LeafState] = [Running(a, t0, b"")]
+
+	step_interrupt(interrupts, states)
+	assert interrupts.count == 1
+	assert states == [Running(a, t0, b"")]
 
 
 def test_step_interrupt_suppresses_the_lookup_error() -> None:

@@ -80,15 +80,17 @@ class Interrupts:
 
 	def register(self, states: list[LeafState], leaf_index: int, proc: Signalable) -> None:
 		"""Store a live leaf proc; a landed interrupt that missed its registration — the
-		spawn-window Ctrl-C — replays the missed presses now. The leaf is marked Interrupting
-		whenever an interrupt landed in its spawn window: the terminal's group SIGINT is what
-		kills a child there, so the Stopped attribution is honest even for a child already
-		reaped, whose signals are skipped.
+		spawn-window Ctrl-C — replays the missed presses now. A child reaped in that window
+		with a signal returncode was killed by the terminal's group SIGINT, so its leaf is
+		marked Interrupting without signals; one reaped with a normal returncode exited on
+		its own and keeps its own attribution.
 		"""
 		self.procs[leaf_index] = proc
 		if not self.landed():
 			return
 		presses = min(self.count, KILL_PRESSES)
+		if proc.returncode is not None and proc.returncode >= 0:
+			return
 		if proc.returncode is None:
 			for press in range(1, presses + 1):
 				with suppress(ProcessLookupError):
@@ -167,10 +169,23 @@ def signal_press(proc: Signalable, presses: int) -> None:
 		proc.send_signal(signal.SIGINT)
 
 
+def interrupt_proc(
+	states: list[LeafState], leaf_index: int, proc: Signalable, presses: int
+) -> None:
+	"""Signal one proc at ``presses`` Ctrl-C and mark its leaf Interrupting — the signal
+	suppressed when the proc is already gone, the mark unconditional. ``step_interrupt``
+	applies this to every live registered proc; the register replay splits the pair only to
+	mark once after its press loop.
+	"""
+	with suppress(ProcessLookupError):
+		signal_press(proc, presses)
+	states[leaf_index] = to_interrupting(states[leaf_index], presses)
+
+
 def step_interrupt(interrupts: Interrupts, states: list[LeafState]) -> None:
 	"""Advance escalation one Ctrl-C press: forward SIGINT, again, kill, then cancel the run.
-	The signal is suppressed when a proc is already gone; the leaf still reads Interrupting —
-	the press landed, and the Stopped attribution is the honest one.
+	A reaped child is left to its own attribution — it exited before this press could touch
+	it.
 	"""
 	interrupts.count += 1
 	if interrupts.count > KILL_PRESSES:
@@ -178,9 +193,8 @@ def step_interrupt(interrupts: Interrupts, states: list[LeafState]) -> None:
 			interrupts.main_task.cancel()
 		return
 	for leaf_index, proc in tuple(interrupts.procs.items()):
-		with suppress(ProcessLookupError):
-			signal_press(proc, interrupts.count)
-		states[leaf_index] = to_interrupting(states[leaf_index], interrupts.count)
+		if proc.returncode is None:
+			interrupt_proc(states, leaf_index, proc, interrupts.count)
 
 
 async def await_run(
