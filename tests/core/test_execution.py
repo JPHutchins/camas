@@ -585,11 +585,11 @@ def test_register_marks_interrupting_but_skips_signals_for_a_group_killed_child(
 	assert states == [Interrupting(a, t0, b"", 1)]
 
 
-@pytest.mark.parametrize("returncode", [0, -signal.SIGSEGV, -signal.SIGKILL, -signal.SIGTERM])
+@pytest.mark.parametrize("returncode", [0, -signal.SIGSEGV, -signal.SIGABRT, -signal.SIGTERM])
 def test_register_leaves_a_reaped_child_without_the_signature_to_its_own_attribution(
 	returncode: int,
 ) -> None:
-	"""A naturally-exited child, or a non-SIGINT signal death (a segfault, OOM kill, external
+	"""A naturally-exited child, or a non-SIGINT signal death (a segfault, abort, external
 	SIGTERM), keeps its own attribution: the replay neither signals nor marks it."""
 	a = Task("a")
 	t0 = datetime(2026, 1, 1)
