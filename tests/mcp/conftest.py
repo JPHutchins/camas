@@ -32,13 +32,15 @@ def venv_camas() -> Callable[[Path], Path]:
 
 
 @pytest.fixture
-def await_exits() -> Callable[[list[int], float], Awaitable[None]]:
-	"""Awaits the recorded reload exit instead of racing a sleep margin against the probe's
-	thread hop."""
+def wait_until() -> Callable[[Callable[[], bool], float], Awaitable[None]]:
+	"""Polls a condition on the loop until it holds or the deadline passes — the
+	mechanism-awaiting stand-in for racing sleep margins against the probe's thread hop."""
 
-	async def poll(reload_exits: list[int], timeout: float = 2.0) -> None:
+	async def poll(condition: Callable[[], bool], timeout: float = 2.0) -> None:
 		deadline = asyncio.get_running_loop().time() + timeout
-		while not reload_exits and asyncio.get_running_loop().time() < deadline:  # noqa: ASYNC110
+		while not condition() and asyncio.get_running_loop().time() < deadline:  # noqa: ASYNC110
 			await asyncio.sleep(0.05)
+		if not condition():
+			raise AssertionError(f"condition not met within {timeout}s")
 
 	return poll

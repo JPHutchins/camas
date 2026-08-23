@@ -361,24 +361,20 @@ def build_server(session: Session) -> Server[object]:
 	changes, the in-flight call is answered and the server exits for the client to reconnect
 	(#58). The respawn command is the client's own MCP configuration — not this process's argv —
 	so an ad-hoc ``--plain`` launch comes back as the configured form. Every tools/call arms an
-	exit timer for when the client goes idle; at fire, off the loop, the timer probes the
-	package — changed exits, unchanged or unreadable stays up (the next call re-probes). A
+	exit probe for when the client goes idle; after ``RELOAD_EXIT_DELAY``, off the loop, it walks
+	the package — changed exits, unchanged or unreadable stays up (the next call re-probes). A
 	response gets up to ``RELOAD_EXIT_DELAY`` to flush before the exit. A request whose handler
 	has not run when the exit is decided is not covered — recovery is the client's transparent
 	reconnect, which #297 tracks as not yet working.
 	"""
 	initial = package_snapshot()
-	pending_exit: asyncio.TimerHandle | None = None
 	probe_task: asyncio.Task[None] | None = None
 	active_calls = 0
 
-	def schedule_exit() -> None:
-		nonlocal probe_task
+	async def probe_and_exit() -> None:
+		await asyncio.sleep(RELOAD_EXIT_DELAY)
 		if active_calls:
 			return
-		probe_task = asyncio.get_running_loop().create_task(probe_and_exit())
-
-	async def probe_and_exit() -> None:
 		changed = False
 		with suppress(OSError, RuntimeError):
 			changed = (await asyncio.to_thread(package_snapshot)) != initial
@@ -405,7 +401,7 @@ def build_server(session: Session) -> Server[object]:
 		return list(tools(task_names(session.project), session.compat))
 
 	async def call_handler(name: str, arguments: dict[str, Any]) -> types.CallToolResult:
-		nonlocal pending_exit, probe_task, active_calls
+		nonlocal probe_task, active_calls
 		try:
 			active_calls += 1
 			before = task_names(session.project)
@@ -416,11 +412,12 @@ def build_server(session: Session) -> Server[object]:
 		finally:
 			active_calls -= 1
 			if probe_task is not None:
-				probe_task.cancel()
+				if probe_task.done():
+					probe_task.exception()  # retrieve a dead probe's failure — no unretrieved log
+				else:
+					probe_task.cancel()
 				probe_task = None
-			if pending_exit is not None:
-				pending_exit.cancel()
-			pending_exit = asyncio.get_running_loop().call_later(RELOAD_EXIT_DELAY, schedule_exit)
+			probe_task = asyncio.get_running_loop().create_task(probe_and_exit())
 		return result
 
 	server.list_tools()(list_handler)  # type: ignore[no-untyped-call]

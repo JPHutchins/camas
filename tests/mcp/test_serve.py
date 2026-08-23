@@ -596,7 +596,7 @@ def test_package_snapshot_tracks_content_not_metadata(
 
 
 async def test_stale_package_answers_the_call_then_schedules_reload(
-	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reload_exits: list[int], await_exits: Any
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reload_exits: list[int], wait_until: Any
 ) -> None:
 	"""A stale package still answers the triggering call — the exit is scheduled after the
 	response, so the client reconnects on the closed pipe instead of hanging (#58). The
@@ -613,7 +613,7 @@ async def test_stale_package_answers_the_call_then_schedules_reload(
 		# a new call's finally cancels the previous timer and arms a fresh one — the arming
 		# runs before the response is written, the timer's fire comes RELOAD_EXIT_DELAY later
 		assert not (await client.call_tool("camas_list", {})).isError
-		await await_exits(reload_exits)
+		await wait_until(lambda: bool(reload_exits))
 	assert reload_exits == [1]
 
 
