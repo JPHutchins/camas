@@ -83,7 +83,8 @@ class Interrupts:
 		spawn-window Ctrl-C — replays the missed presses now. A child reaped in that window
 		owns the Interrupting mark only when its returncode is SIGINT's death signature
 		(:func:`died_of_sigint`); any other reaped child exited on its own and keeps its own
-		attribution.
+		attribution. A natural death reaped but not yet delivered by the watcher's callback
+		still reads ``None`` and is marked — that sub-window cannot be told from a group kill.
 		"""
 		self.procs[leaf_index] = proc
 		if not self.landed():
@@ -94,7 +95,7 @@ class Interrupts:
 			return
 		if returncode is None:
 			for press in range(1, presses + 1):
-				with suppress(ProcessLookupError):
+				with suppress(ProcessLookupError, ValueError):
 					signal_press(proc, press)
 		states[leaf_index] = to_interrupting(states[leaf_index], presses)
 
@@ -173,9 +174,10 @@ def signal_press(proc: Signalable, presses: int) -> None:
 def died_of_sigint(returncode: int | None) -> bool:
 	"""Whether a reaped child's returncode is SIGINT's death signature — the negative signal,
 	or the 128 + signal exit a KeyboardInterrupt teardown produces — the only reaped children
-	a landed interrupt honestly owns.
+	a landed interrupt honestly owns. A child that exits 130 on its own is indistinguishable
+	from that teardown and reads Stopped in the same window.
 	"""
-	return returncode in (-signal.SIGINT, 128 + signal.SIGINT)
+	return returncode in (-signal.SIGINT, INTERRUPT_RC)
 
 
 def interrupt_proc(
@@ -186,7 +188,7 @@ def interrupt_proc(
 	liveness first: ``step_interrupt`` applies this to every registered proc the press owns,
 	the register replay splits the pair only to mark once after its press loop.
 	"""
-	with suppress(ProcessLookupError):
+	with suppress(ProcessLookupError, ValueError):
 		signal_press(proc, presses)
 	states[leaf_index] = to_interrupting(states[leaf_index], presses)
 
@@ -195,6 +197,8 @@ def step_interrupt(interrupts: Interrupts, states: list[LeafState]) -> None:
 	"""Advance escalation one Ctrl-C press: forward SIGINT, again, kill, then cancel the run.
 	A child reaped without SIGINT's death signature exited on its own and keeps its own
 	attribution; one reaped with it owns the mark without signals — the press's group kill.
+	A reaped-but-undelivered natural death reads ``None`` at the probe and is marked too —
+	the sub-window the two cannot be told apart.
 	"""
 	interrupts.count += 1
 	if interrupts.count > KILL_PRESSES:

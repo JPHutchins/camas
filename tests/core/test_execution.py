@@ -565,7 +565,7 @@ def test_register_bounds_the_replay_at_kill_presses() -> None:
 	assert states == [Interrupting(a, t0, b"", KILL_PRESSES)]
 
 
-@pytest.mark.parametrize("returncode", [-signal.SIGINT, 128 + signal.SIGINT])
+@pytest.mark.parametrize("returncode", [-signal.SIGINT, INTERRUPT_RC])
 def test_register_marks_interrupting_but_skips_signals_for_a_group_killed_child(
 	returncode: int,
 ) -> None:
@@ -584,27 +584,15 @@ def test_register_marks_interrupting_but_skips_signals_for_a_group_killed_child(
 	assert states == [Interrupting(a, t0, b"", 1)]
 
 
-def test_register_leaves_a_naturally_dead_child_to_its_own_attribution() -> None:
-	"""A child reaped with a normal returncode exited on its own; the replay neither signals
-	nor marks it, so it reads Finished, not a misreported Stopped."""
+@pytest.mark.parametrize("returncode", [0, -signal.SIGSEGV])
+def test_register_leaves_a_reaped_child_without_the_signature_to_its_own_attribution(
+	returncode: int,
+) -> None:
+	"""A naturally-exited child, or a non-SIGINT signal death (a segfault, OOM kill, external
+	SIGTERM), keeps its own attribution: the replay neither signals nor marks it."""
 	a = Task("a")
 	t0 = datetime(2026, 1, 1)
-	proc = FakeProc(returncode=0)
-	interrupts = Interrupts(procs={}, count=1)
-	states: list[LeafState] = [Running(a, t0, b"")]
-
-	interrupts.register(states, 0, proc)
-	assert proc.signals == []
-	assert proc.killed is False
-	assert states == [Running(a, t0, b"")]
-
-
-def test_register_leaves_a_non_sigint_signal_death_to_its_own_attribution() -> None:
-	"""A segfault, OOM kill, or external SIGTERM is not SIGINT's death signature; the replay
-	neither signals nor marks it, so the death reads Finished with its own returncode."""
-	a = Task("a")
-	t0 = datetime(2026, 1, 1)
-	proc = FakeProc(returncode=-signal.SIGSEGV)
+	proc = FakeProc(returncode=returncode)
 	interrupts = Interrupts(procs={}, count=1)
 	states: list[LeafState] = [Running(a, t0, b"")]
 
@@ -637,7 +625,7 @@ def test_step_interrupt_skips_a_reaped_child() -> None:
 	assert states == [Running(a, t0, b"")]
 
 
-@pytest.mark.parametrize("returncode", [-signal.SIGINT, 128 + signal.SIGINT])
+@pytest.mark.parametrize("returncode", [-signal.SIGINT, INTERRUPT_RC])
 def test_step_interrupt_marks_a_group_killed_reaped_child(returncode: int) -> None:
 	"""A child the press's group SIGINT killed before the handler dispatched is reaped with
 	SIGINT's death signature; it owns the mark without signals, the same Stopped the same
