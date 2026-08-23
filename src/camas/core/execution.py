@@ -25,8 +25,8 @@ else:  # pragma: no cover
 	from taskgroup import TaskGroup
 	from typing_extensions import assert_never
 
-from ..v0.completion import INTERRUPT_RC, NOT_FOUND_RC, Errored, Finished, Skipped, Stopped
-from ..v0.leaf_state import Interrupting, LeafState, Waiting
+from ..v0.completion import INTERRUPT_RC, NOT_FOUND_RC, Completion, Errored, Finished, Skipped, Stopped
+from ..v0.leaf_state import Completed, Interrupting, LeafState, Waiting
 from ..v0.task import Parallel, Sequential, Task, TaskNode
 from ..v0.task_event import CompletedEvent, OutputEvent, StartedEvent, TaskEvent
 from .completion import RunResult, TaskResult
@@ -317,6 +317,12 @@ def leaf_identity(ctx: RunContext, leaf_index: int) -> CacheKey | None:
 	return ctx.identities[leaf_index] if ctx.identities is not None else None
 
 
+def leaf_result(ctx: RunContext, leaf_index: int, completion: Completion) -> TaskResult:
+	"""The TaskResult a leaf's completion produces — the one construction every completion
+	path shares."""
+	return TaskResult(task_label(ctx.leaves[leaf_index]), completion, leaf_identity(ctx, leaf_index))
+
+
 async def run_cmd(task: Task, leaf_index: int, ctx: RunContext) -> TaskResult:
 	"""Run one leaf as a subprocess, dispatching Started/Output/Completed events."""
 	async with ctx.limiter:
@@ -325,7 +331,7 @@ async def run_cmd(task: Task, leaf_index: int, ctx: RunContext) -> TaskResult:
 			await ctx.dispatch(
 				leaf_index, CompletedEvent(task, leaf_index, stopped, datetime.now())
 			)
-			return TaskResult(task_label(task), stopped, leaf_identity(ctx, leaf_index))
+			return leaf_result(ctx, leaf_index, stopped)
 		start_pc: Final = time.perf_counter()
 		await ctx.dispatch(leaf_index, StartedEvent(task, leaf_index, datetime.now()))
 		argv: Final = resolve_cmd(task.cmd)
@@ -349,7 +355,7 @@ async def run_cmd(task: Task, leaf_index: int, ctx: RunContext) -> TaskResult:
 			await ctx.dispatch(
 				leaf_index, CompletedEvent(task, leaf_index, errored, datetime.now())
 			)
-			return TaskResult(task_label(task), errored, leaf_identity(ctx, leaf_index))
+			return leaf_result(ctx, leaf_index, errored)
 		ctx.interrupts.procs[leaf_index] = proc
 		if ctx.interrupts.landed() and proc.returncode is None:
 			for press in range(1, min(ctx.interrupts.count, KILL_PRESSES) + 1):
@@ -374,7 +380,7 @@ async def run_cmd(task: Task, leaf_index: int, ctx: RunContext) -> TaskResult:
 			else Finished(rc, elapsed, output)
 		)
 		await ctx.dispatch(leaf_index, CompletedEvent(task, leaf_index, completion, datetime.now()))
-		return TaskResult(task_label(task), completion, leaf_identity(ctx, leaf_index))
+		return leaf_result(ctx, leaf_index, completion)
 
 
 async def skip_subtree(child: TaskNode, skip: Skipped, ctx: RunContext) -> tuple[TaskResult, ...]:
@@ -382,7 +388,7 @@ async def skip_subtree(child: TaskNode, skip: Skipped, ctx: RunContext) -> tuple
 	results: tuple[TaskResult, ...] = ()
 	for idx in subtree_leaf_indices(child, ctx.index_map):
 		await ctx.dispatch(idx, CompletedEvent(ctx.leaves[idx], idx, skip, datetime.now()))
-		results = (*results, TaskResult(task_label(ctx.leaves[idx]), skip, leaf_identity(ctx, idx)))
+		results = (*results, leaf_result(ctx, idx, skip))
 	return results
 
 
@@ -415,6 +421,32 @@ async def execute(node: TaskNode, ctx: RunContext) -> tuple[TaskResult, ...]:
 			return seq_results
 		case _:
 			assert_never(node)
+
+
+async def recovered_results(ctx: RunContext, states: list[LeafState]) -> tuple[TaskResult, ...]:
+	"""Rebuild the leaf results after the 4th press cancelled the task tree, which can no
+	longer return them. A ``Completed`` leaf keeps its carried completion; a leaf the cancel
+	caught mid-flight — still ``Waiting`` on the limiter, ``Running``, or ``Interrupting`` —
+	reads ``Stopped``, the press's own attribution, and dispatches the ``CompletedEvent``
+	its cancelled ``run_cmd`` never will.
+	"""
+	results: tuple[TaskResult, ...] = ()
+	for leaf_index, state in enumerate(states):
+		if isinstance(state, Completed):
+			completion = state.completion
+		else:
+			elapsed = (
+				0.0
+				if isinstance(state, Waiting)
+				else (datetime.now() - state.start_time).total_seconds()
+			)
+			completion = Stopped(INTERRUPT_RC, elapsed, ())
+			await ctx.dispatch(
+				leaf_index,
+				CompletedEvent(ctx.leaves[leaf_index], leaf_index, completion, datetime.now()),
+			)
+		results = (*results, leaf_result(ctx, leaf_index, completion))
+	return results
 
 
 async def run(
@@ -512,6 +544,8 @@ async def run(
 		main_task: Final = loop.create_task(execute(expanded, ctx))
 		interrupts.main_task = main_task
 		results = await await_run(main_task, interrupts)
+		if interrupts.count > KILL_PRESSES:
+			results = await recovered_results(ctx, states)
 	finally:
 		if sigint_handled:  # pragma: no branch
 			loop.remove_signal_handler(signal.SIGINT)

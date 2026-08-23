@@ -8,6 +8,7 @@ import os
 import signal
 import sys
 import time
+from contextlib import nullcontext
 from datetime import datetime
 from pathlib import Path
 from subprocess import DEVNULL
@@ -18,8 +19,10 @@ import pytest
 from camas import Parallel, Sequential, Task
 from camas.core.execution import (
 	Interrupts,
+	RunContext,
 	Signalable,
 	await_run,
+	recovered_results,
 	restore_tty,
 	run,
 	spawn_cwd,
@@ -31,7 +34,7 @@ from camas.core.execution import (
 from camas.core.leaf_state import KILL_PRESSES
 from camas.core.timings import CacheKey
 from camas.v0.completion import INTERRUPT_RC, NOT_FOUND_RC, Errored, Finished, Skipped, Stopped
-from camas.v0.leaf_state import Interrupting, LeafState, Running
+from camas.v0.leaf_state import Completed, Interrupting, LeafState, Running, Waiting
 from camas.v0.task_event import CompletedEvent, OutputEvent, StartedEvent
 
 if TYPE_CHECKING:
@@ -544,6 +547,50 @@ def test_fourth_press_cancels_run_and_await_run_returns_empty() -> None:
 	assert results == ()
 
 
+def test_recovered_results_rebuilds_every_leaf_after_the_cancel() -> None:
+	"""The 4th press cancels the task tree, so the results it can no longer return are
+	rebuilt from the states: a completed leaf keeps its carried completion, a mid-flight leaf
+	reads Stopped and receives the CompletedEvent its cancelled run_cmd never dispatched."""
+
+	finished = Finished(0, 0.1, ())
+
+	async def scenario() -> tuple[tuple[TaskResult, ...], list[TaskEvent]]:
+		a, b, c = Task("a"), Task("b"), Task("c")
+		events: list[TaskEvent] = []
+
+		async def dispatch(leaf_idx: int, event: TaskEvent) -> None:
+			events.append(event)
+
+		states: list[LeafState] = [
+			Completed(a, finished),
+			Running(b, datetime(2026, 1, 1), b"out"),
+			Waiting(c),
+		]
+		ctx = RunContext(
+			dispatch=dispatch,
+			leaves=(a, b, c),
+			index_map={id(a): 0, id(b): 1, id(c): 2},
+			limiter=nullcontext(),
+			interrupts=Interrupts(procs={}),
+			states=states,
+			base=None,
+			child_stdin=None,
+			leaf_color=True,
+			identities=None,
+		)
+		return await recovered_results(ctx, states), events
+
+	results, events = asyncio.run(scenario())
+	assert [r.name for r in results] == ["a", "b", "c"]
+	assert results[0].completion is finished
+	assert isinstance(results[1].completion, Stopped)
+	assert results[1].completion.returncode == INTERRUPT_RC
+	assert isinstance(results[2].completion, Stopped)
+	assert results[2].completion.elapsed == 0.0
+	assert [e.leaf_index for e in events] == [1, 2]
+	assert all(isinstance(e, CompletedEvent) for e in events)
+
+
 class _SignalAfterOutputs:
 	"""Fire SIGINT once ``count`` distinct leaves have emitted output — a deterministic replacement
 	for a fixed wall-clock timer. A leaf's output arrives only after its subprocess is spawned *and*
@@ -600,6 +647,56 @@ def test_ctrl_c_resolves_jobs_queued_leaves_as_stopped() -> None:
 	result = asyncio.run(scenario())
 	assert result.returncode == INTERRUPT_RC
 	assert len(result.results) == 4
+	assert all(isinstance(r.completion, Stopped) for r in result.results)
+
+
+class _SignalFourTimes:
+	"""Fire SIGINT four times once ``count`` distinct leaves have emitted output — the press
+	escalation in one handler batch. CPython's self-pipe wakeup runs all four ``on_sigint``
+	callbacks back to back in a single loop iteration, so the 4th press's cancel always lands
+	before the watcher's reap callbacks can resume a leaf's ``run_cmd``."""
+
+	def __init__(self, count: int) -> None:
+		self.count = count
+		self.started: set[int] = set()
+
+	async def setup(self, task: TaskNode) -> None:
+		return None
+
+	async def on_event(self, event: TaskEvent, states: Sequence[LeafState], ctx: None) -> None:
+		if isinstance(event, OutputEvent) and len(self.started) < self.count:
+			self.started.add(event.leaf_index)
+			if len(self.started) == self.count:
+				for _ in range(4):
+					os.kill(os.getpid(), signal.SIGINT)
+
+	async def teardown(self, ctxs: tuple[None, ...]) -> None:
+		return None
+
+
+_IGNORE_SIGINT_THEN_SLEEP: Final = (
+	"import signal; signal.signal(signal.SIGINT, signal.SIG_IGN); "
+	"print('up', flush=True); import time; time.sleep(60)"
+)
+"""Emit a line (registered), then ignore SIGINT so only the kill press can end the child —
+the 4th press's cancel catches the tree while the children's reaps are still pending."""
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal handling only")
+def test_fourth_press_omits_no_leaf_from_the_results() -> None:
+	"""#295: the 4th press cancels the task tree mid-flight; the results are rebuilt from the
+	states so every leaf appears — the mid-flight ones Stopped, not silently omitted."""
+
+	async def scenario() -> RunResult:
+		task = Parallel(
+			*(Task(("python", "-c", _IGNORE_SIGINT_THEN_SLEEP), name=f"t{i}") for i in range(3))
+		)
+		return await run(task, effects=(_SignalFourTimes(3),))
+
+	result = asyncio.run(scenario())
+	assert result.returncode == INTERRUPT_RC
+	assert result.interrupt_count == 4
+	assert len(result.results) == 3
 	assert all(isinstance(r.completion, Stopped) for r in result.results)
 
 
