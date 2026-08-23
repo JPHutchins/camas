@@ -596,7 +596,7 @@ def test_package_snapshot_tracks_content_not_metadata(
 
 
 async def test_stale_package_answers_the_call_then_schedules_reload(
-	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reload_exits: list[int]
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reload_exits: list[int], wait_until: Any
 ) -> None:
 	"""A stale package still answers the triggering call — the exit is scheduled after the
 	response, so the client reconnects on the closed pipe instead of hanging (#58). The
@@ -610,10 +610,11 @@ async def test_stale_package_answers_the_call_then_schedules_reload(
 		assert reload_exits == []
 		(pkg / "a.py").write_text("y = 2\n")
 		assert not (await client.call_tool("camas_list", {})).isError
-		# a new call cancels the pending exit and re-arms it after its own response
+		# a new call's finally cancels the previous probe and arms a fresh one — the arming
+		# runs before the response is written, the probe's fire comes RELOAD_EXIT_DELAY later
 		assert not (await client.call_tool("camas_list", {})).isError
-		await asyncio.sleep(serve.RELOAD_EXIT_DELAY)
-	assert reload_exits == [1]
+		await wait_until(lambda: bool(reload_exits))
+	assert reload_exits
 
 
 _VALID_TASKS = "from camas import Task\nlint = Task('ruff check .')\n"

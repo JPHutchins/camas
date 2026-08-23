@@ -5,12 +5,13 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 
 import pytest
 
 if TYPE_CHECKING:
-	from collections.abc import Callable
+	from collections.abc import Awaitable, Callable
 	from pathlib import Path
 
 
@@ -28,3 +29,18 @@ def venv_camas() -> Callable[[Path], Path]:
 		return root / "bin" / "camas"
 
 	return build
+
+
+@pytest.fixture
+def wait_until() -> Callable[[Callable[[], bool], float], Awaitable[None]]:
+	"""Polls a condition on the loop until it holds or the deadline passes — the
+	mechanism-awaiting stand-in for racing sleep margins against the probe's thread hop."""
+
+	async def poll(condition: Callable[[], bool], timeout: float = 2.0) -> None:
+		deadline = asyncio.get_running_loop().time() + timeout
+		while not condition() and asyncio.get_running_loop().time() < deadline:  # noqa: ASYNC110
+			await asyncio.sleep(0.05)
+		if not condition():
+			raise AssertionError(f"condition not met within {timeout}s")
+
+	return poll
