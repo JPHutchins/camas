@@ -645,9 +645,8 @@ def test_step_interrupt_skips_a_reaped_child() -> None:
 @pytest.mark.parametrize("returncode", [-signal.SIGINT, INTERRUPT_RC])
 def test_step_interrupt_marks_a_group_killed_reaped_child(returncode: int) -> None:
 	"""A child the press's group SIGINT killed before the handler dispatched is reaped with
-	SIGINT's death signature; it owns the mark, and the attempted signal raises the
-	production ProcessLookupError and is suppressed — the same Stopped the same kill earns
-	at register."""
+	SIGINT's death signature; it owns the mark without a signal attempt — the reaped state
+	makes the attempt a production no-op, the same mark-only split register uses."""
 	a = Task("a")
 	t0 = datetime(2026, 1, 1)
 	proc = RecordingRaisingProc(returncode=returncode)
@@ -655,7 +654,7 @@ def test_step_interrupt_marks_a_group_killed_reaped_child(returncode: int) -> No
 	states: list[LeafState] = [Running(a, t0, b"")]
 
 	step_interrupt(interrupts, states)
-	assert proc.signals == [signal.SIGINT]
+	assert proc.signals == []
 	assert proc.killed is False
 	assert states == [Interrupting(a, t0, b"", 1)]
 

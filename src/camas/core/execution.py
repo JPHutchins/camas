@@ -192,8 +192,8 @@ def interrupt_proc(
 ) -> None:
 	"""Signal one proc at ``presses`` Ctrl-C and mark its leaf Interrupting — the signal
 	suppressed when the proc is already gone, the mark unconditional. Callers gate on
-	liveness first: ``step_interrupt`` applies this to every registered proc the press owns,
-	the register replay splits the pair only to mark once after its press loop.
+	liveness first: ``step_interrupt`` applies this to the press's live procs, the register
+	replay splits the pair only to mark once after its press loop.
 	"""
 	with suppress(OSError, ValueError):
 		signal_press(proc, presses)
@@ -213,9 +213,13 @@ def step_interrupt(interrupts: Interrupts, states: list[LeafState]) -> None:
 			interrupts.main_task.cancel()
 		return
 	for leaf_index, proc in tuple(interrupts.procs.items()):
-		if not owns_mark(proc.returncode):
+		returncode = proc.returncode
+		if not owns_mark(returncode):
 			continue
-		interrupt_proc(states, leaf_index, proc, interrupts.count)
+		if returncode is not None:
+			states[leaf_index] = to_interrupting(states[leaf_index], interrupts.count)
+		else:
+			interrupt_proc(states, leaf_index, proc, interrupts.count)
 
 
 async def await_run(
