@@ -56,6 +56,9 @@ Limiter: TypeAlias = "asyncio.Semaphore | nullcontext[None]"
 class Signalable(Protocol):
 	"""The subset of ``asyncio.subprocess.Process`` the interrupt path drives."""
 
+	@property
+	def returncode(self) -> int | None: ...
+
 	def send_signal(self, sig: int, /) -> None: ...
 	def kill(self) -> None: ...
 
@@ -74,6 +77,23 @@ class Interrupts:
 		handler may have run.
 		"""
 		return self.count > 0
+
+	def register(self, states: list[LeafState], leaf_index: int, proc: Signalable) -> None:
+		"""Store a live leaf proc; a landed interrupt that missed its registration — the
+		spawn-window Ctrl-C — replays the missed presses now. The leaf is marked Interrupting
+		whenever an interrupt landed in its spawn window: the terminal's group SIGINT is what
+		kills a child there, so the Stopped attribution is honest even for a child already
+		reaped, whose signals are skipped.
+		"""
+		self.procs[leaf_index] = proc
+		if not self.landed():
+			return
+		presses = min(self.count, KILL_PRESSES)
+		if proc.returncode is None:
+			for press in range(1, presses + 1):
+				with suppress(ProcessLookupError):
+					signal_press(proc, press)
+		states[leaf_index] = to_interrupting(states[leaf_index], presses)
 
 
 class RunContext(NamedTuple):
@@ -139,23 +159,19 @@ else:  # pragma: no cover
 		"""No tty state to restore on Windows."""
 
 
-def interrupt_proc(
-	states: list[LeafState], leaf_index: int, proc: Signalable, presses: int
-) -> None:
-	"""Bring one proc in line with the escalation at ``presses`` Ctrl-C — SIGINT, or kill once
-	the kill press has been reached — and mark its leaf Interrupting. ``step_interrupt`` applies
-	this to every registered proc; ``run_cmd`` replays the missed presses to a proc whose
-	registration a landed interrupt missed (#265).
-	"""
+def signal_press(proc: Signalable, presses: int) -> None:
+	"""One escalation step — SIGINT, or kill once the kill press has been reached."""
 	if presses >= KILL_PRESSES:
 		proc.kill()
 	else:
 		proc.send_signal(signal.SIGINT)
-	states[leaf_index] = to_interrupting(states[leaf_index], presses)
 
 
 def step_interrupt(interrupts: Interrupts, states: list[LeafState]) -> None:
-	"""Advance escalation one Ctrl-C press: forward SIGINT, again, kill, then cancel the run."""
+	"""Advance escalation one Ctrl-C press: forward SIGINT, again, kill, then cancel the run.
+	The signal is suppressed when a proc is already gone; the leaf still reads Interrupting —
+	the press landed, and the Stopped attribution is the honest one.
+	"""
 	interrupts.count += 1
 	if interrupts.count > KILL_PRESSES:
 		if interrupts.main_task is not None:  # pragma: no branch
@@ -163,7 +179,8 @@ def step_interrupt(interrupts: Interrupts, states: list[LeafState]) -> None:
 		return
 	for leaf_index, proc in tuple(interrupts.procs.items()):
 		with suppress(ProcessLookupError):
-			interrupt_proc(states, leaf_index, proc, interrupts.count)
+			signal_press(proc, interrupts.count)
+		states[leaf_index] = to_interrupting(states[leaf_index], interrupts.count)
 
 
 async def await_run(
@@ -350,11 +367,7 @@ async def run_cmd(task: Task, leaf_index: int, ctx: RunContext) -> TaskResult:
 				leaf_index, CompletedEvent(task, leaf_index, errored, datetime.now())
 			)
 			return TaskResult(task_label(task), errored, leaf_identity(ctx, leaf_index))
-		ctx.interrupts.procs[leaf_index] = proc
-		if ctx.interrupts.landed() and proc.returncode is None:
-			for press in range(1, min(ctx.interrupts.count, KILL_PRESSES) + 1):
-				with suppress(ProcessLookupError):
-					interrupt_proc(ctx.states, leaf_index, proc, press)
+		ctx.interrupts.register(ctx.states, leaf_index, proc)
 		output: Final[list[bytes]] = []
 		try:
 			if proc.stdout is not None:  # pragma: no branch

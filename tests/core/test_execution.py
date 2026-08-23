@@ -487,7 +487,8 @@ def test_run_base_none_preserves_process_cwd() -> None:
 class FakeProc:
 	"""Records the signals an interrupt escalation would send to a leaf subprocess."""
 
-	def __init__(self) -> None:
+	def __init__(self, returncode: int | None = None) -> None:
+		self.returncode = returncode
 		self.signals: list[int] = []
 		self.killed = False
 
@@ -496,6 +497,17 @@ class FakeProc:
 
 	def kill(self) -> None:
 		self.killed = True
+
+
+class RaisingProc(FakeProc):
+	"""A proc whose transport is already gone — every signal raises, as the suppress paths
+	pin."""
+
+	def send_signal(self, sig: int, /) -> None:
+		raise ProcessLookupError
+
+	def kill(self) -> None:
+		raise ProcessLookupError
 
 
 async def _forever() -> tuple[TaskResult, ...]:
@@ -525,6 +537,69 @@ def test_step_interrupt_forwards_twice_then_kills() -> None:
 		Interrupting(a, t0, b"", KILL_PRESSES),
 		Interrupting(b, t0, b"", KILL_PRESSES),
 	]
+
+
+def test_register_replays_the_missed_presses() -> None:
+	a = Task("a")
+	t0 = datetime(2026, 1, 1)
+	proc = FakeProc()
+	interrupts = Interrupts(procs={}, count=2)
+	states: list[LeafState] = [Running(a, t0, b"")]
+
+	interrupts.register(states, 0, proc)
+	assert interrupts.procs[0] is proc
+	assert proc.signals == [signal.SIGINT, signal.SIGINT]
+	assert states == [Interrupting(a, t0, b"", 2)]
+
+
+def test_register_bounds_the_replay_at_kill_presses() -> None:
+	a = Task("a")
+	t0 = datetime(2026, 1, 1)
+	proc = FakeProc()
+	interrupts = Interrupts(procs={}, count=4)
+	states: list[LeafState] = [Running(a, t0, b"")]
+
+	interrupts.register(states, 0, proc)
+	assert proc.signals == [signal.SIGINT, signal.SIGINT]
+	assert proc.killed is True
+	assert states == [Interrupting(a, t0, b"", KILL_PRESSES)]
+
+
+def test_register_marks_interrupting_but_skips_signals_for_a_reaped_child() -> None:
+	"""A child that died in the spawn window — the terminal's group SIGINT — is already
+	reaped; its signals are skipped, but the Interrupting attribution stands."""
+	a = Task("a")
+	t0 = datetime(2026, 1, 1)
+	proc = FakeProc(returncode=0)
+	interrupts = Interrupts(procs={}, count=1)
+	states: list[LeafState] = [Running(a, t0, b"")]
+
+	interrupts.register(states, 0, proc)
+	assert proc.signals == []
+	assert proc.killed is False
+	assert states == [Interrupting(a, t0, b"", 1)]
+
+
+def test_register_suppresses_the_lookup_error() -> None:
+	a = Task("a")
+	t0 = datetime(2026, 1, 1)
+	interrupts = Interrupts(procs={}, count=1)
+	states: list[LeafState] = [Running(a, t0, b"")]
+
+	interrupts.register(states, 0, RaisingProc())
+	assert states == [Interrupting(a, t0, b"", 1)]
+
+
+def test_step_interrupt_suppresses_the_lookup_error() -> None:
+	a = Task("a")
+	t0 = datetime(2026, 1, 1)
+	interrupts = Interrupts(procs={0: RaisingProc()})
+	states: list[LeafState] = [Running(a, t0, b"")]
+
+	for _ in range(KILL_PRESSES):
+		step_interrupt(interrupts, states)
+	assert interrupts.count == KILL_PRESSES
+	assert states == [Interrupting(a, t0, b"", KILL_PRESSES)]
 
 
 def test_fourth_press_cancels_run_and_await_run_returns_empty() -> None:
