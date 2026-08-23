@@ -424,7 +424,6 @@ def build_server(session: Session) -> Server[object]:
 			active_calls -= 1
 			if probe_task is not None:
 				probe_task.cancel()
-				probe_task = None
 			probe_task = asyncio.get_running_loop().create_task(probe_and_exit())
 			probe_task.add_done_callback(retrieve_probe_exception)
 		return result

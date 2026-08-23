@@ -41,7 +41,7 @@ async def _slow_call(
 	counter: list[int], session: Session, name: str, arguments: dict[str, Any]
 ) -> Any:
 	"""A call that takes 0.3s the first time and 0.6s after, so a concurrently-dispatched call
-	is still in flight when an earlier stale call's exit timer fires."""
+	is still in flight when an earlier stale call's exit probe fires."""
 	counter[0] += 1
 	await asyncio.sleep(0.3 if counter[0] == 1 else 0.6)
 	return await _dispatch(session, name, arguments)
@@ -77,7 +77,7 @@ def _fake_package(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 async def test_reverted_package_keeps_the_server_up(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reload_exits: list[int], wait_until: Any
 ) -> None:
-	"""The exit re-checks the snapshot when it fires: a package reverted before the timer ran
+	"""The exit re-checks the snapshot when it fires: a package reverted before the probe ran
 	keeps the server up instead of exiting on a stale observation."""
 	monkeypatch.setattr(serve, "RELOAD_EXIT_DELAY", 1.0)
 	pkg = _fake_package(tmp_path, monkeypatch)
@@ -223,7 +223,7 @@ async def test_call_completing_during_the_probe_walk_keeps_its_flush_window(
 	monkeypatch.setattr(serve, "exit_for_reload", record_exit)
 	async with create_connected_server_and_client_session(serve.build_server(session)) as client:
 		assert not (await client.call_tool("camas_list", {})).isError
-		await asyncio.sleep(1.05)  # the first call's timer fired at 1.0; its walk runs
+		await asyncio.sleep(1.05)  # the first call's probe fired at 1.0; its walk runs
 		second = asyncio.create_task(client.call_tool("camas_list", {}))
 		assert not (await second).isError
 		call_end = loop.time()
@@ -235,7 +235,7 @@ async def test_call_completing_during_the_probe_walk_keeps_its_flush_window(
 async def test_exit_arms_at_call_end_not_call_entry(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reload_exits: list[int], wait_until: Any
 ) -> None:
-	"""The probe must arm from the call's finally — an arm-at-entry timer counts the call's
+	"""The probe must arm from the call's finally — an arm-at-entry probe counts the call's
 	own duration against the flush window and the gap assert fails."""
 	monkeypatch.setattr(serve, "RELOAD_EXIT_DELAY", 1.0)
 	_fake_package(tmp_path, monkeypatch)
@@ -332,7 +332,7 @@ async def test_stale_package_schedules_reload_even_when_the_call_raises(
 async def test_concurrent_calls_exit_after_the_last_finishes(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reload_exits: list[int], wait_until: Any
 ) -> None:
-	"""A timer firing while a call is in flight is dropped — the slow concurrent call is never
+	"""A probe firing while a call is in flight is dropped — the slow concurrent call is never
 	killed, and the exit fires only after the last call arms a fresh probe and the client is
 	idle."""
 	monkeypatch.setattr(serve, "RELOAD_EXIT_DELAY", 0.05)
@@ -368,7 +368,7 @@ def test_readline_raises_on_early_eof() -> None:
 		bufsize=1,
 	)
 	try:
-		with pytest.raises(AssertionError, match="server closed stdout"):
+		with pytest.raises(_ServerEofError, match="server closed stdout"):
 			_readline(server)
 	finally:
 		server.wait()
@@ -393,7 +393,7 @@ def test_readline_times_out_with_stderr() -> None:
 		bufsize=1,
 	)
 	try:
-		with pytest.raises(AssertionError, match="timed out waiting for the server"):
+		with pytest.raises(_ServerEofError, match="timed out waiting for the server"):
 			_readline(server, timeout=0.5)
 	finally:
 		server.kill()
