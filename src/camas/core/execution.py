@@ -168,7 +168,8 @@ else:  # pragma: no cover
 def signal_press(proc: Signalable, presses: int) -> None:
 	"""One escalation step — SIGINT, or kill once the kill press has been reached — best
 	effort: a gone transport's raise (or Windows rejecting SIGINT) is suppressed here, the
-	one place the delivery policy owns it.
+	one place the delivery policy owns it. ``presses`` is the 1-based press number this step
+	delivers — SIGINT below ``KILL_PRESSES``, kill from it on.
 	"""
 	with suppress(OSError, ValueError):
 		if presses >= KILL_PRESSES:
@@ -193,17 +194,6 @@ def owns_mark(returncode: int | None) -> bool:
 	return returncode is None or died_of_sigint(returncode)
 
 
-def interrupt_proc(
-	states: list[LeafState], leaf_index: int, proc: Signalable, presses: int
-) -> None:
-	"""Signal one proc at ``presses`` Ctrl-C and mark its leaf Interrupting — the mark
-	unconditional. Its only caller, ``step_interrupt``, applies this to the press's live
-	procs.
-	"""
-	signal_press(proc, presses)
-	states[leaf_index] = to_interrupting(states[leaf_index], presses)
-
-
 def step_interrupt(interrupts: Interrupts, states: list[LeafState]) -> None:
 	"""Advance escalation one Ctrl-C press: forward SIGINT, again, kill, then cancel the run.
 	A child reaped without SIGINT's death signature exited on its own and keeps its own
@@ -220,10 +210,9 @@ def step_interrupt(interrupts: Interrupts, states: list[LeafState]) -> None:
 		returncode = proc.returncode
 		if not owns_mark(returncode):
 			continue
-		if returncode is not None:
-			states[leaf_index] = to_interrupting(states[leaf_index], interrupts.count)
-		else:
-			interrupt_proc(states, leaf_index, proc, interrupts.count)
+		if returncode is None:
+			signal_press(proc, interrupts.count)
+		states[leaf_index] = to_interrupting(states[leaf_index], interrupts.count)
 
 
 async def await_run(
@@ -241,8 +230,7 @@ async def await_run(
 		interrupts.count += 1
 		for proc in tuple(interrupts.procs.values()):
 			if proc.returncode is None:
-				with suppress(OSError):
-					proc.kill()
+				signal_press(proc, KILL_PRESSES)
 		return ()
 
 

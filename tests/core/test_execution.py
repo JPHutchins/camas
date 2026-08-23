@@ -575,6 +575,7 @@ def test_register_replays_the_missed_presses(
 	states: list[LeafState] = [Running(a, t0, b"")]
 
 	interrupts.register(states, 0, proc)
+	assert interrupts.procs[0] is proc
 	assert proc.signals == signals
 	assert proc.killed is killed
 	assert states == [Interrupting(a, t0, b"", presses)]
