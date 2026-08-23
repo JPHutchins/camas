@@ -610,8 +610,8 @@ async def test_stale_package_answers_the_call_then_schedules_reload(
 		assert reload_exits == []
 		(pkg / "a.py").write_text("y = 2\n")
 		assert not (await client.call_tool("camas_list", {})).isError
-		# a new call's finally cancels the previous timer and arms a fresh one — the arming
-		# runs before the response is written, the timer's fire comes RELOAD_EXIT_DELAY later
+		# a new call's finally cancels the previous probe and arms a fresh one — the arming
+		# runs before the response is written, the probe's fire comes RELOAD_EXIT_DELAY later
 		assert not (await client.call_tool("camas_list", {})).isError
 		await wait_until(lambda: bool(reload_exits))
 	assert reload_exits == [1]

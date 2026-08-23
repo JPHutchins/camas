@@ -363,9 +363,10 @@ def build_server(session: Session) -> Server[object]:
 	so an ad-hoc ``--plain`` launch comes back as the configured form. Every tools/call arms an
 	exit probe for when the client goes idle; after ``RELOAD_EXIT_DELAY``, off the loop, it walks
 	the package — changed exits, unchanged or unreadable stays up (the next call re-probes). A
-	response gets up to ``RELOAD_EXIT_DELAY`` to flush before the exit. A request whose handler
-	has not run when the exit is decided is not covered — recovery is the client's transparent
-	reconnect, which #297 tracks as not yet working.
+	tools/call response gets at least ``RELOAD_EXIT_DELAY`` (plus the walk) to flush before the
+	exit; other requests are unprotected and re-issued after the client's reconnect. A request
+	whose handler has not run when the exit is decided is not covered — recovery is the client's
+	transparent reconnect, which #297 tracks as not yet working.
 	"""
 	initial = package_snapshot()
 	probe_task: asyncio.Task[None] | None = None
@@ -373,7 +374,13 @@ def build_server(session: Session) -> Server[object]:
 
 	def retrieve_probe_exception(task: asyncio.Task[None]) -> None:
 		if not task.cancelled():
-			task.exception()  # retrieve a dead probe's failure — no unretrieved log, even idle
+			exception = (
+				task.exception()
+			)  # retrieve a dead probe's failure — no unretrieved log, even idle
+			if (
+				exception is not None
+			):  # pragma: no cover  # the suppressed surfaces cover the tested paths
+				print(f"camas mcp: reload probe failed: {exception!r}", file=sys.stderr)
 
 	async def probe_and_exit() -> None:
 		await asyncio.sleep(RELOAD_EXIT_DELAY)

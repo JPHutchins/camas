@@ -87,23 +87,23 @@ async def test_reverted_package_keeps_the_server_up(
 
 	def counting_snapshot() -> dict[str, str]:
 		nonlocal walks
+		result = real_snapshot()
 		walks += 1
-		return real_snapshot()
+		return result
 
 	monkeypatch.setattr(serve, "package_snapshot", counting_snapshot)
 	async with create_connected_server_and_client_session(serve.build_server(session)) as client:
 		(pkg / "a.py").write_text("y = 2\n")
 		assert not (await client.call_tool("camas_list", {})).isError
 		(pkg / "a.py").write_text("x = 1\n")
-		await asyncio.sleep(1.1)
-		await wait_until(lambda: walks >= 2)  # the fire-time walk ran before the assert
+		await wait_until(lambda: walks >= 2)  # the fire-time walk completed before the assert
 	assert reload_exits == []
 
 
 async def test_probe_skips_the_walk_while_a_call_is_in_flight(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reload_exits: list[int], wait_until: Any
 ) -> None:
-	"""The pre-walk idle check: a timer firing while a call runs returns without walking the
+	"""The pre-walk idle check: a probe firing while a call runs returns without walking the
 	package — the walk count stays at the build-time one."""
 	monkeypatch.setattr(serve, "RELOAD_EXIT_DELAY", 0.5)
 	_fake_package(tmp_path, monkeypatch)
@@ -139,7 +139,7 @@ async def test_probe_skips_the_walk_while_a_call_is_in_flight(
 async def test_mid_call_change_arms_the_exit(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reload_exits: list[int], wait_until: Any
 ) -> None:
-	"""A package change landing before the fire-time probe runs is caught — the call-end timer
+	"""A package change landing before the fire-time probe runs is caught — the call-end probe
 	is armed unconditionally, so the flip needs no call-start sample."""
 	monkeypatch.setattr(serve, "RELOAD_EXIT_DELAY", 0.05)
 	_fake_package(tmp_path, monkeypatch)
@@ -235,7 +235,7 @@ async def test_call_completing_during_the_probe_walk_keeps_its_flush_window(
 async def test_exit_arms_at_call_end_not_call_entry(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reload_exits: list[int], wait_until: Any
 ) -> None:
-	"""The timer must arm from the call's finally — an arm-at-entry timer counts the call's
+	"""The probe must arm from the call's finally — an arm-at-entry timer counts the call's
 	own duration against the flush window and the gap assert fails."""
 	monkeypatch.setattr(serve, "RELOAD_EXIT_DELAY", 1.0)
 	_fake_package(tmp_path, monkeypatch)
@@ -268,7 +268,7 @@ async def test_exit_arms_at_call_end_not_call_entry(
 	monkeypatch.setattr(serve, "exit_for_reload", record_exit)
 	async with create_connected_server_and_client_session(serve.build_server(session)) as client:
 		assert not (await client.call_tool("camas_list", {})).isError
-		await asyncio.sleep(1.6)  # the first probe (1.0-1.5) saw an unchanged package
+		await asyncio.sleep(1.6)  # the first probe (1.5-2.0) saw an unchanged package
 		second = asyncio.create_task(client.call_tool("camas_list", {}))
 		assert not (await second).isError
 		call_end = loop.time()
@@ -333,7 +333,7 @@ async def test_concurrent_calls_exit_after_the_last_finishes(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reload_exits: list[int], wait_until: Any
 ) -> None:
 	"""A timer firing while a call is in flight is dropped — the slow concurrent call is never
-	killed, and the exit fires only after the last call arms a fresh timer and the client is
+	killed, and the exit fires only after the last call arms a fresh probe and the client is
 	idle."""
 	monkeypatch.setattr(serve, "RELOAD_EXIT_DELAY", 0.05)
 	monkeypatch.setattr(serve, "call", functools.partial(_slow_call, [0]))
