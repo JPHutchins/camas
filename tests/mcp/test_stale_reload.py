@@ -216,9 +216,99 @@ async def test_call_completing_during_the_probe_walk_keeps_its_flush_window(
 		second = asyncio.create_task(client.call_tool("camas_list", {}))
 		assert not (await second).isError
 		call_end = loop.time()
-		await await_exits(reload_exits)
+		await await_exits(reload_exits, timeout=4.0)
 	assert reload_exits == [1]
 	assert exit_times[0] - call_end >= serve.RELOAD_EXIT_DELAY
+
+
+async def test_exit_arms_at_call_end_not_call_entry(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reload_exits: list[int], await_exits: Any
+) -> None:
+	"""A slow second call discriminates the arming point: the timer must arm from the call's
+	finally, or the exit fires inside the call and the flush-window gap assert fails."""
+	monkeypatch.setattr(serve, "RELOAD_EXIT_DELAY", 1.0)
+	_fake_package(tmp_path, monkeypatch)
+	session = _session({"lint": PASS}, None, tmp_path)
+	initial = serve.package_snapshot()
+	exit_times: list[float] = []
+	loop = asyncio.get_running_loop()
+	changed = False
+
+	def slow_snapshot() -> dict[str, str]:
+		time.sleep(0.5)
+		return {"changed": "1"} if changed else initial
+
+	calls = 0
+
+	async def slow_second(session: Session, name: str, arguments: dict[str, Any]) -> Any:
+		nonlocal calls, changed
+		calls += 1
+		if calls == 2:
+			changed = True
+			await asyncio.sleep(0.8)
+		return await _dispatch(session, name, arguments)
+
+	def record_exit() -> None:
+		reload_exits.append(1)
+		exit_times.append(loop.time())
+
+	monkeypatch.setattr(serve, "package_snapshot", slow_snapshot)
+	monkeypatch.setattr(serve, "call", slow_second)
+	monkeypatch.setattr(serve, "exit_for_reload", record_exit)
+	async with create_connected_server_and_client_session(serve.build_server(session)) as client:
+		assert not (await client.call_tool("camas_list", {})).isError
+		await asyncio.sleep(1.6)  # the first probe (1.0-1.5) saw an unchanged package
+		second = asyncio.create_task(client.call_tool("camas_list", {}))
+		assert not (await second).isError
+		call_end = loop.time()
+		await await_exits(reload_exits, timeout=4.0)
+	assert reload_exits == [1]
+	assert exit_times[0] - call_end >= serve.RELOAD_EXIT_DELAY
+
+
+@pytest.mark.parametrize("exc", [OSError("locked"), RuntimeError("no thread")])
+async def test_unreadable_package_stays_up_without_an_unretrieved_exception(
+	tmp_path: Path,
+	monkeypatch: pytest.MonkeyPatch,
+	reload_exits: list[int],
+	await_exits: Any,
+	exc: OSError | RuntimeError,
+) -> None:
+	"""A probe whose walk raises stays up — the suppression behind the docstring's "unreadable
+	stays up" promise — and the raise never surfaces as an unretrieved task exception."""
+	monkeypatch.setattr(serve, "RELOAD_EXIT_DELAY", 0.05)
+	_fake_package(tmp_path, monkeypatch)
+	session = _session({"lint": PASS}, None, tmp_path)
+	initial = serve.package_snapshot()
+	exceptions: list[BaseException] = []
+
+	def capture_exceptions(  # pragma: no cover  # fires only when the suppression breaks
+		_loop: asyncio.AbstractEventLoop, context: dict[str, Any]
+	) -> None:
+		exception = context.get("exception")
+		if isinstance(exception, BaseException):
+			exceptions.append(exception)
+
+	asyncio.get_running_loop().set_exception_handler(capture_exceptions)
+	walking = False
+
+	def flaky_snapshot() -> dict[str, str]:
+		if walking:
+			raise exc
+		return initial
+
+	monkeypatch.setattr(serve, "package_snapshot", flaky_snapshot)
+	async with create_connected_server_and_client_session(serve.build_server(session)) as client:
+		assert not (await client.call_tool("camas_list", {})).isError
+		walking = True
+		await asyncio.sleep(0.15)  # the fire-time probe walked and raised
+		walking = False
+		assert reload_exits == []
+		assert exceptions == []
+		assert not (await client.call_tool("camas_list", {})).isError
+		await asyncio.sleep(0.15)
+	assert reload_exits == []
+	assert exceptions == []
 
 
 async def test_stale_package_schedules_reload_even_when_the_call_raises(
@@ -265,6 +355,27 @@ def test_stderr_prefers_the_drain_buffer() -> None:
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="select on pipes is POSIX-only")
+def test_readline_raises_on_early_eof() -> None:
+	"""A server that dies before writing fails with the EOF report, not a hang."""
+	server = subprocess.Popen(
+		[sys.executable, "-c", "pass"],
+		stdin=subprocess.PIPE,
+		stdout=subprocess.PIPE,
+		stderr=subprocess.PIPE,
+		text=True,
+		bufsize=1,
+	)
+	try:
+		with pytest.raises(AssertionError, match="server closed stdout"):
+			_readline(server)
+	finally:
+		server.wait()
+		cast("IO[str]", server.stdin).close()
+		cast("IO[str]", server.stdout).close()
+		cast("IO[str]", server.stderr).close()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="select on pipes is POSIX-only")
 def test_readline_times_out_with_stderr() -> None:
 	"""A server that never writes fails at the deadline with its stderr, not a hang."""
 	server = subprocess.Popen(
@@ -290,6 +401,10 @@ def test_readline_times_out_with_stderr() -> None:
 		cast("IO[str]", server.stderr).close()
 
 
+class _ServerEofError(AssertionError):
+	"""The live server died or stalled — distinguishable from a bad answer by the e2e guard."""
+
+
 def _readline(
 	server: subprocess.Popen[str],
 	timeout: float = 15.0,
@@ -301,7 +416,7 @@ def _readline(
 	pipe, so the two readers never race.
 
 	Raises:
-		AssertionError: on the deadline or an early EOF, with the server's stderr when it has
+		_ServerEofError: on the deadline or an early EOF, with the server's stderr when it has
 			written any.
 	"""
 	assert server.stdout is not None
@@ -315,11 +430,11 @@ def _readline(
 	try:
 		line = lines.get(timeout=timeout)
 	except queue.Empty:
-		raise AssertionError(
+		raise _ServerEofError(
 			f"timed out waiting for the server; stderr: {_stderr(server, stderr_chunks)!r}"
 		) from None
 	if not line:
-		raise AssertionError(
+		raise _ServerEofError(
 			f"server closed stdout before responding; stderr: {_stderr(server, stderr_chunks)!r}"
 		)
 	return line
@@ -431,7 +546,8 @@ def test_live_server_answers_then_dies_when_the_package_changes(tmp_path: Path) 
 		# additionally keeps an early fire (parent stalled between send and write) probing an
 		# unchanged package. Call 4 guarantees a fresh timer once the marker exists, so a
 		# stall-consumed probe cannot leave the test hanging — a stall long enough for the exit
-		# to fire before call 4 is a fast failure whose contract the wait below still verifies.
+		# to fire before call 4 skips call 4's answer check; the wait and returncode assert
+		# below still verify the exit contract.
 		_send_rpc(server, 3)
 		probe.write_text("")
 		try:
@@ -439,7 +555,7 @@ def test_live_server_answers_then_dies_when_the_package_changes(tmp_path: Path) 
 			try:
 				_send_rpc(server, 4)
 				_read_rpc(server, 4, stderr_chunks)
-			except (BrokenPipeError, AssertionError):  # pragma: no cover  # the exit already fired
+			except (BrokenPipeError, _ServerEofError):  # pragma: no cover  # the exit already fired
 				pass
 			server.wait(timeout=15)
 		finally:
