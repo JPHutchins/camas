@@ -290,9 +290,10 @@ async def test_unreadable_package_stays_up_without_an_unretrieved_exception(
 		return initial
 
 	monkeypatch.setattr(serve, "package_snapshot", flaky_snapshot)
-	async with create_connected_server_and_client_session(serve.build_server(session)) as client:
+	server = serve.build_server(session)
+	walking = True
+	async with create_connected_server_and_client_session(server) as client:
 		assert not (await client.call_tool("camas_list", {})).isError
-		walking = True
 		deadline = asyncio.get_running_loop().time() + 4.0
 		while not raises and asyncio.get_running_loop().time() < deadline:  # noqa: ASYNC110
 			await asyncio.sleep(0.05)
