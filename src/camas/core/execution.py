@@ -190,9 +190,9 @@ WINDOWS_CTRL_C_EXIT: Final = 0xC000013A
 """STATUS_CONTROL_C_EXIT — the Windows console's death signature for the same group kill the
 POSIX signatures name."""
 
-KILL_DEATH_RC: Final = -signal.SIGKILL if sys.platform != "win32" else 1
-"""The returncode a child killed by the kill press reports — the SIGKILL signal on POSIX,
-TerminateProcess's exit code on Windows."""
+KILL_DEATH_RC: Final = -9 if sys.platform != "win32" else 1
+"""The returncode a child killed by the kill press reports — SIGKILL's negative signal on
+POSIX, TerminateProcess's exit code on Windows."""
 
 SIGINT_DEATH_SIGNATURES: Final = (
 	(WINDOWS_CTRL_C_EXIT,) if sys.platform == "win32" else (-signal.SIGINT, INTERRUPT_RC)

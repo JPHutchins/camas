@@ -756,7 +756,7 @@ def test_recovered_results_rebuilds_every_leaf_after_the_cancel() -> None:
 	assert isinstance(results[2].completion, Stopped)
 	assert results[2].completion.returncode == -signal.SIGINT
 	assert isinstance(results[3].completion, Stopped)
-	assert results[3].completion.returncode == (KILL_DEATH_RC if hasattr(signal, "SIGKILL") else 1)
+	assert results[3].completion.returncode == KILL_DEATH_RC
 	assert isinstance(results[4].completion, Stopped)
 	assert results[4].completion.elapsed == 0.0
 	assert [e.leaf_index for e in events] == [1, 2, 3, 4]
