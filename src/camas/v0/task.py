@@ -685,3 +685,44 @@ def _sequential_of(left: TaskNode | str, right: TaskNode | str) -> Sequential:
 	if isinstance(right_node, Sequential):
 		return rebuilt(right_node, left_node, *_nodes(right_node.tasks))
 	return Sequential(left_node, right_node)
+
+
+GIT_PORCELAIN: Final = Task(
+	("bash", "-c", 'git diff --exit-code && [ -z "$(git status --porcelain)" ]')
+)
+"""The default drift check for :func:`Clean` — fails whenever the working tree carries a
+tracked edit or an untracked file. POSIX shell; Windows projects pass an explicit ``check``."""
+
+
+def Clean(mutater: Task, *, check: Task = GIT_PORCELAIN, before: bool = True) -> Sequential:  # noqa: N802  # constructor-style factory, like Task/Parallel
+	"""A codegen drift gate: run the mutating generator, then fail if the working tree is not
+	exactly as it was — the committed-generated-code CI staple.
+
+	Expands to a ``Sequential``: the ``check`` command as ``clean-before``, then ``mutater``,
+	then the ``check`` command as ``clean-after``. A tree that is dirty to start fails
+	``clean-before`` first — the gate is meaningless from a dirty start — and ``Sequential``'s
+	blocker skips the generator; a ``clean-after`` failure's output is the drift diagnostic,
+	the diff and untracked-file list.
+
+	Raises:
+		ValueError: when ``mutater`` is not marked ``mutates=True`` — the gate exists to catch
+			the generator's writes, and the budget sequences mutating leaves first.
+
+	>>> Clean(Task("make update-openapi", mutates=True), before=False).tasks[0].cmd
+	'make update-openapi'
+	>>> Clean(Task("make update-openapi", mutates=True)).tasks[0].name
+	'clean-before'
+	"""
+	if not mutater.mutates:
+		raise ValueError(
+			"Clean's inner task must be marked mutates=True — the drift gate exists to "
+			"catch its writes"
+		)
+
+	def check_leaf(name: str) -> Task:
+		return Task(check.cmd, name=name, env=check.env, cwd=check.cwd)
+
+	after: Final = check_leaf("clean-after")
+	if not before:
+		return Sequential(mutater, after)
+	return Sequential(check_leaf("clean-before"), mutater, after)
