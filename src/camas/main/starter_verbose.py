@@ -102,14 +102,17 @@ def web_paths(changed: tuple[str, ...]) -> tuple[str, ...]:
 # the command to touch only a.py; with no --paths (a full run) {paths} becomes ".".
 fmt = Task('python -c "" {paths}', mutates=True, paths=".")
 
-# Clean(mutater=..., check=..., before=...) is the committed-generated-code drift gate: it runs
+# Clean(mutator=..., check=..., before=...) is the committed-generated-code drift gate: it runs
 # the mutating generator between two runs of the check command — clean-before first (a tree
 # dirty to start fails there and skips the generator), clean-after last (its failure's output is
-# the drift diagnostic: the diff and untracked-file list). check= defaults to GIT_PORCELAIN —
-# `git diff --exit-code` plus a porcelain guard for new files — and before=False drops the
-# pre-check. The mutater= task must be marked mutates=True; Clean raises otherwise.
+# the drift diagnostic). check= defaults to GIT_PORCELAIN() — a factory, so importing it
+# registers no runnable task — and before=False drops the pre-check. The mutator= task must be
+# marked mutates=True; Clean raises otherwise. The placeholders below are inert (nothing writes,
+# the check always passes); a real gate pairs a generator that writes with the default check.
+# Under --under budget mode the scheduler rebuilds the tree mutating-first, so the gate's
+# fail-fast ordering does not hold there.
 generators = Clean(
-	mutater=Task("python -c \"print('generated')\"", mutates=True),
+	mutator=Task("python -c \"print('generated')\"", mutates=True),
 	check=Task("python -c pass"),
 )
 

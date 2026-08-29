@@ -10,7 +10,7 @@ import asyncio
 import shutil
 import subprocess
 import sys
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, cast
 
 import pytest
 from typing_extensions import assert_type
@@ -34,8 +34,8 @@ def test_clean_expands_to_before_mutater_after() -> None:
 	assert [task.name for task in node.tasks] == ["clean-before", None, "clean-after"]
 	match node.tasks:
 		case (Task(cmd=before_cmd), _, Task(cmd=after_cmd)):
-			assert before_cmd == GIT_PORCELAIN.cmd
-			assert after_cmd == GIT_PORCELAIN.cmd
+			assert before_cmd == GIT_PORCELAIN().cmd
+			assert after_cmd == GIT_PORCELAIN().cmd
 		case _:
 			raise AssertionError(f"unexpected shape: {node.tasks!r}")
 
@@ -49,8 +49,9 @@ def test_clean_uses_a_custom_check() -> None:
 	check = Task("python -c pass", name="my-clean")
 	node = Clean(Task("make gen", mutates=True), check=check)
 	match node.tasks:
-		case (Task(cmd=before_cmd), _, Task(env=after_env)):
+		case (Task(cmd=before_cmd), _, Task(cmd=after_cmd, env=after_env)):
 			assert before_cmd == "python -c pass"
+			assert after_cmd == "python -c pass"
 			assert after_env is check.env
 		case _:
 			raise AssertionError(f"unexpected shape: {node.tasks!r}")
@@ -59,6 +60,49 @@ def test_clean_uses_a_custom_check() -> None:
 def test_clean_rejects_a_non_mutating_generator() -> None:
 	with pytest.raises(ValueError, match="mutates=True"):
 		Clean(Task("make gen"))
+	with pytest.raises(ValueError, match="mutates=True"):
+		Clean("make gen")
+	with pytest.raises(ValueError, match="mutates=True"):
+		Clean(cast("Task", Sequential(Task("gen a", mutates=True), Task("gen b", mutates=True))))
+	with pytest.raises(ValueError, match="check must be a Task"):
+		Clean(
+			Task("make gen", mutates=True), check=cast("Task", Sequential(Task("c1"), Task("c2")))
+		)
+
+
+def test_clean_coerces_a_string_check() -> None:
+	node = Clean(Task("make gen", mutates=True), check="git status --porcelain")
+	assert [task.name for task in node.tasks] == ["clean-before", None, "clean-after"]
+	match node.tasks:
+		case (Task(cmd=before_cmd), _, Task(cmd=after_cmd)):
+			assert before_cmd == "git status --porcelain"
+			assert after_cmd == "git status --porcelain"
+		case _:
+			raise AssertionError(f"unexpected shape: {node.tasks!r}")
+
+
+def test_clean_check_leaves_keep_the_checks_fields() -> None:
+	"""``check``'s scoping and diagnostics ride into the derived leaves, not just cmd/env."""
+	check = Task(
+		"python -c pass",
+		name="verify",
+		when="generated",
+		paths="src",
+		help="verify generated output",
+		agent_format=("--format json", "raw"),
+	)
+	node = Clean(Task("make gen", mutates=True), check=check)
+	for leaf in (node.tasks[0], node.tasks[2]):
+		assert isinstance(leaf, Task)
+		assert leaf.when == "generated"
+		assert leaf.paths == "src"
+		assert leaf.help == "verify generated output"
+		assert leaf.agent_format == check.agent_format
+
+
+def test_clean_named_gate_prefixes_its_check_leaves() -> None:
+	node = Clean(Task("make gen", mutates=True), name="openapi")
+	assert [task.name for task in node.tasks] == ["openapi-before", None, "openapi-after"]
 
 
 _HAS_GIT: Final = shutil.which("git") is not None

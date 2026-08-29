@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Final, Literal, NamedTuple, TypeAlias, TypeVar, cast, get_args
@@ -687,42 +687,94 @@ def _sequential_of(left: TaskNode | str, right: TaskNode | str) -> Sequential:
 	return Sequential(left_node, right_node)
 
 
-GIT_PORCELAIN: Final = Task(
-	("bash", "-c", 'git diff --exit-code && [ -z "$(git status --porcelain)" ]')
-)
-"""The default drift check for :func:`Clean` — fails whenever the working tree carries a
-tracked edit or an untracked file. POSIX shell; Windows projects pass an explicit ``check``."""
+def GIT_PORCELAIN() -> Task:  # noqa: N802  # constructor-style factory, like Task/Parallel
+	"""A fresh default drift check for :func:`Clean` — a factory, not an instance, so a
+	``tasks.py`` importing it registers no runnable task. The command prints the porcelain
+	status and exits nonzero when it is non-empty: tracked edits and untracked files alike,
+	immune to the repository's ``status.showUntrackedFiles`` config. Python is the
+	portability layer — no shell — and ``git`` must be on PATH.
+	"""
+	return Task(
+		(
+			"python",
+			"-c",
+			"import subprocess, sys; "
+			"s = subprocess.run("
+			"['git', 'status', '--porcelain', '--untracked-files=all'], "
+			"capture_output=True, text=True).stdout; "
+			"sys.stdout.write(s); sys.exit(1 if s.strip() else 0)",
+		)
+	)
 
 
-def Clean(mutater: Task, *, check: Task = GIT_PORCELAIN, before: bool = True) -> Sequential:  # noqa: N802  # constructor-style factory, like Task/Parallel
+_GIT_PORCELAIN: Final = GIT_PORCELAIN()
+"""Kept private so importing camas into a ``tasks.py`` registers no runnable task."""
+
+
+def _as_task(value: object, message: str) -> Task:
+	"""Coerce a bare command string to a Task, or reject any other non-Task with ``message`` —
+	the function boundary is what keeps the runtime guard visible to every checker.
+
+	Raises:
+		ValueError: when ``value`` is neither a ``str`` nor a ``Task``.
+	"""
+	if isinstance(value, str):
+		return Task(value)
+	if not isinstance(value, Task):
+		raise ValueError(message)
+	return value
+
+
+def Clean(  # noqa: N802  # constructor-style factory, like Task/Parallel
+	mutator: Task | str,
+	*,
+	check: Task | str = _GIT_PORCELAIN,
+	before: bool = True,
+	name: str | None = None,
+) -> Sequential:
 	"""A codegen drift gate: run the mutating generator, then fail if the working tree is not
 	exactly as it was — the committed-generated-code CI staple.
 
-	Expands to a ``Sequential``: the ``check`` command as ``clean-before``, then ``mutater``,
+	Expands to a ``Sequential``: the ``check`` command as ``clean-before``, then ``mutator``,
 	then the ``check`` command as ``clean-after``. A tree that is dirty to start fails
 	``clean-before`` first — the gate is meaningless from a dirty start — and ``Sequential``'s
-	blocker skips the generator; a ``clean-after`` failure's output is the drift diagnostic,
-	the diff and untracked-file list.
+	blocker skips the generator; a ``clean-after`` failure's output is the drift diagnostic.
+	``name`` prefixes the two check leaves (``<name>-before``/``<name>-after``) so multiple
+	gates do not collide in the timing cache.
+
+	Under ``--under`` budget mode the scheduler rebuilds the tree mutating-first and discards
+	``Sequential`` structure, so the fail-fast ordering and the before/after distinction do
+	not hold there — the checks may race, and a check leaf measured over budget is excluded
+	(see the budget-ordering issue the engine tracks).
 
 	Raises:
-		ValueError: when ``mutater`` is not marked ``mutates=True`` — the gate exists to catch
-			the generator's writes, and the budget sequences mutating leaves first.
+		ValueError: when ``mutator`` is not a ``Task`` or is not marked ``mutates=True`` — the
+			gate exists to catch the generator's writes, and the budget sequences mutating
+			leaves first — or when ``check`` is not a ``Task``.
 
 	>>> Clean(Task("make update-openapi", mutates=True), before=False).tasks[0].cmd
 	'make update-openapi'
 	>>> Clean(Task("make update-openapi", mutates=True)).tasks[0].name
 	'clean-before'
 	"""
-	if not mutater.mutates:
+	mutator = _as_task(
+		mutator,
+		"Clean's mutator must be a Task marked mutates=True — the drift gate exists to "
+		"catch its writes",
+	)
+	check = _as_task(check, "Clean's check must be a Task whose exit 0 means the tree is clean")
+	if not mutator.mutates:
 		raise ValueError(
-			"Clean's inner task must be marked mutates=True — the drift gate exists to "
-			"catch its writes"
+			"Clean's mutator must be marked mutates=True — the drift gate exists to catch "
+			"its writes"
 		)
 
-	def check_leaf(name: str) -> Task:
-		return Task(check.cmd, name=name, env=check.env, cwd=check.cwd)
+	def check_leaf(leaf_name: str) -> Task:
+		return replace(check, name=leaf_name)
 
-	after: Final = check_leaf("clean-after")
+	before_name: Final = f"{name}-before" if name is not None else "clean-before"
+	after_name: Final = f"{name}-after" if name is not None else "clean-after"
+	after: Final = check_leaf(after_name)
 	if not before:
-		return Sequential(mutater, after)
-	return Sequential(check_leaf("clean-before"), mutater, after)
+		return Sequential(mutator, after)
+	return Sequential(check_leaf(before_name), mutator, after)
