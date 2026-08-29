@@ -8,6 +8,7 @@ import os
 import signal
 import sys
 import time
+from contextlib import nullcontext
 from datetime import datetime
 from pathlib import Path
 from subprocess import DEVNULL
@@ -17,12 +18,16 @@ import pytest
 
 from camas import Parallel, Sequential, Task
 from camas.core.execution import (
+	KILL_DEATH_RC,
 	SIGINT_DEATH_SIGNATURES,
 	Interrupts,
+	RunContext,
 	Signalable,
 	await_run,
+	recovered_results,
 	restore_tty,
 	run,
+	run_cmd,
 	spawn_cwd,
 	spawn_error_message,
 	step_interrupt,
@@ -32,7 +37,7 @@ from camas.core.execution import (
 from camas.core.leaf_state import KILL_PRESSES
 from camas.core.timings import CacheKey
 from camas.v0.completion import INTERRUPT_RC, NOT_FOUND_RC, Errored, Finished, Skipped, Stopped
-from camas.v0.leaf_state import Interrupting, LeafState, Running
+from camas.v0.leaf_state import Completed, Interrupting, LeafState, Running, Waiting
 from camas.v0.task_event import CompletedEvent, OutputEvent, StartedEvent
 
 if TYPE_CHECKING:
@@ -689,8 +694,11 @@ def test_step_interrupt_suppresses_the_transport_raises() -> None:
 	assert states == [Interrupting(a, t0, b"", KILL_PRESSES)]
 
 
-def test_fourth_press_cancels_run_and_await_run_returns_empty() -> None:
-	async def scenario() -> tuple[bool, tuple[TaskResult, ...]]:
+def test_fourth_press_cancels_run_and_await_run_returns_the_rebuild_sentinel() -> None:
+	"""The press-4 cancel returns None — the caller's signal to rebuild the results from the
+	states — rather than an empty tuple a completed run could also produce."""
+
+	async def scenario() -> tuple[bool, tuple[TaskResult, ...] | None]:
 		main = asyncio.ensure_future(_forever())
 		await asyncio.sleep(0)
 		procs: dict[int, Signalable] = {0: FakeProc()}
@@ -703,7 +711,94 @@ def test_fourth_press_cancels_run_and_await_run_returns_empty() -> None:
 
 	cancelled, results = asyncio.run(scenario())
 	assert cancelled is True
-	assert results == ()
+	assert results is None
+
+
+def test_recovered_results_rebuilds_every_leaf_after_the_cancel() -> None:
+	"""The 4th press cancels the task tree, so the results it can no longer return are
+	rebuilt from the states: a completed leaf keeps its carried completion, a mid-flight leaf
+	reads Stopped and receives the CompletedEvent its cancelled run_cmd never dispatched."""
+
+	finished = Finished(0, 0.1, ())
+
+	async def scenario() -> tuple[tuple[TaskResult, ...], list[TaskEvent]]:
+		a, b, c, d, e = Task("a"), Task("b"), Task("c"), Task("d"), Task("e")
+		events: list[TaskEvent] = []
+
+		async def dispatch(leaf_idx: int, event: TaskEvent) -> None:
+			events.append(event)
+
+		states: list[LeafState] = [
+			Completed(a, finished),
+			Running(b, datetime(2026, 1, 1), b"out"),
+			Interrupting(c, datetime(2026, 1, 1), b"out", 2),
+			Interrupting(d, datetime(2026, 1, 1), b"out", KILL_PRESSES),
+			Waiting(e),
+		]
+		ctx = RunContext(
+			dispatch=dispatch,
+			leaves=(a, b, c, d, e),
+			index_map={id(t): i for i, t in enumerate((a, b, c, d, e))},
+			limiter=nullcontext(),
+			interrupts=Interrupts(procs={}),
+			states=states,
+			base=None,
+			child_stdin=None,
+			leaf_color=True,
+			identities=None,
+		)
+		return await recovered_results(ctx, states), events
+
+	results, events = asyncio.run(scenario())
+	assert [r.name for r in results] == ["a", "b", "c", "d", "e"]
+	assert results[0].completion is finished
+	assert isinstance(results[1].completion, Stopped)
+	assert results[1].completion.returncode == INTERRUPT_RC
+	assert isinstance(results[2].completion, Stopped)
+	assert results[2].completion.returncode == -signal.SIGINT
+	assert isinstance(results[3].completion, Stopped)
+	assert results[3].completion.returncode == KILL_DEATH_RC
+	assert isinstance(results[4].completion, Stopped)
+	assert results[4].completion.elapsed == 0.0
+	assert [e.leaf_index for e in events] == [1, 2, 3, 4]
+	assert all(isinstance(e, CompletedEvent) for e in events)
+
+
+def test_cancelled_spawn_skips_the_kill_and_reap(monkeypatch: pytest.MonkeyPatch) -> None:
+	"""A cancel landing while the child is still spawning has no proc to kill or reap — the
+	handler and the finally both pass the ``None`` proc through and the cancellation
+	propagates."""
+
+	async def scenario() -> None:
+		async def never_spawns(*args: object, **kwargs: object) -> asyncio.subprocess.Process:
+			await asyncio.get_running_loop().create_future()
+			raise AssertionError("the cancelled spawn never returns")
+
+		monkeypatch.setattr(asyncio, "create_subprocess_exec", never_spawns)
+		a = Task("a")
+
+		async def dispatch(leaf_idx: int, event: TaskEvent) -> None:
+			return None
+
+		ctx = RunContext(
+			dispatch=dispatch,
+			leaves=(a,),
+			index_map={id(a): 0},
+			limiter=nullcontext(),
+			interrupts=Interrupts(procs={}),
+			states=[Waiting(a)],
+			base=None,
+			child_stdin=None,
+			leaf_color=True,
+			identities=None,
+		)
+		task = asyncio.ensure_future(run_cmd(a, 0, ctx))
+		await asyncio.sleep(0)
+		task.cancel()
+		with pytest.raises(asyncio.CancelledError):
+			await task
+
+	asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("count", [0, 1, 2, KILL_PRESSES])
@@ -729,15 +824,18 @@ def test_await_run_re_raises_an_external_cancellation(count: int) -> None:
 
 
 class _SignalAfterOutputs:
-	"""Fire SIGINT once ``count`` distinct leaves have emitted output — a deterministic replacement
-	for a fixed wall-clock timer. A leaf's output arrives only after its subprocess is spawned *and*
-	registered for interruption (its ``StartedEvent`` fires before the spawn), so a slow CI runner
-	can't deliver the signal while a child is still unstarted and unkillable — the macOS-ARM SIGINT
-	race fixed for a sibling test in #156/#161, applied here to the other two.
-	"""
+	"""Fire SIGINT ``presses`` times once ``count`` distinct leaves have emitted output — a
+	deterministic replacement for a fixed wall-clock timer. A leaf's output arrives only after its
+	subprocess is spawned *and* registered for interruption (its ``StartedEvent`` fires before the
+	spawn), so a slow CI runner can't deliver the signal while a child is still unstarted and
+	unkillable — the macOS-ARM SIGINT race fixed for a sibling test in #156/#161, applied here to
+	the other two. All ``presses`` fire in one handler batch: CPython's self-pipe wakeup runs the
+	``on_sigint`` callbacks back to back in a single loop iteration, so a press-4 cancel always
+	lands before the watcher's reap callbacks can resume a leaf's ``run_cmd``."""
 
-	def __init__(self, count: int) -> None:
+	def __init__(self, count: int, presses: int = 1) -> None:
 		self.count = count
+		self.presses = presses
 		self.started: set[int] = set()
 
 	async def setup(self, task: TaskNode) -> None:
@@ -747,7 +845,8 @@ class _SignalAfterOutputs:
 		if isinstance(event, OutputEvent) and len(self.started) < self.count:
 			self.started.add(event.leaf_index)
 			if len(self.started) == self.count:
-				os.kill(os.getpid(), signal.SIGINT)
+				for _ in range(self.presses):
+					os.kill(os.getpid(), signal.SIGINT)
 
 	async def teardown(self, ctxs: tuple[None, ...]) -> None:
 		return None
@@ -785,6 +884,33 @@ def test_ctrl_c_resolves_jobs_queued_leaves_as_stopped() -> None:
 	assert result.returncode == INTERRUPT_RC
 	assert len(result.results) == 4
 	assert all(isinstance(r.completion, Stopped) for r in result.results)
+
+
+_IGNORE_SIGINT_THEN_SLEEP: Final = (
+	"import signal; signal.signal(signal.SIGINT, signal.SIG_IGN); "
+	"print('up', flush=True); import time; time.sleep(60)"
+)
+"""Emit a line (registered), then ignore SIGINT so only the kill press can end the child —
+the 4th press's cancel catches the tree while the children's reaps are still pending."""
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal handling only")
+def test_fourth_press_omits_no_leaf_from_the_results() -> None:
+	"""#295: the 4th press cancels the task tree mid-flight; the results are rebuilt from the
+	states so every leaf appears — the mid-flight ones Stopped, not silently omitted."""
+
+	async def scenario() -> RunResult:
+		task = Parallel(
+			*(Task(("python", "-c", _IGNORE_SIGINT_THEN_SLEEP), name=f"t{i}") for i in range(3))
+		)
+		return await run(task, effects=(_SignalAfterOutputs(3, presses=4),))
+
+	result = asyncio.run(scenario())
+	assert result.returncode == INTERRUPT_RC
+	assert result.interrupt_count == 4
+	assert len(result.results) == 3
+	assert all(isinstance(r.completion, Stopped) for r in result.results)
+	assert all(r.completion.returncode == KILL_DEATH_RC for r in result.results)
 
 
 class _SignalAfterStarted:
