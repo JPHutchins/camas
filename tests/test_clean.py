@@ -7,9 +7,10 @@ it was (#233)."""
 from __future__ import annotations
 
 import asyncio
+import shutil
 import subprocess
 import sys
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 import pytest
 from typing_extensions import assert_type
@@ -60,6 +61,11 @@ def test_clean_rejects_a_non_mutating_generator() -> None:
 		Clean(Task("make gen"))
 
 
+_HAS_GIT: Final = shutil.which("git") is not None
+"""The functional pins shell out to a real git repository; hermetic environments (the nix
+build's test phase) have no git on PATH."""
+
+
 def _git_repo(tmp_path: Path) -> None:
 	"""A committed one-file repository the functional pins run inside."""
 	subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
@@ -72,7 +78,10 @@ def _git_repo(tmp_path: Path) -> None:
 	)
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="the default check is POSIX shell")
+@pytest.mark.skipif(
+	sys.platform == "win32" or not _HAS_GIT,
+	reason="the default check is POSIX shell and the pin needs a real git repository",
+)
 def test_clean_passes_a_clean_tree(tmp_path: Path) -> None:
 	"""A generator that writes nothing leaves the tree clean; the run succeeds."""
 	_git_repo(tmp_path)
@@ -86,7 +95,10 @@ def test_clean_passes_a_clean_tree(tmp_path: Path) -> None:
 	assert all(isinstance(r.completion, Finished) for r in result.results)
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="the default check is POSIX shell")
+@pytest.mark.skipif(
+	sys.platform == "win32" or not _HAS_GIT,
+	reason="the default check is POSIX shell and the pin needs a real git repository",
+)
 def test_clean_fails_when_the_generator_dirties_the_tree(tmp_path: Path) -> None:
 	"""The after-check leaf fails and its output is the drift diagnostic."""
 	_git_repo(tmp_path)
@@ -103,7 +115,10 @@ def test_clean_fails_when_the_generator_dirties_the_tree(tmp_path: Path) -> None
 	assert b"tracked.txt" in b"".join(after.output)
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="the default check is POSIX shell")
+@pytest.mark.skipif(
+	sys.platform == "win32" or not _HAS_GIT,
+	reason="the default check is POSIX shell and the pin needs a real git repository",
+)
 def test_clean_fails_fast_on_a_dirty_start(tmp_path: Path) -> None:
 	"""A dirty tree fails clean-before first and the generator is skipped, its writes never
 	landing."""
