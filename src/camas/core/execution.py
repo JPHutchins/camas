@@ -449,24 +449,25 @@ async def run_cmd(task: Task, leaf_index: int, ctx: RunContext) -> TaskResult:
 			if sys.platform == "win32"
 			else dict(os.environ)
 		)
-		try:
-			proc: Final = await asyncio.create_subprocess_exec(
-				*argv,
-				stdin=ctx.child_stdin,
-				stdout=asyncio.subprocess.PIPE,
-				stderr=STDOUT,
-				env=subprocess_env({**inherited, **task.env}, color=ctx.leaf_color),
-				cwd=cwd,
-			)
-		except OSError as exc:
-			errored: Final = Errored(NOT_FOUND_RC, spawn_error_message(exc, argv, cwd))
-			await ctx.dispatch(
-				leaf_index, CompletedEvent(task, leaf_index, errored, datetime.now())
-			)
-			return leaf_result(ctx, leaf_index, errored)
-		ctx.interrupts.register(ctx.states, leaf_index, proc)
+		proc: asyncio.subprocess.Process | None = None
 		output: Final[list[bytes]] = []
 		try:
+			try:
+				proc = await asyncio.create_subprocess_exec(
+					*argv,
+					stdin=ctx.child_stdin,
+					stdout=asyncio.subprocess.PIPE,
+					stderr=STDOUT,
+					env=subprocess_env({**inherited, **task.env}, color=ctx.leaf_color),
+					cwd=cwd,
+				)
+			except OSError as exc:
+				errored: Final = Errored(NOT_FOUND_RC, spawn_error_message(exc, argv, cwd))
+				await ctx.dispatch(
+					leaf_index, CompletedEvent(task, leaf_index, errored, datetime.now())
+				)
+				return leaf_result(ctx, leaf_index, errored)
+			ctx.interrupts.register(ctx.states, leaf_index, proc)
 			if proc.stdout is not None:  # pragma: no branch
 				async for line in proc.stdout:
 					output.append(line)
@@ -474,22 +475,26 @@ async def run_cmd(task: Task, leaf_index: int, ctx: RunContext) -> TaskResult:
 						leaf_index, OutputEvent(task, leaf_index, line, datetime.now())
 					)
 			await proc.wait()
+			elapsed: Final = time.perf_counter() - start_pc
+			rc: Final = proc.returncode or 0
+			completion: Final = (
+				Stopped(rc, elapsed, output)
+				if isinstance(ctx.states[leaf_index], Interrupting)
+				else Finished(rc, elapsed, output)
+			)
+			await ctx.dispatch(
+				leaf_index, CompletedEvent(task, leaf_index, completion, datetime.now())
+			)
+			return leaf_result(ctx, leaf_index, completion)
 		except asyncio.CancelledError:
-			with suppress(ProcessLookupError, OSError):
-				proc.kill()
-			await proc.wait()
+			if proc is not None:
+				with suppress(ProcessLookupError, OSError):
+					proc.kill()
+				await proc.wait()
 			raise
 		finally:
-			ctx.interrupts.procs.pop(leaf_index, None)
-		elapsed: Final = time.perf_counter() - start_pc
-		rc: Final = proc.returncode or 0
-		completion: Final = (
-			Stopped(rc, elapsed, output)
-			if isinstance(ctx.states[leaf_index], Interrupting)
-			else Finished(rc, elapsed, output)
-		)
-		await ctx.dispatch(leaf_index, CompletedEvent(task, leaf_index, completion, datetime.now()))
-		return leaf_result(ctx, leaf_index, completion)
+			if proc is not None:
+				ctx.interrupts.procs.pop(leaf_index, None)
 
 
 async def skip_subtree(child: TaskNode, skip: Skipped, ctx: RunContext) -> tuple[TaskResult, ...]:
@@ -542,39 +547,34 @@ async def recovered_results(ctx: RunContext, states: list[LeafState]) -> tuple[T
 	``INTERRUPT_RC`` like the pre-spawn catch does. Mid-flight output is unrecoverable — the
 	cancelled ``run_cmd`` owned the buffer, so the rebuilt completion carries none.
 	"""
-	results: tuple[TaskResult, ...] = ()
+	results: list[TaskResult] = []
 	for leaf_index, state in enumerate(states):
 		match state:
 			case Completed(completion=completion):
 				pass
 			case Waiting():
 				completion = Stopped(INTERRUPT_RC, 0.0, ())
-				await ctx.dispatch(
-					leaf_index,
-					CompletedEvent(ctx.leaves[leaf_index], leaf_index, completion, datetime.now()),
-				)
 			case Running(start_time=start_time):
 				completion = Stopped(
-					INTERRUPT_RC, (datetime.now() - start_time).total_seconds(), ()
-				)
-				await ctx.dispatch(
-					leaf_index,
-					CompletedEvent(ctx.leaves[leaf_index], leaf_index, completion, datetime.now()),
+					INTERRUPT_RC,
+					max(0.0, (datetime.now() - start_time).total_seconds()),
+					(),
 				)
 			case Interrupting(start_time=start_time, presses=presses):
 				completion = Stopped(
 					KILL_DEATH_RC if presses >= KILL_PRESSES else -signal.SIGINT,
-					(datetime.now() - start_time).total_seconds(),
+					max(0.0, (datetime.now() - start_time).total_seconds()),
 					(),
-				)
-				await ctx.dispatch(
-					leaf_index,
-					CompletedEvent(ctx.leaves[leaf_index], leaf_index, completion, datetime.now()),
 				)
 			case _:
 				assert_never(state)
-		results = (*results, leaf_result(ctx, leaf_index, completion))
-	return results
+		if not isinstance(state, Completed):
+			await ctx.dispatch(
+				leaf_index,
+				CompletedEvent(ctx.leaves[leaf_index], leaf_index, completion, datetime.now()),
+			)
+		results.append(leaf_result(ctx, leaf_index, completion))
+	return tuple(results)
 
 
 async def run(

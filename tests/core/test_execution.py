@@ -27,6 +27,7 @@ from camas.core.execution import (
 	recovered_results,
 	restore_tty,
 	run,
+	run_cmd,
 	spawn_cwd,
 	spawn_error_message,
 	step_interrupt,
@@ -761,6 +762,43 @@ def test_recovered_results_rebuilds_every_leaf_after_the_cancel() -> None:
 	assert results[4].completion.elapsed == 0.0
 	assert [e.leaf_index for e in events] == [1, 2, 3, 4]
 	assert all(isinstance(e, CompletedEvent) for e in events)
+
+
+def test_cancelled_spawn_skips_the_kill_and_reap(monkeypatch: pytest.MonkeyPatch) -> None:
+	"""A cancel landing while the child is still spawning has no proc to kill or reap — the
+	handler and the finally both pass the ``None`` proc through and the cancellation
+	propagates."""
+
+	async def scenario() -> None:
+		async def never_spawns(*args: object, **kwargs: object) -> asyncio.subprocess.Process:
+			await asyncio.get_running_loop().create_future()
+			raise AssertionError("the cancelled spawn never returns")
+
+		monkeypatch.setattr(asyncio, "create_subprocess_exec", never_spawns)
+		a = Task("a")
+
+		async def dispatch(leaf_idx: int, event: TaskEvent) -> None:
+			return None
+
+		ctx = RunContext(
+			dispatch=dispatch,
+			leaves=(a,),
+			index_map={id(a): 0},
+			limiter=nullcontext(),
+			interrupts=Interrupts(procs={}),
+			states=[Waiting(a)],
+			base=None,
+			child_stdin=None,
+			leaf_color=True,
+			identities=None,
+		)
+		task = asyncio.ensure_future(run_cmd(a, 0, ctx))
+		await asyncio.sleep(0)
+		task.cancel()
+		with pytest.raises(asyncio.CancelledError):
+			await task
+
+	asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("count", [0, 1, 2, KILL_PRESSES])
