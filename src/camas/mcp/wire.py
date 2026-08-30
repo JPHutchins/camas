@@ -230,7 +230,7 @@ class InitRequest(BaseModel):
 	verbose: bool = Field(
 		default=True,
 		description=(
-			"Scaffold the kitchen-sink template: every Task/Sequential/Parallel/Config option "
+			"Scaffold the kitchen-sink template: every Task/Sequential/Parallel/Pipe/Config option "
 			"worked and explained, including path scoping, agent_format structured output, "
 			"matrix expansion, and Config(agent=Claude(fix=..., check=..., default=...)). "
 			"Defaults to true here (camas_init is MCP-driven, so the fuller reference is the "

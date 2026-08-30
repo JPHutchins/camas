@@ -611,6 +611,11 @@ class Pipe(Group):
 				"Pipe stages must be Tasks — a nested group would mean several commands "
 				"sharing one stream"
 			)
+		if len({id(t) for t in self.tasks}) != len(self.tasks):
+			raise ValueError(
+				"Pipe stages must be distinct Tasks — a repeated stage would collide in the "
+				"engine's per-leaf slots"
+			)
 
 	def __hash__(self) -> int:
 		return Group.__hash__(self)

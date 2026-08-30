@@ -16,13 +16,15 @@ from camas.core.execution import run
 from camas.core.gate import strip_agent_only_pipes, with_agent_format
 from camas.core.matrix import expand_matrix
 from camas.core.timings import CacheKey, TaskTiming
-from camas.v0.completion import Finished
+from camas.v0.completion import INTERRUPT_RC, Finished, Stopped
+from camas.v0.leaf_state import Waiting
 from camas.v0.task import AgentFormat
 
 if TYPE_CHECKING:
 	from collections.abc import Sequence
 	from pathlib import Path
 
+	from camas.core.completion import TaskResult
 	from camas.v0.leaf_state import LeafState
 	from camas.v0.task import TaskNode
 	from camas.v0.task_event import TaskEvent
@@ -38,6 +40,9 @@ def test_pipe_coerces_stage_strings_and_rejects_nested_groups() -> None:
 	assert Pipe("echo a", "echo b").tasks == (Task("echo a"), Task("echo b"))
 	with pytest.raises(ValueError, match="stages must be Tasks"):
 		Pipe("echo a", Sequential("echo b"))
+	stage = Task("echo a")
+	with pytest.raises(ValueError, match="stages must be distinct"):
+		Pipe(stage, stage)
 
 
 def test_pipe_equality_includes_agent_only() -> None:
@@ -49,6 +54,11 @@ def test_pipe_operators_compose_as_an_opaque_group() -> None:
 	pipe = Pipe("a", "b")
 	assert (pipe | "c").tasks == (pipe, Task("c"))
 	assert (pipe + "c").tasks == (pipe, Task("c"))
+
+
+def test_strip_agent_only_pipes_leaves_a_pipeless_tree_untouched() -> None:
+	seq = Sequential(Task("a"), Task("b"))
+	assert strip_agent_only_pipes(seq) is seq
 
 
 def test_strip_agent_only_pipes_collapses_to_the_first_stage() -> None:
@@ -196,6 +206,13 @@ def test_expand_matrix_fans_out_a_pipe_matrix_as_pipe_clones() -> None:
 	assert result.tasks[0].tasks[0].cmd == "a 1"  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
 
 
+def test_github_matrix_rejects_a_pipe_with_the_fd_wiring_message() -> None:
+	from camas.main.github_matrix import jobs_emission
+
+	with pytest.raises(ValueError, match="fd-wired"):
+		jobs_emission(Pipe("a", "b"), {})
+
+
 def test_pipe_cancel_kills_every_stage() -> None:
 	"""Cancelling a pipe run kills and reaps every stage — no transport outlives the loop."""
 	pipe = Pipe(
@@ -253,6 +270,51 @@ def test_pipe_spawn_failure_mid_pipe_kills_the_spawned_stages() -> None:
 	result = asyncio.run(run(pipe, jobs=1))
 	assert result.returncode == 1
 	assert result.results[1].completion.returncode == 127
+
+
+def test_pipe_spawn_failure_reports_a_finished_earlier_stage_as_stopped() -> None:
+	"""A stage that genuinely ran before the failure reads Stopped with its own code — 0 when
+	it finished before the kill, a kill code otherwise — never Skipped with the failed
+	stage's 127."""
+	pipe = Pipe(
+		Task(("python", "-c", "import sys; sys.stdout.write('ran')")), Task("no-such-cmd-xyz")
+	)
+	result = asyncio.run(run(pipe, jobs=1))
+	first = result.results[0].completion
+	assert isinstance(first, Stopped)
+	assert first.returncode != 127
+	assert result.results[1].completion.returncode == 127
+
+
+def test_pipe_interrupted_before_spawning_stops_the_stages() -> None:
+	"""A landed interrupt stops the remaining stages without launching them — the run_cmd
+	pre-spawn guard, mirrored."""
+	from contextlib import nullcontext
+
+	from camas.core.execution import Interrupts, RunContext, run_pipe
+	from camas.v0.task_event import CompletedEvent
+
+	a, b = Task("a"), Task("b")
+	events: list[TaskEvent] = []
+
+	async def dispatch(leaf_idx: int, event: TaskEvent) -> None:
+		events.append(event)
+
+	async def scenario() -> tuple[TaskResult, ...]:
+		leaves = (a, b)
+		index_map = {id(a): 0, id(b): 1}
+		states: list[LeafState] = [Waiting(a), Waiting(b)]
+		interrupts = Interrupts(procs={})
+		interrupts.count = 1
+		ctx = RunContext(
+			dispatch, leaves, index_map, nullcontext(), interrupts, states, None, None, True, None
+		)
+		return await run_pipe((a, b), ctx)
+
+	results = asyncio.run(scenario())
+	assert all(isinstance(r.completion, Stopped) for r in results)
+	assert all(r.completion.returncode == INTERRUPT_RC for r in results)
+	assert all(isinstance(e, CompletedEvent) for e in events)
 
 
 def test_render_shows_a_pipe_with_the_pipe_separator() -> None:

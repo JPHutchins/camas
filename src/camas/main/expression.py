@@ -479,11 +479,15 @@ def to_expression(node: TaskNode) -> str:
 				f"{paths_kwarg(paths)}{when_kwarg(when)}{agent_format_kwarg(agent_format)})"
 			)
 		case Group() as group:
+			agent_only_kwarg = (
+				", agent_only=True" if isinstance(group, Pipe) and group.agent_only else ""
+			)
 			return (
 				f"{type(group).__name__}({render_members(group.tasks)}{name_kwarg(group.name)}"
 				f"{matrix_kwarg(group.matrix)}{variants_kwarg(group.variants)}"
 				f"{env_kwarg(group.env)}{cwd_kwarg(group.cwd)}"
-				f"{help_kwarg(group.help)}{paths_kwarg(group.paths)}{when_kwarg(group.when)})"
+				f"{help_kwarg(group.help)}{paths_kwarg(group.paths)}{when_kwarg(group.when)}"
+				f"{agent_only_kwarg})"
 			)
 		case _:
 			assert_never(node)

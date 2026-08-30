@@ -440,11 +440,17 @@ def jobs_emission(task: TaskNode, tasks: Mapping[str, TaskNode]) -> Jobs:
 				"task has no matrix axes to emit as a GitHub Actions job matrix, and it is a "
 				"single leaf — there are no children to fan out as one job each"
 			)
-		case Sequential() | Pipe():
+		case Sequential():
 			raise ValueError(
-				"a Sequential/Pipe's children run in order, but GitHub Actions matrix jobs run "
+				"a Sequential's children run in order, but GitHub Actions matrix jobs run "
 				"in parallel — express the ordering with needs: in the workflow, and emit the "
 				"parallel step of the pipeline"
+			)
+		case Pipe():
+			raise ValueError(
+				"a Pipe's stages are fd-wired into one process pipeline, which GitHub Actions "
+				"matrix jobs cannot split — emit the pipeline as a single job, or express the "
+				"stages as a Sequential with needs: ordering in the workflow"
 			)
 		case Parallel(tasks=children) as group:
 			blocking = tuple(

@@ -46,7 +46,7 @@ if sys.version_info >= (3, 11):
 else:  # pragma: no cover
 	from typing_extensions import assert_never
 
-from ..v0.task import Group, Task, rebuilt
+from ..v0.task import Group, Pipe, Task, rebuilt
 from .task import task_label
 
 if TYPE_CHECKING:
@@ -265,6 +265,11 @@ def scoped_tree(node: TaskNode, resolved: Mapping[int, Task]) -> TaskNode | None
 	match node:
 		case Task():
 			return resolved.get(id(node))
+		case Pipe(tasks=stages):
+			kept = tuple(s for s in (scoped_tree(c, resolved) for c in stages) if s is not None)
+			# A pruned stage would rewire the pipeline (the survivor before the cut feeding
+			# the one after it), so any pruned stage drops the whole pipe.
+			return rebuilt(node, *kept) if len(kept) == len(stages) else None
 		case Group() as group:
 			kept = tuple(
 				s for s in (scoped_tree(c, resolved) for c in group.tasks) if s is not None

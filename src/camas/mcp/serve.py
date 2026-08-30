@@ -586,7 +586,7 @@ def tools(task_names: tuple[str, ...], compat: Compat) -> Tools:
 			description=textwrap.dedent("""\
 				How to author or edit THIS project's tasks.py. Returns camas's own installed
 				source path and its authoring tutorial — served live from the package, so it
-				never drifts: the Task / Sequential / Parallel / Config API, matrix expansion,
+				never drifts: the Task / Sequential / Parallel / Pipe / Config API, matrix expansion,
 				per-leaf cwd and env, and custom output Effects, with worked examples. Read this
 				before writing tasks.py, then validate your work with camas_check. The cited
 				source path is the API source of truth — read it for exact signatures and the
@@ -638,7 +638,7 @@ def tools(task_names: tuple[str, ...], compat: Compat) -> Tools:
 			description=textwrap.dedent("""\
 				Scaffold a commented starter tasks.py in THIS project's root when it has none — the
 				MCP mirror of `camas --init`, for driving camas purely over the MCP. Defaults
-				(verbose=true) to the kitchen-sink template: every Task/Sequential/Parallel/Config
+				(verbose=true) to the kitchen-sink template: every Task/Sequential/Parallel/Pipe/Config
 				option worked and explained in place — path scoping ({paths}/when=), matrix
 				expansion, agent_format structured output, and Config(agent=Claude(fix=...,
 				check=..., default=...)) — with cross-platform placeholder commands, so you can read
@@ -1301,7 +1301,7 @@ def docs_text(resp: wire.DocsResponse) -> str:
 	return (
 		"camas authoring guide. The API source of truth is the installed camas package at:\n"
 		f"  {resp.source}\n"
-		"Read its v0/ submodules for exact Task/Sequential/Parallel/Config signatures and the "
+		"Read its v0/ submodules for exact Task/Sequential/Parallel/Pipe/Config signatures and the "
 		"examples/ directory for full project layouts; validate your tasks.py with camas_check."
 		f"\n\n{resp.tutorial}"
 	)

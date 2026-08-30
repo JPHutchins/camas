@@ -186,15 +186,30 @@ def strip_agent_only_pipes(node: TaskNode) -> TaskNode:
 	>>> strip_agent_only_pipes(Pipe("a", "b")).tasks[0].cmd
 	'a'
 	"""
+	if not _has_agent_only(node):
+		return node
 	match node:
 		case Pipe(tasks=stages, agent_only=True):
-			return strip_agent_only_pipes(rebuilt(node, stages[0], agent_only=False))
+			return rebuilt(node, stages[0], agent_only=False)
 		case Group() as group:
-			return rebuilt(group, *(strip_agent_only_pipes(c) for c in group.tasks))
-		case Task():
+			children = tuple(strip_agent_only_pipes(c) for c in group.tasks)
+			if all(new is old for new, old in zip(children, group.tasks, strict=True)):
+				return node  # pragma: no cover
+			return rebuilt(group, *children)
+		case Task():  # pragma: no cover
 			return node
 		case _:
 			assert_never(node)
+
+
+def _has_agent_only(node: TaskNode) -> bool:
+	match node:
+		case Pipe(agent_only=True):
+			return True
+		case Group() as group:
+			return any(_has_agent_only(c) for c in group.tasks)
+		case _:
+			return False
 
 
 def uses_path_mode(node: TaskNode) -> bool:
