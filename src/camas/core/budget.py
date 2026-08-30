@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import sys
+from itertools import chain
 
 if sys.version_info >= (3, 11):
 	from typing import assert_never
@@ -19,7 +20,7 @@ from .matrix import expand_matrix
 from .timings import estimate
 
 if TYPE_CHECKING:
-	from collections.abc import Mapping
+	from collections.abc import Iterable, Mapping
 
 	from ..v0.task import Group, TaskNode
 	from .timings import CacheKey, TaskTiming
@@ -92,7 +93,7 @@ class _Planned(NamedTuple):
 	"""
 
 	node: TaskNode | None
-	dispositions: tuple[Disposition, ...]
+	dispositions: Iterable[Disposition]
 	has_mutating: bool
 
 
@@ -112,9 +113,10 @@ def plan_under(
 	measurements of this run — see :func:`camas.core.timings.estimate`.
 	"""
 	planned = _plan_under(expand_matrix(node), budget_s, timings, scope)
-	fits = tuple(d for d in planned.dispositions if isinstance(d, Fits))
-	over_budget = tuple(d for d in planned.dispositions if isinstance(d, OverBudget))
-	untimed = tuple(d for d in planned.dispositions if isinstance(d, Untimed))
+	dispositions: Final = tuple(planned.dispositions)
+	fits = tuple(d for d in dispositions if isinstance(d, Fits))
+	over_budget = tuple(d for d in dispositions if isinstance(d, OverBudget))
+	untimed = tuple(d for d in dispositions if isinstance(d, Untimed))
 	return BudgetPlan(budget_s, planned.node, fits, over_budget, untimed)
 
 
@@ -161,7 +163,7 @@ def _plan_under(
 			else:
 				runnable = Sequential(
 					*mutating,
-					_collapse(Parallel(*readonly, name=node.name, env=node.env, cwd=node.cwd)),
+					_collapse(Parallel(*readonly, env=node.env, cwd=node.cwd)),
 					**_fields_of(node),
 				)
 			return _Planned(
@@ -171,9 +173,9 @@ def _plan_under(
 			assert_never(node)
 
 
-def _collect(planned: tuple[_Planned, ...]) -> tuple[Disposition, ...]:
+def _collect(planned: tuple[_Planned, ...]) -> Iterable[Disposition]:
 	"""The planned children's dispositions, in DFS order."""
-	return tuple(disposition for child in planned for disposition in child.dispositions)
+	return chain.from_iterable(child.dispositions for child in planned)
 
 
 def _fields_of(node: Group) -> dict[str, Any]:

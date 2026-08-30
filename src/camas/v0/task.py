@@ -731,7 +731,8 @@ def Clean(  # noqa: N802  # constructor-style factory, like Task/Parallel
 	always run — ``when="."`` and ``paths=None`` override the check's own scoping — and the
 	check reads git's view, so paths git ignores are outside its contract. Under ``--under``
 	the gate keeps its ordering (#306); a check leaf measured over budget is excluded
-	outright.
+	outright, and a mutator measured over budget drops like any leaf, leaving the checks to
+	run around an un-run generator, so drift goes undetected.
 
 	Raises:
 		ValueError: ``mutator`` or ``check`` is neither a ``str`` nor a ``Task``; ``mutator``

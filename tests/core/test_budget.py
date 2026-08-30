@@ -180,6 +180,23 @@ def test_plan_under_serializes_mutating_subtrees_whole() -> None:
 	assert plan.untimed == ()
 
 
+def test_plan_under_drops_an_over_budget_clean_mutator() -> None:
+	"""#306: a Clean mutator measured over budget drops like any leaf — the gate degenerates
+	to its checks around an un-run generator."""
+	mutator = Task("make gen", name="gen", mutates=True)
+	clean = Clean(mutator)
+	timings = {
+		CacheKey("gen-before", 0): TaskTiming(0.1, 5),
+		CacheKey("gen", 0): TaskTiming(9.0, 5),
+		CacheKey("gen-after", 0): TaskTiming(0.1, 5),
+	}
+	plan = plan_under(clean, 1.0, timings)
+	assert plan.node == Sequential(clean.tasks[0], clean.tasks[2])
+	assert [f.task.name for f in plan.fits] == ["gen-before", "gen-after"]
+	assert plan.over_budget == (OverBudget(mutator, 9.0),)
+	assert plan.untimed == ()
+
+
 def test_plan_under_drops_an_over_budget_mutating_leaf_from_a_parallel() -> None:
 	fmt = Task("fmt", name="fmt", mutates=True)
 	lint = Task("lint", name="lint")
@@ -255,7 +272,7 @@ def test_plan_under_collapses_a_fieldless_inner_readonly_wrapper() -> None:
 
 def test_plan_under_carries_group_fields_onto_the_reordered_wrapper() -> None:
 	"""The manufactured Sequential carries every GROUP_FIELDS value; the inner read-only
-	Parallel keeps the group's name/env/cwd."""
+	Parallel keeps the group's env/cwd, with the identity left on the outer wrapper."""
 	fmt = Task("fmt", name="fmt", mutates=True)
 	lint = Task("lint", name="lint")
 	source = Parallel(
@@ -270,7 +287,6 @@ def test_plan_under_carries_group_fields_onto_the_reordered_wrapper() -> None:
 		Task("fmt", name="fmt", mutates=True, env={"A": "1"}, cwd=Path(), paths=".", when="."),
 		Parallel(
 			Task("lint", name="lint", env={"A": "1"}, cwd=Path(), paths=".", when="."),
-			name="gate",
 			env={"A": "1"},
 			cwd=Path(),
 		),

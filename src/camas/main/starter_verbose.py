@@ -110,7 +110,8 @@ fmt = Task('python -c "" {paths}', mutates=True, paths=".")
 # marked mutates=True; Clean raises otherwise. The placeholders below are inert (nothing writes,
 # the check always passes); a real gate pairs a generator that writes with the default check.
 # Under --under budget mode the gate keeps its ordering (#306); a check leaf measured over
-# budget is excluded outright.
+# budget is excluded outright, and a mutator measured over budget drops like any leaf,
+# leaving the checks to run around an un-run generator, so drift goes undetected.
 generators = Clean(
 	mutator=Task("python -c \"print('generated')\"", mutates=True),
 	check=Task("python -c pass"),
