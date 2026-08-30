@@ -238,11 +238,18 @@ def test_pipe_cancel_during_spawn_kills_registered_stages() -> None:
 	)
 
 	class SlowStart:
+		def __init__(self) -> None:
+			self.started = 0
+
 		async def setup(self, task: TaskNode) -> None:
 			return None
 
 		async def on_event(self, event: TaskEvent, states: Sequence[LeafState], ctx: None) -> None:
-			await asyncio.sleep(60)
+			from camas.v0.task_event import StartedEvent
+
+			self.started += isinstance(event, StartedEvent)
+			if self.started == 2:
+				await asyncio.sleep(60)
 
 		async def teardown(self, ctxs: tuple[None, ...]) -> None:
 			pass
@@ -270,6 +277,34 @@ def test_pipe_spawn_failure_mid_pipe_kills_the_spawned_stages() -> None:
 	result = asyncio.run(run(pipe, jobs=1))
 	assert result.returncode == 1
 	assert result.results[1].completion.returncode == 127
+
+
+def test_pipe_spawn_failure_never_starts_later_stages() -> None:
+	"""Stages after a failed spawn never launch — Skipped without a StartedEvent, like
+	skip_subtree's leaves."""
+	from camas.v0.task_event import StartedEvent
+
+	events: list[TaskEvent] = []
+
+	class Recorder:
+		async def setup(self, task: TaskNode) -> None:
+			return None
+
+		async def on_event(self, event: TaskEvent, states: Sequence[LeafState], ctx: None) -> None:
+			events.append(event)
+
+		async def teardown(self, ctxs: tuple[None, ...]) -> None:
+			pass
+
+	pipe = Pipe(
+		Task(("python", "-c", "pass")),
+		Task("no-such-cmd-xyz"),
+		Task(("python", "-c", "pass")),
+	)
+	result = asyncio.run(run(pipe, jobs=1, effects=(Recorder(),)))
+	assert result.results[2].completion.returncode == 127
+	started = {e.leaf_index for e in events if isinstance(e, StartedEvent)}
+	assert 2 not in started
 
 
 def test_pipe_spawn_failure_reports_a_finished_earlier_stage_as_stopped() -> None:
@@ -315,6 +350,101 @@ def test_pipe_interrupted_before_spawning_stops_the_stages() -> None:
 	assert all(isinstance(r.completion, Stopped) for r in results)
 	assert all(r.completion.returncode == INTERRUPT_RC for r in results)
 	assert all(isinstance(e, CompletedEvent) for e in events)
+
+
+def test_pipe_interrupt_cuts_by_position_not_equality() -> None:
+	"""Equal-but-distinct stages: the cut slices by position, so each leaf gets exactly one
+	completion."""
+	from contextlib import nullcontext
+
+	from camas.core.execution import Interrupts, RunContext, run_pipe
+	from camas.v0.task_event import CompletedEvent
+
+	a1 = Task("python -c pass")
+	a2 = Task("python -c pass")
+	events: list[TaskEvent] = []
+
+	async def dispatch(leaf_idx: int, event: TaskEvent) -> None:
+		events.append(event)
+
+	async def scenario() -> tuple[TaskResult, ...]:
+		leaves = (a1, a2)
+		index_map = {id(a1): 0, id(a2): 1}
+		states: list[LeafState] = [Waiting(a1), Waiting(a2)]
+		interrupts = Interrupts(procs={})
+		interrupts.count = 1
+		ctx = RunContext(
+			dispatch, leaves, index_map, nullcontext(), interrupts, states, None, None, True, None
+		)
+		return await run_pipe((a1, a2), ctx)
+
+	results = asyncio.run(scenario())
+	assert len(results) == 2
+	completions = [e for e in events if isinstance(e, CompletedEvent)]
+	assert [c.leaf_index for c in completions] == [0, 1]
+
+
+def test_pipe_interrupt_mid_pipe_unwinds_the_spawned_stages() -> None:
+	"""A landed interrupt after a stage spawned kills it and reports its own code, then
+	Stops the rest — nothing is abandoned."""
+	from contextlib import nullcontext
+
+	from camas.core.execution import Interrupts, RunContext, run_pipe
+	from camas.v0.task_event import CompletedEvent, StartedEvent
+
+	a = Task(("python", "-c", "import time; time.sleep(60)"))
+	b = Task("b")
+	events: list[TaskEvent] = []
+	interrupts = Interrupts(procs={})
+
+	async def dispatch(leaf_idx: int, event: TaskEvent) -> None:
+		if isinstance(event, StartedEvent):
+			interrupts.count = 1
+		events.append(event)
+
+	async def scenario() -> tuple[TaskResult, ...]:
+		leaves = (a, b)
+		index_map = {id(a): 0, id(b): 1}
+		states: list[LeafState] = [Waiting(a), Waiting(b)]
+		ctx = RunContext(
+			dispatch, leaves, index_map, nullcontext(), interrupts, states, None, None, True, None
+		)
+		return await run_pipe((a, b), ctx)
+
+	results = asyncio.run(scenario())
+	assert len(results) == 2
+	assert isinstance(results[0].completion, Stopped)
+	assert results[0].completion.returncode != 0
+	assert results[1].completion.returncode == INTERRUPT_RC
+	completions = [e for e in events if isinstance(e, CompletedEvent)]
+	assert [c.leaf_index for c in completions] == [0, 1]
+
+
+def test_pipe_cancel_inside_spawn_closes_the_fresh_pipe_fds() -> None:
+	"""A cancel landing after os.pipe() but inside the spawn await closes the fresh pair —
+	nothing leaks toward EMFILE in a long-lived server."""
+	from camas.core import execution as execution_module
+
+	async def slow_spawn(*args: object, **kwargs: object) -> object:
+		await asyncio.sleep(60)
+		raise AssertionError("unreachable")
+
+	monkeypatch = pytest.MonkeyPatch()
+	monkeypatch.setattr(execution_module, "_spawn_stage", slow_spawn)
+	pipe = Pipe(
+		Task(("python", "-c", "pass")),
+		Task(("python", "-c", "pass")),
+	)
+
+	async def scenario() -> None:
+		main_task = asyncio.ensure_future(run(pipe, jobs=1))
+		await asyncio.sleep(0.2)
+		main_task.cancel()
+		with pytest.raises(asyncio.CancelledError):
+			await main_task
+
+	asyncio.run(scenario())
+	monkeypatch.undo()
 
 
 def test_render_shows_a_pipe_with_the_pipe_separator() -> None:
