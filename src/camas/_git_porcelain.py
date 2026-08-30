@@ -10,9 +10,7 @@ import subprocess
 import sys
 from typing import Final
 
-from .core.execution import env_case_insensitive
-
-_PLATFORM: Final = sys.platform
+from .core.platform import env_case_insensitive
 
 
 def _git_env_var(key: str) -> bool:
@@ -21,17 +19,25 @@ def _git_env_var(key: str) -> bool:
 
 
 def _write_line(text: str) -> None:
-	"""``text`` to stderr, newline-terminated."""
-	sys.stderr.write(text if text.endswith("\n") else text + "\n")
+	"""``text`` to stderr as UTF-8 bytes — the renderer's codec — newline-terminated, via
+	``stderr.buffer`` or the text stream when it has none.
+	"""
+	line = text if text.endswith("\n") else text + "\n"
+	buffer = getattr(sys.stderr, "buffer", None)
+	if buffer is None:
+		sys.stderr.write(line)
+	else:
+		buffer.write(line.encode("utf-8", "replace"))
 
 
 def _write_stdout(text: str) -> None:
-	"""``text`` to stdout as UTF-8 bytes, the codec the renderer decodes leaf output with, via
-	``stdout.buffer`` or the text stream when it has none.
+	"""``text`` to stdout as UTF-8 bytes — the renderer's codec — via ``stdout.buffer``, or
+	sanitized through the text stream's own codec when it has no buffer.
 	"""
 	buffer = getattr(sys.stdout, "buffer", None)
 	if buffer is None:
-		sys.stdout.write(text)
+		codec: Final = getattr(sys.stdout, "encoding", None) or "utf-8"
+		sys.stdout.write(text.encode(codec, "replace").decode(codec))
 	else:
 		buffer.write(text.encode("utf-8", "replace"))
 
@@ -58,7 +64,7 @@ def main() -> int:
 			code: Final = run.returncode
 			_write_line(
 				f"git status killed by signal {-code}"
-				if code < 0 and _PLATFORM != "win32"
+				if code < 0 and not env_case_insensitive()
 				else f"git status exited with code {code}"
 			)
 		return 1

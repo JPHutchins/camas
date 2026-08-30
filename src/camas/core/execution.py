@@ -315,11 +315,6 @@ def subprocess_env(merged: dict[str, str], *, color: bool = True) -> dict[str, s
 	return FORCED_COLOR | base
 
 
-def env_case_insensitive() -> bool:
-	"""Whether the platform's environment block is case-insensitive (Windows, MSYS/Cygwin)."""
-	return sys.platform in ("win32", "msys", "cygwin")
-
-
 def drop_case_variants(overlay: dict[str, str], inherited: dict[str, str]) -> dict[str, str]:
 	"""``inherited`` minus entries whose names collide case-insensitively with an ``overlay`` key —
 	on a case-insensitive env block, a differently-cased pre-existing entry would shadow the

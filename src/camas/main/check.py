@@ -420,7 +420,7 @@ def inherited_mypypath() -> str:
 	"""The environment's existing MYPYPATH value — found case-insensitively where the checker's
 	env block is case-insensitive (Windows, MSYS/Cygwin).
 	"""
-	from ..core.execution import env_case_insensitive
+	from ..core.platform import env_case_insensitive
 
 	return (
 		next((value for key, value in os.environ.items() if key.casefold() == "mypypath"), "")
@@ -493,7 +493,8 @@ def merge_env(overlay: dict[str, str]) -> dict[str, str] | None:
 	"""
 	if not overlay:
 		return None
-	from ..core.execution import drop_case_variants, env_case_insensitive
+	from ..core.execution import drop_case_variants
+	from ..core.platform import env_case_insensitive
 
 	inherited = (
 		drop_case_variants(overlay, dict(os.environ))

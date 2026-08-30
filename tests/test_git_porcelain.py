@@ -8,14 +8,13 @@ from __future__ import annotations
 
 import io
 import runpy
-import sys
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import pytest
 
 from camas._git_porcelain import main
-from camas.core.execution import env_case_insensitive
+from camas.core.platform import env_case_insensitive
 
 if TYPE_CHECKING:
 	from collections.abc import Callable
@@ -165,8 +164,8 @@ def test_main_runs_git_with_lenient_utf8_decode(monkeypatch: pytest.MonkeyPatch)
 
 
 @pytest.mark.skipif(
-	sys.platform == "win32",
-	reason="the signal form renders off Windows; the Windows crash-code form has its own pin",
+	env_case_insensitive(),
+	reason="a native git child surfaces Windows status codes, not POSIX signals; that form has its own pin",
 )
 def test_main_reports_a_signal_death_when_git_dies_without_output(
 	monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
@@ -176,10 +175,10 @@ def test_main_reports_a_signal_death_when_git_dies_without_output(
 	assert capsys.readouterr().err == "git status killed by signal 9\n"
 
 
-def test_main_reports_a_windows_crash_code_as_an_exit(
+def test_main_reports_a_native_child_crash_code_as_an_exit(
 	monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-	monkeypatch.setattr("camas._git_porcelain._PLATFORM", "win32")
+	monkeypatch.setattr("camas._git_porcelain.env_case_insensitive", lambda: True)
 	monkeypatch.setattr("camas._git_porcelain.subprocess.run", _fake_git(_git_result(-1073741510)))
 	assert main() == 1
 	assert capsys.readouterr().err == "git status exited with code -1073741510\n"
@@ -244,12 +243,63 @@ def test_main_writes_a_dirty_tree_without_a_buffer(
 	monkeypatch: pytest.MonkeyPatch,
 ) -> None:
 	"""An embedding may redirect stdout to a text-only stream; the write falls back to it."""
+	sink = io.StringIO()
+	monkeypatch.setattr("sys.stdout", sink)
 	monkeypatch.setattr(
 		"camas._git_porcelain.subprocess.run",
 		_fake_git(_git_result(0, stdout=" M tracked.txt\n")),
 	)
-	monkeypatch.setattr("sys.stdout", io.StringIO())
 	assert main() == 1
+	assert sink.getvalue() == " M tracked.txt\n"
+
+
+class _StrictAsciiText(io.StringIO):
+	"""A buffer-less text stream whose codec cannot represent non-ASCII."""
+
+	encoding = "ascii"
+
+	def write(self, s: str) -> int:
+		s.encode("ascii")
+		return super().write(s)
+
+
+def test_main_survives_a_dirty_tree_on_a_strict_text_stream(
+	monkeypatch: pytest.MonkeyPatch,
+) -> None:
+	"""The buffer-less fallback sanitizes through the stream's own codec."""
+	sink = _StrictAsciiText()
+	monkeypatch.setattr("sys.stdout", sink)
+	monkeypatch.setattr(
+		"camas._git_porcelain.subprocess.run",
+		_fake_git(_git_result(0, stdout=" M �.txt\n")),
+	)
+	assert main() == 1
+	assert sink.getvalue() == " M ?.txt\n"
+
+
+def test_main_writes_failures_as_utf8_bytes(monkeypatch: pytest.MonkeyPatch) -> None:
+	"""git's stderr reaches the renderer as UTF-8 bytes, whatever stderr's own codec."""
+	sink = io.TextIOWrapper(io.BytesIO(), encoding="ascii", errors="strict")
+	monkeypatch.setattr("sys.stderr", sink)
+	monkeypatch.setattr(
+		"camas._git_porcelain.subprocess.run",
+		_fake_git(_git_result(1, stderr="fatal: bäd\n")),
+	)
+	assert main() == 1
+	assert sink.buffer.getvalue() == "fatal: bäd\n".encode()
+
+
+def test_main_writes_failures_to_a_bufferless_stderr(
+	monkeypatch: pytest.MonkeyPatch,
+) -> None:
+	sink = io.StringIO()
+	monkeypatch.setattr("sys.stderr", sink)
+	monkeypatch.setattr(
+		"camas._git_porcelain.subprocess.run",
+		_fake_git(_git_result(1, stderr="fatal: bad")),
+	)
+	assert main() == 1
+	assert sink.getvalue() == "fatal: bad\n"
 
 
 def test_main_fails_with_a_hint_when_git_cannot_execute(
