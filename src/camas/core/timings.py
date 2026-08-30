@@ -15,7 +15,7 @@ from math import isfinite
 from typing import IO, TYPE_CHECKING, Final, NamedTuple, NoReturn, TypeAlias, cast
 
 from ..v0.completion import Errored, Finished, Skipped, Stopped
-from ..v0.task import Parallel, Sequential, Task
+from ..v0.task import Parallel, Pipe, Sequential, Task
 from .scope import PATHS_TOKEN, resolve_default_leaf
 from .task import task_label
 
@@ -130,7 +130,8 @@ def estimate(
 	node: TaskNode, timings: Mapping[CacheKey, TaskTiming], scope: int = 0
 ) -> Estimate | None:
 	"""Compose ``node``'s estimate at ``scope`` from observed leaf durations: a leaf is its own
-	timing, a Sequential the sum of its children, a Parallel their max. ``None`` when any leaf in
+	timing, a Sequential the sum of its children, a Parallel their max, a Pipe their max (its
+	stages overlap like a Parallel's). ``None`` when any leaf in
 	the subtree has never been timed *at that scope* — an observation from another scale is not an
 	estimate of this run, and treating it as one is what excluded a one-file ``pylint`` for costing
 	206s over the whole tree. An unmeasured leaf runs and is thereby measured, so each scope a
@@ -146,7 +147,7 @@ def estimate(
 		case Sequential(tasks=children):
 			parts = child_estimates(children, timings, scope)
 			return rolled_up(parts, sum(p.elapsed_s for p in parts)) if parts else None
-		case Parallel(tasks=children):
+		case Parallel(tasks=children) | Pipe(tasks=children):
 			parts = child_estimates(children, timings, scope)
 			return rolled_up(parts, max(p.elapsed_s for p in parts)) if parts else None
 		case _:

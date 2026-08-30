@@ -18,7 +18,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Final, Literal, NamedTuple, TypeAlias
 
-from ..v0.task import Group, Task, rebuilt
+from ..v0.task import Group, Pipe, Task, rebuilt
 from .budget import plan_under
 from .execution import run
 from .matrix import expand_matrix
@@ -156,7 +156,7 @@ def with_agent_format(node: TaskNode, report_dir: Path) -> FormattedNode:
 	"""
 	match node:
 		case Task():
-			if node.agent_format is None:
+			if node.agent_format is None or not node.agent_format.args:
 				return FormattedNode(node, (None,))
 			args = node.agent_format.args
 			report_path = _allocate_report_path(report_dir) if REPORT_TOKEN in args else None
@@ -170,6 +170,28 @@ def with_agent_format(node: TaskNode, report_dir: Path) -> FormattedNode:
 				rebuilt(group, *(f.node for f in formatted)),
 				tuple(p for f in formatted for p in f.report_paths),
 			)
+		case _:
+			assert_never(node)
+
+
+def strip_agent_only_pipes(node: TaskNode) -> TaskNode:
+	"""The human-run shape of ``node``: an ``agent_only`` Pipe collapses to its first stage, so
+	a human gets the stage's plain output while an agent keeps the full pipeline — the same
+	runner split as ``agent_format``'s args, which the gate appends on the agent path. Consults
+	no runner identity; the caller decides which path it is on.
+
+	>>> strip_agent_only_pipes(Pipe("cargo clippy", "clippy-sarif", agent_only=True)).cmd
+	'cargo clippy'
+	>>> strip_agent_only_pipes(Pipe("a", "b")).tasks[0].cmd
+	'a'
+	"""
+	match node:
+		case Pipe(tasks=stages, agent_only=True):
+			return strip_agent_only_pipes(stages[0])
+		case Group() as group:
+			return rebuilt(group, *(strip_agent_only_pipes(c) for c in group.tasks))
+		case Task():
+			return node
 		case _:
 			assert_never(node)
 

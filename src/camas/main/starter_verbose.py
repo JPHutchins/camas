@@ -33,6 +33,7 @@ from camas import (
 	Config,
 	Effect,
 	Parallel,
+	Pipe,
 	Sequential,
 	Task,
 	by_glob,
@@ -115,6 +116,22 @@ fmt = Task('python -c "" {paths}', mutates=True, paths=".")
 generators = Clean(
 	mutator=Task("python -c \"print('generated')\"", mutates=True),
 	check=Task("python -c pass"),
+)
+
+# Pipe(*stages, agent_only=False) wires each stage's stdout into the next stage's stdin — no
+# shell, so every stage stays its own argv vector and {paths} substitution never re-parses
+# through a shell quoting layer. Stages must be leaves. The pipeline fails pipefail-style: any
+# stage's non-zero exit fails the run, so a producer failing under a succeeding last stage is
+# still a failure, and every stage still runs to completion (a dying stage feeds EOF downstream).
+# agent_only=True runs the full pipeline on an agent run and collapses to the first stage alone
+# on a human run — the human gets the plain human-readable output, the agent the piped
+# structured output, the same runner split as agent_format's args. The placeholders below are
+# inert (nothing writes); a real pipeline pairs a producer with the converter that turns its
+# output into the agent's structured format.
+diagnostics = Pipe(
+	Task("python -c \"print('hello')\""),
+	Task("python -c pass"),
+	agent_only=True,
 )
 
 # by_suffix(suffixes, default=...) builds a paths= callable: it filters the changed files by

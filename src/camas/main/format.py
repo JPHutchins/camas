@@ -20,7 +20,7 @@ from ..core.color import BOLD_CYAN, CAMAS_LIGHT_PINK, CAMAS_VIOLET, GREY, RESET
 from ..core.matrix import overridable_axes
 from ..core.render import color_on, print_tree
 from ..core.scope import scope_warning_messages
-from ..v0.task import Parallel, Sequential, Task, TaskNode
+from ..v0.task import Parallel, Pipe, Sequential, Task, TaskNode
 from .color import maybe_color, wrap_ansi
 from .effects import available_effects, flatten_annotation, signature_fields
 from .mypyc import MISSING
@@ -41,7 +41,11 @@ def par_child_summary(node: TaskNode, names: frozenset[str]) -> str:
 	``,`` binds looser than ``|``.
 	"""
 	rendered = task_summary(node, names, is_root=False)
-	if isinstance(node, Sequential) and not is_named_ref(node, names) and len(node.tasks) > 1:
+	if (
+		isinstance(node, (Sequential, Pipe))
+		and not is_named_ref(node, names)
+		and len(node.tasks) > 1
+	):
 		return f"({rendered})"
 	return rendered
 
@@ -72,7 +76,7 @@ def task_summary(node: TaskNode, names: frozenset[str], is_root: bool = True) ->
 			return cmd if isinstance(cmd, str) else " ".join(cmd)
 		case Sequential(tasks=tasks):
 			return ", ".join(task_summary(t, names, is_root=False) for t in tasks)
-		case Parallel(tasks=tasks):
+		case Parallel(tasks=tasks) | Pipe(tasks=tasks):
 			return " | ".join(par_child_summary(t, names) for t in tasks)
 		case _:
 			assert_never(node)

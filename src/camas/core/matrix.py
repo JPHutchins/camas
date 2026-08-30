@@ -17,11 +17,11 @@ if sys.version_info >= (3, 11):
 else:  # pragma: no cover
 	from typing_extensions import assert_never
 
-from ..v0.task import Group, Parallel, Sequential, Task, TaskNode, rebuilt
+from ..v0.task import Group, Parallel, Pipe, Sequential, Task, TaskNode, rebuilt
 from .task import MatrixBinding, VarBinding, node_label, task_label
 
 if TYPE_CHECKING:
-	from collections.abc import Mapping
+	from collections.abc import Callable, Mapping
 
 	from ..v0.task import PathScope, WhenPredicate
 
@@ -181,7 +181,11 @@ def matrix_axes(task: TaskNode) -> dict[str, tuple[str, ...]]:
 	match task:
 		case Task():
 			return {}
-		case Sequential(tasks=tasks, matrix=matrix) | Parallel(tasks=tasks, matrix=matrix):
+		case (
+			Sequential(tasks=tasks, matrix=matrix)
+			| Parallel(tasks=tasks, matrix=matrix)
+			| Pipe(tasks=tasks, matrix=matrix)
+		):
 			result: dict[str, tuple[str, ...]] = dict(matrix) if matrix else {}
 			for child in tasks:
 				for k, v in matrix_axes(child).items():
@@ -204,7 +208,11 @@ def variant_axes(task: TaskNode) -> dict[str, tuple[str, ...]]:
 	match task:
 		case Task():
 			return {}
-		case Sequential(tasks=tasks, variants=variants) | Parallel(tasks=tasks, variants=variants):
+		case (
+			Sequential(tasks=tasks, variants=variants)
+			| Parallel(tasks=tasks, variants=variants)
+			| Pipe(tasks=tasks, variants=variants)
+		):
 			result: dict[str, tuple[str, ...]] = (
 				{key: tuple(dict.fromkeys(v[key] for v in variants)) for key in variants[0]}
 				if variants
@@ -234,6 +242,7 @@ def declared_variants(task: TaskNode) -> tuple[dict[str, str], ...] | None:
 		case (
 			Sequential(tasks=children, variants=variants)
 			| Parallel(tasks=children, variants=variants)
+			| Pipe(tasks=children, variants=variants)
 		):
 			if variants is not None:
 				return variants
@@ -273,7 +282,11 @@ def empty_variant_labels(task: TaskNode) -> tuple[str, ...]:
 	match task:
 		case Task():
 			return ()
-		case Sequential(tasks=tasks, variants=variants) | Parallel(tasks=tasks, variants=variants):
+		case (
+			Sequential(tasks=tasks, variants=variants)
+			| Parallel(tasks=tasks, variants=variants)
+			| Pipe(tasks=tasks, variants=variants)
+		):
 			here: Final = (node_label(task),) if variants is not None and not variants else ()
 			return (*here, *(label for child in tasks for label in empty_variant_labels(child)))
 		case _:
@@ -301,7 +314,11 @@ def unfilled_required_axes(task: TaskNode) -> tuple[str, ...]:
 	match task:
 		case Task():
 			return ()
-		case Sequential(tasks=tasks, matrix=matrix) | Parallel(tasks=tasks, matrix=matrix):
+		case (
+			Sequential(tasks=tasks, matrix=matrix)
+			| Parallel(tasks=tasks, matrix=matrix)
+			| Pipe(tasks=tasks, matrix=matrix)
+		):
 			here = tuple(name for name, values in (matrix or {}).items() if not values)
 			nested = tuple(a for child in tasks for a in unfilled_required_axes(child))
 			return tuple(dict.fromkeys((*here, *nested)))
@@ -449,10 +466,12 @@ def expand_sequential_matrix(
 	container_env: dict[str, str],
 	container_cwd: Path | None,
 	help: str | None,
+	constructor: Callable[..., TaskNode] = Sequential,
 ) -> Parallel:
-	"""Expand a Sequential's matrix into a Parallel of cloned Sequentials.
+	"""Expand an ordered group's matrix into a Parallel of cloned groups of ``constructor``'s
+	kind — a :class:`Sequential` by default, a :class:`Pipe` for a piped matrix.
 
-	Each per-binding Sequential carries the binding-scope env (container env with
+	Each per-binding clone carries the binding-scope env (container env with
 	matrix values substituted, plus the binding itself) so the display can show
 	it once at the group header instead of on every leaf.
 
@@ -467,8 +486,10 @@ def expand_sequential_matrix(
 	"""
 	return Parallel(
 		*(
-			Sequential(
-				*(specialize_node(child, binding, binding_suffix(binding)) for child in children),
+			constructor(
+				*tuple(
+					specialize_node(child, binding, binding_suffix(binding)) for child in children
+				),
 				name=(f"{name} {binding_suffix(binding)}" if name is not None else None),
 				env={k: substitute_in_str(v, binding) for k, v in container_env.items()}
 				| dict(binding),
@@ -610,6 +631,27 @@ def expand_matrix(
 				return rebuilt(task, *par_expanded)
 			return expand_parallel_matrix(
 				par_expanded, node_bindings(matrix, variants), task.name, env, cwd, task.help
+			)
+		case Pipe(
+			tasks=tasks, matrix=matrix, variants=variants, env=env, cwd=cwd, paths=paths, when=when
+		):
+			pipe_env: Final = parent_env | env
+			pipe_cwd: Final = cwd if cwd is not None else ancestor_cwd
+			pipe_paths: Final = paths if paths is not None else ancestor_paths
+			pipe_when: Final = when if when is not None else ancestor_when
+			pipe_expanded: Final = tuple(
+				expand_matrix(t, pipe_env, pipe_cwd, pipe_paths, pipe_when) for t in tasks
+			)
+			if matrix is None and variants is None:
+				return rebuilt(task, *pipe_expanded)
+			return expand_sequential_matrix(
+				pipe_expanded,
+				node_bindings(matrix, variants),
+				task.name,
+				env,
+				cwd,
+				task.help,
+				functools.partial(Pipe, agent_only=task.agent_only),
 			)
 		case _:
 			assert_never(task)

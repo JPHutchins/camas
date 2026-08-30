@@ -17,7 +17,17 @@ else:  # pragma: no cover
 	from typing_extensions import assert_never
 
 from ..core.task import did_you_mean
-from ..v0.task import AgentFormat, Group, OutputKind, Parallel, Sequential, Task, TaskNode, rebuilt
+from ..v0.task import (
+	AgentFormat,
+	Group,
+	OutputKind,
+	Parallel,
+	Pipe,
+	Sequential,
+	Task,
+	TaskNode,
+	rebuilt,
+)
 
 if TYPE_CHECKING:
 	from collections.abc import Mapping
@@ -40,11 +50,12 @@ CONSTRUCTORS: Final = {
 	Task.__name__: Task,
 	Sequential.__name__: Sequential,
 	Parallel.__name__: Parallel,
+	Pipe.__name__: Pipe,
 }
 
 CONFIG_CONSTRUCTORS: Final = CONSTRUCTORS | {Ref.__name__: Ref}
 
-EXPRESSION_PATTERN: Final = re.compile(r"^\s*(?:(?:Task|Sequential|Parallel|Ref)\s*\(|[(\{])")
+EXPRESSION_PATTERN: Final = re.compile(r"^\s*(?:(?:Task|Sequential|Parallel|Pipe|Ref)\s*\(|[(\{])")
 
 
 def format_syntax_error(source: str, err: SyntaxError) -> str:
@@ -396,7 +407,7 @@ def parse_expression(expr: str, tasks: Mapping[str, TaskNode] | None = None) -> 
 
 	if tasks is None:
 		match result:
-			case Task() | Sequential() | Parallel():
+			case Task() | Sequential() | Parallel() | Pipe():
 				return result
 			case _:
 				print(

@@ -387,9 +387,9 @@ class Task:
 
 @dataclass(frozen=True, slots=True, init=False, repr=False)
 class Group:
-	"""Shared base for ``Sequential`` and ``Parallel``: variadic ``*tasks`` (with
+	"""Shared base for ``Sequential``, ``Parallel``, and ``Pipe``: variadic ``*tasks`` (with
 	``str`` → ``Task`` coercion), identical kwargs, hashable. Use
-	``isinstance(x, Group)`` to test for "either kind of grouping node";
+	``isinstance(x, Group)`` to test for "some kind of grouping node";
 	pattern-match on the concrete subclass to discriminate.
 
 	``paths`` is the default path-scope for descendant ``{paths}`` leaves that set none
@@ -556,7 +556,92 @@ class Parallel(Group):  # pyrefly: ignore[bad-class-definition]
 		return _sequential_of(self, other)
 
 
-TaskNode: TypeAlias = Task | Sequential | Parallel
+@dataclass(frozen=True, slots=True, init=False, repr=False)
+class Pipe(Group):
+	"""A group of leaf stages piped fd-to-fd, each stage its own argv vector — no shell.
+
+	Every stage runs concurrently and to completion (a dying stage feeds EOF downstream);
+	the pipeline fails ``pipefail``-style: any stage's non-zero exit fails the run, so a
+	producer failing under a succeeding last stage is still a failure. Stages must be
+	leaves — a nested group would mean several commands sharing one stream.
+
+	``agent_only=True`` runs the full pipeline on an agent run and collapses to the first
+	stage alone on a human run — the plain human-readable output for a human, the piped
+	structured output for the agent, selected by the same runner identity that appends
+	``agent_format`` args (:func:`camas.core.gate.strip_agent_only_pipes`).
+
+	>>> Pipe("cargo clippy --message-format=json", "clippy-sarif").agent_only
+	False
+	>>> Pipe("a", "b", agent_only=True).tasks[0].cmd
+	'a'
+	>>> Pipe("a", "b")
+	Pipe(tasks=(Task(cmd='a', name=None, env={}, cwd=None), Task(cmd='b', name=None, env={}, cwd=None)), name=None, matrix=None, env={}, cwd=None)
+	>>> Pipe("a", Sequential("b"))
+	Traceback (most recent call last):
+	    ...
+	ValueError: Pipe stages must be Tasks — a nested group would mean several commands sharing one stream
+	"""
+
+	agent_only: bool
+
+	def __init__(
+		self,
+		*tasks: TaskNode | str,
+		agent_only: bool = False,
+		name: str | None = None,
+		matrix: dict[str, tuple[str, ...]] | None = None,
+		variants: tuple[dict[str, str], ...] | None = None,
+		env: dict[str, str] | None = None,
+		cwd: str | Path | None = None,
+		help: str | None = None,
+		paths: str | PathScope | None = None,
+		when: str | Path | tuple[str | Path, ...] | WhenPredicate | None = None,
+	) -> None:
+		# Explicit base call — zero-arg super() breaks under mypyc's compiled subclasses.
+		Group.__init__(
+			self,
+			*tasks,
+			name=name,
+			matrix=matrix,
+			variants=variants,
+			env=env,
+			cwd=cwd,
+			help=help,
+			paths=paths,
+			when=when,
+		)
+		object.__setattr__(self, "agent_only", agent_only)
+		if any(not isinstance(t, Task) for t in self.tasks):
+			raise ValueError(
+				"Pipe stages must be Tasks — a nested group would mean several commands "
+				"sharing one stream"
+			)
+
+	def __repr__(self) -> str:
+		parts = (
+			f"tasks={self.tasks!r}",
+			f"name={self.name!r}",
+			f"matrix={self.matrix!r}",
+			*([f"variants={self.variants!r}"] if self.variants is not None else []),
+			f"env={self.env!r}",
+			f"cwd={self.cwd!r}",
+			*([f"help={self.help!r}"] if self.help is not None else []),
+			*([f"paths={self.paths!r}"] if self.paths is not None else []),
+			*([f"when={self.when!r}"] if self.when is not None else []),
+			*(["agent_only=True"] if self.agent_only else []),
+		)
+		return f"Pipe({', '.join(parts)})"
+
+	def __or__(self, other: TaskNode | str) -> Parallel:
+		"""``|`` composes in parallel: a :class:`Parallel` of this whole pipe and ``other``."""
+		return _parallel_of(self, other)
+
+	def __add__(self, other: TaskNode | str) -> Sequential:
+		"""``+`` builds a :class:`Sequential` that runs this whole pipe first, then ``other``."""
+		return _sequential_of(self, other)
+
+
+TaskNode: TypeAlias = Task | Sequential | Parallel | Pipe
 
 
 GROUP_FIELDS: Final = ("name", "matrix", "variants", "env", "cwd", "help", "paths", "when")

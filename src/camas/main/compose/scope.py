@@ -18,7 +18,7 @@ else:  # pragma: no cover
 	from typing_extensions import assert_never
 
 from ...v0.config import Claude, Config
-from ...v0.task import Group, Parallel, ProjectRef, Sequential, Task, rebuilt
+from ...v0.task import Group, Parallel, Pipe, ProjectRef, Sequential, Task, rebuilt
 from ..effects import running_under_agent
 from ..state import LoadErr, LoadOk
 from ..tasks import (
@@ -222,7 +222,7 @@ def _compose_scope(
 		if isinstance(value, Config):
 			resolved_scope[name] = resolve_config(value)
 		elif name.startswith("_") or not isinstance(
-			value, (Task, Sequential, Parallel, ProjectRef)
+			value, (Task, Sequential, Parallel, Pipe, ProjectRef)
 		):
 			resolved_scope[name] = value
 		elif isinstance(value, ProjectRef):

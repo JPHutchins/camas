@@ -14,7 +14,7 @@ from contextlib import nullcontext, suppress
 from dataclasses import dataclass
 from datetime import datetime
 from subprocess import DEVNULL, STDOUT
-from typing import TYPE_CHECKING, Any, Final, NamedTuple, Protocol, TypeAlias
+from typing import TYPE_CHECKING, Any, Final, NamedTuple, Protocol, TypeAlias, cast
 
 if sys.version_info >= (3, 11):
 	from asyncio import TaskGroup
@@ -35,7 +35,7 @@ from ..v0.completion import (
 	Stopped,
 )
 from ..v0.leaf_state import Completed, Interrupting, LeafState, Running, Waiting
-from ..v0.task import Parallel, Sequential, Task, TaskNode
+from ..v0.task import Parallel, Pipe, Sequential, Task, TaskNode
 from ..v0.task_event import CompletedEvent, OutputEvent, StartedEvent, TaskEvent
 from .completion import RunResult, TaskResult
 from .leaf_state import KILL_PRESSES, next_state, to_interrupting
@@ -497,6 +497,141 @@ async def run_cmd(task: Task, leaf_index: int, ctx: RunContext) -> TaskResult:
 				ctx.interrupts.procs.pop(leaf_index, None)
 
 
+async def run_pipe(stages: tuple[TaskNode, ...], ctx: RunContext) -> tuple[TaskResult, ...]:
+	"""Run a Pipe's stages concurrently, each stage's stdout wired into the next's stdin — the
+	last stage's stdout is the pipeline's output. Every stage runs to completion (a dying stage
+	feeds EOF downstream), and each stage's own exit is its leaf's result, so ``pipefail`` holds:
+	any non-zero stage fails the run. Stages deliberately bypass the leaf limiter — a pipeline is
+	one unit whose stages must all be live at once, or a full pipe deadlocks its writer.
+
+	Raises:
+		asyncio.CancelledError: when the run is cancelled — re-raised after every child is
+			killed and awaited, so no transport outlives the loop.
+	"""
+	leaves: Final = cast("tuple[Task, ...]", stages)
+	procs: Final[dict[int, asyncio.subprocess.Process]] = {}
+	started_pc: Final[dict[int, float]] = {}
+	outputs: Final[dict[int, list[bytes]]] = {ctx.index_map[id(s)]: [] for s in stages}
+	spawn_failure: tuple[int, str, int, str] | None = None
+	prev_read: int | None = ctx.child_stdin
+	for stage in leaves:
+		leaf_index = ctx.index_map[id(stage)]
+		started_pc[leaf_index] = time.perf_counter()
+		await ctx.dispatch(leaf_index, StartedEvent(stage, leaf_index, datetime.now()))
+		if spawn_failure is not None:
+			continue
+		argv = resolve_cmd(stage.cmd)
+		cwd = spawn_cwd(ctx.base, stage.cwd)
+		inherited = (
+			drop_case_variants(dict(stage.env), dict(os.environ))
+			if sys.platform == "win32"
+			else dict(os.environ)
+		)
+		is_last = stage is leaves[-1]
+		read_fd: int | None = None
+		stdout: int
+		if is_last:
+			stdout = asyncio.subprocess.PIPE
+		else:
+			read_fd, stdout = os.pipe()
+		try:
+			proc = await asyncio.create_subprocess_exec(
+				*argv,
+				stdin=prev_read,
+				stdout=stdout,
+				stderr=asyncio.subprocess.PIPE,
+				env=subprocess_env({**inherited, **stage.env}, color=ctx.leaf_color),
+				cwd=cwd,
+			)
+		except OSError as exc:
+			if read_fd is not None:
+				os.close(read_fd)
+			if not is_last:
+				os.close(stdout)
+			spawn_failure = (
+				NOT_FOUND_RC,
+				spawn_error_message(exc, argv, cwd),
+				leaf_index,
+				task_label(ctx.leaves[leaf_index]),
+			)
+			continue
+		if not is_last:
+			os.close(stdout)
+		if prev_read is not None:
+			os.close(prev_read)
+		prev_read = read_fd
+		procs[leaf_index] = proc
+		ctx.interrupts.register(ctx.states, leaf_index, proc)
+
+	if spawn_failure is not None:
+		rc, message, failed_index, failed_name = spawn_failure
+		for proc in procs.values():
+			with suppress(ProcessLookupError, OSError):
+				proc.kill()
+		for proc in procs.values():
+			with suppress(ProcessLookupError, OSError):
+				await proc.wait()
+		results: list[TaskResult] = []
+		for stage in leaves:
+			leaf_index = ctx.index_map[id(stage)]
+			failed_completion = (
+				Errored(rc, message) if leaf_index == failed_index else Skipped(rc, failed_name)
+			)
+			await ctx.dispatch(
+				leaf_index,
+				CompletedEvent(stage, leaf_index, failed_completion, datetime.now()),
+			)
+			results.append(leaf_result(ctx, leaf_index, failed_completion))
+		for leaf_index in procs:
+			ctx.interrupts.procs.pop(leaf_index, None)
+		return tuple(results)
+
+	async def read_into(leaf_index: int, stream: asyncio.StreamReader) -> None:
+		async for line in stream:
+			outputs[leaf_index].append(line)
+			await ctx.dispatch(
+				leaf_index, OutputEvent(ctx.leaves[leaf_index], leaf_index, line, datetime.now())
+			)
+
+	readers: Final[list[asyncio.Task[None]]] = [
+		asyncio.create_task(read_into(leaf_index, proc.stderr))
+		for leaf_index, proc in procs.items()
+		if proc.stderr is not None
+	]
+	last_proc: Final = procs[ctx.index_map[id(leaves[-1])]]
+	if last_proc.stdout is not None:  # pragma: no branch
+		last_index: Final = ctx.index_map[id(leaves[-1])]
+		readers.append(asyncio.create_task(read_into(last_index, last_proc.stdout)))
+	try:
+		await asyncio.gather(*readers, *(proc.wait() for proc in procs.values()))
+	except asyncio.CancelledError:
+		for proc in procs.values():
+			with suppress(ProcessLookupError, OSError):
+				proc.kill()
+		for proc in procs.values():
+			with suppress(ProcessLookupError, OSError):
+				await proc.wait()
+		raise
+	results = []
+	for stage in leaves:
+		leaf_index = ctx.index_map[id(stage)]
+		proc = procs[leaf_index]
+		elapsed = time.perf_counter() - started_pc[leaf_index]
+		rc = proc.returncode or 0
+		completion = (
+			Stopped(rc, elapsed, tuple(outputs[leaf_index]))
+			if isinstance(ctx.states[leaf_index], Interrupting)
+			else Finished(rc, elapsed, tuple(outputs[leaf_index]))
+		)
+		await ctx.dispatch(
+			leaf_index, CompletedEvent(stage, leaf_index, completion, datetime.now())
+		)
+		results.append(leaf_result(ctx, leaf_index, completion))
+	for leaf_index in procs:
+		ctx.interrupts.procs.pop(leaf_index, None)
+	return tuple(results)
+
+
 async def skip_subtree(child: TaskNode, skip: Skipped, ctx: RunContext) -> tuple[TaskResult, ...]:
 	"""Dispatch a Skipped completion for every leaf in a subtree, in DFS order."""
 	results: tuple[TaskResult, ...] = ()
@@ -515,6 +650,8 @@ async def execute(node: TaskNode, ctx: RunContext) -> tuple[TaskResult, ...]:
 			async with TaskGroup() as tg:
 				futures: Final = tuple(tg.create_task(execute(child, ctx)) for child in children)
 			return tuple(r for f in futures for r in f.result())
+		case Pipe(tasks=children):
+			return await run_pipe(children, ctx)
 		case Sequential(tasks=children):
 			seq_results: tuple[TaskResult, ...] = ()
 			blocker: TaskResult | None = None

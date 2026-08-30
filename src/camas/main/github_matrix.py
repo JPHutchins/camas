@@ -80,7 +80,7 @@ from ..core.matrix import (
 )
 from ..core.task import node_label, task_label
 from ..core.traversal import flatten_leaves
-from ..v0.task import Parallel, Sequential, Task
+from ..v0.task import Parallel, Pipe, Sequential, Task
 from .format import format_empty_variants_error
 
 if TYPE_CHECKING:
@@ -210,6 +210,7 @@ def declared_cells(task: TaskNode) -> Fanout:
 		case (
 			Sequential(tasks=children, matrix=matrix, variants=variants)
 			| Parallel(tasks=children, matrix=matrix, variants=variants)
+			| Pipe(tasks=children, matrix=matrix, variants=variants)
 		):
 			inner: Final = functools.reduce(
 				merge_fanouts, map(declared_cells, children), Fanout((), ())
@@ -439,7 +440,7 @@ def jobs_emission(task: TaskNode, tasks: Mapping[str, TaskNode]) -> Jobs:
 				"task has no matrix axes to emit as a GitHub Actions job matrix, and it is a "
 				"single leaf — there are no children to fan out as one job each"
 			)
-		case Sequential():
+		case Sequential() | Pipe():
 			raise ValueError(
 				"a Sequential's children run in order, but GitHub Actions matrix jobs run in "
 				"parallel — express the ordering with needs: in the workflow, and emit the "

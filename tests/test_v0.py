@@ -22,6 +22,7 @@ from camas.v0.task import (
 	GROUP_FIELDS,
 	Group,
 	Parallel,
+	Pipe,
 	Project,
 	Sequential,
 	Task,
@@ -40,6 +41,7 @@ HEADLINE: Final = frozenset(
 		"Effect",
 		"GIT_PORCELAIN",
 		"Parallel",
+		"Pipe",
 		"Project",
 		"Sequential",
 		"Task",
@@ -64,6 +66,7 @@ PUBLIC_API: Final = (
 	Waiting,
 	Group,
 	Parallel,
+	Pipe,
 	Sequential,
 	Task,
 	TaskNode,
@@ -111,6 +114,10 @@ def test_group_fields_track_every_group_constructor_kwarg() -> None:
 		assert keywords == GROUP_FIELDS, cls
 		positional = tuple((p.name, p.kind) for p in params if p.kind is not p.KEYWORD_ONLY)
 		assert positional == (("tasks", inspect.Parameter.VAR_POSITIONAL),), cls
+	# Pipe adds one keyword of its own ahead of the shared fields.
+	pipe_params = tuple(inspect.signature(Pipe).parameters.values())
+	pipe_keywords = tuple(p.name for p in pipe_params if p.kind is p.KEYWORD_ONLY)
+	assert pipe_keywords == ("agent_only", *GROUP_FIELDS)
 
 
 def test_a_fresh_plain_left_operand_adopts_the_right_fields() -> None:

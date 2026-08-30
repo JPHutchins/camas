@@ -12,6 +12,7 @@ from .task import GIT_PORCELAIN as GIT_PORCELAIN
 from .task import AgentFormat as AgentFormat
 from .task import Clean as Clean
 from .task import Parallel as Parallel
+from .task import Pipe as Pipe
 from .task import Project as Project
 from .task import Sequential as Sequential
 from .task import Task as Task

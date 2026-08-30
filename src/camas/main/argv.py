@@ -17,7 +17,7 @@ else:  # pragma: no cover
 	from typing_extensions import assert_never
 
 from ..core.matrix import resolve_cmd
-from ..v0.task import Parallel, Sequential, Task, TaskNode
+from ..v0.task import Parallel, Pipe, Sequential, Task, TaskNode
 
 if TYPE_CHECKING:
 	from collections.abc import Sequence
@@ -90,7 +90,7 @@ def apply_passthrough(task: TaskNode, args: tuple[str, ...]) -> Task:
 				when=when,
 				agent_format=agent_format,
 			)
-		case Sequential() | Parallel():
+		case Sequential() | Parallel() | Pipe():
 			raise ValueError(
 				f"pass-through args (--) only apply to Task, got {type(task).__name__}"
 			)

@@ -18,7 +18,7 @@ else:  # pragma: no cover
 
 from ..v0.config import Agent, Claude, Config
 from ..v0.effect import Effect
-from ..v0.task import Group, Parallel, Sequential, Task, TaskNode, rebuilt
+from ..v0.task import Group, Parallel, Pipe, Sequential, Task, TaskNode, rebuilt
 from .expression import Ref, parse_task_value, resolve_refs
 from .state import LoadOk
 
@@ -92,7 +92,7 @@ def redundant_name_warnings(scope: Mapping[str, object]) -> tuple[str, ...]:
 		"name is already the task name, so drop the redundant name="
 		for name, val in scope.items()
 		if not name.startswith("_")
-		and isinstance(val, Task | Sequential | Parallel)
+		and isinstance(val, Task | Sequential | Parallel | Pipe)
 		and val.name == name
 	)
 
@@ -126,7 +126,7 @@ def anonymous_config_field_warnings(scope: Mapping[str, object]) -> tuple[str, .
 	bound_ids = {
 		id(val)
 		for name, val in scope.items()
-		if not name.startswith("_") and isinstance(val, Task | Sequential | Parallel)
+		if not name.startswith("_") and isinstance(val, Task | Sequential | Parallel | Pipe)
 	}
 	agent = config.agent
 	base_fields: tuple[tuple[str, TaskNode | None], ...] = (
@@ -207,7 +207,7 @@ def name_scope_bindings(scope: Mapping[str, object]) -> dict[str, TaskNode]:
 	bindings: Final = {
 		name: val
 		for name, val in scope.items()
-		if not name.startswith("_") and isinstance(val, Task | Sequential | Parallel)
+		if not name.startswith("_") and isinstance(val, Task | Sequential | Parallel | Pipe)
 	}
 	named_by_id: Final = {id(val): assign_key_name(val, name) for name, val in bindings.items()}
 
@@ -260,7 +260,7 @@ def name_scope_config(scope: Mapping[str, object]) -> Config | None:
 	name_by_id: Final = {
 		id(val): name
 		for name, val in scope.items()
-		if not name.startswith("_") and isinstance(val, Task | Sequential | Parallel)
+		if not name.startswith("_") and isinstance(val, Task | Sequential | Parallel | Pipe)
 	}
 
 	def promote_required(node: TaskNode) -> TaskNode:
