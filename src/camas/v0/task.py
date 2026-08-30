@@ -734,7 +734,7 @@ def Clean(  # noqa: N802  # constructor-style factory, like Task/Parallel
 
 	Raises:
 		ValueError: ``mutator`` or ``check`` is neither a ``str`` nor a ``Task``; ``mutator``
-			lacks ``mutates=True``.
+			lacks ``mutates=True``; ``check`` carries a ``{paths}`` token.
 
 	>>> Clean(Task("make update-openapi", mutates=True), before=False).tasks[0].cmd
 	'make update-openapi'
@@ -747,6 +747,12 @@ def Clean(  # noqa: N802  # constructor-style factory, like Task/Parallel
 		"catch its writes",
 	)
 	check = _as_task(check, "Clean's check must be a Task whose exit 0 means the tree is clean")
+	check_cmd: Final = check.cmd if isinstance(check.cmd, str) else " ".join(check.cmd)
+	if "{paths}" in check_cmd:
+		raise ValueError(
+			"Clean's check must not carry {paths} — a scoped run would narrow the check "
+			"while the mutator still writes"
+		)
 	if not mutator.mutates:
 		raise ValueError(
 			"Clean's mutator must be marked mutates=True — the drift gate exists to catch "

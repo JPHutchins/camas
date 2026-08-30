@@ -71,7 +71,9 @@ def test_clean_check_scoping_is_overridden_not_applied() -> None:
 	"""The derived check leaves always run: the check's own scoping is replaced by
 	``when="."`` and ``paths=None``, so a scoped run cannot prune them while the mutator
 	still writes."""
-	check = Task("python -c pass {paths}", when="src", cwd="sub", paths="src")
+	with pytest.raises(ValueError, match=r"\{paths\}"):
+		Clean(Task("make gen", mutates=True), check=Task("python -c pass {paths}", paths="src"))
+	check = Task("python -c pass", when="src", cwd="sub", paths="src")
 	node = Clean(Task("make gen", mutates=True), check=check)
 	for leaf in (node.tasks[0], node.tasks[2]):
 		assert isinstance(leaf, Task)
