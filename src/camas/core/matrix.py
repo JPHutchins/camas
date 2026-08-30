@@ -602,20 +602,46 @@ def expand_matrix(
 				when=leaf_when if leaf_when is not None else _when_from_cwd(leaf_cwd),
 				agent_format=task.agent_format,
 			)
-		case Sequential(
-			tasks=tasks, matrix=matrix, variants=variants, env=env, cwd=cwd, paths=paths, when=when
+		case (
+			Sequential(
+				tasks=tasks,
+				matrix=matrix,
+				variants=variants,
+				env=env,
+				cwd=cwd,
+				paths=paths,
+				when=when,
+			)
+			| Pipe(
+				tasks=tasks,
+				matrix=matrix,
+				variants=variants,
+				env=env,
+				cwd=cwd,
+				paths=paths,
+				when=when,
+			)
 		):
-			seq_env: Final = parent_env | env
-			seq_cwd: Final = cwd if cwd is not None else ancestor_cwd
-			seq_paths: Final = paths if paths is not None else ancestor_paths
-			seq_when: Final = when if when is not None else ancestor_when
-			seq_expanded: Final = tuple(
-				expand_matrix(t, seq_env, seq_cwd, seq_paths, seq_when) for t in tasks
+			ordered_env: Final = parent_env | env
+			ordered_cwd: Final = cwd if cwd is not None else ancestor_cwd
+			ordered_paths: Final = paths if paths is not None else ancestor_paths
+			ordered_when: Final = when if when is not None else ancestor_when
+			ordered_expanded: Final = tuple(
+				expand_matrix(t, ordered_env, ordered_cwd, ordered_paths, ordered_when)
+				for t in tasks
 			)
 			if matrix is None and variants is None:
-				return rebuilt(task, *seq_expanded)
+				return rebuilt(task, *ordered_expanded)
 			return expand_sequential_matrix(
-				seq_expanded, node_bindings(matrix, variants), task.name, env, cwd, task.help
+				ordered_expanded,
+				node_bindings(matrix, variants),
+				task.name,
+				env,
+				cwd,
+				task.help,
+				functools.partial(Pipe, agent_only=task.agent_only)
+				if isinstance(task, Pipe)
+				else Sequential,
 			)
 		case Parallel(
 			tasks=tasks, matrix=matrix, variants=variants, env=env, cwd=cwd, paths=paths, when=when
@@ -631,27 +657,6 @@ def expand_matrix(
 				return rebuilt(task, *par_expanded)
 			return expand_parallel_matrix(
 				par_expanded, node_bindings(matrix, variants), task.name, env, cwd, task.help
-			)
-		case Pipe(
-			tasks=tasks, matrix=matrix, variants=variants, env=env, cwd=cwd, paths=paths, when=when
-		):
-			pipe_env: Final = parent_env | env
-			pipe_cwd: Final = cwd if cwd is not None else ancestor_cwd
-			pipe_paths: Final = paths if paths is not None else ancestor_paths
-			pipe_when: Final = when if when is not None else ancestor_when
-			pipe_expanded: Final = tuple(
-				expand_matrix(t, pipe_env, pipe_cwd, pipe_paths, pipe_when) for t in tasks
-			)
-			if matrix is None and variants is None:
-				return rebuilt(task, *pipe_expanded)
-			return expand_sequential_matrix(
-				pipe_expanded,
-				node_bindings(matrix, variants),
-				task.name,
-				env,
-				cwd,
-				task.help,
-				functools.partial(Pipe, agent_only=task.agent_only),
 			)
 		case _:
 			assert_never(task)

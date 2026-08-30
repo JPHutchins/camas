@@ -131,7 +131,7 @@ def _plan_under(
 			disposition: Final = classify(node, budget_s, timings, scope)
 			kept: Final = not isinstance(disposition, OverBudget)
 			return _Planned(None if not kept else node, (disposition,), kept and node.mutates)
-		case Sequential(tasks=children) | Pipe(tasks=children):
+		case Sequential(tasks=children):
 			planned = tuple(_plan_under(child, budget_s, timings, scope) for child in children)
 			kept_children = tuple(
 				child_node for child_node, _, _ in planned if child_node is not None
@@ -140,6 +140,19 @@ def _plan_under(
 				None if not kept_children else _collapse(rebuilt(node, *kept_children)),
 				_collect(planned),
 				any(child.has_mutating for child in planned),
+			)
+		case Pipe(tasks=children):
+			planned = tuple(_plan_under(child, budget_s, timings, scope) for child in children)
+			pipe_kept = tuple(child.node for child in planned if child.node is not None)
+			# Cutting a stage would rewire the pipeline (the survivor before the cut would feed
+			# the one after it), so any dropped stage drops the whole pipe.
+			pipe_runnable = (
+				None if len(pipe_kept) != len(children) else _collapse(rebuilt(node, *pipe_kept))
+			)
+			return _Planned(
+				pipe_runnable,
+				_collect(planned),
+				pipe_runnable is not None and any(child.has_mutating for child in planned),
 			)
 		case Parallel(tasks=children):
 			planned = tuple(_plan_under(child, budget_s, timings, scope) for child in children)

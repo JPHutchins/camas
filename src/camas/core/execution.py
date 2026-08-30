@@ -502,11 +502,10 @@ async def run_pipe(stages: tuple[TaskNode, ...], ctx: RunContext) -> tuple[TaskR
 	last stage's stdout is the pipeline's output. Every stage runs to completion (a dying stage
 	feeds EOF downstream), and each stage's own exit is its leaf's result, so ``pipefail`` holds:
 	any non-zero stage fails the run. Stages deliberately bypass the leaf limiter — a pipeline is
-	one unit whose stages must all be live at once, or a full pipe deadlocks its writer.
-
-	Raises:
-		asyncio.CancelledError: when the run is cancelled — re-raised after every child is
-			killed and awaited, so no transport outlives the loop.
+	one unit whose stages must all be live at once, or a full pipe deadlocks its writer. The
+	``os.pipe()`` fd wiring is exercised on Windows by the wheels suite's run of the pipe tests.
+	Whatever fails — a cancel, a spawn error, a reader overflow — every child is killed and
+	awaited before the exception is re-raised, so no transport outlives the loop.
 	"""
 	leaves: Final = cast("tuple[Task, ...]", stages)
 	procs: Final[dict[int, asyncio.subprocess.Process]] = {}
@@ -514,63 +513,76 @@ async def run_pipe(stages: tuple[TaskNode, ...], ctx: RunContext) -> tuple[TaskR
 	outputs: Final[dict[int, list[bytes]]] = {ctx.index_map[id(s)]: [] for s in stages}
 	spawn_failure: tuple[int, str, int, str] | None = None
 	prev_read: int | None = ctx.child_stdin
-	for stage in leaves:
-		leaf_index = ctx.index_map[id(stage)]
-		started_pc[leaf_index] = time.perf_counter()
-		await ctx.dispatch(leaf_index, StartedEvent(stage, leaf_index, datetime.now()))
-		if spawn_failure is not None:
-			continue
-		argv = resolve_cmd(stage.cmd)
-		cwd = spawn_cwd(ctx.base, stage.cwd)
-		inherited = (
-			drop_case_variants(dict(stage.env), dict(os.environ))
-			if sys.platform == "win32"
-			else dict(os.environ)
-		)
-		is_last = stage is leaves[-1]
-		read_fd: int | None = None
-		stdout: int
-		if is_last:
-			stdout = asyncio.subprocess.PIPE
-		else:
-			read_fd, stdout = os.pipe()
-		try:
-			proc = await asyncio.create_subprocess_exec(
-				*argv,
-				stdin=prev_read,
-				stdout=stdout,
-				stderr=asyncio.subprocess.PIPE,
-				env=subprocess_env({**inherited, **stage.env}, color=ctx.leaf_color),
-				cwd=cwd,
-			)
-		except OSError as exc:
-			if read_fd is not None:
-				os.close(read_fd)
-			if not is_last:
-				os.close(stdout)
-			spawn_failure = (
-				NOT_FOUND_RC,
-				spawn_error_message(exc, argv, cwd),
-				leaf_index,
-				task_label(ctx.leaves[leaf_index]),
-			)
-			continue
-		if not is_last:
-			os.close(stdout)
-		if prev_read is not None:
-			os.close(prev_read)
-		prev_read = read_fd
-		procs[leaf_index] = proc
-		ctx.interrupts.register(ctx.states, leaf_index, proc)
 
-	if spawn_failure is not None:
-		rc, message, failed_index, failed_name = spawn_failure
+	async def kill_all() -> None:
+		"""Kill and reap every spawned stage, and drop their interrupt registrations."""
 		for proc in procs.values():
 			with suppress(ProcessLookupError, OSError):
 				proc.kill()
 		for proc in procs.values():
 			with suppress(ProcessLookupError, OSError):
 				await proc.wait()
+		for leaf_index in procs:
+			ctx.interrupts.procs.pop(leaf_index, None)
+
+	try:
+		for stage in leaves:
+			leaf_index = ctx.index_map[id(stage)]
+			started_pc[leaf_index] = time.perf_counter()
+			await ctx.dispatch(leaf_index, StartedEvent(stage, leaf_index, datetime.now()))
+			if spawn_failure is not None:
+				continue
+			argv = resolve_cmd(stage.cmd)
+			cwd = spawn_cwd(ctx.base, stage.cwd)
+			inherited = (
+				drop_case_variants(dict(stage.env), dict(os.environ))
+				if sys.platform == "win32"
+				else dict(os.environ)
+			)
+			is_last = stage is leaves[-1]
+			read_fd: int | None = None
+			stdout: int
+			if is_last:
+				stdout = asyncio.subprocess.PIPE
+			else:
+				read_fd, stdout = os.pipe()
+			try:
+				proc = await asyncio.create_subprocess_exec(
+					*argv,
+					stdin=prev_read,
+					stdout=stdout,
+					stderr=asyncio.subprocess.PIPE,
+					env=subprocess_env({**inherited, **stage.env}, color=ctx.leaf_color),
+					cwd=cwd,
+				)
+			except OSError as exc:
+				if read_fd is not None:
+					os.close(read_fd)
+				if not is_last:
+					os.close(stdout)
+				if prev_read is not None and prev_read != ctx.child_stdin:
+					os.close(prev_read)
+				spawn_failure = (
+					NOT_FOUND_RC,
+					spawn_error_message(exc, argv, cwd),
+					leaf_index,
+					task_label(ctx.leaves[leaf_index]),
+				)
+				continue
+			if not is_last:
+				os.close(stdout)
+			if prev_read is not None and prev_read != ctx.child_stdin:
+				os.close(prev_read)
+			prev_read = read_fd
+			procs[leaf_index] = proc
+			ctx.interrupts.register(ctx.states, leaf_index, proc)
+	except BaseException:
+		await kill_all()
+		raise
+
+	if spawn_failure is not None:
+		rc, message, failed_index, failed_name = spawn_failure
+		await kill_all()
 		results: list[TaskResult] = []
 		for stage in leaves:
 			leaf_index = ctx.index_map[id(stage)]
@@ -582,8 +594,6 @@ async def run_pipe(stages: tuple[TaskNode, ...], ctx: RunContext) -> tuple[TaskR
 				CompletedEvent(stage, leaf_index, failed_completion, datetime.now()),
 			)
 			results.append(leaf_result(ctx, leaf_index, failed_completion))
-		for leaf_index in procs:
-			ctx.interrupts.procs.pop(leaf_index, None)
 		return tuple(results)
 
 	async def read_into(leaf_index: int, stream: asyncio.StreamReader) -> None:
@@ -604,13 +614,8 @@ async def run_pipe(stages: tuple[TaskNode, ...], ctx: RunContext) -> tuple[TaskR
 		readers.append(asyncio.create_task(read_into(last_index, last_proc.stdout)))
 	try:
 		await asyncio.gather(*readers, *(proc.wait() for proc in procs.values()))
-	except asyncio.CancelledError:
-		for proc in procs.values():
-			with suppress(ProcessLookupError, OSError):
-				proc.kill()
-		for proc in procs.values():
-			with suppress(ProcessLookupError, OSError):
-				await proc.wait()
+	except BaseException:
+		await kill_all()
 		raise
 	results = []
 	for stage in leaves:

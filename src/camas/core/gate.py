@@ -175,19 +175,20 @@ def with_agent_format(node: TaskNode, report_dir: Path) -> FormattedNode:
 
 
 def strip_agent_only_pipes(node: TaskNode) -> TaskNode:
-	"""The human-run shape of ``node``: an ``agent_only`` Pipe collapses to its first stage, so
-	a human gets the stage's plain output while an agent keeps the full pipeline — the same
-	runner split as ``agent_format``'s args, which the gate appends on the agent path. Consults
-	no runner identity; the caller decides which path it is on.
+	"""The human-run shape of ``node``: an ``agent_only`` Pipe collapses to a single-stage Pipe
+	holding its first stage — the group's fields ride along, since env/cwd/matrix/paths/when
+	still apply to the human's run of that stage — while an agent keeps the full pipeline, the
+	same runner split as ``agent_format``'s args, which the gate appends on the agent path.
+	Consults no runner identity; the caller decides which path it is on.
 
-	>>> strip_agent_only_pipes(Pipe("cargo clippy", "clippy-sarif", agent_only=True)).cmd
+	>>> strip_agent_only_pipes(Pipe("cargo clippy", "clippy-sarif", agent_only=True)).tasks[0].cmd
 	'cargo clippy'
 	>>> strip_agent_only_pipes(Pipe("a", "b")).tasks[0].cmd
 	'a'
 	"""
 	match node:
 		case Pipe(tasks=stages, agent_only=True):
-			return strip_agent_only_pipes(stages[0])
+			return strip_agent_only_pipes(rebuilt(node, stages[0], agent_only=False))
 		case Group() as group:
 			return rebuilt(group, *(strip_agent_only_pipes(c) for c in group.tasks))
 		case Task():

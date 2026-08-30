@@ -188,14 +188,17 @@ def iter_rows(
 	match node:
 		case Task():
 			yield LeafInfo(node, depth, is_last_chain)
-		case Sequential(tasks=children, name=name):
-			seq_label = (
-				f"{name}{SEQ_SUFFIX}" if name is not None else group_display_name(children, " → ")
+		case Sequential(tasks=children, name=name) | Pipe(tasks=children, name=name):
+			is_pipe = isinstance(node, Pipe)
+			suffix = PIPE_SUFFIX if is_pipe else SEQ_SUFFIX
+			separator = " | " if is_pipe else " → "
+			label = (
+				f"{name}{suffix}" if name is not None else group_display_name(children, separator)
 			)
-			yield GroupHeader(seq_label, depth, is_last_chain)
-			seq_last = len(children) - 1
+			yield GroupHeader(label, depth, is_last_chain)
+			last = len(children) - 1
 			for i, child in enumerate(children):
-				link = ChainLink(is_last=i == seq_last, parent_is_parallel=False)
+				link = ChainLink(is_last=i == last, parent_is_parallel=False)
 				yield from iter_rows(child, depth + 1, (*is_last_chain, link))
 		case Parallel(tasks=children, name=name):
 			par_label = (
@@ -205,15 +208,6 @@ def iter_rows(
 			par_last = len(children) - 1
 			for i, child in enumerate(children):
 				link = ChainLink(is_last=i == par_last, parent_is_parallel=True)
-				yield from iter_rows(child, depth + 1, (*is_last_chain, link))
-		case Pipe(tasks=children, name=name):
-			pipe_label = (
-				f"{name}{PIPE_SUFFIX}" if name is not None else group_display_name(children, " | ")
-			)
-			yield GroupHeader(pipe_label, depth, is_last_chain)
-			pipe_last = len(children) - 1
-			for i, child in enumerate(children):
-				link = ChainLink(is_last=i == pipe_last, parent_is_parallel=False)
 				yield from iter_rows(child, depth + 1, (*is_last_chain, link))
 		case _:
 			assert_never(node)
@@ -247,11 +241,17 @@ def walk_with_context(
 				env_diff(env, ancestor_env),
 				cwd if cwd != ancestor_cwd else None,
 			)
-		case Sequential(tasks=children, name=name, env=env, cwd=cwd):
+		case (
+			Sequential(tasks=children, name=name, env=env, cwd=cwd)
+			| Pipe(tasks=children, name=name, env=env, cwd=cwd)
+		):
 			here_env = env_diff(env, ancestor_env)
 			here_cwd = cwd if cwd is not None and cwd != ancestor_cwd else None
+			is_pipe = isinstance(node, Pipe)
+			suffix = PIPE_SUFFIX if is_pipe else SEQ_SUFFIX
+			separator = " | " if is_pipe else " → "
 			label = (
-				f"{name}{SEQ_SUFFIX}" if name is not None else group_display_name(children, " → ")
+				f"{name}{suffix}" if name is not None else group_display_name(children, separator)
 			)
 			yield GroupHeader(label, depth, is_last_chain), here_env, here_cwd
 			last_i = len(children) - 1
@@ -274,21 +274,6 @@ def walk_with_context(
 			new_cwd = cwd if cwd is not None else ancestor_cwd
 			for i, child in enumerate(children):
 				link = ChainLink(is_last=i == last_i, parent_is_parallel=True)
-				yield from walk_with_context(
-					child, depth + 1, (*is_last_chain, link), new_env, new_cwd
-				)
-		case Pipe(tasks=children, name=name, env=env, cwd=cwd):
-			here_env = env_diff(env, ancestor_env)
-			here_cwd = cwd if cwd is not None and cwd != ancestor_cwd else None
-			label = (
-				f"{name}{PIPE_SUFFIX}" if name is not None else group_display_name(children, " | ")
-			)
-			yield GroupHeader(label, depth, is_last_chain), here_env, here_cwd
-			last_i = len(children) - 1
-			new_env = {**ancestor_env, **env}
-			new_cwd = cwd if cwd is not None else ancestor_cwd
-			for i, child in enumerate(children):
-				link = ChainLink(is_last=i == last_i, parent_is_parallel=False)
 				yield from walk_with_context(
 					child, depth + 1, (*is_last_chain, link), new_env, new_cwd
 				)

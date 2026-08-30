@@ -20,7 +20,12 @@ from camas.v0.completion import Finished
 from camas.v0.task import AgentFormat
 
 if TYPE_CHECKING:
+	from collections.abc import Sequence
 	from pathlib import Path
+
+	from camas.v0.leaf_state import LeafState
+	from camas.v0.task import TaskNode
+	from camas.v0.task_event import TaskEvent
 
 ECHO_UPPER: tuple[str, ...] = (
 	"python",
@@ -47,12 +52,30 @@ def test_pipe_operators_compose_as_an_opaque_group() -> None:
 
 
 def test_strip_agent_only_pipes_collapses_to_the_first_stage() -> None:
+	"""The collapse keeps the group's fields on a single-stage Pipe, so env/cwd/matrix still
+	reach the human's run of that stage."""
 	node = Sequential(
-		Pipe("cargo clippy", "clippy-sarif", agent_only=True),
+		Pipe("cargo clippy", "clippy-sarif", agent_only=True, env={"A": "1"}),
 		Pipe("fmt", "tee"),
 	)
-	assert strip_agent_only_pipes(node) == Sequential(Task("cargo clippy"), Pipe("fmt", "tee"))
+	assert strip_agent_only_pipes(node) == Sequential(
+		Pipe(Task("cargo clippy"), env={"A": "1"}),
+		Pipe("fmt", "tee"),
+	)
 	assert strip_agent_only_pipes(Pipe("a", "b")) == Pipe("a", "b")
+
+
+def test_apply_overrides_keeps_agent_only() -> None:
+	from camas.core.matrix import apply_overrides
+
+	pipe = Pipe("a {X}", "b {X}", matrix={"X": ("1",)}, agent_only=True)
+	overridden = apply_overrides(pipe, {"X": ("1",)})
+	assert isinstance(overridden, Pipe)
+	assert overridden.agent_only is True
+
+
+def test_pipe_hash_handles_group_fields() -> None:
+	hash(Pipe("a", "b", env={"K": "v"}, matrix={"X": ("1",)}))
 
 
 def test_pipe_wires_stdout_into_the_next_stage() -> None:
@@ -67,6 +90,17 @@ def test_pipe_wires_stdout_into_the_next_stage() -> None:
 	assert first.output == ()
 	assert isinstance(last, Finished)
 	assert last.output == (b"HELLO",)
+
+
+def test_pipe_runs_with_a_denied_stdin() -> None:
+	"""The gate path denies the parent's stdin — the first stage reads DEVNULL, and the shared
+	handle must survive the pipe's fd cleanup."""
+	pipe = Pipe(
+		Task(("python", "-c", "import sys; sys.stdout.write('x')")),
+		Task(ECHO_UPPER),
+	)
+	result = asyncio.run(run(pipe, jobs=1, interactive=False))
+	assert result.returncode == 0
 
 
 def test_pipe_last_stage_stdout_is_the_pipeline_output() -> None:
@@ -139,7 +173,9 @@ def test_plan_under_preserves_pipe_stage_order() -> None:
 	assert plan.untimed == ()
 
 
-def test_plan_under_drops_an_over_budget_pipe_stage_in_place() -> None:
+def test_plan_under_drops_the_whole_pipe_when_a_stage_is_over_budget() -> None:
+	"""A cut stage would rewire the pipeline — the survivor before the cut feeding the one
+	after it — so any dropped stage drops the whole pipe."""
 	gen = Task("cargo clippy", name="gen")
 	sarif = Task("clippy-sarif", name="sarif")
 	pipe = Pipe(gen, sarif)
@@ -148,7 +184,7 @@ def test_plan_under_drops_an_over_budget_pipe_stage_in_place() -> None:
 		CacheKey("sarif", 0): TaskTiming(9.0, 5),
 	}
 	plan = plan_under(pipe, 1.0, timings)
-	assert plan.node == Pipe(gen)
+	assert plan.node is None
 	assert plan.fits == (Fits(gen, 0.1),)
 	assert plan.over_budget == (plan.over_budget[0],)
 
@@ -169,6 +205,33 @@ def test_pipe_cancel_kills_every_stage() -> None:
 
 	async def scenario() -> None:
 		main_task = asyncio.ensure_future(run(pipe))
+		await asyncio.sleep(0.2)
+		main_task.cancel()
+		with pytest.raises(asyncio.CancelledError):
+			await main_task
+
+	asyncio.run(scenario())
+
+
+def test_pipe_cancel_during_spawn_kills_registered_stages() -> None:
+	"""A cancel landing inside the spawn loop still kills and reaps the spawned stages."""
+	pipe = Pipe(
+		Task(("python", "-c", "import time; time.sleep(60)")),
+		Task(("python", "-c", "pass")),
+	)
+
+	class SlowStart:
+		async def setup(self, task: TaskNode) -> None:
+			return None
+
+		async def on_event(self, event: TaskEvent, states: Sequence[LeafState], ctx: None) -> None:
+			await asyncio.sleep(60)
+
+		async def teardown(self, ctxs: tuple[None, ...]) -> None:
+			pass
+
+	async def scenario() -> None:
+		main_task = asyncio.ensure_future(run(pipe, effects=(SlowStart(),)))
 		await asyncio.sleep(0.2)
 		main_task.cancel()
 		with pytest.raises(asyncio.CancelledError):

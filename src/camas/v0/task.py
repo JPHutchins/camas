@@ -476,18 +476,7 @@ class Group:
 		)
 
 	def __repr__(self) -> str:
-		parts = (
-			f"tasks={self.tasks!r}",
-			f"name={self.name!r}",
-			f"matrix={self.matrix!r}",
-			*([f"variants={self.variants!r}"] if self.variants is not None else []),
-			f"env={self.env!r}",
-			f"cwd={self.cwd!r}",
-			*([f"help={self.help!r}"] if self.help is not None else []),
-			*([f"paths={self.paths!r}"] if self.paths is not None else []),
-			*([f"when={self.when!r}"] if self.when is not None else []),
-		)
-		return f"{type(self).__name__}({', '.join(parts)})"
+		return f"{type(self).__name__}({', '.join(_group_repr_parts(self))})"
 
 
 class Sequential(Group):  # pyrefly: ignore[bad-class-definition]
@@ -574,6 +563,10 @@ class Pipe(Group):
 	False
 	>>> Pipe("a", "b", agent_only=True).tasks[0].cmd
 	'a'
+	>>> Pipe()
+	Traceback (most recent call last):
+	    ...
+	ValueError: Pipe needs at least one stage
 	>>> Pipe("a", "b")
 	Pipe(tasks=(Task(cmd='a', name=None, env={}, cwd=None), Task(cmd='b', name=None, env={}, cwd=None)), name=None, matrix=None, env={}, cwd=None)
 	>>> Pipe("a", Sequential("b"))
@@ -611,23 +604,20 @@ class Pipe(Group):
 			when=when,
 		)
 		object.__setattr__(self, "agent_only", agent_only)
+		if not self.tasks:
+			raise ValueError("Pipe needs at least one stage")
 		if any(not isinstance(t, Task) for t in self.tasks):
 			raise ValueError(
 				"Pipe stages must be Tasks — a nested group would mean several commands "
 				"sharing one stream"
 			)
 
+	def __hash__(self) -> int:
+		return Group.__hash__(self)
+
 	def __repr__(self) -> str:
 		parts = (
-			f"tasks={self.tasks!r}",
-			f"name={self.name!r}",
-			f"matrix={self.matrix!r}",
-			*([f"variants={self.variants!r}"] if self.variants is not None else []),
-			f"env={self.env!r}",
-			f"cwd={self.cwd!r}",
-			*([f"help={self.help!r}"] if self.help is not None else []),
-			*([f"paths={self.paths!r}"] if self.paths is not None else []),
-			*([f"when={self.when!r}"] if self.when is not None else []),
+			*_group_repr_parts(self),
 			*(["agent_only=True"] if self.agent_only else []),
 		)
 		return f"Pipe({', '.join(parts)})"
@@ -642,6 +632,21 @@ class Pipe(Group):
 
 
 TaskNode: TypeAlias = Task | Sequential | Parallel | Pipe
+
+
+def _group_repr_parts(group: Group) -> tuple[str, ...]:
+	"""The repr parts shared by every Group kind, so a field added later renders for all."""
+	return (
+		f"tasks={group.tasks!r}",
+		f"name={group.name!r}",
+		f"matrix={group.matrix!r}",
+		*([f"variants={group.variants!r}"] if group.variants is not None else []),
+		f"env={group.env!r}",
+		f"cwd={group.cwd!r}",
+		*([f"help={group.help!r}"] if group.help is not None else []),
+		*([f"paths={group.paths!r}"] if group.paths is not None else []),
+		*([f"when={group.when!r}"] if group.when is not None else []),
+	)
 
 
 GROUP_FIELDS: Final = ("name", "matrix", "variants", "env", "cwd", "help", "paths", "when")
@@ -668,16 +673,14 @@ def rebuilt(group: G, *children: TaskNode, **changes: object) -> G:
 	Raises:
 		TypeError: a ``changes`` name outside :data:`GROUP_FIELDS`.
 	"""
-	unknown = [name for name in changes if name not in GROUP_FIELDS]
+	allowed = (*GROUP_FIELDS, *(("agent_only",) if isinstance(group, Pipe) else ()))
+	unknown = [name for name in changes if name not in allowed]
 	if unknown:
 		raise TypeError(f"rebuilt() got an unexpected keyword argument {unknown[0]!r}")
-	return type(group)(
-		*children,
-		**cast(
-			"dict[str, Any]",
-			{field: changes.get(field, getattr(group, field)) for field in GROUP_FIELDS},
-		),
-	)
+	kwargs = {field: changes.get(field, getattr(group, field)) for field in GROUP_FIELDS}
+	if isinstance(group, Pipe):
+		kwargs["agent_only"] = changes.get("agent_only", group.agent_only)
+	return type(group)(*children, **cast("dict[str, Any]", kwargs))
 
 
 @dataclass(frozen=True, slots=True)

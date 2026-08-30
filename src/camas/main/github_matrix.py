@@ -442,8 +442,8 @@ def jobs_emission(task: TaskNode, tasks: Mapping[str, TaskNode]) -> Jobs:
 			)
 		case Sequential() | Pipe():
 			raise ValueError(
-				"a Sequential's children run in order, but GitHub Actions matrix jobs run in "
-				"parallel — express the ordering with needs: in the workflow, and emit the "
+				"a Sequential/Pipe's children run in order, but GitHub Actions matrix jobs run "
+				"in parallel — express the ordering with needs: in the workflow, and emit the "
 				"parallel step of the pipeline"
 			)
 		case Parallel(tasks=children) as group:
