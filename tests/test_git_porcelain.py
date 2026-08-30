@@ -6,7 +6,9 @@ git."""
 
 from __future__ import annotations
 
+import io
 import runpy
+import sys
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
@@ -139,6 +141,8 @@ def test_main_scrubs_git_environment_case_insensitively_on_windows(
 	seen_env: dict[str, str] = {}
 	monkeypatch.setattr("camas._git_porcelain.subprocess.run", _recording_run(seen_env))
 	monkeypatch.setattr("camas._git_porcelain.env_case_insensitive", lambda: True)
+	monkeypatch.delenv("keep_me", raising=False)
+	monkeypatch.delenv("KEEP_ME", raising=False)
 	monkeypatch.setenv("git_dir", "/elsewhere")
 	monkeypatch.setenv("keep_me", "yes")
 	assert main() == 0
@@ -160,12 +164,45 @@ def test_main_runs_git_with_lenient_utf8_decode(monkeypatch: pytest.MonkeyPatch)
 	assert seen_kwargs["encoding"] == "utf-8"
 
 
+@pytest.mark.skipif(
+	sys.platform == "win32",
+	reason="the signal form renders off Windows; the Windows crash-code form has its own pin",
+)
 def test_main_reports_a_signal_death_when_git_dies_without_output(
 	monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
 	monkeypatch.setattr("camas._git_porcelain.subprocess.run", _fake_git(_git_result(-9)))
 	assert main() == 1
 	assert capsys.readouterr().err == "git status killed by signal 9\n"
+
+
+def test_main_reports_a_windows_crash_code_as_an_exit(
+	monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	monkeypatch.setattr("camas._git_porcelain._PLATFORM", "win32")
+	monkeypatch.setattr("camas._git_porcelain.subprocess.run", _fake_git(_git_result(-1073741510)))
+	assert main() == 1
+	assert capsys.readouterr().err == "git status exited with code -1073741510\n"
+
+
+def test_main_falls_back_when_stderr_is_whitespace_only(
+	monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	monkeypatch.setattr(
+		"camas._git_porcelain.subprocess.run", _fake_git(_git_result(1, stderr=" \n"))
+	)
+	assert main() == 1
+	assert capsys.readouterr().err == "git status exited with code 1\n"
+
+
+def test_main_newline_terminates_a_trailing_failure(
+	monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	monkeypatch.setattr(
+		"camas._git_porcelain.subprocess.run", _fake_git(_git_result(1, stderr="fatal: bad"))
+	)
+	assert main() == 1
+	assert capsys.readouterr().err == "fatal: bad\n"
 
 
 def test_main_forwards_warnings_from_a_clean_run(
@@ -191,11 +228,27 @@ def test_main_newline_terminates_a_trailing_warning(
 
 
 def test_main_survives_an_undecodable_dirty_tree(monkeypatch: pytest.MonkeyPatch) -> None:
-	"""A replacement character in the status output must not crash the write side."""
+	"""The status bytes reach stdout as UTF-8 — the renderer's codec — so a replacement
+	character survives a strict-ASCII stdout instead of raising."""
+	sink = io.TextIOWrapper(io.BytesIO(), encoding="ascii", errors="strict")
+	monkeypatch.setattr("sys.stdout", sink)
 	monkeypatch.setattr(
 		"camas._git_porcelain.subprocess.run",
 		_fake_git(_git_result(0, stdout=" M �.txt\n")),
 	)
+	assert main() == 1
+	assert sink.buffer.getvalue() == " M �.txt\n".encode()
+
+
+def test_main_writes_a_dirty_tree_without_a_buffer(
+	monkeypatch: pytest.MonkeyPatch,
+) -> None:
+	"""An embedding may redirect stdout to a text-only stream; the write falls back to it."""
+	monkeypatch.setattr(
+		"camas._git_porcelain.subprocess.run",
+		_fake_git(_git_result(0, stdout=" M tracked.txt\n")),
+	)
+	monkeypatch.setattr("sys.stdout", io.StringIO())
 	assert main() == 1
 
 

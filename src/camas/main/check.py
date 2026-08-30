@@ -417,8 +417,8 @@ def mypypath(inherited: str, camas_root: Path) -> str:
 
 
 def inherited_mypypath() -> str:
-	"""The environment's existing MYPYPATH value — found case-insensitively on Windows, where the
-	env block does not distinguish ``Mypypath`` from ``MYPYPATH``.
+	"""The environment's existing MYPYPATH value — found case-insensitively where the checker's
+	env block is case-insensitive (Windows, MSYS/Cygwin).
 	"""
 	from ..core.execution import env_case_insensitive
 

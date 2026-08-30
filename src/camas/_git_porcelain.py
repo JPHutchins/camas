@@ -12,6 +12,8 @@ from typing import Final
 
 from .core.execution import env_case_insensitive
 
+_PLATFORM: Final = sys.platform
+
 
 def _git_env_var(key: str) -> bool:
 	"""Whether ``key`` names a GIT_* variable under this platform's env case rules."""
@@ -21,6 +23,17 @@ def _git_env_var(key: str) -> bool:
 def _write_line(text: str) -> None:
 	"""``text`` to stderr, newline-terminated."""
 	sys.stderr.write(text if text.endswith("\n") else text + "\n")
+
+
+def _write_stdout(text: str) -> None:
+	"""``text`` to stdout as UTF-8 bytes, the codec the renderer decodes leaf output with, via
+	``stdout.buffer`` or the text stream when it has none.
+	"""
+	buffer = getattr(sys.stdout, "buffer", None)
+	if buffer is None:
+		sys.stdout.write(text)
+	else:
+		buffer.write(text.encode("utf-8", "replace"))
 
 
 def main() -> int:
@@ -45,16 +58,14 @@ def main() -> int:
 			code: Final = run.returncode
 			_write_line(
 				f"git status killed by signal {-code}"
-				if code < 0
+				if code < 0 and _PLATFORM != "win32"
 				else f"git status exited with code {code}"
 			)
 		return 1
-	if run.stderr:
+	if run.stderr.strip():
 		_write_line(run.stderr)
 	if run.stdout.strip():
-		sys.stdout.buffer.write(
-			run.stdout.encode(sys.stdout.encoding or "utf-8", "backslashreplace")
-		)
+		_write_stdout(run.stdout)
 		return 1
 	return 0
 

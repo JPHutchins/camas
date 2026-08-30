@@ -322,8 +322,8 @@ def env_case_insensitive() -> bool:
 
 def drop_case_variants(overlay: dict[str, str], inherited: dict[str, str]) -> dict[str, str]:
 	"""``inherited`` minus entries whose names collide case-insensitively with an ``overlay`` key —
-	Windows env blocks are case-insensitive, so a differently-cased pre-existing entry would shadow
-	the overlay in the child.
+	on a case-insensitive env block, a differently-cased pre-existing entry would shadow the
+	overlay in the child.
 
 	>>> drop_case_variants({"MYPYPATH": "new"}, {"Mypypath": "old", "OTHER": "kept"})
 	{'OTHER': 'kept'}
@@ -451,7 +451,7 @@ async def run_cmd(task: Task, leaf_index: int, ctx: RunContext) -> TaskResult:
 		cwd: Final = spawn_cwd(ctx.base, task.cwd)
 		inherited: Final = (
 			drop_case_variants(dict(task.env), dict(os.environ))
-			if env_case_insensitive()
+			if sys.platform == "win32"
 			else dict(os.environ)
 		)
 		proc: asyncio.subprocess.Process | None = None
