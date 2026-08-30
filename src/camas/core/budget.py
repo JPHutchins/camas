@@ -12,17 +12,16 @@ if sys.version_info >= (3, 11):
 else:  # pragma: no cover
 	from typing_extensions import assert_never
 
-from typing import TYPE_CHECKING, Final, NamedTuple, TypeAlias
+from typing import TYPE_CHECKING, Any, Final, NamedTuple, TypeAlias, overload
 
-from ..v0.task import Parallel, Sequential, Task, rebuilt
+from ..v0.task import GROUP_FIELDS, Parallel, Sequential, Task, rebuilt
 from .matrix import expand_matrix
 from .timings import estimate
-from .traversal import flatten_leaves
 
 if TYPE_CHECKING:
 	from collections.abc import Mapping
 
-	from ..v0.task import TaskNode
+	from ..v0.task import Group, TaskNode
 	from .timings import CacheKey, TaskTiming
 
 
@@ -87,88 +86,116 @@ def classify(
 	return OverBudget(task, est.elapsed_s)
 
 
+class _Planned(NamedTuple):
+	"""A subtree's planning result: the kept node, its dispositions in DFS order, and whether
+	any kept leaf mutates.
+	"""
+
+	node: TaskNode | None
+	dispositions: tuple[Disposition, ...]
+	has_mutating: bool
+
+
 def plan_under(
 	node: TaskNode, budget_s: float, timings: Mapping[CacheKey, TaskTiming], scope: int = 0
 ) -> BudgetPlan:
 	"""Partition ``node``'s expanded leaves by ``budget_s``, preserving the tree's structure:
-	a ``Sequential``'s ordering survives, and the mutating-first reordering applies only
-	across a ``Parallel``'s siblings (#306). Only leaves measured to exceed the budget are
-	excluded; untimed leaves are run (and thereby measured), since a budget that skipped
-	them would keep them forever unmeasured. ``scope`` selects which observations count as
+	a ``Sequential``'s ordering survives, and across a ``Parallel``'s siblings the mutating
+	subtrees are serialized ahead of the pure read-only ones, which keep their concurrency
+	(#306). A mutating subtree is kept whole, so a nested mixed shape loses cross-subtree
+	parallelism rather than ordering. A repeated leaf keeps every occurrence, and each
+	counts against the budget. Only leaves measured to exceed the budget are excluded;
+	untimed leaves are run (and thereby measured), since a budget that skipped them would
+	keep them forever unmeasured. ``scope`` selects which observations count as
 	measurements of this run — see :func:`camas.core.timings.estimate`.
 	"""
-	runnable, dispositions = _plan_under(expand_matrix(node), budget_s, timings, scope)
-	fits = tuple(d for d in dispositions if isinstance(d, Fits))
-	over_budget = tuple(d for d in dispositions if isinstance(d, OverBudget))
-	untimed = tuple(d for d in dispositions if isinstance(d, Untimed))
-	return BudgetPlan(budget_s, runnable, fits, over_budget, untimed)
+	planned = _plan_under(expand_matrix(node), budget_s, timings, scope)
+	fits = tuple(d for d in planned.dispositions if isinstance(d, Fits))
+	over_budget = tuple(d for d in planned.dispositions if isinstance(d, OverBudget))
+	untimed = tuple(d for d in planned.dispositions if isinstance(d, Untimed))
+	return BudgetPlan(budget_s, planned.node, fits, over_budget, untimed)
 
 
 def _plan_under(
 	node: TaskNode, budget_s: float, timings: Mapping[CacheKey, TaskTiming], scope: int
-) -> tuple[TaskNode | None, tuple[Disposition, ...]]:
-	"""Recurse the tree: classify leaves, keep ``Sequential`` order, split a ``Parallel``'s
-	children mutating-first — the shape :func:`schedule` flattens to, but without discarding
-	the structure the ordering lives in.
+) -> _Planned:
+	"""The recursive pass: classify leaves, keep ``Sequential`` order, and reorder ``Parallel``
+	siblings mutating-first.
 	"""
 	match node:
 		case Task():
 			disposition: Final = classify(node, budget_s, timings, scope)
-			return (None if isinstance(disposition, OverBudget) else node), (disposition,)
+			kept: Final = not isinstance(disposition, OverBudget)
+			return _Planned(None if not kept else node, (disposition,), kept and node.mutates)
 		case Sequential(tasks=children):
 			planned = tuple(_plan_under(child, budget_s, timings, scope) for child in children)
-			kept = tuple(child_node for child_node, _ in planned if child_node is not None)
-			return (None if not kept else rebuilt(node, *kept)), _collect(planned)
+			kept_children = tuple(
+				child_node for child_node, _, _ in planned if child_node is not None
+			)
+			return _Planned(
+				None if not kept_children else _collapse(rebuilt(node, *kept_children)),
+				_collect(planned),
+				any(child.has_mutating for child in planned),
+			)
 		case Parallel(tasks=children):
 			planned = tuple(_plan_under(child, budget_s, timings, scope) for child in children)
-			kept = tuple(child_node for child_node, _ in planned if child_node is not None)
-			mutating = tuple(child for child in kept if _has_mutating(child))
-			readonly = tuple(child for child in kept if not _has_mutating(child))
-			return (
-				None
-				if not kept
-				else (
-					rebuilt(node, *(mutating + readonly))
-					if not mutating or not readonly
-					else Sequential(
-						*mutating, Parallel(*readonly), name=node.name, env=node.env, cwd=node.cwd
-					)
-				),
-				_collect(planned),
+			mutating = tuple(
+				child_node
+				for child_node, _, has_mutating in planned
+				if child_node is not None and has_mutating
+			)
+			readonly = tuple(
+				child_node
+				for child_node, _, has_mutating in planned
+				if child_node is not None and not has_mutating
+			)
+			runnable: TaskNode | None
+			if not mutating and not readonly:
+				runnable = None
+			elif not readonly:
+				runnable = _collapse(Sequential(*mutating, **_fields_of(node)))
+			elif not mutating:
+				runnable = _collapse(rebuilt(node, *readonly))
+			else:
+				runnable = Sequential(
+					*mutating,
+					Parallel(*readonly, name=node.name, env=node.env, cwd=node.cwd),
+					**_fields_of(node),
+				)
+			return _Planned(
+				runnable, _collect(planned), any(child.has_mutating for child in planned)
 			)
 		case _:
 			assert_never(node)
 
 
-def _collect(
-	planned: tuple[tuple[TaskNode | None, tuple[Disposition, ...]], ...],
-) -> tuple[Disposition, ...]:
+def _collect(planned: tuple[_Planned, ...]) -> tuple[Disposition, ...]:
 	"""The planned children's dispositions, in DFS order."""
-	return tuple(disposition for _, dispositions in planned for disposition in dispositions)
+	return tuple(disposition for child in planned for disposition in child.dispositions)
 
 
-def _has_mutating(node: TaskNode) -> bool:
-	"""Whether any leaf in the subtree writes the workspace."""
-	return any(info.task.mutates for info in flatten_leaves(node))
-
-
-def schedule(fitting: tuple[Task, ...]) -> TaskNode | None:
-	"""Mutating leaves run before the read-only group, so a formatter never races a
-	checker over the same files.
-
-	>>> schedule(()) is None
-	True
-	>>> schedule((Task("ruff check ."),))
-	Parallel(tasks=(Task(cmd='ruff check .', name=None, env={}, cwd=None),), name=None, matrix=None, env={}, cwd=None)
-	>>> schedule((Task("ruff format .", mutates=True),))
-	Sequential(tasks=(Task(cmd='ruff format .', name=None, env={}, cwd=None, mutates=True),), name=None, matrix=None, env={}, cwd=None)
+def _fields_of(node: Group) -> dict[str, Any]:
+	""":func:`rebuilt`'s GROUP_FIELDS carry, for a manufactured wrapper of a different kind
+	than ``node``.
 	"""
-	mutating = tuple(t for t in fitting if t.mutates)
-	readonly = tuple(t for t in fitting if not t.mutates)
-	if not mutating and not readonly:
-		return None
-	if not mutating:
-		return Parallel(*readonly)
-	if not readonly:
-		return Sequential(*mutating)
-	return Sequential(*mutating, Parallel(*readonly))
+	return {field: getattr(node, field) for field in GROUP_FIELDS}
+
+
+@overload
+def _collapse(node: Sequential) -> Sequential: ...
+@overload
+def _collapse(node: Parallel) -> Parallel: ...
+def _collapse(node: Group) -> Group:
+	"""A single-child wrapper whose child is the same kind is dropped, matching the ``|``/``+``
+	flattening.
+	"""
+	children: Final = node.tasks
+	if len(children) != 1:
+		return node
+	match node:
+		case Sequential() if isinstance(children[0], Sequential):
+			return children[0]
+		case Parallel() if isinstance(children[0], Parallel):
+			return children[0]
+		case _:
+			return node
