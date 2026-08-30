@@ -7,13 +7,13 @@ git."""
 from __future__ import annotations
 
 import runpy
-import sys
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import pytest
 
 from camas._git_porcelain import main
+from camas.core.execution import env_case_insensitive
 
 if TYPE_CHECKING:
 	from collections.abc import Callable
@@ -32,12 +32,28 @@ def _fake_git(result: SimpleNamespace) -> Callable[..., SimpleNamespace]:
 	return run
 
 
-def _recording_run(seen_env: dict[str, str]) -> Callable[..., SimpleNamespace]:
-	"""A ``subprocess.run`` stand-in recording the ``env`` it is passed."""
+def _recording_run(
+	seen_env: dict[str, str] | None = None,
+	seen_kwargs: dict[str, object] | None = None,
+	result: SimpleNamespace | None = None,
+) -> Callable[..., SimpleNamespace]:
+	"""A ``subprocess.run`` stand-in recording the ``env`` and/or kwargs it is passed."""
 
-	def run(*args: object, env: dict[str, str], **kwargs: object) -> SimpleNamespace:
-		seen_env.update(env)
-		return _git_result(0)
+	def run(*args: object, env: dict[str, str] | None = None, **kwargs: object) -> SimpleNamespace:
+		if seen_env is not None:
+			seen_env.update(env or {})
+		if seen_kwargs is not None:
+			seen_kwargs.update(kwargs)
+		return _git_result(0) if result is None else result
+
+	return run
+
+
+def _failing_run(exc: OSError) -> Callable[..., SimpleNamespace]:
+	"""A ``subprocess.run`` stand-in raising ``exc``."""
+
+	def run(*args: object, **kwargs: object) -> SimpleNamespace:
+		raise exc
 
 	return run
 
@@ -72,10 +88,9 @@ def test_main_fails_and_forwards_stderr_when_git_errors(
 def test_main_fails_with_a_hint_when_git_is_absent(
 	monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-	def raises(*args: object, **kwargs: object) -> SimpleNamespace:
-		raise FileNotFoundError("git")
-
-	monkeypatch.setattr("camas._git_porcelain.subprocess.run", raises)
+	monkeypatch.setattr(
+		"camas._git_porcelain.subprocess.run", _failing_run(FileNotFoundError("git"))
+	)
 	assert main() == 1
 	assert "git is required on PATH" in capsys.readouterr().err
 
@@ -96,11 +111,10 @@ def test_main_scrubs_ambient_git_environment(
 
 
 @pytest.mark.skipif(
-	sys.platform == "win32",
+	env_case_insensitive(),
 	reason=(
-		"Python 3.12+ uppercases os.environ keys on Windows; on 3.10/3.11 the lowercase key "
-		"survives and the case-insensitive scrub removes it — either way the exact-case "
-		"assertion cannot run there"
+		"on a case-insensitive env platform the lowercase key is scrubbed (Windows 3.10/3.11 "
+		"preserve the case; 3.12+ upper-cases it), so the exact-case assertion cannot run there"
 	),
 )
 def test_main_scrubs_git_environment_exact_case_on_posix(
@@ -120,11 +134,11 @@ def test_main_scrubs_git_environment_exact_case_on_posix(
 def test_main_scrubs_git_environment_case_insensitively_on_windows(
 	monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-	"""The case-insensitive branch is dead on POSIX CI: patch the platform gate and pin it
-	directly, so a revert to the exact match fails here."""
+	"""The case-insensitive branch is dead on POSIX CI: patch the platform predicate seam and
+	pin it directly, so a revert to the exact match fails here."""
 	seen_env: dict[str, str] = {}
 	monkeypatch.setattr("camas._git_porcelain.subprocess.run", _recording_run(seen_env))
-	monkeypatch.setattr("camas._git_porcelain.sys.platform", "win32")
+	monkeypatch.setattr("camas._git_porcelain.env_case_insensitive", lambda: True)
 	monkeypatch.setenv("git_dir", "/elsewhere")
 	monkeypatch.setenv("keep_me", "yes")
 	assert main() == 0
@@ -133,26 +147,25 @@ def test_main_scrubs_git_environment_case_insensitively_on_windows(
 	assert lower_keys["keep_me"] == "yes"
 
 
-def test_main_runs_git_with_lenient_decode(monkeypatch: pytest.MonkeyPatch) -> None:
-	"""The exit-code logic never reads the decoded bytes, so errors="replace" must not be
-	trimmed back out."""
+def test_main_runs_git_with_lenient_utf8_decode(monkeypatch: pytest.MonkeyPatch) -> None:
+	"""The exit-code logic never reads the decoded bytes, so the lenient UTF-8 decode must not
+	be trimmed back out."""
 	seen_kwargs: dict[str, object] = {}
-
-	def capture(*args: object, **kwargs: object) -> SimpleNamespace:
-		seen_kwargs.update(kwargs)
-		return _git_result(1, stderr="fatal: bad byte\n")
-
-	monkeypatch.setattr("camas._git_porcelain.subprocess.run", capture)
+	monkeypatch.setattr(
+		"camas._git_porcelain.subprocess.run",
+		_recording_run(seen_kwargs=seen_kwargs, result=_git_result(1, stderr="fatal: bad byte\n")),
+	)
 	assert main() == 1
 	assert seen_kwargs["errors"] == "replace"
+	assert seen_kwargs["encoding"] == "utf-8"
 
 
-def test_main_reports_the_code_when_git_dies_without_output(
+def test_main_reports_a_signal_death_when_git_dies_without_output(
 	monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-	monkeypatch.setattr("camas._git_porcelain.subprocess.run", _fake_git(_git_result(143)))
+	monkeypatch.setattr("camas._git_porcelain.subprocess.run", _fake_git(_git_result(-9)))
 	assert main() == 1
-	assert capsys.readouterr().err == "git status exited with code 143\n"
+	assert capsys.readouterr().err == "git status killed by signal 9\n"
 
 
 def test_main_forwards_warnings_from_a_clean_run(
@@ -166,17 +179,39 @@ def test_main_forwards_warnings_from_a_clean_run(
 	assert capsys.readouterr().err == "warning: something\n"
 
 
+def test_main_newline_terminates_a_trailing_warning(
+	monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	monkeypatch.setattr(
+		"camas._git_porcelain.subprocess.run",
+		_fake_git(_git_result(0, stderr="warning: something")),
+	)
+	assert main() == 0
+	assert capsys.readouterr().err == "warning: something\n"
+
+
+def test_main_survives_an_undecodable_dirty_tree(monkeypatch: pytest.MonkeyPatch) -> None:
+	"""A replacement character in the status output must not crash the write side."""
+	monkeypatch.setattr(
+		"camas._git_porcelain.subprocess.run",
+		_fake_git(_git_result(0, stdout=" M �.txt\n")),
+	)
+	assert main() == 1
+
+
 def test_main_fails_with_a_hint_when_git_cannot_execute(
 	monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-	"""A git shim that fails to exec (WinError 193) is still a git that cannot run."""
-
-	def raises(*args: object, **kwargs: object) -> SimpleNamespace:
-		raise OSError("not a valid Win32 application")
-
-	monkeypatch.setattr("camas._git_porcelain.subprocess.run", raises)
+	"""A git shim that fails to exec (WinError 193) is still a git that cannot run — and the
+	hint carries the exception itself."""
+	monkeypatch.setattr(
+		"camas._git_porcelain.subprocess.run",
+		_failing_run(OSError("not a valid Win32 application")),
+	)
 	assert main() == 1
-	assert "git is required on PATH" in capsys.readouterr().err
+	err = capsys.readouterr().err
+	assert "git is required on PATH" in err
+	assert "not a valid Win32 application" in err
 
 
 def test_module_main_exits_with_mains_code(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -315,6 +315,11 @@ def subprocess_env(merged: dict[str, str], *, color: bool = True) -> dict[str, s
 	return FORCED_COLOR | base
 
 
+def env_case_insensitive() -> bool:
+	"""Whether the platform's environment block is case-insensitive (Windows, MSYS/Cygwin)."""
+	return sys.platform in ("win32", "msys", "cygwin")
+
+
 def drop_case_variants(overlay: dict[str, str], inherited: dict[str, str]) -> dict[str, str]:
 	"""``inherited`` minus entries whose names collide case-insensitively with an ``overlay`` key —
 	Windows env blocks are case-insensitive, so a differently-cased pre-existing entry would shadow
@@ -446,7 +451,7 @@ async def run_cmd(task: Task, leaf_index: int, ctx: RunContext) -> TaskResult:
 		cwd: Final = spawn_cwd(ctx.base, task.cwd)
 		inherited: Final = (
 			drop_case_variants(dict(task.env), dict(os.environ))
-			if sys.platform == "win32"
+			if env_case_insensitive()
 			else dict(os.environ)
 		)
 		proc: asyncio.subprocess.Process | None = None

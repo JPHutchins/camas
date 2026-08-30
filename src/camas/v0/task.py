@@ -730,8 +730,8 @@ def Clean(  # noqa: N802  # constructor-style factory, like Task/Parallel
 	generator; the after-check's failure output is the drift diagnostic. The check leaves
 	always run — ``when="."`` and ``paths=None`` override the check's own scoping — and the
 	check reads git's view, so paths git ignores are outside its contract. The default check
-	scrubs ambient GIT_* environment (case-insensitively on Windows); a user-supplied
-	``check`` runs with the ambient environment. Under ``--under``
+	scrubs ambient GIT_* environment (case-insensitively on Windows and MSYS/Cygwin); a
+	user-supplied ``check`` runs with the ambient environment. Under ``--under``
 	the gate keeps its ordering (#306); a check leaf measured over budget is excluded
 	outright, and a mutator measured over budget drops like any leaf, leaving the checks to
 	run around an un-run generator, so drift goes undetected.
