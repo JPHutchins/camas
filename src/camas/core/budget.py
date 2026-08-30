@@ -5,9 +5,16 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, NamedTuple, TypeAlias
+import sys
 
-from ..v0.task import Parallel, Sequential, Task
+if sys.version_info >= (3, 11):
+	from typing import assert_never
+else:  # pragma: no cover
+	from typing_extensions import assert_never
+
+from typing import TYPE_CHECKING, Final, NamedTuple, TypeAlias
+
+from ..v0.task import Parallel, Sequential, Task, rebuilt
 from .matrix import expand_matrix
 from .timings import estimate
 from .traversal import flatten_leaves
@@ -83,18 +90,66 @@ def classify(
 def plan_under(
 	node: TaskNode, budget_s: float, timings: Mapping[CacheKey, TaskTiming], scope: int = 0
 ) -> BudgetPlan:
-	"""Partition ``node``'s expanded, de-duplicated leaves by ``budget_s``. Only leaves measured
-	to exceed the budget are excluded; untimed leaves are run (and thereby measured), since a
-	budget that skipped them would keep them forever unmeasured. ``scope`` selects which
-	observations count as measurements of this run — see :func:`camas.core.timings.estimate`.
+	"""Partition ``node``'s expanded leaves by ``budget_s``, preserving the tree's structure:
+	a ``Sequential``'s ordering survives, and the mutating-first reordering applies only
+	across a ``Parallel``'s siblings (#306). Only leaves measured to exceed the budget are
+	excluded; untimed leaves are run (and thereby measured), since a budget that skipped
+	them would keep them forever unmeasured. ``scope`` selects which observations count as
+	measurements of this run — see :func:`camas.core.timings.estimate`.
 	"""
-	leaves = tuple(dict.fromkeys(info.task for info in flatten_leaves(expand_matrix(node))))
-	dispositions = tuple(classify(leaf, budget_s, timings, scope) for leaf in leaves)
+	runnable, dispositions = _plan_under(expand_matrix(node), budget_s, timings, scope)
 	fits = tuple(d for d in dispositions if isinstance(d, Fits))
 	over_budget = tuple(d for d in dispositions if isinstance(d, OverBudget))
 	untimed = tuple(d for d in dispositions if isinstance(d, Untimed))
-	runnable = tuple(d.task for d in dispositions if not isinstance(d, OverBudget))
-	return BudgetPlan(budget_s, schedule(runnable), fits, over_budget, untimed)
+	return BudgetPlan(budget_s, runnable, fits, over_budget, untimed)
+
+
+def _plan_under(
+	node: TaskNode, budget_s: float, timings: Mapping[CacheKey, TaskTiming], scope: int
+) -> tuple[TaskNode | None, tuple[Disposition, ...]]:
+	"""Recurse the tree: classify leaves, keep ``Sequential`` order, split a ``Parallel``'s
+	children mutating-first — the shape :func:`schedule` flattens to, but without discarding
+	the structure the ordering lives in.
+	"""
+	match node:
+		case Task():
+			disposition: Final = classify(node, budget_s, timings, scope)
+			return (None if isinstance(disposition, OverBudget) else node), (disposition,)
+		case Sequential(tasks=children):
+			planned = tuple(_plan_under(child, budget_s, timings, scope) for child in children)
+			kept = tuple(child_node for child_node, _ in planned if child_node is not None)
+			return (None if not kept else rebuilt(node, *kept)), _collect(planned)
+		case Parallel(tasks=children):
+			planned = tuple(_plan_under(child, budget_s, timings, scope) for child in children)
+			kept = tuple(child_node for child_node, _ in planned if child_node is not None)
+			mutating = tuple(child for child in kept if _has_mutating(child))
+			readonly = tuple(child for child in kept if not _has_mutating(child))
+			return (
+				None
+				if not kept
+				else (
+					rebuilt(node, *(mutating + readonly))
+					if not mutating or not readonly
+					else Sequential(
+						*mutating, Parallel(*readonly), name=node.name, env=node.env, cwd=node.cwd
+					)
+				),
+				_collect(planned),
+			)
+		case _:
+			assert_never(node)
+
+
+def _collect(
+	planned: tuple[tuple[TaskNode | None, tuple[Disposition, ...]], ...],
+) -> tuple[Disposition, ...]:
+	"""The planned children's dispositions, in DFS order."""
+	return tuple(disposition for _, dispositions in planned for disposition in dispositions)
+
+
+def _has_mutating(node: TaskNode) -> bool:
+	"""Whether any leaf in the subtree writes the workspace."""
+	return any(info.task.mutates for info in flatten_leaves(node))
 
 
 def schedule(fitting: tuple[Task, ...]) -> TaskNode | None:

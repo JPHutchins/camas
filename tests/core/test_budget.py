@@ -64,11 +64,44 @@ def test_plan_under_runs_untimed() -> None:
 	assert [u.task for u in plan.untimed] == [b]
 
 
-def test_plan_under_dedups_repeated_leaves() -> None:
+def test_plan_under_preserves_structure_including_repeats() -> None:
+	"""#306: the planner walks the tree instead of flattening it — a repeated leaf keeps its
+	place instead of being silently deduplicated away."""
 	a = Task("ruff", name="lint")
 	plan = plan_under(Parallel(a, Sequential(a)), 5.0, {CacheKey("lint", 0): TaskTiming(0.1, 1)})
-	assert plan.node == Parallel(a)
-	assert len(plan.fits) == 1
+	assert plan.node == Parallel(a, Sequential(a))
+	assert len(plan.fits) == 2
+
+
+def test_plan_under_preserves_sequential_ordering() -> None:
+	"""#306: a Sequential's ordering is its contract — the mutating-first heuristic reorders
+	only across Parallel siblings."""
+	clean_before = Task("git check", name="clean-before")
+	gen = Task("make gen", name="gen", mutates=True)
+	clean_after = Task("git check", name="clean-after")
+	timings = {
+		CacheKey("clean-before", 0): TaskTiming(0.1, 5),
+		CacheKey("gen", 0): TaskTiming(0.2, 5),
+		CacheKey("clean-after", 0): TaskTiming(0.1, 5),
+	}
+	plan = plan_under(Sequential(clean_before, gen, clean_after), 1.0, timings)
+	assert plan.node == Sequential(clean_before, gen, clean_after)
+	assert len(plan.fits) == 3
+
+
+def test_plan_under_drops_an_over_budget_leaf_without_reordering() -> None:
+	"""#306: an excluded leaf leaves the surviving order intact — the gate's checks keep
+	their positions even when one of them is over budget."""
+	clean_before = Task("git check", name="clean-before")
+	gen = Task("make gen", name="gen", mutates=True)
+	clean_after = Task("git check", name="clean-after")
+	timings = {
+		CacheKey("gen", 0): TaskTiming(0.2, 5),
+		CacheKey("clean-after", 0): TaskTiming(9.0, 5),
+	}
+	plan = plan_under(Sequential(clean_before, gen, clean_after), 1.0, timings)
+	assert plan.node == Sequential(clean_before, gen)
+	assert [o.task.name for o in plan.over_budget] == ["clean-after"]
 
 
 def test_plan_under_nothing_fits_is_none() -> None:
