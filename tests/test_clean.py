@@ -7,10 +7,7 @@ it was (#233)."""
 from __future__ import annotations
 
 import asyncio
-import shutil
-import subprocess
-import sys
-from typing import TYPE_CHECKING, Final, cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 from typing_extensions import assert_type
@@ -31,7 +28,7 @@ def test_clean_returns_a_sequential_typed() -> None:
 
 def test_clean_expands_to_before_mutater_after() -> None:
 	node = Clean(Task("make gen", mutates=True))
-	assert [task.name for task in node.tasks] == ["clean-before", None, "clean-after"]
+	assert [task.name for task in node.tasks] == ["make gen-before", None, "make gen-after"]
 	match node.tasks:
 		case (Task(cmd=before_cmd), _, Task(cmd=after_cmd)):
 			assert before_cmd == GIT_PORCELAIN().cmd
@@ -42,7 +39,7 @@ def test_clean_expands_to_before_mutater_after() -> None:
 
 def test_clean_before_false_drops_the_precheck() -> None:
 	node = Clean(Task("make gen", mutates=True), before=False)
-	assert [task.name for task in node.tasks] == [None, "clean-after"]
+	assert [task.name for task in node.tasks] == [None, "make gen-after"]
 
 
 def test_clean_uses_a_custom_check() -> None:
@@ -70,23 +67,19 @@ def test_clean_rejects_a_non_mutating_generator() -> None:
 		)
 
 
-def test_clean_coerces_a_string_check() -> None:
-	node = Clean(Task("make gen", mutates=True), check="git status --porcelain")
-	assert [task.name for task in node.tasks] == ["clean-before", None, "clean-after"]
-	match node.tasks:
-		case (Task(cmd=before_cmd), _, Task(cmd=after_cmd)):
-			assert before_cmd == "git status --porcelain"
-			assert after_cmd == "git status --porcelain"
-		case _:
-			raise AssertionError(f"unexpected shape: {node.tasks!r}")
+def test_clean_rejects_a_scoped_check() -> None:
+	"""A check whose ``when``/``cwd`` scoping could prune it while the mutator still runs
+	would silently green a dirtied tree on scoped runs."""
+	with pytest.raises(ValueError, match="when="):
+		Clean(Task("make gen", mutates=True), check=Task("python -c pass", when="src"))
+	with pytest.raises(ValueError, match="cwd"):
+		Clean(Task("make gen", mutates=True), check=Task("python -c pass", cwd="sub"))
 
 
 def test_clean_check_leaves_keep_the_checks_fields() -> None:
-	"""``check``'s scoping and diagnostics ride into the derived leaves, not just cmd/env."""
 	check = Task(
 		"python -c pass",
 		name="verify",
-		when="generated",
 		paths="src",
 		help="verify generated output",
 		agent_format=("--format json", "raw"),
@@ -94,7 +87,6 @@ def test_clean_check_leaves_keep_the_checks_fields() -> None:
 	node = Clean(Task("make gen", mutates=True), check=check)
 	for leaf in (node.tasks[0], node.tasks[2]):
 		assert isinstance(leaf, Task)
-		assert leaf.when == "generated"
 		assert leaf.paths == "src"
 		assert leaf.help == "verify generated output"
 		assert leaf.agent_format == check.agent_format
@@ -105,51 +97,35 @@ def test_clean_named_gate_prefixes_its_check_leaves() -> None:
 	assert [task.name for task in node.tasks] == ["openapi-before", None, "openapi-after"]
 
 
-_HAS_GIT: Final = shutil.which("git") is not None
-"""The functional pins shell out to a real git repository; hermetic environments (the nix
-build's test phase) have no git on PATH."""
+def test_clean_coerces_a_string_check() -> None:
+	node = Clean(Task("make gen", mutates=True), check="git status --porcelain")
+	assert [task.name for task in node.tasks] == ["make gen-before", None, "make gen-after"]
+	match node.tasks:
+		case (Task(cmd=before_cmd), _, Task(cmd=after_cmd)):
+			assert before_cmd == "git status --porcelain"
+			assert after_cmd == "git status --porcelain"
+		case _:
+			raise AssertionError(f"unexpected shape: {node.tasks!r}")
 
 
-def _git_repo(tmp_path: Path) -> None:
-	"""A committed one-file repository the functional pins run inside."""
-	subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
-	(tmp_path / "tracked.txt").write_text("original\n", encoding="utf-8")
-	subprocess.run(["git", "add", "tracked.txt"], cwd=tmp_path, check=True)
-	subprocess.run(
-		["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init"],
-		cwd=tmp_path,
-		check=True,
-	)
-
-
-@pytest.mark.skipif(
-	sys.platform == "win32" or not _HAS_GIT,
-	reason="the default check is POSIX shell and the pin needs a real git repository",
-)
-def test_clean_passes_a_clean_tree(tmp_path: Path) -> None:
+def test_clean_passes_a_clean_tree(git_repo: Path) -> None:
 	"""A generator that writes nothing leaves the tree clean; the run succeeds."""
-	_git_repo(tmp_path)
 	node = Clean(Task("python -c pass", mutates=True))
 
 	async def scenario() -> RunResult:
-		return await run(node, base=tmp_path)
+		return await run(node, base=git_repo)
 
 	result = asyncio.run(scenario())
 	assert result.returncode == 0
 	assert all(isinstance(r.completion, Finished) for r in result.results)
 
 
-@pytest.mark.skipif(
-	sys.platform == "win32" or not _HAS_GIT,
-	reason="the default check is POSIX shell and the pin needs a real git repository",
-)
-def test_clean_fails_when_the_generator_dirties_the_tree(tmp_path: Path) -> None:
+def test_clean_fails_when_the_generator_dirties_the_tree(git_repo: Path) -> None:
 	"""The after-check leaf fails and its output is the drift diagnostic."""
-	_git_repo(tmp_path)
 	node = Clean(Task(("python", "-c", "open('tracked.txt', 'a').write('drift\\n')"), mutates=True))
 
 	async def scenario() -> RunResult:
-		return await run(node, base=tmp_path)
+		return await run(node, base=git_repo)
 
 	result = asyncio.run(scenario())
 	assert result.returncode == 1
@@ -159,15 +135,10 @@ def test_clean_fails_when_the_generator_dirties_the_tree(tmp_path: Path) -> None
 	assert b"tracked.txt" in b"".join(after.output)
 
 
-@pytest.mark.skipif(
-	sys.platform == "win32" or not _HAS_GIT,
-	reason="the default check is POSIX shell and the pin needs a real git repository",
-)
-def test_clean_fails_fast_on_a_dirty_start(tmp_path: Path) -> None:
-	"""A dirty tree fails clean-before first and the generator is skipped, its writes never
-	landing."""
-	_git_repo(tmp_path)
-	(tmp_path / "tracked.txt").write_text("preexisting dirt\n", encoding="utf-8")
+def test_clean_fails_fast_on_a_dirty_start(git_repo: Path) -> None:
+	"""A dirty tree fails the before-check first and the generator is skipped, its writes
+	never landing."""
+	(git_repo / "tracked.txt").write_text("preexisting dirt\n", encoding="utf-8")
 	node = Clean(
 		Task(
 			("python", "-c", "open('tracked.txt', 'a').write('generator ran\\n')"),
@@ -176,9 +147,23 @@ def test_clean_fails_fast_on_a_dirty_start(tmp_path: Path) -> None:
 	)
 
 	async def scenario() -> RunResult:
-		return await run(node, base=tmp_path)
+		return await run(node, base=git_repo)
 
 	result = asyncio.run(scenario())
 	assert result.returncode == 1
 	assert isinstance(result.results[1].completion, Skipped)
-	assert (tmp_path / "tracked.txt").read_text(encoding="utf-8") == "preexisting dirt\n"
+	assert (git_repo / "tracked.txt").read_text(encoding="utf-8") == "preexisting dirt\n"
+
+
+def test_clean_fails_in_a_non_git_directory(git_repo: Path) -> None:
+	"""git's own failure (no repository) must fail the gate, not silently green it. The
+	directory sits beside the repo — inside it, git would walk up and find the parent."""
+	non_repo = git_repo.parent / "no-repo"
+	non_repo.mkdir()
+	node = Clean(Task("python -c pass", mutates=True))
+
+	async def scenario() -> RunResult:
+		return await run(node, base=non_repo)
+
+	result = asyncio.run(scenario())
+	assert result.returncode == 1

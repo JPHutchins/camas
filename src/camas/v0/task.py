@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import re
+import sys
 from dataclasses import dataclass, replace
 from pathlib import Path
 from types import MappingProxyType
@@ -689,22 +690,11 @@ def _sequential_of(left: TaskNode | str, right: TaskNode | str) -> Sequential:
 
 def GIT_PORCELAIN() -> Task:  # noqa: N802  # constructor-style factory, like Task/Parallel
 	"""A fresh default drift check for :func:`Clean` — a factory, not an instance, so a
-	``tasks.py`` importing it registers no runnable task. The command prints the porcelain
-	status and exits nonzero when it is non-empty: tracked edits and untracked files alike,
-	immune to the repository's ``status.showUntrackedFiles`` config. Python is the
-	portability layer — no shell — and ``git`` must be on PATH.
+	``tasks.py`` importing it registers no runnable task. The check is the maintained
+	:mod:`camas._git_porcelain` module, run under camas's own interpreter; ``git`` must be on
+	PATH.
 	"""
-	return Task(
-		(
-			"python",
-			"-c",
-			"import subprocess, sys; "
-			"s = subprocess.run("
-			"['git', 'status', '--porcelain', '--untracked-files=all'], "
-			"capture_output=True, text=True).stdout; "
-			"sys.stdout.write(s); sys.exit(1 if s.strip() else 0)",
-		)
-	)
+	return Task((sys.executable, "-m", "camas._git_porcelain"))
 
 
 _GIT_PORCELAIN: Final = GIT_PORCELAIN()
@@ -718,11 +708,10 @@ def _as_task(value: object, message: str) -> Task:
 	Raises:
 		ValueError: when ``value`` is neither a ``str`` nor a ``Task``.
 	"""
-	if isinstance(value, str):
-		return Task(value)
-	if not isinstance(value, Task):
+	node: Final = _node(value) if isinstance(value, str) else value
+	if not isinstance(node, Task):
 		raise ValueError(message)
-	return value
+	return node
 
 
 def Clean(  # noqa: N802  # constructor-style factory, like Task/Parallel
@@ -739,8 +728,9 @@ def Clean(  # noqa: N802  # constructor-style factory, like Task/Parallel
 	then the ``check`` command as ``clean-after``. A tree that is dirty to start fails
 	``clean-before`` first — the gate is meaningless from a dirty start — and ``Sequential``'s
 	blocker skips the generator; a ``clean-after`` failure's output is the drift diagnostic.
-	``name`` prefixes the two check leaves (``<name>-before``/``<name>-after``) so multiple
-	gates do not collide in the timing cache.
+	The two check leaves are named ``<label>-before``/``<label>-after`` — the explicit ``name``
+	when given, else the mutator's own label — so distinct gates never collide in the timing
+	cache or dedup under ``--under``.
 
 	Under ``--under`` budget mode the scheduler rebuilds the tree mutating-first and discards
 	``Sequential`` structure, so the fail-fast ordering and the before/after distinction do
@@ -748,14 +738,16 @@ def Clean(  # noqa: N802  # constructor-style factory, like Task/Parallel
 	(see the budget-ordering issue the engine tracks).
 
 	Raises:
-		ValueError: when ``mutator`` is not a ``Task`` or is not marked ``mutates=True`` — the
-			gate exists to catch the generator's writes, and the budget sequences mutating
-			leaves first — or when ``check`` is not a ``Task``.
+		ValueError: when ``mutator`` is neither a ``str`` nor a ``Task``, or is not marked
+			``mutates=True`` — the gate exists to catch the generator's writes, and the
+			budget sequences mutating leaves first — or when ``check`` is neither a ``str``
+			nor a ``Task``, or carries ``when=``/``cwd=`` scoping that could prune the checks
+			while the mutator still runs.
 
 	>>> Clean(Task("make update-openapi", mutates=True), before=False).tasks[0].cmd
 	'make update-openapi'
 	>>> Clean(Task("make update-openapi", mutates=True)).tasks[0].name
-	'clean-before'
+	'make update-openapi-before'
 	"""
 	mutator = _as_task(
 		mutator,
@@ -768,13 +760,25 @@ def Clean(  # noqa: N802  # constructor-style factory, like Task/Parallel
 			"Clean's mutator must be marked mutates=True — the drift gate exists to catch "
 			"its writes"
 		)
+	if check.when is not None:
+		raise ValueError(
+			"Clean's check must not set when= — a scoped run would prune the checks while "
+			"the mutator still runs"
+		)
+	if check.cwd is not None:
+		raise ValueError(
+			"Clean's check must not set cwd — its directory gating would prune the checks "
+			"on scoped runs"
+		)
 
 	def check_leaf(leaf_name: str) -> Task:
 		return replace(check, name=leaf_name)
 
-	before_name: Final = f"{name}-before" if name is not None else "clean-before"
-	after_name: Final = f"{name}-after" if name is not None else "clean-after"
-	after: Final = check_leaf(after_name)
+	mutator_label: Final = mutator.name or (
+		mutator.cmd if isinstance(mutator.cmd, str) else " ".join(mutator.cmd)
+	)
+	gate_name: Final = name if name is not None else mutator_label
+	after: Final = check_leaf(f"{gate_name}-after")
 	if not before:
 		return Sequential(mutator, after)
-	return Sequential(check_leaf(before_name), mutator, after)
+	return Sequential(check_leaf(f"{gate_name}-before"), mutator, after)
