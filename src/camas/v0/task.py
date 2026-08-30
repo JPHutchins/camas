@@ -244,8 +244,9 @@ class Task:
 	``camas <task> --help`` instead of the bare command.
 
 	``mutates`` marks a leaf that writes the workspace (a formatter or auto-fixer).
-	The ``--under`` budget scheduler runs such leaves sequentially, before the
-	read-only group, so they never race a checker over the same files.
+	The ``--under`` budget scheduler serializes mutating subtrees ahead of a
+	``Parallel``'s pure read-only siblings, so a mutator never runs concurrently
+	with a checker over the same files.
 
 	``paths`` is the scope for a ``{paths}`` command (:mod:`camas.core.scope`): a
 	directory-prefix string (``"."``) or a ``(changed) -> tuple[str, ...]`` callable that maps the
@@ -646,7 +647,7 @@ def _nodes(children: tuple[TaskNode, ...]) -> tuple[TaskNode, ...]:
 	return tuple(_node(child) for child in children)
 
 
-def _fieldless(group: Group) -> bool:
+def fieldless(group: Group) -> bool:
 	"""Whether every :data:`GROUP_FIELDS` value is the constructor default: ``None``, or an
 	empty mapping for ``env``.
 	"""
@@ -661,8 +662,8 @@ def _parallel_of(left: TaskNode | str, right: TaskNode | str) -> Parallel:
 	left_node, right_node = _node(left), _node(right)
 	if isinstance(left_node, Parallel):
 		if isinstance(right_node, Parallel):
-			if _fieldless(left_node) and (
-				not _fieldless(right_node) or type(right_node) is not Parallel
+			if fieldless(left_node) and (
+				not fieldless(right_node) or type(right_node) is not Parallel
 			):
 				return rebuilt(right_node, *_nodes(left_node.tasks), *_nodes(right_node.tasks))
 			return rebuilt(left_node, *_nodes(left_node.tasks), *_nodes(right_node.tasks))
@@ -677,8 +678,8 @@ def _sequential_of(left: TaskNode | str, right: TaskNode | str) -> Sequential:
 	left_node, right_node = _node(left), _node(right)
 	if isinstance(left_node, Sequential):
 		if isinstance(right_node, Sequential):
-			if _fieldless(left_node) and (
-				not _fieldless(right_node) or type(right_node) is not Sequential
+			if fieldless(left_node) and (
+				not fieldless(right_node) or type(right_node) is not Sequential
 			):
 				return rebuilt(right_node, *_nodes(left_node.tasks), *_nodes(right_node.tasks))
 			return rebuilt(left_node, *_nodes(left_node.tasks), *_nodes(right_node.tasks))
@@ -729,8 +730,9 @@ def Clean(  # noqa: N802  # constructor-style factory, like Task/Parallel
 	generator; the after-check's failure output is the drift diagnostic. The check leaves
 	always run — ``when="."`` and ``paths=None`` override the check's own scoping — and the
 	check reads git's view, so paths git ignores are outside its contract. Under ``--under``
-	the scheduler rebuilds the tree mutating-first, so the fail-fast ordering does not hold
-	there, and a check leaf measured over budget is excluded outright (#306).
+	the gate keeps its ordering (#306); a check leaf measured over budget is excluded
+	outright, and a mutator measured over budget drops like any leaf, leaving the checks to
+	run around an un-run generator, so drift goes undetected.
 
 	Raises:
 		ValueError: ``mutator`` or ``check`` is neither a ``str`` nor a ``Task``; ``mutator``

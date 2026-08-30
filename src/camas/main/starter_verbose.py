@@ -95,10 +95,10 @@ def web_paths(changed: tuple[str, ...]) -> tuple[str, ...]:
 
 
 # mutates=True marks a leaf that writes the workspace (a formatter, an auto-fixer). It has two
-# jobs: `camas --under=<duration>` runs every mutates=True leaf first, in sequence, then the
-# read-only rest in parallel, so a formatter never races a checker over the same files; and
-# it's the natural node to register as Config(agent=Claude(fix=...)) below. paths="." plus the
-# {paths} token in the command is what makes it narrowable: `camas fmt --paths a.py` rewrites
+# jobs: `camas --under=<duration>` serializes mutating subtrees ahead of a Parallel's pure
+# read-only siblings, so a mutator never runs concurrently with a checker over the same files;
+# and it's the natural node to register as Config(agent=Claude(fix=...)) below. paths="." plus
+# the {paths} token in the command is what makes it narrowable: `camas fmt --paths a.py` rewrites
 # the command to touch only a.py; with no --paths (a full run) {paths} becomes ".".
 fmt = Task('python -c "" {paths}', mutates=True, paths=".")
 
@@ -109,8 +109,9 @@ fmt = Task('python -c "" {paths}', mutates=True, paths=".")
 # registers no runnable task — and before=False drops the pre-check. The mutator= task must be
 # marked mutates=True; Clean raises otherwise. The placeholders below are inert (nothing writes,
 # the check always passes); a real gate pairs a generator that writes with the default check.
-# Under --under budget mode the scheduler rebuilds the tree mutating-first, so the gate's
-# fail-fast ordering does not hold there.
+# Under --under budget mode the gate keeps its ordering (#306); a check leaf measured over
+# budget is excluded outright, and a mutator measured over budget drops like any leaf,
+# leaving the checks to run around an un-run generator, so drift goes undetected.
 generators = Clean(
 	mutator=Task("python -c \"print('generated')\"", mutates=True),
 	check=Task("python -c pass"),
