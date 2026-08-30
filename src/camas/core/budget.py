@@ -14,7 +14,7 @@ else:  # pragma: no cover
 
 from typing import TYPE_CHECKING, Any, Final, NamedTuple, TypeAlias, overload
 
-from ..v0.task import GROUP_FIELDS, Parallel, Sequential, Task, rebuilt
+from ..v0.task import GROUP_FIELDS, Parallel, Sequential, Task, fieldless, rebuilt
 from .matrix import expand_matrix
 from .timings import estimate
 
@@ -103,8 +103,10 @@ def plan_under(
 	a ``Sequential``'s ordering survives, and across a ``Parallel``'s siblings the mutating
 	subtrees are serialized ahead of the pure read-only ones, which keep their concurrency
 	(#306). A mutating subtree is kept whole, so a nested mixed shape loses cross-subtree
-	parallelism rather than ordering. A repeated leaf keeps every occurrence, and each
-	counts against the budget. Only leaves measured to exceed the budget are excluded;
+	parallelism rather than ordering. A repeated leaf keeps every occurrence: each is
+	classified against the budget individually, so a serialized repeat can consume its slot
+	twice and record one sample per occurrence. Only leaves measured to exceed the budget
+	are excluded;
 	untimed leaves are run (and thereby measured), since a budget that skipped them would
 	keep them forever unmeasured. ``scope`` selects which observations count as
 	measurements of this run — see :func:`camas.core.timings.estimate`.
@@ -159,7 +161,7 @@ def _plan_under(
 			else:
 				runnable = Sequential(
 					*mutating,
-					Parallel(*readonly, name=node.name, env=node.env, cwd=node.cwd),
+					_collapse(Parallel(*readonly, name=node.name, env=node.env, cwd=node.cwd)),
 					**_fields_of(node),
 				)
 			return _Planned(
@@ -186,11 +188,11 @@ def _collapse(node: Sequential) -> Sequential: ...
 @overload
 def _collapse(node: Parallel) -> Parallel: ...
 def _collapse(node: Group) -> Group:
-	"""A single-child wrapper whose child is the same kind is dropped, matching the ``|``/``+``
-	flattening.
+	"""A fieldless single-child wrapper whose child is the same kind is dropped, matching the
+	``|``/``+`` flattening; a wrapper carrying annotations keeps them.
 	"""
 	children: Final = node.tasks
-	if len(children) != 1:
+	if len(children) != 1 or not fieldless(node):
 		return node
 	match node:
 		case Sequential() if isinstance(children[0], Sequential):

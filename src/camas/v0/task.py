@@ -647,7 +647,7 @@ def _nodes(children: tuple[TaskNode, ...]) -> tuple[TaskNode, ...]:
 	return tuple(_node(child) for child in children)
 
 
-def _fieldless(group: Group) -> bool:
+def fieldless(group: Group) -> bool:
 	"""Whether every :data:`GROUP_FIELDS` value is the constructor default: ``None``, or an
 	empty mapping for ``env``.
 	"""
@@ -662,8 +662,8 @@ def _parallel_of(left: TaskNode | str, right: TaskNode | str) -> Parallel:
 	left_node, right_node = _node(left), _node(right)
 	if isinstance(left_node, Parallel):
 		if isinstance(right_node, Parallel):
-			if _fieldless(left_node) and (
-				not _fieldless(right_node) or type(right_node) is not Parallel
+			if fieldless(left_node) and (
+				not fieldless(right_node) or type(right_node) is not Parallel
 			):
 				return rebuilt(right_node, *_nodes(left_node.tasks), *_nodes(right_node.tasks))
 			return rebuilt(left_node, *_nodes(left_node.tasks), *_nodes(right_node.tasks))
@@ -678,8 +678,8 @@ def _sequential_of(left: TaskNode | str, right: TaskNode | str) -> Sequential:
 	left_node, right_node = _node(left), _node(right)
 	if isinstance(left_node, Sequential):
 		if isinstance(right_node, Sequential):
-			if _fieldless(left_node) and (
-				not _fieldless(right_node) or type(right_node) is not Sequential
+			if fieldless(left_node) and (
+				not fieldless(right_node) or type(right_node) is not Sequential
 			):
 				return rebuilt(right_node, *_nodes(left_node.tasks), *_nodes(right_node.tasks))
 			return rebuilt(left_node, *_nodes(left_node.tasks), *_nodes(right_node.tasks))

@@ -220,6 +220,39 @@ def test_plan_under_collapses_a_rebuilt_single_child_sequential() -> None:
 	assert plan.untimed == ()
 
 
+def test_plan_under_keeps_a_named_single_child_wrapper() -> None:
+	"""#306: collapsing never strips annotations — a named wrapper survives with its fields."""
+	a, b = Task("a", name="a"), Task("b", name="b")
+	inner = Parallel(a, b)
+	source = Parallel(inner, name="outer", help="drift gate")
+	timings = {
+		CacheKey("a", 0): TaskTiming(0.1, 5),
+		CacheKey("b", 0): TaskTiming(0.1, 5),
+	}
+	plan = plan_under(source, 1.0, timings)
+	assert plan.node == Parallel(inner, name="outer", help="drift gate")
+	assert plan.fits == (Fits(a, 0.1), Fits(b, 0.1))
+	assert plan.over_budget == ()
+	assert plan.untimed == ()
+
+
+def test_plan_under_collapses_a_fieldless_inner_readonly_wrapper() -> None:
+	"""#306: the mixed branch's inner read-only group collapses when fieldless — no
+	Parallel(Parallel(...)) nesting."""
+	gen = Task("gen", name="gen", mutates=True)
+	a, b = Task("a", name="a"), Task("b", name="b")
+	timings = {
+		CacheKey("gen", 0): TaskTiming(0.1, 5),
+		CacheKey("a", 0): TaskTiming(0.1, 5),
+		CacheKey("b", 0): TaskTiming(0.1, 5),
+	}
+	plan = plan_under(Parallel(gen, Parallel(a, b)), 1.0, timings)
+	assert plan.node == Sequential(gen, Parallel(a, b))
+	assert plan.fits == (Fits(gen, 0.1), Fits(a, 0.1), Fits(b, 0.1))
+	assert plan.over_budget == ()
+	assert plan.untimed == ()
+
+
 def test_plan_under_carries_group_fields_onto_the_reordered_wrapper() -> None:
 	"""The manufactured Sequential carries every GROUP_FIELDS value; the inner read-only
 	Parallel keeps the group's name/env/cwd."""
