@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Final
 from camas import (
 	AgentFormat,
 	Claude,
+	Clean,
 	Config,
 	Effect,
 	Parallel,
@@ -100,6 +101,20 @@ def web_paths(changed: tuple[str, ...]) -> tuple[str, ...]:
 # {paths} token in the command is what makes it narrowable: `camas fmt --paths a.py` rewrites
 # the command to touch only a.py; with no --paths (a full run) {paths} becomes ".".
 fmt = Task('python -c "" {paths}', mutates=True, paths=".")
+
+# Clean(mutator=..., check=..., before=...) is the committed-generated-code drift gate: it runs
+# the mutating generator between two runs of the check command — clean-before first (a tree
+# dirty to start fails there and skips the generator), clean-after last (its failure's output is
+# the drift diagnostic). check= defaults to GIT_PORCELAIN() — a factory, so importing it
+# registers no runnable task — and before=False drops the pre-check. The mutator= task must be
+# marked mutates=True; Clean raises otherwise. The placeholders below are inert (nothing writes,
+# the check always passes); a real gate pairs a generator that writes with the default check.
+# Under --under budget mode the scheduler rebuilds the tree mutating-first, so the gate's
+# fail-fast ordering does not hold there.
+generators = Clean(
+	mutator=Task("python -c \"print('generated')\"", mutates=True),
+	check=Task("python -c pass"),
+)
 
 # by_suffix(suffixes, default=...) builds a paths= callable: it filters the changed files by
 # extension on a scoped run, and returns default on a full run (never empty, for the reason

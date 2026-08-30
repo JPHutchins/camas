@@ -428,9 +428,11 @@ help: ``camas <task> --help``.
 
 import typing
 
+from .v0 import GIT_PORCELAIN as GIT_PORCELAIN
 from .v0 import Agent as Agent
 from .v0 import AgentFormat as AgentFormat
 from .v0 import Claude as Claude
+from .v0 import Clean as Clean
 from .v0 import Config as Config
 from .v0 import Effect as Effect
 from .v0 import Parallel as Parallel

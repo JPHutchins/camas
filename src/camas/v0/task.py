@@ -6,7 +6,8 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+import sys
+from dataclasses import dataclass, replace
 from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Final, Literal, NamedTuple, TypeAlias, TypeVar, cast, get_args
@@ -685,3 +686,91 @@ def _sequential_of(left: TaskNode | str, right: TaskNode | str) -> Sequential:
 	if isinstance(right_node, Sequential):
 		return rebuilt(right_node, left_node, *_nodes(right_node.tasks))
 	return Sequential(left_node, right_node)
+
+
+def GIT_PORCELAIN() -> Task:  # noqa: N802  # constructor-style factory, like Task/Parallel
+	"""A fresh default drift check for :func:`Clean` — a factory, not an instance, so a
+	``tasks.py`` importing it registers no runnable task. Runs the maintained
+	:mod:`camas._git_porcelain` module under camas's own interpreter; ``git`` must be on
+	PATH.
+	"""
+	return Task((sys.executable, "-m", "camas._git_porcelain"), cwd=".")
+
+
+_GIT_PORCELAIN: Final = GIT_PORCELAIN()
+"""Kept private so importing camas into a ``tasks.py`` registers no runnable task."""
+
+
+def _as_task(value: object, message: str) -> Task:
+	"""Coerce a bare command string to a Task, or reject any other non-Task with ``message``.
+
+	Raises:
+		ValueError: ``value`` is neither a ``str`` nor a ``Task``.
+	"""
+	node: Final = _node(value) if isinstance(value, str) else value
+	if not isinstance(node, Task):
+		raise ValueError(message)
+	return node
+
+
+def Clean(  # noqa: N802  # constructor-style factory, like Task/Parallel
+	mutator: Task | str,
+	*,
+	check: Task | str = _GIT_PORCELAIN,
+	before: bool = True,
+	name: str | None = None,
+) -> Sequential:
+	"""A codegen drift gate: run the mutating generator, then fail if the working tree is not
+	exactly as it was.
+
+	Expands to ``Sequential``: the ``check`` as ``<label>-before``, then ``mutator``, then
+	``check`` as ``<label>-after``; ``label`` is ``name``, else the mutator's label joined
+	with the check's own name. A dirty tree fails the before-check and the blocker skips the
+	generator; the after-check's failure output is the drift diagnostic. The check leaves
+	always run — ``when="."`` and ``paths=None`` override the check's own scoping — and the
+	check reads git's view, so paths git ignores are outside its contract. Under ``--under``
+	the scheduler rebuilds the tree mutating-first, so the fail-fast ordering does not hold
+	there, and a check leaf measured over budget is excluded outright (#306).
+
+	Raises:
+		ValueError: ``mutator`` or ``check`` is neither a ``str`` nor a ``Task``; ``mutator``
+			lacks ``mutates=True``; ``check`` carries a ``{paths}`` token.
+
+	>>> Clean(Task("make update-openapi", mutates=True), before=False).tasks[0].cmd
+	'make update-openapi'
+	>>> Clean(Task("make update-openapi", mutates=True)).tasks[0].name
+	'make update-openapi-before'
+	"""
+	mutator = _as_task(
+		mutator,
+		"Clean's mutator must be a Task marked mutates=True — the drift gate exists to "
+		"catch its writes",
+	)
+	check = _as_task(check, "Clean's check must be a Task whose exit 0 means the tree is clean")
+	check_cmd: Final = check.cmd if isinstance(check.cmd, str) else " ".join(check.cmd)
+	if "{paths}" in check_cmd:
+		raise ValueError(
+			"Clean's check must not carry {paths} — a scoped run would narrow the check "
+			"while the mutator still writes"
+		)
+	if not mutator.mutates:
+		raise ValueError(
+			"Clean's mutator must be marked mutates=True — the drift gate exists to catch "
+			"its writes"
+		)
+
+	def check_leaf(leaf_name: str) -> Task:
+		return replace(check, name=leaf_name, when=".", paths=None)
+
+	from camas.core.task import task_label
+
+	mutator_label: Final = task_label(mutator)
+	gate_name: Final = (
+		name
+		if name is not None
+		else (f"{mutator_label}-{check.name}" if check.name is not None else mutator_label)
+	)
+	after: Final = check_leaf(f"{gate_name}-after")
+	if not before:
+		return Sequential(mutator, after, name=name)
+	return Sequential(check_leaf(f"{gate_name}-before"), mutator, after, name=name)
