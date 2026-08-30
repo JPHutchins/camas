@@ -690,8 +690,8 @@ def _sequential_of(left: TaskNode | str, right: TaskNode | str) -> Sequential:
 
 def GIT_PORCELAIN() -> Task:  # noqa: N802  # constructor-style factory, like Task/Parallel
 	"""A fresh default drift check for :func:`Clean` — a factory, not an instance, so a
-	``tasks.py`` importing it registers no runnable task. The check is the maintained
-	:mod:`camas._git_porcelain` module, run under camas's own interpreter; ``git`` must be on
+	``tasks.py`` importing it registers no runnable task. Runs the maintained
+	:mod:`camas._git_porcelain` module under camas's own interpreter; ``git`` must be on
 	PATH.
 	"""
 	return Task((sys.executable, "-m", "camas._git_porcelain"))
@@ -702,11 +702,10 @@ _GIT_PORCELAIN: Final = GIT_PORCELAIN()
 
 
 def _as_task(value: object, message: str) -> Task:
-	"""Coerce a bare command string to a Task, or reject any other non-Task with ``message`` —
-	the function boundary is what keeps the runtime guard visible to every checker.
+	"""Coerce a bare command string to a Task, or reject any other non-Task with ``message``.
 
 	Raises:
-		ValueError: when ``value`` is neither a ``str`` nor a ``Task``.
+		ValueError: ``value`` is neither a ``str`` nor a ``Task``.
 	"""
 	node: Final = _node(value) if isinstance(value, str) else value
 	if not isinstance(node, Task):
@@ -722,27 +721,17 @@ def Clean(  # noqa: N802  # constructor-style factory, like Task/Parallel
 	name: str | None = None,
 ) -> Sequential:
 	"""A codegen drift gate: run the mutating generator, then fail if the working tree is not
-	exactly as it was — the committed-generated-code CI staple.
+	exactly as it was.
 
-	Expands to a ``Sequential``: the ``check`` command as ``clean-before``, then ``mutator``,
-	then the ``check`` command as ``clean-after``. A tree that is dirty to start fails
-	``clean-before`` first — the gate is meaningless from a dirty start — and ``Sequential``'s
-	blocker skips the generator; a ``clean-after`` failure's output is the drift diagnostic.
-	The two check leaves are named ``<label>-before``/``<label>-after`` — the explicit ``name``
-	when given, else the mutator's own label — so distinct gates never collide in the timing
-	cache or dedup under ``--under``.
-
-	Under ``--under`` budget mode the scheduler rebuilds the tree mutating-first and discards
-	``Sequential`` structure, so the fail-fast ordering and the before/after distinction do
-	not hold there — the checks may race, and a check leaf measured over budget is excluded
-	(see the budget-ordering issue the engine tracks).
+	Expands to ``Sequential``: the ``check`` as ``<label>-before``, then ``mutator``, then
+	``check`` as ``<label>-after``; ``label`` is ``name`` or the mutator's own. A dirty tree
+	fails the before-check and the blocker skips the generator; the after-check's failure
+	output is the drift diagnostic. Under ``--under`` the scheduler rebuilds the tree
+	mutating-first, so the fail-fast ordering does not hold there (#306).
 
 	Raises:
-		ValueError: when ``mutator`` is neither a ``str`` nor a ``Task``, or is not marked
-			``mutates=True`` — the gate exists to catch the generator's writes, and the
-			budget sequences mutating leaves first — or when ``check`` is neither a ``str``
-			nor a ``Task``, or carries ``when=``/``cwd=`` scoping that could prune the checks
-			while the mutator still runs.
+		ValueError: ``mutator`` or ``check`` is neither a ``str`` nor a ``Task``; ``mutator``
+			lacks ``mutates=True``; ``check`` sets ``when`` or ``cwd``.
 
 	>>> Clean(Task("make update-openapi", mutates=True), before=False).tasks[0].cmd
 	'make update-openapi'
