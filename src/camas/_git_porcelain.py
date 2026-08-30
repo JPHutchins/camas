@@ -11,12 +11,16 @@ from typing import Final
 
 
 def main() -> int:
-	run: Final = subprocess.run(
-		["git", "status", "--porcelain", "--untracked-files=normal"],
-		capture_output=True,
-		text=True,
-		check=False,
-	)
+	try:
+		run: Final = subprocess.run(
+			["git", "status", "--porcelain", "--untracked-files=normal"],
+			capture_output=True,
+			text=True,
+			check=False,
+		)
+	except OSError as exc:
+		sys.stderr.write(f"git is required on PATH: {exc}\n")
+		return 1
 	if run.returncode != 0:
 		sys.stderr.write(run.stderr)
 		return 1

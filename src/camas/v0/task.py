@@ -724,14 +724,14 @@ def Clean(  # noqa: N802  # constructor-style factory, like Task/Parallel
 	exactly as it was.
 
 	Expands to ``Sequential``: the ``check`` as ``<label>-before``, then ``mutator``, then
-	``check`` as ``<label>-after``; ``label`` is ``name`` or the mutator's own. A dirty tree
+	``check`` as ``<label>-after``; ``label`` is ``name``, the check's own, or the mutator's. A dirty tree
 	fails the before-check and the blocker skips the generator; the after-check's failure
 	output is the drift diagnostic. Under ``--under`` the scheduler rebuilds the tree
 	mutating-first, so the fail-fast ordering does not hold there (#306).
 
 	Raises:
 		ValueError: ``mutator`` or ``check`` is neither a ``str`` nor a ``Task``; ``mutator``
-			lacks ``mutates=True``; ``check`` sets ``when`` or ``cwd``.
+			lacks ``mutates=True``; ``check`` sets ``when``, ``cwd``, or ``paths``.
 
 	>>> Clean(Task("make update-openapi", mutates=True), before=False).tasks[0].cmd
 	'make update-openapi'
@@ -759,6 +759,11 @@ def Clean(  # noqa: N802  # constructor-style factory, like Task/Parallel
 			"Clean's check must not set cwd — its directory gating would prune the checks "
 			"on scoped runs"
 		)
+	if check.paths is not None:
+		raise ValueError(
+			"Clean's check must not set paths — a scoped run would narrow the check while "
+			"the mutator still writes"
+		)
 
 	def check_leaf(leaf_name: str) -> Task:
 		return replace(check, name=leaf_name)
@@ -766,7 +771,7 @@ def Clean(  # noqa: N802  # constructor-style factory, like Task/Parallel
 	mutator_label: Final = mutator.name or (
 		mutator.cmd if isinstance(mutator.cmd, str) else " ".join(mutator.cmd)
 	)
-	gate_name: Final = name if name is not None else mutator_label
+	gate_name: Final = name if name is not None else (check.name or mutator_label)
 	after: Final = check_leaf(f"{gate_name}-after")
 	if not before:
 		return Sequential(mutator, after)

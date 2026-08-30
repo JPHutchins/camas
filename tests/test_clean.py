@@ -74,22 +74,27 @@ def test_clean_rejects_a_scoped_check() -> None:
 		Clean(Task("make gen", mutates=True), check=Task("python -c pass", when="src"))
 	with pytest.raises(ValueError, match="cwd"):
 		Clean(Task("make gen", mutates=True), check=Task("python -c pass", cwd="sub"))
+	with pytest.raises(ValueError, match="paths"):
+		Clean(Task("make gen", mutates=True), check=Task("python -c pass {paths}", paths="src"))
 
 
 def test_clean_check_leaves_keep_the_checks_fields() -> None:
 	check = Task(
 		"python -c pass",
 		name="verify",
-		paths="src",
 		help="verify generated output",
 		agent_format=("--format json", "raw"),
 	)
 	node = Clean(Task("make gen", mutates=True), check=check)
 	for leaf in (node.tasks[0], node.tasks[2]):
 		assert isinstance(leaf, Task)
-		assert leaf.paths == "src"
 		assert leaf.help == "verify generated output"
 		assert leaf.agent_format == check.agent_format
+
+
+def test_clean_uses_the_checks_own_name_for_the_gate_label() -> None:
+	node = Clean(Task("make gen", mutates=True), check=Task("python -c pass", name="verify"))
+	assert [task.name for task in node.tasks] == ["verify-before", None, "verify-after"]
 
 
 def test_clean_named_gate_prefixes_its_check_leaves() -> None:

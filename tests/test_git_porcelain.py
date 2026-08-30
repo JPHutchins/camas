@@ -58,6 +58,17 @@ def test_main_fails_and_forwards_stderr_when_git_errors(
 	assert capsys.readouterr().err == "fatal: not a git repository\n"
 
 
+def test_main_fails_with_a_hint_when_git_is_absent(
+	monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	def raises(*args: object, **kwargs: object) -> SimpleNamespace:
+		raise FileNotFoundError("git")
+
+	monkeypatch.setattr("camas._git_porcelain.subprocess.run", raises)
+	assert main() == 1
+	assert "git is required on PATH" in capsys.readouterr().err
+
+
 def test_module_main_exits_with_mains_code(monkeypatch: pytest.MonkeyPatch) -> None:
 	"""The ``__main__`` block wraps :func:`main`'s exit code in ``SystemExit``. The
 	``subprocess.run`` patch survives ``runpy``'s module re-execution, unlike a ``main``
