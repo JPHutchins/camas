@@ -6,8 +6,8 @@ git."""
 
 from __future__ import annotations
 
-import os
 import runpy
+import sys
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
@@ -96,8 +96,12 @@ def test_main_scrubs_ambient_git_environment(
 
 
 @pytest.mark.skipif(
-	os.name == "nt",
-	reason="os.environ uppercases keys on Windows; a raw-block lowercase key needs a spawned child",
+	sys.platform == "win32",
+	reason=(
+		"Python 3.12+ uppercases os.environ keys on Windows; on 3.10/3.11 the lowercase key "
+		"survives and the case-insensitive scrub removes it — either way the exact-case "
+		"assertion cannot run there"
+	),
 )
 def test_main_scrubs_git_environment_exact_case_on_posix(
 	monkeypatch: pytest.MonkeyPatch,
@@ -111,6 +115,55 @@ def test_main_scrubs_git_environment_exact_case_on_posix(
 	assert main() == 0
 	assert seen_env["git_dir"] == "/elsewhere"
 	assert seen_env["keep_me"] == "yes"
+
+
+def test_main_scrubs_git_environment_case_insensitively_on_windows(
+	monkeypatch: pytest.MonkeyPatch,
+) -> None:
+	"""The case-insensitive branch is dead on POSIX CI: patch the platform gate and pin it
+	directly, so a revert to the exact match fails here."""
+	seen_env: dict[str, str] = {}
+	monkeypatch.setattr("camas._git_porcelain.subprocess.run", _recording_run(seen_env))
+	monkeypatch.setattr("camas._git_porcelain.sys.platform", "win32")
+	monkeypatch.setenv("git_dir", "/elsewhere")
+	monkeypatch.setenv("keep_me", "yes")
+	assert main() == 0
+	lower_keys = {key.lower(): value for key, value in seen_env.items()}
+	assert "git_dir" not in lower_keys
+	assert lower_keys["keep_me"] == "yes"
+
+
+def test_main_runs_git_with_lenient_decode(monkeypatch: pytest.MonkeyPatch) -> None:
+	"""The exit-code logic never reads the decoded bytes, so errors="replace" must not be
+	trimmed back out."""
+	seen_kwargs: dict[str, object] = {}
+
+	def capture(*args: object, **kwargs: object) -> SimpleNamespace:
+		seen_kwargs.update(kwargs)
+		return _git_result(1, stderr="fatal: bad byte\n")
+
+	monkeypatch.setattr("camas._git_porcelain.subprocess.run", capture)
+	assert main() == 1
+	assert seen_kwargs["errors"] == "replace"
+
+
+def test_main_reports_the_code_when_git_dies_without_output(
+	monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	monkeypatch.setattr("camas._git_porcelain.subprocess.run", _fake_git(_git_result(143)))
+	assert main() == 1
+	assert capsys.readouterr().err == "git status exited with code 143\n"
+
+
+def test_main_forwards_warnings_from_a_clean_run(
+	monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	monkeypatch.setattr(
+		"camas._git_porcelain.subprocess.run",
+		_fake_git(_git_result(0, stderr="warning: something\n")),
+	)
+	assert main() == 0
+	assert capsys.readouterr().err == "warning: something\n"
 
 
 def test_main_fails_with_a_hint_when_git_cannot_execute(

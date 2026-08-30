@@ -12,8 +12,14 @@ from typing import Final
 
 
 def _git_env_var(key: str) -> bool:
-	"""Whether ``key`` names a GIT_* variable: exact on POSIX, case-insensitive on Windows."""
-	return key.upper().startswith("GIT_") if os.name == "nt" else key.startswith("GIT_")
+	"""Whether ``key`` names a GIT_* variable: case-insensitive where the environment is
+	(Windows and MSYS/Cygwin), exact elsewhere.
+	"""
+	return (
+		key.upper().startswith("GIT_")
+		if sys.platform in ("win32", "msys", "cygwin")
+		else key.startswith("GIT_")
+	)
 
 
 def main() -> int:
@@ -27,12 +33,14 @@ def main() -> int:
 			check=False,
 			env=env,
 		)
-	except OSError:
-		sys.stderr.write("git is required on PATH\n")
+	except OSError as exc:
+		sys.stderr.write(f"git is required on PATH ({exc})\n")
 		return 1
 	if run.returncode != 0:
-		sys.stderr.write(run.stderr)
+		sys.stderr.write(run.stderr or f"git status exited with code {run.returncode}\n")
 		return 1
+	if run.stderr:
+		sys.stderr.write(run.stderr)
 	if run.stdout.strip():
 		sys.stdout.write(run.stdout)
 		return 1
