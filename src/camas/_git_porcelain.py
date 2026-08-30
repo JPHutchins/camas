@@ -11,19 +11,23 @@ import sys
 from typing import Final
 
 
+def _git_env_var(key: str) -> bool:
+	"""Whether ``key`` names a GIT_* variable: exact on POSIX, case-insensitive on Windows."""
+	return key.upper().startswith("GIT_") if os.name == "nt" else key.startswith("GIT_")
+
+
 def main() -> int:
-	env: Final = {
-		key: value for key, value in os.environ.items() if not key.upper().startswith("GIT_")
-	}
+	env: Final = {key: value for key, value in os.environ.items() if not _git_env_var(key)}
 	try:
 		run: Final = subprocess.run(
 			["git", "status", "--porcelain", "--untracked-files=normal"],
 			capture_output=True,
 			text=True,
+			errors="replace",
 			check=False,
 			env=env,
 		)
-	except FileNotFoundError:
+	except OSError:
 		sys.stderr.write("git is required on PATH\n")
 		return 1
 	if run.returncode != 0:

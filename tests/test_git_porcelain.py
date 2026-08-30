@@ -6,6 +6,7 @@ git."""
 
 from __future__ import annotations
 
+import os
 import runpy
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
@@ -27,6 +28,16 @@ def _fake_git(result: SimpleNamespace) -> Callable[..., SimpleNamespace]:
 
 	def run(*args: object, **kwargs: object) -> SimpleNamespace:
 		return result
+
+	return run
+
+
+def _recording_run(seen_env: dict[str, str]) -> Callable[..., SimpleNamespace]:
+	"""A ``subprocess.run`` stand-in recording the ``env`` it is passed."""
+
+	def run(*args: object, env: dict[str, str], **kwargs: object) -> SimpleNamespace:
+		seen_env.update(env)
+		return _git_result(0)
 
 	return run
 
@@ -74,12 +85,7 @@ def test_main_scrubs_ambient_git_environment(
 ) -> None:
 	"""GIT_DIR and friends override directory discovery; the check runs with them scrubbed."""
 	seen_env: dict[str, str] = {}
-
-	def capture(*args: object, env: dict[str, str], **kwargs: object) -> SimpleNamespace:
-		seen_env.update(env)
-		return _git_result(0)
-
-	monkeypatch.setattr("camas._git_porcelain.subprocess.run", capture)
+	monkeypatch.setattr("camas._git_porcelain.subprocess.run", _recording_run(seen_env))
 	monkeypatch.setenv("GIT_DIR", "/elsewhere")
 	monkeypatch.setenv("GIT_WORK_TREE", "/elsewhere")
 	monkeypatch.setenv("KEEP_ME", "yes")
@@ -89,24 +95,35 @@ def test_main_scrubs_ambient_git_environment(
 	assert seen_env["KEEP_ME"] == "yes"
 
 
-def test_main_scrubs_git_environment_case_insensitively(
+@pytest.mark.skipif(
+	os.name == "nt",
+	reason="os.environ uppercases keys on Windows; a raw-block lowercase key needs a spawned child",
+)
+def test_main_scrubs_git_environment_exact_case_on_posix(
 	monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-	"""Windows environment names are case-insensitive, so a lowercase git_dir still
-	overrides discovery; the scrub matches on the upper-cased key."""
+	"""POSIX git's getenv is case-sensitive, so the scrub is exact: a lowercase git_dir
+	survives, since git never reads it."""
 	seen_env: dict[str, str] = {}
-
-	def capture(*args: object, env: dict[str, str], **kwargs: object) -> SimpleNamespace:
-		seen_env.update(env)
-		return _git_result(0)
-
-	monkeypatch.setattr("camas._git_porcelain.subprocess.run", capture)
+	monkeypatch.setattr("camas._git_porcelain.subprocess.run", _recording_run(seen_env))
 	monkeypatch.setenv("git_dir", "/elsewhere")
 	monkeypatch.setenv("keep_me", "yes")
 	assert main() == 0
-	lower_keys = {key.lower(): value for key, value in seen_env.items()}
-	assert "git_dir" not in lower_keys
-	assert lower_keys["keep_me"] == "yes"
+	assert seen_env["git_dir"] == "/elsewhere"
+	assert seen_env["keep_me"] == "yes"
+
+
+def test_main_fails_with_a_hint_when_git_cannot_execute(
+	monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	"""A git shim that fails to exec (WinError 193) is still a git that cannot run."""
+
+	def raises(*args: object, **kwargs: object) -> SimpleNamespace:
+		raise OSError("not a valid Win32 application")
+
+	monkeypatch.setattr("camas._git_porcelain.subprocess.run", raises)
+	assert main() == 1
+	assert "git is required on PATH" in capsys.readouterr().err
 
 
 def test_module_main_exits_with_mains_code(monkeypatch: pytest.MonkeyPatch) -> None:
