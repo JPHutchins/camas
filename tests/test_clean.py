@@ -67,15 +67,16 @@ def test_clean_rejects_a_non_mutating_generator() -> None:
 		)
 
 
-def test_clean_rejects_a_scoped_check() -> None:
-	"""A check whose ``when``/``cwd`` scoping could prune it while the mutator still runs
-	would silently green a dirtied tree on scoped runs."""
-	with pytest.raises(ValueError, match="when="):
-		Clean(Task("make gen", mutates=True), check=Task("python -c pass", when="src"))
-	with pytest.raises(ValueError, match="cwd"):
-		Clean(Task("make gen", mutates=True), check=Task("python -c pass", cwd="sub"))
-	with pytest.raises(ValueError, match="paths"):
-		Clean(Task("make gen", mutates=True), check=Task("python -c pass {paths}", paths="src"))
+def test_clean_check_scoping_is_overridden_not_applied() -> None:
+	"""The derived check leaves always run: the check's own scoping is replaced by
+	``when="."`` and ``paths=None``, so a scoped run cannot prune them while the mutator
+	still writes."""
+	check = Task("python -c pass {paths}", when="src", cwd="sub", paths="src")
+	node = Clean(Task("make gen", mutates=True), check=check)
+	for leaf in (node.tasks[0], node.tasks[2]):
+		assert isinstance(leaf, Task)
+		assert leaf.when == "."
+		assert leaf.paths is None
 
 
 def test_clean_check_leaves_keep_the_checks_fields() -> None:
@@ -94,12 +95,22 @@ def test_clean_check_leaves_keep_the_checks_fields() -> None:
 
 def test_clean_uses_the_checks_own_name_for_the_gate_label() -> None:
 	node = Clean(Task("make gen", mutates=True), check=Task("python -c pass", name="verify"))
-	assert [task.name for task in node.tasks] == ["verify-before", None, "verify-after"]
+	assert [task.name for task in node.tasks] == [
+		"make gen-verify-before",
+		None,
+		"make gen-verify-after",
+	]
+
+
+def test_clean_named_gate_also_names_the_sequential() -> None:
+	node = Clean(Task("make gen", mutates=True), name="openapi")
+	assert node.name == "openapi"
 
 
 def test_clean_named_gate_prefixes_its_check_leaves() -> None:
 	node = Clean(Task("make gen", mutates=True), name="openapi")
 	assert [task.name for task in node.tasks] == ["openapi-before", None, "openapi-after"]
+	assert node.name == "openapi"
 
 
 def test_clean_coerces_a_string_check() -> None:

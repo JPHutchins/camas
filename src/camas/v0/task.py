@@ -694,7 +694,7 @@ def GIT_PORCELAIN() -> Task:  # noqa: N802  # constructor-style factory, like Ta
 	:mod:`camas._git_porcelain` module under camas's own interpreter; ``git`` must be on
 	PATH.
 	"""
-	return Task((sys.executable, "-m", "camas._git_porcelain"))
+	return Task((sys.executable, "-m", "camas._git_porcelain"), cwd=".")
 
 
 _GIT_PORCELAIN: Final = GIT_PORCELAIN()
@@ -724,14 +724,17 @@ def Clean(  # noqa: N802  # constructor-style factory, like Task/Parallel
 	exactly as it was.
 
 	Expands to ``Sequential``: the ``check`` as ``<label>-before``, then ``mutator``, then
-	``check`` as ``<label>-after``; ``label`` is ``name``, the check's own, or the mutator's. A dirty tree
-	fails the before-check and the blocker skips the generator; the after-check's failure
-	output is the drift diagnostic. Under ``--under`` the scheduler rebuilds the tree
-	mutating-first, so the fail-fast ordering does not hold there (#306).
+	``check`` as ``<label>-after``; ``label`` is ``name``, else the mutator's label joined
+	with the check's own name. A dirty tree fails the before-check and the blocker skips the
+	generator; the after-check's failure output is the drift diagnostic. The check leaves
+	always run — ``when="."`` and ``paths=None`` override the check's own scoping — and the
+	check reads git's view, so paths git ignores are outside its contract. Under ``--under``
+	the scheduler rebuilds the tree mutating-first, so the fail-fast ordering does not hold
+	there, and a check leaf measured over budget is excluded outright (#306).
 
 	Raises:
 		ValueError: ``mutator`` or ``check`` is neither a ``str`` nor a ``Task``; ``mutator``
-			lacks ``mutates=True``; ``check`` sets ``when``, ``cwd``, or ``paths``.
+			lacks ``mutates=True``.
 
 	>>> Clean(Task("make update-openapi", mutates=True), before=False).tasks[0].cmd
 	'make update-openapi'
@@ -749,30 +752,19 @@ def Clean(  # noqa: N802  # constructor-style factory, like Task/Parallel
 			"Clean's mutator must be marked mutates=True — the drift gate exists to catch "
 			"its writes"
 		)
-	if check.when is not None:
-		raise ValueError(
-			"Clean's check must not set when= — a scoped run would prune the checks while "
-			"the mutator still runs"
-		)
-	if check.cwd is not None:
-		raise ValueError(
-			"Clean's check must not set cwd — its directory gating would prune the checks "
-			"on scoped runs"
-		)
-	if check.paths is not None:
-		raise ValueError(
-			"Clean's check must not set paths — a scoped run would narrow the check while "
-			"the mutator still writes"
-		)
 
 	def check_leaf(leaf_name: str) -> Task:
-		return replace(check, name=leaf_name)
+		return replace(check, name=leaf_name, when=".", paths=None)
 
-	mutator_label: Final = mutator.name or (
-		mutator.cmd if isinstance(mutator.cmd, str) else " ".join(mutator.cmd)
+	from camas.core.task import task_label
+
+	mutator_label: Final = task_label(mutator)
+	gate_name: Final = (
+		name
+		if name is not None
+		else (f"{mutator_label}-{check.name}" if check.name is not None else mutator_label)
 	)
-	gate_name: Final = name if name is not None else (check.name or mutator_label)
 	after: Final = check_leaf(f"{gate_name}-after")
 	if not before:
-		return Sequential(mutator, after)
-	return Sequential(check_leaf(f"{gate_name}-before"), mutator, after)
+		return Sequential(mutator, after, name=name)
+	return Sequential(check_leaf(f"{gate_name}-before"), mutator, after, name=name)

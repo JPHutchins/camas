@@ -69,6 +69,26 @@ def test_main_fails_with_a_hint_when_git_is_absent(
 	assert "git is required on PATH" in capsys.readouterr().err
 
 
+def test_main_scrubs_ambient_git_environment(
+	monkeypatch: pytest.MonkeyPatch,
+) -> None:
+	"""GIT_DIR and friends override directory discovery; the check runs with them scrubbed."""
+	seen_env: dict[str, str] = {}
+
+	def capture(*args: object, env: dict[str, str], **kwargs: object) -> SimpleNamespace:
+		seen_env.update(env)
+		return _git_result(0)
+
+	monkeypatch.setattr("camas._git_porcelain.subprocess.run", capture)
+	monkeypatch.setenv("GIT_DIR", "/elsewhere")
+	monkeypatch.setenv("GIT_WORK_TREE", "/elsewhere")
+	monkeypatch.setenv("KEEP_ME", "yes")
+	assert main() == 0
+	assert "GIT_DIR" not in seen_env
+	assert "GIT_WORK_TREE" not in seen_env
+	assert seen_env["KEEP_ME"] == "yes"
+
+
 def test_module_main_exits_with_mains_code(monkeypatch: pytest.MonkeyPatch) -> None:
 	"""The ``__main__`` block wraps :func:`main`'s exit code in ``SystemExit``. The
 	``subprocess.run`` patch survives ``runpy``'s module re-execution, unlike a ``main``
