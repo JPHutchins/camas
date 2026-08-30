@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+import time
 from typing import TYPE_CHECKING, NamedTuple
 
 import pytest
@@ -252,6 +253,9 @@ def test_parallel_on_event_runs_concurrently() -> None:
 		pass
 
 	class Slow:
+		def __init__(self) -> None:
+			self.windows: list[tuple[float, float]] = []
+
 		async def setup(self, task: TaskNode) -> SlowCtx:
 			return SlowCtx()
 
@@ -259,16 +263,21 @@ def test_parallel_on_event_runs_concurrently() -> None:
 			self, event: TaskEvent, states: Sequence[LeafState], ctx: SlowCtx
 		) -> SlowCtx:
 			if isinstance(event, CompletedEvent):
+				start = time.perf_counter()
 				await asyncio.sleep(1.0)
+				self.windows.append((start, time.perf_counter()))
 			return ctx
 
 		async def teardown(self, ctxs: tuple[SlowCtx, ...]) -> None:
 			pass
 
+	slow = Slow()
 	task = Parallel(
 		Task(("python", "-c", "pass"), name="a"), Task(("python", "-c", "pass"), name="b")
 	)
-	result = asyncio.run(run(task, effects=(Slow(),)))
+	result = asyncio.run(run(task, effects=(slow,)))
 	assert result.returncode == 0
-	# Concurrent: ~1.0s + spawn overhead. Sequential would add another 1.0s.
-	assert result.elapsed < 2.5
+	assert len(slow.windows) == 2
+	(a_start, a_end), (b_start, b_end) = slow.windows
+	# The two 1.0s sleeps overlapped — sequential dispatch would leave a gap between them.
+	assert max(a_start, b_start) < min(a_end, b_end), f"windows did not overlap: {slow.windows}"
