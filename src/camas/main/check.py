@@ -417,12 +417,14 @@ def mypypath(inherited: str, camas_root: Path) -> str:
 
 
 def inherited_mypypath() -> str:
-	"""The environment's existing MYPYPATH value — found case-insensitively on Windows, where the
-	env block does not distinguish ``Mypypath`` from ``MYPYPATH``.
+	"""The environment's existing MYPYPATH value — found case-insensitively where the checker's
+	env block is case-insensitive (Windows, MSYS/Cygwin).
 	"""
+	from ..core.platform import env_case_insensitive
+
 	return (
 		next((value for key, value in os.environ.items() if key.casefold() == "mypypath"), "")
-		if sys.platform == "win32"
+		if env_case_insensitive()
 		else os.environ.get("MYPYPATH", "")
 	)
 
@@ -492,10 +494,11 @@ def merge_env(overlay: dict[str, str]) -> dict[str, str] | None:
 	if not overlay:
 		return None
 	from ..core.execution import drop_case_variants
+	from ..core.platform import env_case_insensitive
 
 	inherited = (
 		drop_case_variants(overlay, dict(os.environ))
-		if sys.platform == "win32"
+		if env_case_insensitive()
 		else dict(os.environ)
 	)
 	return {**inherited, **overlay}

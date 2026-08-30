@@ -66,7 +66,9 @@ def check_ignore(paths: Sequence[str]) -> tuple[Excluded, ...]:
 	Output is decoded leniently because none of the matching depends on those bytes: git echoes each
 	pathname back exactly as given, and camas only ever asks about its own ASCII literals. A
 	non-UTF-8 ``.gitignore`` pattern — or an excludes file under a non-UTF-8 directory — would
-	otherwise take down an advisory warning over characters that only ever get printed.
+	otherwise take down an advisory warning over characters that only ever get printed. Ambient
+	GIT_* environment is honored deliberately: the advisory reports git's own view of the cwd,
+	user-configured ``git_dir`` included — unlike the drift check, which scrubs it.
 	"""
 	git = shutil.which("git")
 	if git is None:

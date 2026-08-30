@@ -317,8 +317,8 @@ def subprocess_env(merged: dict[str, str], *, color: bool = True) -> dict[str, s
 
 def drop_case_variants(overlay: dict[str, str], inherited: dict[str, str]) -> dict[str, str]:
 	"""``inherited`` minus entries whose names collide case-insensitively with an ``overlay`` key —
-	Windows env blocks are case-insensitive, so a differently-cased pre-existing entry would shadow
-	the overlay in the child.
+	on a case-insensitive env block, a differently-cased pre-existing entry would shadow the
+	overlay in the child.
 
 	>>> drop_case_variants({"MYPYPATH": "new"}, {"Mypypath": "old", "OTHER": "kept"})
 	{'OTHER': 'kept'}
