@@ -89,6 +89,26 @@ def test_main_scrubs_ambient_git_environment(
 	assert seen_env["KEEP_ME"] == "yes"
 
 
+def test_main_scrubs_git_environment_case_insensitively(
+	monkeypatch: pytest.MonkeyPatch,
+) -> None:
+	"""Windows environment names are case-insensitive, so a lowercase git_dir still
+	overrides discovery; the scrub matches on the upper-cased key."""
+	seen_env: dict[str, str] = {}
+
+	def capture(*args: object, env: dict[str, str], **kwargs: object) -> SimpleNamespace:
+		seen_env.update(env)
+		return _git_result(0)
+
+	monkeypatch.setattr("camas._git_porcelain.subprocess.run", capture)
+	monkeypatch.setenv("git_dir", "/elsewhere")
+	monkeypatch.setenv("keep_me", "yes")
+	assert main() == 0
+	lower_keys = {key.lower(): value for key, value in seen_env.items()}
+	assert "git_dir" not in lower_keys
+	assert lower_keys["keep_me"] == "yes"
+
+
 def test_module_main_exits_with_mains_code(monkeypatch: pytest.MonkeyPatch) -> None:
 	"""The ``__main__`` block wraps :func:`main`'s exit code in ``SystemExit``. The
 	``subprocess.run`` patch survives ``runpy``'s module re-execution, unlike a ``main``

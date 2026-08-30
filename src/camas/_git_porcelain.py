@@ -12,7 +12,9 @@ from typing import Final
 
 
 def main() -> int:
-	env: Final = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+	env: Final = {
+		key: value for key, value in os.environ.items() if not key.upper().startswith("GIT_")
+	}
 	try:
 		run: Final = subprocess.run(
 			["git", "status", "--porcelain", "--untracked-files=normal"],
