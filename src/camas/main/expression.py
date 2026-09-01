@@ -359,6 +359,19 @@ def eval_node(
 						paths=eval_opt_str(kw.get("paths")),
 						when=eval_when(kw.get("when")),
 					)
+				case "Pipe":
+					return Pipe(
+						*children(args, allow_refs),
+						agent_only=eval_opt_bool(kw.get("agent_only")),
+						name=eval_opt_str(kw.get("name")),
+						matrix=eval_matrix(kw.get("matrix")),
+						variants=eval_variants(kw.get("variants")),
+						env=eval_env(kw.get("env")),
+						cwd=eval_opt_str(kw.get("cwd")),
+						help=eval_opt_str(kw.get("help")),
+						paths=eval_opt_str(kw.get("paths")),
+						when=eval_when(kw.get("when")),
+					)
 				case "Ref":
 					ref_name_node = args[0] if args else kw.get("name")
 					if ref_name_node is None:

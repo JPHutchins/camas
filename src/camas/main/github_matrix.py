@@ -431,7 +431,7 @@ def jobs_emission(task: TaskNode, tasks: Mapping[str, TaskNode]) -> Jobs:
 	"""``task``'s children as one job each, dispatched by binding name.
 
 	Raises:
-		ValueError: when ``task`` is a leaf or a ``Sequential``, when it declares a fan-out or
+		ValueError: when ``task`` is a leaf, a one-stage ``Pipe``, or a ``Sequential``, when it declares a fan-out or
 			state a per-child job would not inherit, or when a child is not a dispatchable task.
 	"""
 	match task:
@@ -446,7 +446,12 @@ def jobs_emission(task: TaskNode, tasks: Mapping[str, TaskNode]) -> Jobs:
 				"in parallel — express the ordering with needs: in the workflow, and emit the "
 				"parallel step of the pipeline"
 			)
-		case Pipe():
+		case Pipe(tasks=stages):
+			if len(stages) == 1:
+				raise ValueError(
+					"task has no matrix axes to emit as a GitHub Actions job matrix, and it is a "
+					"single leaf — there are no children to fan out as one job each"
+				)
 			raise ValueError(
 				"a Pipe's stages are fd-wired into one process pipeline, which GitHub Actions "
 				"matrix jobs cannot split — emit the pipeline as a single job, or express the "

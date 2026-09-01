@@ -125,9 +125,10 @@ generators = Clean(
 # still a failure, and every stage still runs to completion (a dying stage feeds EOF downstream).
 # agent_only=True runs the full pipeline on an agent run and collapses to the first stage alone
 # on a human run — the human gets the plain human-readable output, the agent the piped
-# structured output, the same runner split as agent_format's args. The placeholders below are
-# inert (nothing writes); a real pipeline pairs a producer with the converter that turns its
-# output into the agent's structured format.
+# structured output, the same runner split as agent_format's args. Stages also compose with `>`:
+# clippy > "sarif" is a Pipe — parenthesize a chain of more than two ((a > b) > c), since Python
+# chains `>` comparisons. The placeholders below are inert (nothing writes); a real pipeline
+# pairs a producer with the converter that turns its output into the agent's structured format.
 diagnostics = Pipe(
 	Task("python -c \"print('hello')\""),
 	Task("python -c pass"),

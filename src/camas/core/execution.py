@@ -534,6 +534,7 @@ async def run_pipe(stages: tuple[TaskNode, ...], ctx: RunContext) -> tuple[TaskR
 	leaves: Final = cast("tuple[Task, ...]", stages)
 	procs: Final[dict[int, asyncio.subprocess.Process]] = {}
 	readers: Final[list[asyncio.Task[None]]] = []
+	waiters: Final[list[asyncio.Task[None]]] = []
 	stage_readers: Final[dict[int, tuple[asyncio.Task[None], ...]]] = {}
 	started_pc: Final[dict[int, float]] = {}
 	outputs: Final[dict[int, list[bytes]]] = {ctx.index_map[id(s)]: [] for s in stages}
@@ -552,11 +553,11 @@ async def run_pipe(stages: tuple[TaskNode, ...], ctx: RunContext) -> tuple[TaskR
 			)
 
 	async def kill_all(leaked_read: int | None) -> None:
-		"""Cancel the readers, close a leaked pipe end, kill and reap every spawned stage, and
-		drop their interrupt registrations.
+		"""Close a leaked pipe end, kill and reap every spawned stage, then let the readers
+		drain — the reaped procs EOF their streams, so a reader awaiting ``readline`` gets the
+		buffered tail instead of losing it to a cancel — cancel the waiters, and drop the
+		interrupt registrations.
 		"""
-		for reader in readers:
-			reader.cancel()
 		if leaked_read is not None and leaked_read != ctx.child_stdin:
 			with suppress(OSError):
 				os.close(leaked_read)
@@ -569,6 +570,11 @@ async def run_pipe(stages: tuple[TaskNode, ...], ctx: RunContext) -> tuple[TaskR
 		for reader in readers:
 			with suppress(BaseException):
 				await reader
+		for waiter in waiters:
+			waiter.cancel()
+		for waiter in waiters:
+			with suppress(BaseException):
+				await waiter
 		for leaf_index in procs:
 			ctx.interrupts.procs.pop(leaf_index, None)
 
@@ -599,24 +605,44 @@ async def run_pipe(stages: tuple[TaskNode, ...], ctx: RunContext) -> tuple[TaskR
 			leaf_index = ctx.index_map[id(stage)]
 			if ctx.interrupts.count:
 				await kill_all(prev_read)
-				for spawned_stage in leaves[:pos]:
-					spawned_index = ctx.index_map[id(spawned_stage)]
-					interrupted_proc = procs[spawned_index]
+				for leaf_index, interrupted_proc in procs.items():
 					stopped_rc = interrupted_proc.returncode or 0
 					spawned_completion: Completion = Stopped(
 						stopped_rc,
-						time.perf_counter() - started_pc[spawned_index],
-						tuple(outputs[spawned_index]),
+						time.perf_counter() - started_pc[leaf_index],
+						tuple(outputs[leaf_index]),
 					)
 					await ctx.dispatch(
-						spawned_index,
+						leaf_index,
 						CompletedEvent(
-							spawned_stage, spawned_index, spawned_completion, datetime.now()
+							ctx.leaves[leaf_index], leaf_index, spawned_completion, datetime.now()
 						),
 					)
-					results.append(leaf_result(ctx, spawned_index, spawned_completion))
+					results.append(leaf_result(ctx, leaf_index, spawned_completion))
+				# stages from here on never launched: spawn-failure semantics when one failed,
+				# else a landed interrupt
+				if spawn_failure is not None:
+					rc, message, failed_index, failed_name = spawn_failure
+					for remaining_stage in leaves[len(procs) :]:
+						remaining_index = ctx.index_map[id(remaining_stage)]
+						remaining_completion: Completion = (
+							Errored(rc, message)
+							if remaining_index == failed_index
+							else Skipped(rc, failed_name)
+						)
+						await ctx.dispatch(
+							remaining_index,
+							CompletedEvent(
+								remaining_stage,
+								remaining_index,
+								remaining_completion,
+								datetime.now(),
+							),
+						)
+						results.append(leaf_result(ctx, remaining_index, remaining_completion))
+					return tuple(results)
 				stopped = Stopped(INTERRUPT_RC, 0.0, ())
-				for remaining_stage in leaves[pos:]:
+				for remaining_stage in leaves[len(procs) :]:
 					remaining_index = ctx.index_map[id(remaining_stage)]
 					await ctx.dispatch(
 						remaining_index,
@@ -707,7 +733,7 @@ async def run_pipe(stages: tuple[TaskNode, ...], ctx: RunContext) -> tuple[TaskR
 				failed_completion = Stopped(
 					spawned_proc.returncode or 0,
 					time.perf_counter() - started_pc[leaf_index],
-					(),
+					tuple(outputs[leaf_index]),
 				)
 			await ctx.dispatch(
 				leaf_index,
@@ -716,10 +742,10 @@ async def run_pipe(stages: tuple[TaskNode, ...], ctx: RunContext) -> tuple[TaskR
 			results.append(leaf_result(ctx, leaf_index, failed_completion))
 		return tuple(results)
 
-	waiters: Final[tuple[asyncio.Task[None], ...]] = tuple(
-		asyncio.create_task(wait_and_complete(ctx.leaves[leaf_index], leaf_index, proc))
-		for leaf_index, proc in procs.items()
-	)
+	for leaf_index, proc in procs.items():
+		waiters.append(
+			asyncio.create_task(wait_and_complete(ctx.leaves[leaf_index], leaf_index, proc))
+		)
 	try:
 		await asyncio.gather(*waiters)
 	except BaseException:

@@ -16,7 +16,7 @@ from camas.core.execution import run
 from camas.core.gate import strip_agent_only_pipes, with_agent_format
 from camas.core.matrix import expand_matrix
 from camas.core.timings import CacheKey, TaskTiming
-from camas.v0.completion import INTERRUPT_RC, Finished, Stopped
+from camas.v0.completion import INTERRUPT_RC, Errored, Finished, Skipped, Stopped
 from camas.v0.leaf_state import Waiting
 from camas.v0.task import AgentFormat
 
@@ -54,6 +54,33 @@ def test_pipe_operators_compose_as_an_opaque_group() -> None:
 	pipe = Pipe("a", "b")
 	assert (pipe | "c").tasks == (pipe, Task("c"))
 	assert (pipe + "c").tasks == (pipe, Task("c"))
+
+
+def test_gt_operator_composes_pipe_stages() -> None:
+	"""``>`` pipes leaf stdout into the next stage. Chains of more than two need parens —
+	Python's comparison chaining would otherwise drop the head."""
+	assert (Task("a") > "b") == Pipe("a", "b")
+	assert ((Task("a") > "b") > "c").tasks == (Task("a"), Task("b"), Task("c"))
+	assert (Task("a") > Pipe("b", "c")) == Pipe("a", "b", "c")
+	assert (Pipe("a") > "b").tasks == (Task("a"), Task("b"))
+
+
+def test_gt_operator_carries_fields_and_agent_only() -> None:
+	extended = Pipe("a", env={"K": "v"}, agent_only=True) > "b"
+	assert extended.env == {"K": "v"}
+	assert extended.agent_only is True
+	assert (Pipe("a") > Pipe("b", env={"K": "v"})).env == {"K": "v"}
+	assert (Pipe("a", agent_only=True) > Pipe("b")).agent_only is True
+	assert (Pipe("a") > Pipe("b", agent_only=True)).agent_only is True
+
+
+def test_gt_operator_rejects_a_group_stage() -> None:
+	with pytest.raises(ValueError, match="stages must be Tasks"):
+		_ = Sequential("a") > "b"
+	with pytest.raises(ValueError, match="stages must be Tasks"):
+		_ = Parallel("a") > "b"
+	with pytest.raises(ValueError, match="stages must be Tasks"):
+		_ = Task("a") > Sequential("b")
 
 
 def test_strip_agent_only_pipes_leaves_a_pipeless_tree_untouched() -> None:
@@ -213,6 +240,14 @@ def test_github_matrix_rejects_a_pipe_with_the_fd_wiring_message() -> None:
 		jobs_emission(Pipe("a", "b"), {})
 
 
+def test_github_matrix_rejects_a_single_stage_pipe_as_a_leaf() -> None:
+	"""A collapsed agent_only pipe is one stage — the leaf message, not the fd-wiring one."""
+	from camas.main.github_matrix import jobs_emission
+
+	with pytest.raises(ValueError, match="single leaf"):
+		jobs_emission(Pipe("a"), {})
+
+
 def test_pipe_cancel_kills_every_stage() -> None:
 	"""Cancelling a pipe run kills and reaps every stage — no transport outlives the loop."""
 	pipe = Pipe(
@@ -310,14 +345,60 @@ def test_pipe_spawn_failure_never_starts_later_stages() -> None:
 def test_pipe_spawn_failure_reports_a_finished_earlier_stage_as_stopped() -> None:
 	"""A stage that genuinely ran before the failure reads Stopped with its own code — 0 when
 	it finished before the kill, a kill code otherwise — never Skipped with the failed
-	stage's 127."""
+	stage's 127, and it keeps the stderr its reader captured before the kill. The failed
+	spawn waits on the reader's OutputEvent, so the capture provably precedes the failure
+	instead of racing the stage's interpreter startup."""
+	from camas.core import execution as execution_module
+	from camas.v0.task_event import OutputEvent
+
+	original_spawn = execution_module._spawn_stage  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]  # the monkeypatched seam, kept for pass-through
+	wrote = asyncio.Event()
+
+	class Recorder:
+		async def setup(self, task: TaskNode) -> None:
+			return None
+
+		async def on_event(self, event: TaskEvent, states: Sequence[LeafState], ctx: None) -> None:
+			if isinstance(event, OutputEvent) and event.leaf_index == 0:
+				wrote.set()
+
+		async def teardown(self, ctxs: tuple[None, ...]) -> None:
+			pass
+
+	async def failing_spawn(
+		task: Task,
+		*,
+		stdin: int | None,
+		stdout: int,
+		stderr: int,
+		base: Path | None,
+		leaf_color: bool,
+	) -> asyncio.subprocess.Process:
+		if task.cmd == "no-such-cmd-xyz":
+			await asyncio.wait_for(wrote.wait(), timeout=10)
+			raise FileNotFoundError
+		return await original_spawn(
+			task, stdin=stdin, stdout=stdout, stderr=stderr, base=base, leaf_color=leaf_color
+		)
+
+	monkeypatch = pytest.MonkeyPatch()
+	monkeypatch.setattr(execution_module, "_spawn_stage", failing_spawn)
 	pipe = Pipe(
-		Task(("python", "-c", "import sys; sys.stdout.write('ran')")), Task("no-such-cmd-xyz")
+		Task(
+			(
+				"python",
+				"-c",
+				"import sys, time; sys.stderr.write('warn\\n'); sys.stderr.flush(); time.sleep(60)",
+			)
+		),
+		Task("no-such-cmd-xyz"),
 	)
-	result = asyncio.run(run(pipe, jobs=1))
+	result = asyncio.run(run(pipe, jobs=1, effects=(Recorder(),)))
+	monkeypatch.undo()
 	first = result.results[0].completion
 	assert isinstance(first, Stopped)
 	assert first.returncode != 127
+	assert first.output == (b"warn\n",)
 	assert result.results[1].completion.returncode == 127
 
 
@@ -418,6 +499,50 @@ def test_pipe_interrupt_mid_pipe_unwinds_the_spawned_stages() -> None:
 	assert results[1].completion.returncode == INTERRUPT_RC
 	completions = [e for e in events if isinstance(e, CompletedEvent)]
 	assert [c.leaf_index for c in completions] == [0, 1]
+
+
+def test_pipe_interrupt_after_a_spawn_failure_unwinds_with_the_failure_semantics() -> None:
+	"""An interrupt landing after a mid-pipe spawn failure still reports every stage exactly
+	once: the spawned one Stopped with its own code, the failed one Errored, the rest
+	Skipped — the failure's semantics, not a blanket interrupt."""
+	from contextlib import nullcontext
+
+	from camas.core.execution import Interrupts, RunContext, run_pipe
+	from camas.v0.task_event import CompletedEvent, StartedEvent
+
+	a = Task(("python", "-c", "import time; time.sleep(60)"))
+	bad = Task("no-such-cmd-xyz")
+	c = Task("c")
+	events: list[TaskEvent] = []
+	interrupts = Interrupts(procs={})
+
+	async def dispatch(leaf_idx: int, event: TaskEvent) -> None:
+		if isinstance(event, StartedEvent) and event.leaf_index == 1:
+			interrupts.count = 1
+		events.append(event)
+
+	async def scenario() -> tuple[TaskResult, ...]:
+		leaves = (a, bad, c)
+		index_map = {id(a): 0, id(bad): 1, id(c): 2}
+		states: list[LeafState] = [Waiting(a), Waiting(bad), Waiting(c)]
+		ctx = RunContext(
+			dispatch, leaves, index_map, nullcontext(), interrupts, states, None, None, True, None
+		)
+		return await run_pipe((a, bad, c), ctx)
+
+	results = asyncio.run(scenario())
+	assert len(results) == 3
+	spawned, failed, rest = (r.completion for r in results)
+	assert isinstance(spawned, Stopped)
+	assert spawned.returncode != 127
+	assert isinstance(failed, Errored)
+	assert failed.returncode == 127
+	assert isinstance(rest, Skipped)
+	assert rest.returncode == 127
+	completions = [e for e in events if isinstance(e, CompletedEvent)]
+	assert [c.leaf_index for c in completions] == [0, 1, 2]
+	started = {e.leaf_index for e in events if isinstance(e, StartedEvent)}
+	assert started == {0, 1}
 
 
 def test_pipe_cancel_inside_spawn_closes_the_fresh_pipe_fds() -> None:

@@ -184,6 +184,13 @@ def test_or_appends_to_a_parallel() -> None:
 	assert Parallel("format", "lint") | "integration" == Parallel("format", "lint", "integration")
 
 
+def test_gt_rejects_a_project_reference_as_a_stage() -> None:
+	"""A referenced project is a group, not a leaf stage — ``>`` raises the same ValueError the
+	Pipe constructor raises for a nested stage."""
+	with pytest.raises(ValueError, match="stages must be Tasks"):
+		_ = Project("libs") > "lint"
+
+
 def test_operators_assert_their_declared_types() -> None:
 	"""#298's acceptance contract: each operator's static return type — ``assert_type`` is a
 	runtime no-op enforced by every checker in the CI battery, so this test fails at analysis
@@ -196,6 +203,10 @@ def test_operators_assert_their_declared_types() -> None:
 	assert_type(Sequential("build") | "lint", Parallel)
 	assert_type(Project("libs") | "lint", Parallel)
 	assert_type(Project("libs") + "lint", Sequential)
+	assert_type(Task("gen") > "sarif", Pipe)
+	assert_type(Task("a") > Pipe("b"), Pipe)
+	assert_type(Pipe("a") > "b", Pipe)
+	assert_type(Pipe("a") > Pipe("b", "c"), Pipe)
 
 
 def test_or_builds_a_parallel_from_two_leaves() -> None:

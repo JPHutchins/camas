@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from camas import AgentFormat, Parallel, Sequential, Task
+from camas import AgentFormat, Parallel, Pipe, Sequential, Task
 from camas.main.expression import parse_expression, to_expression
 from camas.v0.task import Group
 
@@ -48,6 +48,13 @@ def test_to_expression_round_trips_group_fields_and_tuple_commands() -> None:
 		help="all checks",
 	)
 	assert parse_expression(to_expression(group)) == group
+
+
+def test_to_expression_round_trips_pipe_with_agent_only() -> None:
+	"""The Pipe round-trip keeps ``agent_only`` — the runner-identity split must survive
+	serialization."""
+	pipe = Pipe("cargo clippy --message-format=json", "clippy-sarif", agent_only=True)
+	assert parse_expression(to_expression(pipe)) == pipe
 
 
 @pytest.mark.parametrize(

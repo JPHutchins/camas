@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""Task-tree AST: ``Task`` leaves composed by ``Sequential`` and ``Parallel`` groups."""
+"""Task-tree AST: ``Task`` leaves composed by ``Sequential``, ``Parallel``, and ``Pipe`` groups."""
 
 from __future__ import annotations
 
@@ -384,6 +384,20 @@ class Task:
 		"""
 		return _sequential_of(self, other)
 
+	def __gt__(self, other: TaskNode | str) -> Pipe:
+		"""``>`` pipes this leaf's stdout into ``other``: a :class:`Pipe` of this leaf then
+		``other`` (a right-side :class:`Pipe` contributes its stages and carries its fields).
+
+		``>`` is a comparison operator, so Python chains it as ``a > b > c`` = ``(a > b) and
+		(b > c)`` — parenthesize a chain of more than two: ``(a > b) > c``.
+
+		>>> (Task("gen") > "upper").tasks == (Task("gen"), Task("upper"))
+		True
+		>>> ((Task("a") > "b") > "c").tasks == (Task("a"), Task("b"), Task("c"))
+		True
+		"""
+		return _pipe_of(self, other)
+
 
 @dataclass(frozen=True, slots=True, init=False, repr=False)
 class Group:
@@ -511,6 +525,17 @@ class Sequential(Group):  # pyrefly: ignore[bad-class-definition]
 		"""
 		return _sequential_of(self, other)
 
+	def __gt__(self, other: TaskNode | str) -> Pipe:
+		"""``>`` cannot pipe a composite — stages must be leaves. Raises the same
+		``ValueError`` the :class:`Pipe` constructor raises for a nested stage.
+
+		>>> Sequential("a") > "b"
+		Traceback (most recent call last):
+		    ...
+		ValueError: Pipe stages must be Tasks — a nested group would mean several commands sharing one stream
+		"""
+		return _pipe_of(self, other)
+
 
 class Parallel(Group):  # pyrefly: ignore[bad-class-definition]
 	"""A group of tasks that run concurrently.
@@ -543,6 +568,17 @@ class Parallel(Group):  # pyrefly: ignore[bad-class-definition]
 		True
 		"""
 		return _sequential_of(self, other)
+
+	def __gt__(self, other: TaskNode | str) -> Pipe:
+		"""``>`` cannot pipe a composite — stages must be leaves. Raises the same
+		``ValueError`` the :class:`Pipe` constructor raises for a nested stage.
+
+		>>> Parallel("a") > "b"
+		Traceback (most recent call last):
+		    ...
+		ValueError: Pipe stages must be Tasks — a nested group would mean several commands sharing one stream
+		"""
+		return _pipe_of(self, other)
 
 
 @dataclass(frozen=True, slots=True, init=False, repr=False)
@@ -618,7 +654,7 @@ class Pipe(Group):
 			)
 
 	def __hash__(self) -> int:
-		return Group.__hash__(self)
+		return hash((Group.__hash__(self), self.agent_only))
 
 	def __repr__(self) -> str:
 		parts = (
@@ -634,6 +670,17 @@ class Pipe(Group):
 	def __add__(self, other: TaskNode | str) -> Sequential:
 		"""``+`` builds a :class:`Sequential` that runs this whole pipe first, then ``other``."""
 		return _sequential_of(self, other)
+
+	def __gt__(self, other: TaskNode | str) -> Pipe:
+		"""``>`` appends ``other`` as the next stage (a right-side :class:`Pipe` contributes
+		its stages). Fields and type carry from the operand that brings them, like ``|`` and
+		``+``; either side's ``agent_only`` marks the combined pipe. Like ``Task.__gt__``,
+		parenthesize a chain of more than two.
+
+		>>> (Pipe("a") > "b").tasks == (Task("a"), Task("b"))
+		True
+		"""
+		return _pipe_of(self, other)
 
 
 TaskNode: TypeAlias = Task | Sequential | Parallel | Pipe
@@ -701,6 +748,12 @@ class ProjectRef:
 	def __add__(self, other: TaskNode | str) -> Sequential:
 		"""Composes like a task node — see :meth:`Task.__add__`."""
 		return _sequential_of(cast("TaskNode", self), other)
+
+	def __gt__(self, other: TaskNode | str) -> Pipe:
+		"""A referenced project is a group, not a leaf stage — the composition raises the same
+		``ValueError`` the :class:`Pipe` constructor raises for a nested stage.
+		"""
+		return _pipe_of(cast("TaskNode", self), other)
 
 
 def Project(path: str) -> TaskNode:  # noqa: N802  # constructor-style factory, like Task/Parallel
@@ -780,6 +833,30 @@ def _sequential_of(left: TaskNode | str, right: TaskNode | str) -> Sequential:
 	if isinstance(right_node, Sequential):
 		return rebuilt(right_node, left_node, *_nodes(right_node.tasks))
 	return Sequential(left_node, right_node)
+
+
+def _pipe_of(left: TaskNode | str, right: TaskNode | str) -> Pipe:
+	"""The ``>`` composition — see :meth:`Task.__gt__` and :meth:`Pipe.__gt__`."""
+	left_node, right_node = _node(left), _node(right)
+	if isinstance(left_node, Pipe):
+		if isinstance(right_node, Pipe):
+			if fieldless(left_node) and (not fieldless(right_node) or type(right_node) is not Pipe):
+				return rebuilt(
+					right_node,
+					*_nodes(left_node.tasks),
+					*_nodes(right_node.tasks),
+					agent_only=left_node.agent_only or right_node.agent_only,
+				)
+			return rebuilt(
+				left_node,
+				*_nodes(left_node.tasks),
+				*_nodes(right_node.tasks),
+				agent_only=left_node.agent_only or right_node.agent_only,
+			)
+		return rebuilt(left_node, *_nodes(left_node.tasks), right_node)
+	if isinstance(right_node, Pipe):
+		return rebuilt(right_node, left_node, *_nodes(right_node.tasks))
+	return Pipe(left_node, right_node)
 
 
 def GIT_PORCELAIN() -> Task:  # noqa: N802  # constructor-style factory, like Task/Parallel
