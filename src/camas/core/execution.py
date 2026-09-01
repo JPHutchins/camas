@@ -605,6 +605,7 @@ async def run_pipe(stages: tuple[TaskNode, ...], ctx: RunContext) -> tuple[TaskR
 			leaf_index = ctx.index_map[id(stage)]
 			if ctx.interrupts.count:
 				await kill_all(prev_read)
+				prev_read = None
 				for leaf_index, interrupted_proc in procs.items():
 					stopped_rc = interrupted_proc.returncode or 0
 					spawned_completion: Completion = Stopped(
@@ -685,6 +686,8 @@ async def run_pipe(stages: tuple[TaskNode, ...], ctx: RunContext) -> tuple[TaskR
 					with suppress(OSError):
 						os.close(prev_read)
 				prev_read = None
+				pending_read = None
+				pending_write = -1
 				spawn_failure = (
 					NOT_FOUND_RC,
 					spawn_error_message(exc, argv, cwd),
