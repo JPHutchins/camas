@@ -388,7 +388,7 @@ def test_pipe_spawn_failure_reports_a_finished_earlier_stage_as_stopped() -> Non
 			(
 				"python",
 				"-c",
-				"import sys, time; sys.stderr.write('warn\\n'); sys.stderr.flush(); time.sleep(60)",
+				"import sys, time; sys.stderr.buffer.write(b'warn\\n'); sys.stderr.flush(); time.sleep(60)",
 			)
 		),
 		Task("no-such-cmd-xyz"),
