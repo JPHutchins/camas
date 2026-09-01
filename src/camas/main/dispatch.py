@@ -21,6 +21,7 @@ else:  # pragma: no cover
 from ..core import timings
 from ..core.budget import plan_under
 from ..core.execution import run
+from ..core.gate import strip_agent_only_pipes
 from ..core.hook_event import stdin_changed
 from ..core.matrix import (
 	empty_variant_labels,
@@ -480,6 +481,12 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 				except ValueError as e:
 					print(f"error: {e}", file=sys.stderr)
 					sys.exit(2)
+
+			# A human run collapses agent_only Pipes to their first stage — the agent gets the
+			# full pipeline, the human the stage's plain output. Everything after this point
+			# (matrix emission, budgeting, dry-run, the run itself) is the human shape.
+			if not in_agent:
+				resolved = strip_agent_only_pipes(resolved)
 
 			if args.github_matrix:
 				try:

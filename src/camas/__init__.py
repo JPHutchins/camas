@@ -436,6 +436,7 @@ from .v0 import Clean as Clean
 from .v0 import Config as Config
 from .v0 import Effect as Effect
 from .v0 import Parallel as Parallel
+from .v0 import Pipe as Pipe
 from .v0 import Project as Project
 from .v0 import Sequential as Sequential
 from .v0 import Task as Task

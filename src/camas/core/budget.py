@@ -15,7 +15,7 @@ else:  # pragma: no cover
 
 from typing import TYPE_CHECKING, Any, Final, NamedTuple, TypeAlias, overload
 
-from ..v0.task import GROUP_FIELDS, Parallel, Sequential, Task, fieldless, rebuilt
+from ..v0.task import GROUP_FIELDS, Parallel, Pipe, Sequential, Task, fieldless, rebuilt
 from .matrix import expand_matrix
 from .timings import estimate
 
@@ -141,6 +141,19 @@ def _plan_under(
 				_collect(planned),
 				any(child.has_mutating for child in planned),
 			)
+		case Pipe(tasks=children):
+			planned = tuple(_plan_under(child, budget_s, timings, scope) for child in children)
+			pipe_kept = tuple(child.node for child in planned if child.node is not None)
+			# Cutting a stage would rewire the pipeline (the survivor before the cut would feed
+			# the one after it), so any dropped stage drops the whole pipe.
+			pipe_runnable = (
+				None if len(pipe_kept) != len(children) else _collapse(rebuilt(node, *pipe_kept))
+			)
+			return _Planned(
+				pipe_runnable,
+				_collect(planned),
+				pipe_runnable is not None and any(child.has_mutating for child in planned),
+			)
 		case Parallel(tasks=children):
 			planned = tuple(_plan_under(child, budget_s, timings, scope) for child in children)
 			mutating = tuple(
@@ -189,9 +202,12 @@ def _fields_of(node: Group) -> dict[str, Any]:
 def _collapse(node: Sequential) -> Sequential: ...
 @overload
 def _collapse(node: Parallel) -> Parallel: ...
+@overload
+def _collapse(node: Pipe) -> Pipe: ...
 def _collapse(node: Group) -> Group:
 	"""A fieldless single-child wrapper whose child is the same kind is dropped, matching the
-	``|``/``+`` flattening; a wrapper carrying annotations keeps them.
+	``|``/``+`` flattening; a wrapper carrying annotations keeps them. A Pipe never reaches the
+	drop, since its stages are leaves and a same-kind child is impossible.
 	"""
 	children: Final = node.tasks
 	if len(children) != 1 or not fieldless(node):

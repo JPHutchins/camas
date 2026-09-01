@@ -18,7 +18,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Final, Literal, NamedTuple, TypeAlias
 
-from ..v0.task import Group, Task, rebuilt
+from ..v0.task import Group, Pipe, Task, rebuilt
 from .budget import plan_under
 from .execution import run
 from .matrix import expand_matrix
@@ -156,7 +156,7 @@ def with_agent_format(node: TaskNode, report_dir: Path) -> FormattedNode:
 	"""
 	match node:
 		case Task():
-			if node.agent_format is None:
+			if node.agent_format is None or not node.agent_format.args:
 				return FormattedNode(node, (None,))
 			args = node.agent_format.args
 			report_path = _allocate_report_path(report_dir) if REPORT_TOKEN in args else None
@@ -172,6 +172,44 @@ def with_agent_format(node: TaskNode, report_dir: Path) -> FormattedNode:
 			)
 		case _:
 			assert_never(node)
+
+
+def strip_agent_only_pipes(node: TaskNode) -> TaskNode:
+	"""The human-run shape of ``node``: an ``agent_only`` Pipe collapses to a single-stage Pipe
+	holding its first stage — the group's fields ride along, since env/cwd/matrix/paths/when
+	still apply to the human's run of that stage — while an agent keeps the full pipeline, the
+	same runner split as ``agent_format``'s args, which the gate appends on the agent path.
+	Consults no runner identity; the caller decides which path it is on.
+
+	>>> strip_agent_only_pipes(Pipe("cargo clippy", "clippy-sarif", agent_only=True)).tasks[0].cmd
+	'cargo clippy'
+	>>> strip_agent_only_pipes(Pipe("a", "b")).tasks[0].cmd
+	'a'
+	"""
+	if not _has_agent_only(node):
+		return node
+	match node:
+		case Pipe(tasks=stages, agent_only=True):
+			return rebuilt(node, stages[0], agent_only=False)
+		case Group() as group:
+			children = tuple(strip_agent_only_pipes(c) for c in group.tasks)
+			if all(new is old for new, old in zip(children, group.tasks, strict=True)):
+				return node  # pragma: no cover
+			return rebuilt(group, *children)
+		case Task():  # pragma: no cover
+			return node
+		case _:
+			assert_never(node)
+
+
+def _has_agent_only(node: TaskNode) -> bool:
+	match node:
+		case Pipe(agent_only=True):
+			return True
+		case Group() as group:
+			return any(_has_agent_only(c) for c in group.tasks)
+		case _:
+			return False
 
 
 def uses_path_mode(node: TaskNode) -> bool:

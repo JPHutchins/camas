@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""Task-tree AST: ``Task`` leaves composed by ``Sequential`` and ``Parallel`` groups."""
+"""Task-tree AST: ``Task`` leaves composed by ``Sequential``, ``Parallel``, and ``Pipe`` groups."""
 
 from __future__ import annotations
 
@@ -384,12 +384,26 @@ class Task:
 		"""
 		return _sequential_of(self, other)
 
+	def __gt__(self, other: TaskNode | str) -> Pipe:
+		"""``>`` pipes this leaf's stdout into ``other``: a :class:`Pipe` of this leaf then
+		``other`` (a right-side :class:`Pipe` contributes its stages and carries its fields).
+
+		``>`` is a comparison operator, so Python chains it as ``a > b > c`` = ``(a > b) and
+		(b > c)`` — parenthesize a chain of more than two: ``(a > b) > c``.
+
+		>>> (Task("gen") > "upper").tasks == (Task("gen"), Task("upper"))
+		True
+		>>> ((Task("a") > "b") > "c").tasks == (Task("a"), Task("b"), Task("c"))
+		True
+		"""
+		return _pipe_of(self, other)
+
 
 @dataclass(frozen=True, slots=True, init=False, repr=False)
 class Group:
-	"""Shared base for ``Sequential`` and ``Parallel``: variadic ``*tasks`` (with
+	"""Shared base for ``Sequential``, ``Parallel``, and ``Pipe``: variadic ``*tasks`` (with
 	``str`` → ``Task`` coercion), identical kwargs, hashable. Use
-	``isinstance(x, Group)`` to test for "either kind of grouping node";
+	``isinstance(x, Group)`` to test for "some kind of grouping node";
 	pattern-match on the concrete subclass to discriminate.
 
 	``paths`` is the default path-scope for descendant ``{paths}`` leaves that set none
@@ -476,18 +490,7 @@ class Group:
 		)
 
 	def __repr__(self) -> str:
-		parts = (
-			f"tasks={self.tasks!r}",
-			f"name={self.name!r}",
-			f"matrix={self.matrix!r}",
-			*([f"variants={self.variants!r}"] if self.variants is not None else []),
-			f"env={self.env!r}",
-			f"cwd={self.cwd!r}",
-			*([f"help={self.help!r}"] if self.help is not None else []),
-			*([f"paths={self.paths!r}"] if self.paths is not None else []),
-			*([f"when={self.when!r}"] if self.when is not None else []),
-		)
-		return f"{type(self).__name__}({', '.join(parts)})"
+		return f"{type(self).__name__}({', '.join(_group_repr_parts(self))})"
 
 
 class Sequential(Group):  # pyrefly: ignore[bad-class-definition]
@@ -522,6 +525,17 @@ class Sequential(Group):  # pyrefly: ignore[bad-class-definition]
 		"""
 		return _sequential_of(self, other)
 
+	def __gt__(self, other: TaskNode | str) -> Pipe:
+		"""``>`` cannot pipe a composite — stages must be leaves. Raises the same
+		``ValueError`` the :class:`Pipe` constructor raises for a nested stage.
+
+		>>> Sequential("a") > "b"
+		Traceback (most recent call last):
+		    ...
+		ValueError: Pipe stages must be Tasks — a nested group would mean several commands sharing one stream
+		"""
+		return _pipe_of(self, other)
+
 
 class Parallel(Group):  # pyrefly: ignore[bad-class-definition]
 	"""A group of tasks that run concurrently.
@@ -555,8 +569,136 @@ class Parallel(Group):  # pyrefly: ignore[bad-class-definition]
 		"""
 		return _sequential_of(self, other)
 
+	def __gt__(self, other: TaskNode | str) -> Pipe:
+		"""``>`` cannot pipe a composite — stages must be leaves. Raises the same
+		``ValueError`` the :class:`Pipe` constructor raises for a nested stage.
 
-TaskNode: TypeAlias = Task | Sequential | Parallel
+		>>> Parallel("a") > "b"
+		Traceback (most recent call last):
+		    ...
+		ValueError: Pipe stages must be Tasks — a nested group would mean several commands sharing one stream
+		"""
+		return _pipe_of(self, other)
+
+
+@dataclass(frozen=True, slots=True, init=False, repr=False)
+class Pipe(Group):
+	"""A group of leaf stages piped fd-to-fd, each stage its own argv vector — no shell.
+
+	Every stage runs concurrently and to completion (a dying stage feeds EOF downstream);
+	the pipeline fails ``pipefail``-style: any stage's non-zero exit fails the run, so a
+	producer failing under a succeeding last stage is still a failure. Stages must be
+	leaves — a nested group would mean several commands sharing one stream.
+
+	``agent_only=True`` runs the full pipeline on an agent run and collapses to the first
+	stage alone on a human run — the plain human-readable output for a human, the piped
+	structured output for the agent, selected by the same runner identity that appends
+	``agent_format`` args (:func:`camas.core.gate.strip_agent_only_pipes`).
+
+	>>> Pipe("cargo clippy --message-format=json", "clippy-sarif").agent_only
+	False
+	>>> Pipe("a", "b", agent_only=True).tasks[0].cmd
+	'a'
+	>>> Pipe()
+	Traceback (most recent call last):
+	    ...
+	ValueError: Pipe needs at least one stage
+	>>> Pipe("a", "b")
+	Pipe(tasks=(Task(cmd='a', name=None, env={}, cwd=None), Task(cmd='b', name=None, env={}, cwd=None)), name=None, matrix=None, env={}, cwd=None)
+	>>> Pipe("a", Sequential("b"))
+	Traceback (most recent call last):
+	    ...
+	ValueError: Pipe stages must be Tasks — a nested group would mean several commands sharing one stream
+	"""
+
+	agent_only: bool
+
+	def __init__(
+		self,
+		*tasks: TaskNode | str,
+		agent_only: bool = False,
+		name: str | None = None,
+		matrix: dict[str, tuple[str, ...]] | None = None,
+		variants: tuple[dict[str, str], ...] | None = None,
+		env: dict[str, str] | None = None,
+		cwd: str | Path | None = None,
+		help: str | None = None,
+		paths: str | PathScope | None = None,
+		when: str | Path | tuple[str | Path, ...] | WhenPredicate | None = None,
+	) -> None:
+		# Explicit base call — zero-arg super() breaks under mypyc's compiled subclasses.
+		Group.__init__(
+			self,
+			*tasks,
+			name=name,
+			matrix=matrix,
+			variants=variants,
+			env=env,
+			cwd=cwd,
+			help=help,
+			paths=paths,
+			when=when,
+		)
+		object.__setattr__(self, "agent_only", agent_only)
+		if not self.tasks:
+			raise ValueError("Pipe needs at least one stage")
+		if any(not isinstance(t, Task) for t in self.tasks):
+			raise ValueError(
+				"Pipe stages must be Tasks — a nested group would mean several commands "
+				"sharing one stream"
+			)
+		if len({id(t) for t in self.tasks}) != len(self.tasks):
+			raise ValueError(
+				"Pipe stages must be distinct Tasks — a repeated stage would collide in the "
+				"engine's per-leaf slots"
+			)
+
+	def __hash__(self) -> int:
+		return hash((Group.__hash__(self), self.agent_only))
+
+	def __repr__(self) -> str:
+		parts = (
+			*_group_repr_parts(self),
+			*(["agent_only=True"] if self.agent_only else []),
+		)
+		return f"Pipe({', '.join(parts)})"
+
+	def __or__(self, other: TaskNode | str) -> Parallel:
+		"""``|`` composes in parallel: a :class:`Parallel` of this whole pipe and ``other``."""
+		return _parallel_of(self, other)
+
+	def __add__(self, other: TaskNode | str) -> Sequential:
+		"""``+`` builds a :class:`Sequential` that runs this whole pipe first, then ``other``."""
+		return _sequential_of(self, other)
+
+	def __gt__(self, other: TaskNode | str) -> Pipe:
+		"""``>`` appends ``other`` as the next stage (a right-side :class:`Pipe` contributes
+		its stages). Fields and type carry from the operand that brings them, like ``|`` and
+		``+``; either side's ``agent_only`` marks the combined pipe. Like ``Task.__gt__``,
+		parenthesize a chain of more than two.
+
+		>>> (Pipe("a") > "b").tasks == (Task("a"), Task("b"))
+		True
+		"""
+		return _pipe_of(self, other)
+
+
+TaskNode: TypeAlias = Task | Sequential | Parallel | Pipe
+
+
+def _group_repr_parts(group: Group) -> tuple[str, ...]:
+	"""The repr parts shared by every Group kind, so a field added later renders for all."""
+	return (
+		f"tasks={group.tasks!r}",
+		f"name={group.name!r}",
+		f"matrix={group.matrix!r}",
+		*([f"variants={group.variants!r}"] if group.variants is not None else []),
+		f"env={group.env!r}",
+		f"cwd={group.cwd!r}",
+		*([f"help={group.help!r}"] if group.help is not None else []),
+		*([f"paths={group.paths!r}"] if group.paths is not None else []),
+		*([f"when={group.when!r}"] if group.when is not None else []),
+	)
 
 
 GROUP_FIELDS: Final = ("name", "matrix", "variants", "env", "cwd", "help", "paths", "when")
@@ -583,16 +725,14 @@ def rebuilt(group: G, *children: TaskNode, **changes: object) -> G:
 	Raises:
 		TypeError: a ``changes`` name outside :data:`GROUP_FIELDS`.
 	"""
-	unknown = [name for name in changes if name not in GROUP_FIELDS]
+	allowed = (*GROUP_FIELDS, *(("agent_only",) if isinstance(group, Pipe) else ()))
+	unknown = [name for name in changes if name not in allowed]
 	if unknown:
 		raise TypeError(f"rebuilt() got an unexpected keyword argument {unknown[0]!r}")
-	return type(group)(
-		*children,
-		**cast(
-			"dict[str, Any]",
-			{field: changes.get(field, getattr(group, field)) for field in GROUP_FIELDS},
-		),
-	)
+	kwargs = {field: changes.get(field, getattr(group, field)) for field in GROUP_FIELDS}
+	if isinstance(group, Pipe):
+		kwargs["agent_only"] = changes.get("agent_only", group.agent_only)
+	return type(group)(*children, **cast("dict[str, Any]", kwargs))
 
 
 @dataclass(frozen=True, slots=True)
@@ -608,6 +748,12 @@ class ProjectRef:
 	def __add__(self, other: TaskNode | str) -> Sequential:
 		"""Composes like a task node — see :meth:`Task.__add__`."""
 		return _sequential_of(cast("TaskNode", self), other)
+
+	def __gt__(self, other: TaskNode | str) -> Pipe:
+		"""A referenced project is a group, not a leaf stage — the composition raises the same
+		``ValueError`` the :class:`Pipe` constructor raises for a nested stage.
+		"""
+		return _pipe_of(cast("TaskNode", self), other)
 
 
 def Project(path: str) -> TaskNode:  # noqa: N802  # constructor-style factory, like Task/Parallel
@@ -687,6 +833,30 @@ def _sequential_of(left: TaskNode | str, right: TaskNode | str) -> Sequential:
 	if isinstance(right_node, Sequential):
 		return rebuilt(right_node, left_node, *_nodes(right_node.tasks))
 	return Sequential(left_node, right_node)
+
+
+def _pipe_of(left: TaskNode | str, right: TaskNode | str) -> Pipe:
+	"""The ``>`` composition — see :meth:`Task.__gt__` and :meth:`Pipe.__gt__`."""
+	left_node, right_node = _node(left), _node(right)
+	if isinstance(left_node, Pipe):
+		if isinstance(right_node, Pipe):
+			if fieldless(left_node) and (not fieldless(right_node) or type(right_node) is not Pipe):
+				return rebuilt(
+					right_node,
+					*_nodes(left_node.tasks),
+					*_nodes(right_node.tasks),
+					agent_only=left_node.agent_only or right_node.agent_only,
+				)
+			return rebuilt(
+				left_node,
+				*_nodes(left_node.tasks),
+				*_nodes(right_node.tasks),
+				agent_only=left_node.agent_only or right_node.agent_only,
+			)
+		return rebuilt(left_node, *_nodes(left_node.tasks), right_node)
+	if isinstance(right_node, Pipe):
+		return rebuilt(right_node, left_node, *_nodes(right_node.tasks))
+	return Pipe(left_node, right_node)
 
 
 def GIT_PORCELAIN() -> Task:  # noqa: N802  # constructor-style factory, like Task/Parallel

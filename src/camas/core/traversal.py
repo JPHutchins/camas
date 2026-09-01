@@ -13,7 +13,7 @@ if sys.version_info >= (3, 11):
 else:  # pragma: no cover
 	from typing_extensions import assert_never
 
-from ..v0.task import Parallel, Sequential, Task, TaskNode
+from ..v0.task import Parallel, Pipe, Sequential, Task, TaskNode
 from .leaf_state import ChainLink, LeafInfo
 
 if TYPE_CHECKING:
@@ -29,7 +29,7 @@ def iter_leaves(
 	match node:
 		case Task():
 			yield LeafInfo(node, depth, is_last_chain)
-		case Sequential(tasks=children) | Parallel(tasks=children):
+		case Sequential(tasks=children) | Parallel(tasks=children) | Pipe(tasks=children):
 			parent_is_par: Final = isinstance(node, Parallel)
 			last_i: Final = len(children) - 1
 			for i, child in enumerate(children):
@@ -49,7 +49,7 @@ def subtree_leaf_indices(task: TaskNode, index_map: dict[int, int]) -> tuple[int
 	match task:
 		case Task():
 			return (index_map[id(task)],)
-		case Sequential(tasks=tasks) | Parallel(tasks=tasks):
+		case Sequential(tasks=tasks) | Parallel(tasks=tasks) | Pipe(tasks=tasks):
 			return tuple(i for child in tasks for i in subtree_leaf_indices(child, index_map))
 		case _:
 			assert_never(task)

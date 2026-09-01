@@ -17,7 +17,17 @@ else:  # pragma: no cover
 	from typing_extensions import assert_never
 
 from ..core.task import did_you_mean
-from ..v0.task import AgentFormat, Group, OutputKind, Parallel, Sequential, Task, TaskNode, rebuilt
+from ..v0.task import (
+	AgentFormat,
+	Group,
+	OutputKind,
+	Parallel,
+	Pipe,
+	Sequential,
+	Task,
+	TaskNode,
+	rebuilt,
+)
 
 if TYPE_CHECKING:
 	from collections.abc import Mapping
@@ -40,11 +50,12 @@ CONSTRUCTORS: Final = {
 	Task.__name__: Task,
 	Sequential.__name__: Sequential,
 	Parallel.__name__: Parallel,
+	Pipe.__name__: Pipe,
 }
 
 CONFIG_CONSTRUCTORS: Final = CONSTRUCTORS | {Ref.__name__: Ref}
 
-EXPRESSION_PATTERN: Final = re.compile(r"^\s*(?:(?:Task|Sequential|Parallel|Ref)\s*\(|[(\{])")
+EXPRESSION_PATTERN: Final = re.compile(r"^\s*(?:(?:Task|Sequential|Parallel|Pipe|Ref)\s*\(|[(\{])")
 
 
 def format_syntax_error(source: str, err: SyntaxError) -> str:
@@ -348,6 +359,19 @@ def eval_node(
 						paths=eval_opt_str(kw.get("paths")),
 						when=eval_when(kw.get("when")),
 					)
+				case "Pipe":
+					return Pipe(
+						*children(args, allow_refs),
+						agent_only=eval_opt_bool(kw.get("agent_only")),
+						name=eval_opt_str(kw.get("name")),
+						matrix=eval_matrix(kw.get("matrix")),
+						variants=eval_variants(kw.get("variants")),
+						env=eval_env(kw.get("env")),
+						cwd=eval_opt_str(kw.get("cwd")),
+						help=eval_opt_str(kw.get("help")),
+						paths=eval_opt_str(kw.get("paths")),
+						when=eval_when(kw.get("when")),
+					)
 				case "Ref":
 					ref_name_node = args[0] if args else kw.get("name")
 					if ref_name_node is None:
@@ -396,7 +420,7 @@ def parse_expression(expr: str, tasks: Mapping[str, TaskNode] | None = None) -> 
 
 	if tasks is None:
 		match result:
-			case Task() | Sequential() | Parallel():
+			case Task() | Sequential() | Parallel() | Pipe():
 				return result
 			case _:
 				print(
@@ -468,11 +492,15 @@ def to_expression(node: TaskNode) -> str:
 				f"{paths_kwarg(paths)}{when_kwarg(when)}{agent_format_kwarg(agent_format)})"
 			)
 		case Group() as group:
+			agent_only_kwarg = (
+				", agent_only=True" if isinstance(group, Pipe) and group.agent_only else ""
+			)
 			return (
 				f"{type(group).__name__}({render_members(group.tasks)}{name_kwarg(group.name)}"
 				f"{matrix_kwarg(group.matrix)}{variants_kwarg(group.variants)}"
 				f"{env_kwarg(group.env)}{cwd_kwarg(group.cwd)}"
-				f"{help_kwarg(group.help)}{paths_kwarg(group.paths)}{when_kwarg(group.when)})"
+				f"{help_kwarg(group.help)}{paths_kwarg(group.paths)}{when_kwarg(group.when)}"
+				f"{agent_only_kwarg})"
 			)
 		case _:
 			assert_never(node)

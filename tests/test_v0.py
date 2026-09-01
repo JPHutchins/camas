@@ -22,6 +22,7 @@ from camas.v0.task import (
 	GROUP_FIELDS,
 	Group,
 	Parallel,
+	Pipe,
 	Project,
 	Sequential,
 	Task,
@@ -40,6 +41,7 @@ HEADLINE: Final = frozenset(
 		"Effect",
 		"GIT_PORCELAIN",
 		"Parallel",
+		"Pipe",
 		"Project",
 		"Sequential",
 		"Task",
@@ -64,6 +66,7 @@ PUBLIC_API: Final = (
 	Waiting,
 	Group,
 	Parallel,
+	Pipe,
 	Sequential,
 	Task,
 	TaskNode,
@@ -111,6 +114,10 @@ def test_group_fields_track_every_group_constructor_kwarg() -> None:
 		assert keywords == GROUP_FIELDS, cls
 		positional = tuple((p.name, p.kind) for p in params if p.kind is not p.KEYWORD_ONLY)
 		assert positional == (("tasks", inspect.Parameter.VAR_POSITIONAL),), cls
+	# Pipe adds one keyword of its own ahead of the shared fields.
+	pipe_params = tuple(inspect.signature(Pipe).parameters.values())
+	pipe_keywords = tuple(p.name for p in pipe_params if p.kind is p.KEYWORD_ONLY)
+	assert pipe_keywords == ("agent_only", *GROUP_FIELDS)
 
 
 def test_a_fresh_plain_left_operand_adopts_the_right_fields() -> None:
@@ -177,6 +184,13 @@ def test_or_appends_to_a_parallel() -> None:
 	assert Parallel("format", "lint") | "integration" == Parallel("format", "lint", "integration")
 
 
+def test_gt_rejects_a_project_reference_as_a_stage() -> None:
+	"""A referenced project is a group, not a leaf stage — ``>`` raises the same ValueError the
+	Pipe constructor raises for a nested stage."""
+	with pytest.raises(ValueError, match="stages must be Tasks"):
+		_ = Project("libs") > "lint"
+
+
 def test_operators_assert_their_declared_types() -> None:
 	"""#298's acceptance contract: each operator's static return type — ``assert_type`` is a
 	runtime no-op enforced by every checker in the CI battery, so this test fails at analysis
@@ -189,6 +203,10 @@ def test_operators_assert_their_declared_types() -> None:
 	assert_type(Sequential("build") | "lint", Parallel)
 	assert_type(Project("libs") | "lint", Parallel)
 	assert_type(Project("libs") + "lint", Sequential)
+	assert_type(Task("gen") > "sarif", Pipe)
+	assert_type(Task("a") > Pipe("b"), Pipe)
+	assert_type(Pipe("a") > "b", Pipe)
+	assert_type(Pipe("a") > Pipe("b", "c"), Pipe)
 
 
 def test_or_builds_a_parallel_from_two_leaves() -> None:

@@ -300,7 +300,7 @@ def build_parser(state: TasksState = EMPTY_STATE) -> argparse.ArgumentParser:
 	parser.add_argument(
 		"--verbose",
 		action="store_true",
-		help="with --init, scaffold the kitchen-sink template — every Task/Sequential/"
+		help="with --init, scaffold the kitchen-sink template — every Task/Sequential/Pipe/"
 		"Parallel/Config option worked and explained — instead of the minimal starter",
 	)
 	parser.add_argument(

@@ -34,7 +34,7 @@ ci = Sequential(
 )
 ```
 
-Nodes also compose with operators (in `tasks.py` — the `camas '<expr>'` expression surface does not yet accept them): `ci | "integration"` is a `Parallel` of the whole `ci` group and the integration task (a right-side `Parallel` contributes its children), and `ci + "integration"` is a `Sequential` that flattens `ci`'s tasks in, then the integration task. `+` binds tighter than `|` — parenthesize a mixed chain to control its shape.
+Nodes also compose with operators (in `tasks.py` — the `camas '<expr>'` expression surface does not yet accept them): `ci | "integration"` is a `Parallel` of the whole `ci` group and the integration task (a right-side `Parallel` contributes its children), and `ci + "integration"` is a `Sequential` that flattens `ci`'s tasks in, then the integration task. `+` binds tighter than `|` — parenthesize a mixed chain to control its shape. `clippy > "sarif"` is a `Pipe` wiring `clippy`'s stdout into `sarif` (a right-side `Pipe` contributes its stages); `>` is a comparison operator, so Python chains `a > b > c` as `(a > b) and (b > c)` — parenthesize a chain of more than two: `(a > b) > c`.
 
 The animated tree above is from a live test fixture — [see the walkthrough](#walkthrough).
 

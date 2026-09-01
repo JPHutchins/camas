@@ -80,7 +80,7 @@ from ..core.matrix import (
 )
 from ..core.task import node_label, task_label
 from ..core.traversal import flatten_leaves
-from ..v0.task import Parallel, Sequential, Task
+from ..v0.task import Parallel, Pipe, Sequential, Task
 from .format import format_empty_variants_error
 
 if TYPE_CHECKING:
@@ -210,6 +210,7 @@ def declared_cells(task: TaskNode) -> Fanout:
 		case (
 			Sequential(tasks=children, matrix=matrix, variants=variants)
 			| Parallel(tasks=children, matrix=matrix, variants=variants)
+			| Pipe(tasks=children, matrix=matrix, variants=variants)
 		):
 			inner: Final = functools.reduce(
 				merge_fanouts, map(declared_cells, children), Fanout((), ())
@@ -430,7 +431,7 @@ def jobs_emission(task: TaskNode, tasks: Mapping[str, TaskNode]) -> Jobs:
 	"""``task``'s children as one job each, dispatched by binding name.
 
 	Raises:
-		ValueError: when ``task`` is a leaf or a ``Sequential``, when it declares a fan-out or
+		ValueError: when ``task`` is a leaf, a one-stage ``Pipe``, or a ``Sequential``, when it declares a fan-out or
 			state a per-child job would not inherit, or when a child is not a dispatchable task.
 	"""
 	match task:
@@ -441,9 +442,20 @@ def jobs_emission(task: TaskNode, tasks: Mapping[str, TaskNode]) -> Jobs:
 			)
 		case Sequential():
 			raise ValueError(
-				"a Sequential's children run in order, but GitHub Actions matrix jobs run in "
-				"parallel — express the ordering with needs: in the workflow, and emit the "
+				"a Sequential's children run in order, but GitHub Actions matrix jobs run "
+				"in parallel — express the ordering with needs: in the workflow, and emit the "
 				"parallel step of the pipeline"
+			)
+		case Pipe(tasks=stages):
+			if len(stages) == 1:
+				raise ValueError(
+					"task has no matrix axes to emit as a GitHub Actions job matrix, and it is a "
+					"single leaf — there are no children to fan out as one job each"
+				)
+			raise ValueError(
+				"a Pipe's stages are fd-wired into one process pipeline, which GitHub Actions "
+				"matrix jobs cannot split — emit the pipeline as a single job, or express the "
+				"stages as a Sequential with needs: ordering in the workflow"
 			)
 		case Parallel(tasks=children) as group:
 			blocking = tuple(
