@@ -319,6 +319,7 @@ def test_drop_unjustified_running_drops_a_stage_whose_untimed_sibling_was_pruned
 	gen = Task("cargo clippy {paths}", name="gen", paths="rust")
 	sarif = Task("clippy-sarif {paths}", name="sarif", paths="docs")
 	plan = plan_under(Pipe(gen, sarif), 1.0, {CacheKey("gen", 0): TaskTiming(9.0, 5)})
+	assert plan.node is not None
 	pruned_sibling = timings.observed(None, plan.node, ("rust/lib.rs",))
 	assert drop_unjustified_running(pruned_sibling.node, plan, pruned_sibling.pairs) is None
 	kept_sibling = timings.observed(None, plan.node, ("rust/lib.rs", "docs/readme.md"))
@@ -326,6 +327,12 @@ def test_drop_unjustified_running_drops_a_stage_whose_untimed_sibling_was_pruned
 		drop_unjustified_running(kept_sibling.node, plan, kept_sibling.pairs) == kept_sibling.node
 	)
 	assert drop_unjustified_running(None, plan) is None
+	plain_plan = plan_under(
+		Pipe(Task("gen", name="gen"), Task("sarif", name="sarif")),
+		1.0,
+		{CacheKey("gen", 0): TaskTiming(0.1, 5), CacheKey("sarif", 0): TaskTiming(0.1, 5)},
+	)
+	assert drop_unjustified_running(plain_plan.node, plain_plan) == plain_plan.node
 
 
 def test_drop_unjustified_running_applies_the_cut_semantics() -> None:
@@ -344,6 +351,7 @@ def test_drop_unjustified_running_applies_the_cut_semantics() -> None:
 		1.0,
 		{CacheKey("run", 0): TaskTiming(9.0, 5), CacheKey("midfit", 0): TaskTiming(0.1, 5)},
 	)
+	assert plan.node is not None
 	scoped = timings.observed(None, plan.node, ("src/x.rs",))
 	assert drop_unjustified_running(scoped.node, plan, scoped.pairs) is None
 
@@ -357,6 +365,7 @@ def test_drop_unjustified_running_applies_the_cut_semantics() -> None:
 		1.0,
 		{CacheKey("gen", 0): TaskTiming(0.1, 5), CacheKey("run", 0): TaskTiming(9.0, 5)},
 	)
+	assert plan.node is not None
 	scoped = timings.observed(None, plan.node, ("src/x.rs",))
 	assert drop_unjustified_running(scoped.node, plan, scoped.pairs) == Pipe(
 		Task("gen", name="gen")
@@ -374,7 +383,11 @@ def test_drop_unjustified_running_drops_an_all_dropped_group() -> None:
 		{CacheKey("a", 0): TaskTiming(9.0, 5), CacheKey("b", 0): TaskTiming(9.0, 5)},
 	)
 	# plan_under works on expand_matrix's clones — take the stages from the plan's own tree.
-	dropped = Parallel(Pipe(plan.node.tasks[0].tasks[0]), Pipe(plan.node.tasks[1].tasks[0]))
+	assert isinstance(plan.node, Parallel)
+	pipe_a, pipe_b = plan.node.tasks
+	assert isinstance(pipe_a, Pipe)
+	assert isinstance(pipe_b, Pipe)
+	dropped = Parallel(Pipe(pipe_a.tasks[0]), Pipe(pipe_b.tasks[0]))
 	assert drop_unjustified_running(dropped, plan) is None
 
 
@@ -698,7 +711,7 @@ def test_pipe_interrupt_unwind_reports_an_unowned_finished_stage_finished(
 		)
 		if task.cmd == ("python", "-c", "pass"):
 			a_proc.append(proc)
-		elif task.cmd == ("python", "-c", "import time; time.sleep(60)"):
+		if task.cmd == ("python", "-c", "import time; time.sleep(60)"):
 			# Wait for stage a's observed reap before the interrupt lands, so its natural
 			# exit code — not the unwind's kill — is the one observed.
 			deadline = time.monotonic() + 5
@@ -822,6 +835,8 @@ def test_pipe_cancel_inside_spawn_closes_the_fresh_pipe_fds(
 def test_reap_cancelled_spawn_kills_even_when_the_reaper_is_cancelled() -> None:
 	"""A cancel propagated into the reaper while it awaits the spawn task is uncancelled and
 	retried — the kill still runs."""
+	import time
+
 	from camas.core.execution import (
 		_reap_cancelled_spawn,  # pyright: ignore[reportPrivateUsage]
 	)
@@ -840,7 +855,16 @@ def test_reap_cancelled_spawn_kills_even_when_the_reaper_is_cancelled() -> None:
 	async def scenario() -> None:
 		spawn_task = asyncio.create_task(spawn_child())
 		reaper = asyncio.create_task(_reap_cancelled_spawn(spawn_task))
-		await asyncio.sleep(0.05)
+		await asyncio.sleep(
+			0
+		)  # the reaper starts and suspends at its await — a cancel before the body runs never enters it
+		deadline = time.monotonic() + 5
+		while not child_holder:
+			if (
+				time.monotonic() > deadline
+			):  # pragma: no cover  # only a stuck spawn reaches the deadline
+				pytest.fail("the child never spawned")
+			await asyncio.sleep(0.01)
 		reaper.cancel()
 		await reaper
 		assert child_holder[0].returncode is not None
@@ -860,10 +884,27 @@ def test_reap_cancelled_spawn_stops_when_the_spawn_itself_cancels() -> None:
 	async def scenario() -> None:
 		spawn_task = asyncio.create_task(plain_spawn())
 		reaper = asyncio.create_task(_reap_cancelled_spawn(spawn_task))
-		await asyncio.sleep(0.05)
+		await asyncio.sleep(
+			0
+		)  # let the reaper start and suspend at its await — a cancel before the body runs never enters it
 		reaper.cancel()
 		await reaper
 		assert spawn_task.cancelled()
+
+	asyncio.run(scenario())
+
+
+def test_reap_cancelled_spawn_stops_when_the_spawn_fails() -> None:
+	from camas.core.execution import _reap_cancelled_spawn  # pyright: ignore[reportPrivateUsage]
+
+	async def failing_spawn() -> asyncio.subprocess.Process:
+		await asyncio.sleep(0.05)
+		raise RuntimeError("boom")
+
+	async def scenario() -> None:
+		spawn_task = asyncio.create_task(failing_spawn())
+		reaper = asyncio.create_task(_reap_cancelled_spawn(spawn_task))
+		await reaper
 
 	asyncio.run(scenario())
 

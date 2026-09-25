@@ -17,7 +17,9 @@ else:  # pragma: no cover
 	from typing_extensions import assert_never
 
 from ..core.task import did_you_mean
-from ..v0.ref import Ref
+from ..v0.ref import (
+	Ref as Ref,  # noqa: PLC0414  # explicit re-export: the wheel build's mypy runs --no-implicit-reexport, and the public import stays here
+)
 from ..v0.task import (
 	AgentFormat,
 	Group,
