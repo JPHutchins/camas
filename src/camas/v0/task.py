@@ -389,11 +389,15 @@ class Task:
 		``other`` (a right-side :class:`Pipe` contributes its stages and carries its fields).
 
 		``>`` is a comparison operator, so Python chains it as ``a > b > c`` = ``(a > b) and
-		(b > c)`` — parenthesize a chain of more than two: ``(a > b) > c``.
+		(b > c)`` — parenthesize a chain of more than two: ``(a > b) > c``. A composed pipe is
+		always truthy, so a boolean context (``if a > b:``) silently passes — compare with
+		``==`` instead.
 
 		>>> (Task("gen") > "upper").tasks == (Task("gen"), Task("upper"))
 		True
 		>>> ((Task("a") > "b") > "c").tasks == (Task("a"), Task("b"), Task("c"))
+		True
+		>>> bool(Task("a") > "b")
 		True
 		"""
 		return _pipe_of(self, other)
@@ -626,6 +630,8 @@ class Pipe(Group):
 		paths: str | PathScope | None = None,
 		when: str | Path | tuple[str | Path, ...] | WhenPredicate | None = None,
 	) -> None:
+		from ..main.expression import Ref  # local: main imports v0, not the reverse
+
 		# Explicit base call — zero-arg super() breaks under mypyc's compiled subclasses.
 		Group.__init__(
 			self,
@@ -642,7 +648,7 @@ class Pipe(Group):
 		object.__setattr__(self, "agent_only", agent_only)
 		if not self.tasks:
 			raise ValueError("Pipe needs at least one stage")
-		if any(not isinstance(t, Task) for t in self.tasks):
+		if any(not isinstance(t, (Task, Ref)) for t in self.tasks):
 			raise ValueError(
 				"Pipe stages must be Tasks — a nested group would mean several commands "
 				"sharing one stream"
@@ -675,7 +681,8 @@ class Pipe(Group):
 		"""``>`` appends ``other`` as the next stage (a right-side :class:`Pipe` contributes
 		its stages). Fields and type carry from the operand that brings them, like ``|`` and
 		``+``; either side's ``agent_only`` marks the combined pipe. Like ``Task.__gt__``,
-		parenthesize a chain of more than two.
+		parenthesize a chain of more than two, and compare with ``==`` in a boolean context —
+		a composed pipe is always truthy.
 
 		>>> (Pipe("a") > "b").tasks == (Task("a"), Task("b"))
 		True

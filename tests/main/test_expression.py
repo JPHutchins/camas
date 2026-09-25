@@ -57,6 +57,14 @@ def test_to_expression_round_trips_pipe_with_agent_only() -> None:
 	assert parse_expression(to_expression(pipe)) == pipe
 
 
+def test_pipe_stage_ref_resolves() -> None:
+	"""A Ref is valid at any task position — a Pipe stage included — and resolves like a
+	Sequential/Parallel child; a Ref resolving to a group still hits the stage validation."""
+	assert parse_expression('Pipe("a", b)', tasks={"b": Task("hi")}) == Pipe("a", "hi")
+	with pytest.raises(SystemExit, match="2"):
+		parse_expression('Pipe("a", b)', tasks={"b": Sequential("x")})
+
+
 @pytest.mark.parametrize(
 	("expr", "expected"),
 	[

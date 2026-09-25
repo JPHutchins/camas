@@ -608,10 +608,18 @@ async def run_pipe(stages: tuple[TaskNode, ...], ctx: RunContext) -> tuple[TaskR
 				prev_read = None
 				for leaf_index, interrupted_proc in procs.items():
 					stopped_rc = interrupted_proc.returncode or 0
-					spawned_completion: Completion = Stopped(
-						stopped_rc,
-						time.perf_counter() - started_pc[leaf_index],
-						tuple(outputs[leaf_index]),
+					spawned_completion: Completion = (
+						Stopped(
+							stopped_rc,
+							time.perf_counter() - started_pc[leaf_index],
+							tuple(outputs[leaf_index]),
+						)
+						if isinstance(ctx.states[leaf_index], Interrupting)
+						else Finished(
+							stopped_rc,
+							time.perf_counter() - started_pc[leaf_index],
+							tuple(outputs[leaf_index]),
+						)
 					)
 					await ctx.dispatch(
 						leaf_index,
@@ -666,8 +674,8 @@ async def run_pipe(stages: tuple[TaskNode, ...], ctx: RunContext) -> tuple[TaskR
 				read_fd, stdout = os.pipe()
 				pending_read = read_fd
 				pending_write = stdout
-			try:
-				proc = await _spawn_stage(
+			spawn_task: asyncio.Task[asyncio.subprocess.Process] = asyncio.create_task(
+				_spawn_stage(
 					stage,
 					stdin=prev_read,
 					stdout=stdout,
@@ -675,6 +683,9 @@ async def run_pipe(stages: tuple[TaskNode, ...], ctx: RunContext) -> tuple[TaskR
 					base=ctx.base,
 					leaf_color=ctx.leaf_color,
 				)
+			)
+			try:
+				proc = await asyncio.shield(spawn_task)
 			except OSError as exc:
 				if read_fd is not None:
 					with suppress(OSError):
@@ -695,6 +706,19 @@ async def run_pipe(stages: tuple[TaskNode, ...], ctx: RunContext) -> tuple[TaskR
 					task_label(ctx.leaves[leaf_index]),
 				)
 				continue
+			except BaseException:
+				# The shield raises the cancel here instead of reaching the spawn task — a
+				# cancelled spawn can still hand back the Process, so cancel it explicitly,
+				# take the Process it hands back, and kill it — or a live child is orphaned
+				# past every unwind path.
+				spawn_task.cancel()
+				with suppress(BaseException):
+					orphaned_proc = await spawn_task
+					with suppress(OSError):
+						orphaned_proc.kill()
+					with suppress(ProcessLookupError, OSError):
+						await orphaned_proc.wait()
+				raise
 			if not is_last:
 				os.close(stdout)
 			if prev_read is not None and prev_read != ctx.child_stdin:

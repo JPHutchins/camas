@@ -33,6 +33,7 @@ from ..core.matrix import (
 from ..core.render import print_tree, render_tree_lines
 from ..core.scope import requested_but_unusable, to_changed, with_default_paths
 from ..core.task import did_you_mean, task_label
+from ..core.traversal import flatten_leaves
 from ..v0.config import Config
 from .argv import (
 	NAME_LIKE,
@@ -93,12 +94,28 @@ def dispatch_arg(arg: str, tasks: Mapping[str, TaskNode]) -> TaskNode:
 
 def budget_summary_lines(plan: BudgetPlan) -> list[str]:
 	"""The ``--under`` summary: how many leaves run (and which are unmeasured), and what was
-	excluded as measured-over-budget.
+	excluded as measured-over-budget — a pipe kept whole for its untimed siblings runs its
+	over-budget stages anyway, and says so instead of counting them excluded.
 	"""
+	running_over_budget: Final = (
+		tuple(
+			o
+			for o in plan.over_budget
+			if any(info.task is o.task for info in flatten_leaves(plan.node))
+		)
+		if plan.node is not None
+		else ()
+	)
 	lines = [
 		f"Time budget {plan.budget_s:.2f}s — running {len(plan.fits) + len(plan.untimed)} leaf(s) "
-		f"({len(plan.untimed)} unmeasured), excluded {len(plan.over_budget)} over budget."
+		f"({len(plan.untimed)} unmeasured), excluded "
+		f"{len(plan.over_budget) - len(running_over_budget)} over budget."
 	]
+	if running_over_budget:
+		lines.append(
+			"  running anyway to measure untimed pipe siblings: "
+			+ ", ".join(f"{task_label(o.task)} ~{o.estimated_s:.2f}s" for o in running_over_budget)
+		)
 	if plan.over_budget:
 		lines.append(
 			"  over budget: "

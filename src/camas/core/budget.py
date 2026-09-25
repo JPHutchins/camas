@@ -144,16 +144,22 @@ def _plan_under(
 		case Pipe(tasks=children):
 			planned = tuple(_plan_under(child, budget_s, timings, scope) for child in children)
 			pipe_kept = tuple(child.node for child in planned if child.node is not None)
-			# Cutting a stage would rewire the pipeline (the survivor before the cut would feed
-			# the one after it), so any dropped stage drops the whole pipe.
-			pipe_runnable = (
-				None if len(pipe_kept) != len(children) else _collapse(rebuilt(node, *pipe_kept))
-			)
-			return _Planned(
-				pipe_runnable,
-				_collect(planned),
-				pipe_runnable is not None and any(child.has_mutating for child in planned),
-			)
+			pruned_positions = tuple(i for i, child in enumerate(planned) if child.node is None)
+			# A mid-pipe cut would rewire the pipeline (the survivor before the cut feeding the
+			# one after it) — a suffix-only cut keeps the surviving prefix, and an untimed
+			# sibling keeps the pipe whole for the first run that measures it.
+			pipe_runnable: TaskNode | None
+			pipe_mutating: bool
+			if any(isinstance(d, Untimed) for d in _collect(planned)):
+				pipe_runnable = _collapse(rebuilt(node, *children))
+				pipe_mutating = any(t.mutates for t in children if isinstance(t, Task))
+			elif pipe_kept and pruned_positions == tuple(range(len(pipe_kept), len(children))):
+				pipe_runnable = _collapse(rebuilt(node, *pipe_kept))
+				pipe_mutating = any(child.has_mutating for child in planned)
+			else:
+				pipe_runnable = None
+				pipe_mutating = False
+			return _Planned(pipe_runnable, _collect(planned), pipe_mutating)
 		case Parallel(tasks=children):
 			planned = tuple(_plan_under(child, budget_s, timings, scope) for child in children)
 			mutating = tuple(

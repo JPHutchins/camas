@@ -266,10 +266,21 @@ def scoped_tree(node: TaskNode, resolved: Mapping[int, Task]) -> TaskNode | None
 		case Task():
 			return resolved.get(id(node))
 		case Pipe(tasks=stages):
-			kept = tuple(s for s in (scoped_tree(c, resolved) for c in stages) if s is not None)
+			scoped = tuple(scoped_tree(c, resolved) for c in stages)
+			kept = tuple(s for s in scoped if s is not None)
+			if not kept:
+				return None
+			if len(kept) == len(stages):
+				return rebuilt(node, *kept)
 			# A pruned stage would rewire the pipeline (the survivor before the cut feeding
-			# the one after it), so any pruned stage drops the whole pipe.
-			return rebuilt(node, *kept) if len(kept) == len(stages) else None
+			# the one after it) — a mid-pipe prune drops the whole pipe, a suffix-only prune
+			# keeps the surviving prefix.
+			pruned_positions = tuple(i for i, s in enumerate(scoped) if s is None)
+			return (
+				rebuilt(node, *kept)
+				if pruned_positions == tuple(range(len(kept), len(stages)))
+				else None
+			)
 		case Group() as group:
 			kept = tuple(
 				s for s in (scoped_tree(c, resolved) for c in group.tasks) if s is not None
