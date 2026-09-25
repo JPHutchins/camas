@@ -695,7 +695,7 @@ def test_pipe_cancel_during_spawn_kills_a_child_the_spawn_task_still_returns(
 	from camas.core import execution as execution_module
 
 	original_spawn = execution_module._spawn_stage  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]  # the monkeypatched seam, kept for pass-through
-	pids: list[int] = []
+	spawned: list[asyncio.subprocess.Process] = []
 
 	async def surviving_spawn(
 		task: Task,
@@ -709,7 +709,7 @@ def test_pipe_cancel_during_spawn_kills_a_child_the_spawn_task_still_returns(
 		proc = await original_spawn(
 			task, stdin=stdin, stdout=stdout, stderr=stderr, base=base, leaf_color=leaf_color
 		)
-		pids.append(proc.pid)
+		spawned.append(proc)
 		try:
 			await asyncio.sleep(60)
 		except asyncio.CancelledError:
@@ -728,10 +728,13 @@ def test_pipe_cancel_during_spawn_kills_a_child_the_spawn_task_still_returns(
 		main_task.cancel()
 		with pytest.raises(asyncio.CancelledError):
 			await main_task
-		# The unwind killed and awaited the child before re-raising — the probe finds
-		# nothing left to kill.
-		with pytest.raises(ProcessLookupError if sys.platform != "win32" else OSError):
-			kill(pids[0], 0)
+		# The unwind killed and awaited the child before re-raising — the reaped
+		# returncode is the cross-platform proof; the pid probe adds the POSIX liveness
+		# check (on Windows it would read the transport's still-open handle).
+		assert spawned[0].returncode is not None
+		if sys.platform != "win32":
+			with pytest.raises(ProcessLookupError):
+				kill(spawned[0].pid, 0)
 
 	asyncio.run(scenario())
 
