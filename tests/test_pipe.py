@@ -732,7 +732,9 @@ def test_pipe_cancel_during_spawn_kills_a_child_the_spawn_task_still_returns(
 		# returncode is the cross-platform proof; the pid probe adds the POSIX liveness
 		# check (on Windows it would read the transport's still-open handle).
 		assert spawned[0].returncode is not None
-		if sys.platform != "win32":
+		if (
+			sys.platform != "win32"
+		):  # pragma: no cover  # the win32 arm never runs on a POSIX CI runner
 			with pytest.raises(ProcessLookupError):
 				kill(spawned[0].pid, 0)
 
