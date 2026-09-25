@@ -31,7 +31,7 @@ from pydantic import AnyUrl, BaseModel, ValidationError
 from camas.paths import camas_package_dir
 
 from ..core import timings
-from ..core.budget import plan_under
+from ..core.budget import drop_unjustified_running, plan_under
 from ..core.execution import run
 from ..core.gate import STALE_TEMP_MAX_AGE_S, GateOutcome, run_gate
 from ..core.hook_event import NO_EVENT, HookEvent, event_from_stdin
@@ -80,7 +80,7 @@ else:  # pragma: no cover
 if TYPE_CHECKING:
 	from collections.abc import Mapping, Sequence
 
-	from ..core.budget import BudgetPlan
+	from ..core.budget import BudgetPlan, OverBudget
 	from ..core.completion import RunResult, TaskResult
 	from ..v0.task import TaskNode
 
@@ -548,7 +548,8 @@ def tools(task_names: tuple[str, ...], compat: Compat) -> Tools:
 				'-x'] to run and fail-fast on one test); composite tasks reject args, so target
 				a leaf. For a time-boxed inner loop, pass under=<seconds> to run only the leaves
 				whose recorded estimate fits — mutating leaves (formatters) first, then the
-				read-only rest in parallel; omit task to budget the project default. For an ad-hoc
+				read-only rest in parallel (a pipe kept whole for its untimed siblings runs its
+				over-budget stages too); omit task to budget the project default. For an ad-hoc
 				scoped run of any task, pass paths=[…] (changed files, like the CLI --paths): each
 				{paths} command is narrowed to the files it covers, and it combines with under
 				(scope first, then budget). Compact failures-first summary by default; dry_run=true
@@ -953,14 +954,19 @@ async def run_budget(
 	unscoped = plan.node
 	if unscoped is None:
 		empty = empty_run_response()
-		text = f"{budget_headline(report)}\n\nNothing ran — no leaf fit the budget."
+		reason = (
+			"no leaf fit the budget"
+			if not plan.fits
+			else "a mid-pipe cut would rewire the pipeline"
+		)
+		text = f"{budget_headline(report)}\n\nNothing ran — {reason}."
 		return success(with_warning(session, text), attach_budget(empty, report), session.compat)
 	if requested_but_unusable(req.paths, changed):
 		return nothing_covered_result(session, req.paths)
 	keying: Final = timings.observed(session.camas_dir, unscoped, changed)
-	if keying.node is None:
+	run_node: Final = drop_unjustified_running(keying.node, plan, keying.pairs)
+	if run_node is None:
 		return nothing_covered_result(session, req.paths)
-	run_node: Final = keying.node
 	if req.dry_run:
 		resp = attach_budget(to_plan_response(run_node), report)
 		return success(
@@ -1028,30 +1034,24 @@ def gate_source(tasks: Mapping[str, TaskNode], config: Config | None, task: str 
 
 
 def to_budget_report(plan: BudgetPlan) -> wire.BudgetReport:
-	"""The wire ``BudgetReport`` for a plan: the leaves that run (fitting + unmeasured + the
-	over-budget pipe stages that run to measure untimed siblings) and the over-budget leaves
-	that don't.
+	"""The wire ``BudgetReport`` for a plan: the schedule's runnable leaves and the
+	over-budget leaves that don't run.
 	"""
 	return wire.BudgetReport(
 		budget_s=plan.budget_s,
-		selected=(
-			*(task_label(f.task) for f in plan.fits),
-			*(task_label(u.task) for u in plan.untimed),
-			*(task_label(o.task) for o in plan.running_over_budget),
-		),
+		selected=tuple(task_label(t) for t in plan.runnable),
 		unmeasured=tuple(task_label(u.task) for u in plan.untimed),
-		running_over_budget=tuple(
-			wire.ExcludedLeaf(
-				name=task_label(o.task), reason="over_budget", estimated_s=o.estimated_s
-			)
-			for o in plan.running_over_budget
-		),
-		excluded=tuple(
-			wire.ExcludedLeaf(
-				name=task_label(o.task), reason="over_budget", estimated_s=o.estimated_s
-			)
-			for o in plan.over_budget
-		),
+		running_over_budget=tuple(_excluded_leaf(o) for o in plan.running_over_budget),
+		excluded=tuple(_excluded_leaf(o) for o in plan.over_budget),
+	)
+
+
+def _excluded_leaf(o: OverBudget) -> wire.ExcludedLeaf:
+	"""The wire form of an over-budget disposition — a leaf the budget did not run, or (in
+	``running_over_budget``) one it runs anyway to measure an untimed pipe sibling.
+	"""
+	return wire.ExcludedLeaf(
+		name=task_label(o.task), reason="over_budget", estimated_s=o.estimated_s
 	)
 
 

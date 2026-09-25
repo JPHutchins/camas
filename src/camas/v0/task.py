@@ -12,6 +12,8 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Final, Literal, NamedTuple, TypeAlias, TypeVar, cast, get_args
 
+from .ref import Ref
+
 if TYPE_CHECKING:
 	from collections.abc import Callable, Mapping
 	from typing import Any
@@ -630,8 +632,6 @@ class Pipe(Group):
 		paths: str | PathScope | None = None,
 		when: str | Path | tuple[str | Path, ...] | WhenPredicate | None = None,
 	) -> None:
-		from ..main.expression import Ref  # local: main imports v0, not the reverse
-
 		# Explicit base call — zero-arg super() breaks under mypyc's compiled subclasses.
 		Group.__init__(
 			self,

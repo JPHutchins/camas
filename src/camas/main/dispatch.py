@@ -19,7 +19,7 @@ else:  # pragma: no cover
 	from typing_extensions import assert_never
 
 from ..core import timings
-from ..core.budget import plan_under
+from ..core.budget import drop_unjustified_running, plan_under
 from ..core.execution import run
 from ..core.gate import strip_agent_only_pipes
 from ..core.hook_event import stdin_changed
@@ -33,7 +33,6 @@ from ..core.matrix import (
 from ..core.render import print_tree, render_tree_lines
 from ..core.scope import requested_but_unusable, to_changed, with_default_paths
 from ..core.task import did_you_mean, task_label
-from ..core.traversal import flatten_leaves
 from ..v0.config import Config
 from .argv import (
 	NAME_LIKE,
@@ -97,9 +96,8 @@ def budget_summary_lines(plan: BudgetPlan) -> list[str]:
 	which are unmeasured), what was excluded as measured-over-budget, and which over-budget
 	stages run anyway to measure untimed pipe siblings.
 	"""
-	runnable = tuple(flatten_leaves(plan.node)) if plan.node is not None else ()
 	lines = [
-		f"Time budget {plan.budget_s:.2f}s — running {len(runnable)} leaf(s) "
+		f"Time budget {plan.budget_s:.2f}s — running {len(plan.runnable)} leaf(s) "
 		f"({len(plan.untimed)} unmeasured), excluded {len(plan.over_budget)} over budget."
 	]
 	if plan.running_over_budget:
@@ -120,7 +118,11 @@ def budget_summary_lines(plan: BudgetPlan) -> list[str]:
 			+ ", ".join(task_label(u.task) for u in plan.untimed)
 		)
 	if plan.node is None:
-		lines.append("All leaves exceed the budget — nothing to run.")
+		lines.append(
+			"All leaves exceed the budget — nothing to run."
+			if not plan.fits
+			else "A mid-pipe cut would rewire the pipeline — nothing to run."
+		)
 	return lines
 
 
@@ -158,7 +160,7 @@ def run_under(
 	if plan.node is None:
 		return 0
 	observed: Final = timings.observed(camas_dir, plan.node, changed)
-	scoped = observed.node
+	scoped = drop_unjustified_running(observed.node, plan, observed.pairs)
 	if scoped is None:
 		print(f"No task leaf covers {', '.join(changed)} — nothing to run.")
 		return 0

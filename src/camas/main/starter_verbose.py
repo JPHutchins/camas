@@ -112,7 +112,9 @@ fmt = Task('python -c "" {paths}', mutates=True, paths=".")
 # the check always passes); a real gate pairs a generator that writes with the default check.
 # Under --under budget mode the gate keeps its ordering (#306); a check leaf measured over
 # budget is excluded outright, and a mutator measured over budget drops like any leaf,
-# leaving the checks to run around an un-run generator, so drift goes undetected.
+# leaving the checks to run around an un-run generator, so drift goes undetected. A pipe
+# kept whole for an untimed sibling runs its over-budget stages too, and a suffix-only cut
+# keeps the surviving prefix.
 generators = Clean(
 	mutator=Task("python -c \"print('generated')\"", mutates=True),
 	check=Task("python -c pass"),

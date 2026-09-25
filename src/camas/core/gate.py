@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Final, Literal, NamedTuple, TypeAlias
 
 from ..v0.task import Group, Pipe, Task, rebuilt
-from .budget import plan_under
+from .budget import drop_unjustified_running, plan_under
 from .execution import run
 from .matrix import expand_matrix
 from .timings import observed, scope_of
@@ -290,7 +290,11 @@ async def run_gate(
 	if budgeted is None:
 		return GateOutcome("green", None, None, plan)
 	keying: Final = observed(None, budgeted, changed)
-	scoped = keying.node
+	scoped = (
+		drop_unjustified_running(keying.node, plan, keying.pairs)
+		if plan is not None
+		else keying.node
+	)
 	if scoped is None:
 		return GateOutcome("green", None, None, plan)
 	if uses_path_mode(scoped):

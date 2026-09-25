@@ -520,11 +520,25 @@ async def run_cmd(task: Task, leaf_index: int, ctx: RunContext) -> TaskResult:
 
 
 async def _reap_cancelled_spawn(spawn_task: asyncio.Task[asyncio.subprocess.Process]) -> None:
-	"""Kill and reap the Process a cancelled spawn task hands back — detached from the unwind
-	so no later cancel can interrupt the kill.
+	"""Kill and reap the Process a cancelled spawn task hands back — detached from the unwind,
+	and a cancel propagated into this task is uncancelled and retried, so the kill always runs.
 	"""
-	with suppress(BaseException):
-		orphaned_proc = await spawn_task
+	orphaned_proc: asyncio.subprocess.Process | None = None
+	while True:
+		try:
+			orphaned_proc = await spawn_task
+			break
+		except asyncio.CancelledError:
+			task = asyncio.current_task()
+			if task is not None:
+				cancelling = getattr(task, "cancelling", None)
+				if cancelling is None or cancelling() > 0:
+					task.uncancel()
+			if spawn_task.cancelled():
+				break  # the spawn itself cancelled — no Process to kill
+		except BaseException:
+			break  # the spawn failed some other way — no Process to kill
+	if orphaned_proc is not None:
 		with suppress(OSError):
 			orphaned_proc.kill()
 		with suppress(ProcessLookupError, OSError):
@@ -585,7 +599,7 @@ async def run_pipe(stages: tuple[TaskNode, ...], ctx: RunContext) -> tuple[TaskR
 				await reader
 		for reaper in reapers:
 			with suppress(BaseException):
-				await reaper
+				await asyncio.shield(reaper)
 		for waiter in waiters:
 			waiter.cancel()
 		for waiter in waiters:

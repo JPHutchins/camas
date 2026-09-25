@@ -15,14 +15,15 @@ else:  # pragma: no cover
 
 from typing import TYPE_CHECKING, Any, Final, NamedTuple, TypeAlias, overload
 
-from ..v0.task import GROUP_FIELDS, Parallel, Pipe, Sequential, Task, fieldless, rebuilt
+from ..v0.task import GROUP_FIELDS, Group, Parallel, Pipe, Sequential, Task, fieldless, rebuilt
 from .matrix import expand_matrix
 from .timings import estimate
+from .traversal import flatten_leaves
 
 if TYPE_CHECKING:
 	from collections.abc import Iterable, Mapping
 
-	from ..v0.task import Group, TaskNode
+	from ..v0.task import TaskNode
 	from .timings import CacheKey, TaskTiming
 
 
@@ -62,6 +63,10 @@ class BudgetPlan(NamedTuple):
 	running_over_budget: tuple[OverBudget, ...]
 	"""Over-budget leaves that run anyway — a pipe kept whole so an untimed sibling gets its
 	first measurement. Counted in ``node``, not in ``over_budget``.
+	"""
+	runnable: tuple[Task, ...]
+	"""The schedule's leaves in DFS order — what the plan actually runs; the dispositions are
+	a census, not a runnable set.
 	"""
 
 
@@ -121,6 +126,11 @@ def plan_under(
 	planned = _plan_under(expand_matrix(node), budget_s, timings, scope)
 	dispositions: Final = tuple(planned.dispositions)
 	running_over_budget: Final = planned.running_over_budget
+	runnable: Final = (
+		tuple(info.task for info in flatten_leaves(planned.node))
+		if planned.node is not None
+		else ()
+	)
 	fits = tuple(d for d in dispositions if isinstance(d, Fits))
 	over_budget = tuple(
 		d
@@ -128,7 +138,59 @@ def plan_under(
 		if isinstance(d, OverBudget) and all(d is not r for r in running_over_budget)
 	)
 	untimed = tuple(d for d in dispositions if isinstance(d, Untimed))
-	return BudgetPlan(budget_s, planned.node, fits, over_budget, untimed, running_over_budget)
+	return BudgetPlan(
+		budget_s, planned.node, fits, over_budget, untimed, running_over_budget, runnable
+	)
+
+
+def drop_unjustified_running(
+	node: TaskNode | None,
+	plan: BudgetPlan,
+	pairs: Iterable[tuple[Task, Task]] = (),
+) -> TaskNode | None:
+	"""``node`` after scope pruning: a running-over-budget stage whose untimed sibling did not
+	survive scoping has lost its justification — drop it with the cut semantics of
+	:func:`camas.core.scope.scoped_tree` (a suffix-only cut keeps the prefix, a mid-pipe cut
+	drops the whole pipe). ``pairs`` is the scoping's original-to-scoped pairing, so a rebuilt
+	stage still matches the plan disposition it came from.
+	"""
+	if node is None:
+		return None
+	original_of: Final = {id(scoped): id(original) for original, scoped in pairs}
+	running_ids: Final = {id(o.task) for o in plan.running_over_budget}
+	untimed_ids: Final = {id(u.task) for u in plan.untimed}
+
+	def running(stage: Task) -> bool:
+		return original_of.get(id(stage), id(stage)) in running_ids
+
+	def untimed(stage: Task) -> bool:
+		return original_of.get(id(stage), id(stage)) in untimed_ids
+
+	match node:
+		case Task():
+			return node
+		case Pipe(tasks=stages):
+			if any(untimed(t) for t in stages if isinstance(t, Task)):
+				return node
+			kept = tuple(t for t in stages if not (isinstance(t, Task) and running(t)))
+			if not kept:
+				return None
+			if len(kept) != len(stages):
+				pruned = tuple(
+					i for i, t in enumerate(stages) if isinstance(t, Task) and running(t)
+				)
+				if pruned != tuple(range(len(kept), len(stages))):
+					return None
+			return rebuilt(node, *kept)
+		case Group() as group:
+			kept = tuple(
+				s
+				for s in (drop_unjustified_running(c, plan, pairs) for c in group.tasks)
+				if s is not None
+			)
+			return rebuilt(group, *kept) if kept else None
+		case _:
+			assert_never(node)
 
 
 def _plan_under(
@@ -160,28 +222,23 @@ def _plan_under(
 			# A mid-pipe cut would rewire the pipeline (the survivor before the cut feeding the
 			# one after it) — a suffix-only cut keeps the surviving prefix, and an untimed
 			# sibling keeps the pipe whole for the first run that measures it.
+			dispositions = tuple(_collect(planned))
 			pipe_runnable: TaskNode | None
 			pipe_mutating: bool
-			running_over_budget = _collect_running(planned)
-			if any(isinstance(d, Untimed) for d in _collect(planned)):
+			running_over_budget: tuple[OverBudget, ...]
+			if any(isinstance(d, Untimed) for d in dispositions):
 				pipe_runnable = _collapse(rebuilt(node, *children))
 				pipe_mutating = any(t.mutates for t in children if isinstance(t, Task))
-				running_over_budget = (
-					*_collect_running(planned),
-					*(
-						d
-						for child in planned
-						for d in child.dispositions
-						if isinstance(d, OverBudget)
-					),
-				)
+				running_over_budget = tuple(d for d in dispositions if isinstance(d, OverBudget))
 			elif pipe_kept and pruned_positions == tuple(range(len(pipe_kept), len(children))):
 				pipe_runnable = _collapse(rebuilt(node, *pipe_kept))
 				pipe_mutating = any(child.has_mutating for child in planned)
+				running_over_budget = _collect_running(planned)
 			else:
 				pipe_runnable = None
 				pipe_mutating = False
-			return _Planned(pipe_runnable, _collect(planned), pipe_mutating, running_over_budget)
+				running_over_budget = _collect_running(planned)
+			return _Planned(pipe_runnable, dispositions, pipe_mutating, running_over_budget)
 		case Parallel(tasks=children):
 			planned = tuple(_plan_under(child, budget_s, timings, scope) for child in children)
 			mutating = tuple(

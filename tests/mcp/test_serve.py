@@ -922,6 +922,16 @@ async def test_run_call_under_nothing_fits(tmp_path: Path) -> None:
 	assert "Nothing ran" in _text(result)
 
 
+async def test_run_call_under_mid_pipe_cut_says_what_actually_happened(tmp_path: Path) -> None:
+	_record(tmp_path, [("gen", 9.0), ("sarif", 0.1)])
+	gen = Task("cargo clippy", name="gen")
+	sarif = Task("clippy-sarif", name="sarif")
+	session = _session({"p": Pipe(gen, sarif, name="p")}, None, tmp_path)
+	result = await serve.run_call(session, {"task": "p", "under": 1.0})
+	assert result.isError is False
+	assert "Nothing ran — a mid-pipe cut would rewire the pipeline." in _text(result)
+
+
 async def test_run_call_under_reports_untimed(tmp_path: Path) -> None:
 	_record(tmp_path, [("a", 0.1)])
 	a = Task(("python", "-c", "print('a')"), name="a")
@@ -931,6 +941,26 @@ async def test_run_call_under_reports_untimed(tmp_path: Path) -> None:
 	assert "unmeasured (running to record an estimate): b" in _text(result)
 	assert result.structuredContent is not None
 	assert "b" in result.structuredContent["budget"]["unmeasured"]
+
+
+def test_budget_report_counts_a_dropped_pipe_honestly() -> None:
+	"""A fitting stage of a dropped pipe does not run — the wire report's selected set comes
+	from the runnable schedule, not the disposition census."""
+	from camas.core.budget import plan_under
+	from camas.core.timings import CacheKey, TaskTiming
+
+	gen = Task("cargo clippy", name="gen")
+	sarif = Task("clippy-sarif", name="sarif")
+	timings = {
+		CacheKey("gen", 0): TaskTiming(9.0, 5),
+		CacheKey("sarif", 0): TaskTiming(0.1, 5),
+	}
+	plan = plan_under(Pipe(gen, sarif), 1.0, timings)
+	report = serve.to_budget_report(plan)
+	assert report.selected == ()
+	assert {e.name for e in report.excluded} == {"gen"}
+	headline = serve.budget_headline(report)
+	assert "running 0 leaf(s) (0 unmeasured), excluded 1 over budget" in headline
 
 
 def test_budget_report_counts_an_untimed_whole_pipe_honestly() -> None:

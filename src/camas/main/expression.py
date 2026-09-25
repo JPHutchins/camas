@@ -9,7 +9,7 @@ import ast
 import json
 import re
 import sys
-from typing import TYPE_CHECKING, Final, NamedTuple, cast
+from typing import TYPE_CHECKING, Final, cast
 
 if sys.version_info >= (3, 11):
 	from typing import assert_never
@@ -17,6 +17,7 @@ else:  # pragma: no cover
 	from typing_extensions import assert_never
 
 from ..core.task import did_you_mean
+from ..v0.ref import Ref
 from ..v0.task import (
 	AgentFormat,
 	Group,
@@ -33,18 +34,7 @@ if TYPE_CHECKING:
 	from collections.abc import Mapping
 	from pathlib import Path
 
-	from ..v0.task import PathScope, WhenPredicate
-
-
-class Ref(NamedTuple):
-	"""Parser-only sentinel for a task referenced by name inside a config expression.
-
-	>>> Ref("lint")
-	Ref(name='lint')
-	"""
-
-	name: str
-
+from ..v0.task import PathScope, WhenPredicate
 
 CONSTRUCTORS: Final = {
 	Task.__name__: Task,

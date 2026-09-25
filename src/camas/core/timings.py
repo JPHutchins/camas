@@ -232,7 +232,7 @@ def record_observed(camas_dir: Path | None, leaves: Sequence[tuple[CacheKey, flo
 
 class Observed(NamedTuple):
 	"""How one run is keyed and recorded: where its durations go, what size of change they describe,
-	the per-leaf identities and the tree to run with.
+	the per-leaf identities, the tree to run with, and the scoping's original-to-scoped pairing.
 
 	Built once where a run is set up, and carried to wherever the run finishes, so that no path can
 	run leaves and get part of this right. Deriving these by hand per call site is what let a gate
@@ -247,6 +247,10 @@ class Observed(NamedTuple):
 	takes as its ``identities``."""
 	node: TaskNode | None = None
 	"""The scoped tree to run; ``None`` when the changed paths cover no leaf."""
+	pairs: tuple[tuple[Task, Task], ...] = ()
+	"""Each surviving leaf as (original, scoped) — the bridge from a rebuilt stage back to the
+	plan disposition it came from.
+	"""
 
 	def record(self, result: RunResult) -> None:
 		"""Record ``result``'s timed leaves."""
@@ -315,7 +319,7 @@ def observed(camas_dir: Path | None, expanded: TaskNode, changed: Sequence[str])
 	pairs = scoped_leaves(expanded, changed_t)
 	identities = tuple(keyed(original, scoped) for original, scoped in pairs)
 	node = scoped_tree_from_pairs(expanded, pairs)
-	return Observed(camas_dir, scope, identities, node)
+	return Observed(camas_dir, scope, identities, node, pairs)
 
 
 def ensure_camas_dir(camas_dir: Path) -> None:

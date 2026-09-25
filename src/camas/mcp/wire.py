@@ -77,7 +77,9 @@ class LeafReport(BaseModel):
 
 
 class ExcludedLeaf(BaseModel):
-	"""A leaf a time budget did not run — measured to exceed the budget."""
+	"""A leaf a time budget measured over its limit — excluded from the run, or (in
+	``BudgetReport.running_over_budget``) run anyway to measure an untimed pipe sibling.
+	"""
 
 	name: str
 	reason: Literal["over_budget"]
@@ -285,9 +287,10 @@ class RunRequest(BaseModel):
 		description="Wall-clock budget in seconds: run only the leaves whose recorded "
 		"estimate fits, mutating leaves (formatters) first then the read-only rest in "
 		"parallel. Untimed leaves run (and are thereby measured); only leaves measured "
-		"over budget are skipped, so a cold cache runs the whole tree. Omit 'task' to "
-		"budget the default task; the 'budget' field of the response reports what was "
-		"selected and excluded.",
+		"over budget are skipped — except a pipe kept whole for its untimed siblings, "
+		"which runs its over-budget stages too — so a cold cache runs the whole tree. "
+		"Omit 'task' to budget the default task; the 'budget' field of the response "
+		"reports what was selected and excluded.",
 	)
 	dry_run: bool = Field(
 		default=False,
