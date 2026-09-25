@@ -1028,16 +1028,24 @@ def gate_source(tasks: Mapping[str, TaskNode], config: Config | None, task: str 
 
 
 def to_budget_report(plan: BudgetPlan) -> wire.BudgetReport:
-	"""The wire ``BudgetReport`` for a plan: the leaves that run (fitting + unmeasured) and the
-	over-budget leaves that don't.
+	"""The wire ``BudgetReport`` for a plan: the leaves that run (fitting + unmeasured + the
+	over-budget pipe stages that run to measure untimed siblings) and the over-budget leaves
+	that don't.
 	"""
 	return wire.BudgetReport(
 		budget_s=plan.budget_s,
 		selected=(
 			*(task_label(f.task) for f in plan.fits),
 			*(task_label(u.task) for u in plan.untimed),
+			*(task_label(o.task) for o in plan.running_over_budget),
 		),
 		unmeasured=tuple(task_label(u.task) for u in plan.untimed),
+		running_over_budget=tuple(
+			wire.ExcludedLeaf(
+				name=task_label(o.task), reason="over_budget", estimated_s=o.estimated_s
+			)
+			for o in plan.running_over_budget
+		),
 		excluded=tuple(
 			wire.ExcludedLeaf(
 				name=task_label(o.task), reason="over_budget", estimated_s=o.estimated_s
@@ -1053,13 +1061,18 @@ def attach_budget(resp: wire.RunResponse, report: wire.BudgetReport) -> wire.Run
 
 
 def budget_headline(report: wire.BudgetReport) -> str:
-	"""The load-bearing budget summary: leaves running (and which are unmeasured), and which
-	were excluded as measured-over-budget.
+	"""The load-bearing budget summary: leaves running (and which are unmeasured), which
+	over-budget stages run anyway to measure untimed pipe siblings, and which were excluded.
 	"""
 	lines = [
 		f"Time budget {report.budget_s:.2f}s — running {len(report.selected)} leaf(s) "
 		f"({len(report.unmeasured)} unmeasured), excluded {len(report.excluded)} over budget."
 	]
+	if report.running_over_budget:
+		lines.append(
+			"  running anyway to measure untimed pipe siblings: "
+			+ ", ".join(excluded_note(e) for e in report.running_over_budget)
+		)
 	if report.excluded:
 		lines.append("  over budget: " + ", ".join(excluded_note(e) for e in report.excluded))
 	if report.unmeasured:

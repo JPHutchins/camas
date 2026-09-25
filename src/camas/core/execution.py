@@ -519,6 +519,18 @@ async def run_cmd(task: Task, leaf_index: int, ctx: RunContext) -> TaskResult:
 				ctx.interrupts.procs.pop(leaf_index, None)
 
 
+async def _reap_cancelled_spawn(spawn_task: asyncio.Task[asyncio.subprocess.Process]) -> None:
+	"""Kill and reap the Process a cancelled spawn task hands back — detached from the unwind
+	so no later cancel can interrupt the kill.
+	"""
+	with suppress(BaseException):
+		orphaned_proc = await spawn_task
+		with suppress(OSError):
+			orphaned_proc.kill()
+		with suppress(ProcessLookupError, OSError):
+			await orphaned_proc.wait()
+
+
 async def run_pipe(stages: tuple[TaskNode, ...], ctx: RunContext) -> tuple[TaskResult, ...]:
 	"""Run a Pipe's stages concurrently, each stage's stdout wired into the next's stdin — the
 	last stage's stdout is the pipeline's output, its stderr merged in like a leaf's. Every
@@ -535,6 +547,7 @@ async def run_pipe(stages: tuple[TaskNode, ...], ctx: RunContext) -> tuple[TaskR
 	procs: Final[dict[int, asyncio.subprocess.Process]] = {}
 	readers: Final[list[asyncio.Task[None]]] = []
 	waiters: Final[list[asyncio.Task[None]]] = []
+	reapers: Final[list[asyncio.Task[None]]] = []
 	stage_readers: Final[dict[int, tuple[asyncio.Task[None], ...]]] = {}
 	started_pc: Final[dict[int, float]] = {}
 	outputs: Final[dict[int, list[bytes]]] = {ctx.index_map[id(s)]: [] for s in stages}
@@ -570,6 +583,9 @@ async def run_pipe(stages: tuple[TaskNode, ...], ctx: RunContext) -> tuple[TaskR
 		for reader in readers:
 			with suppress(BaseException):
 				await reader
+		for reaper in reapers:
+			with suppress(BaseException):
+				await reaper
 		for waiter in waiters:
 			waiter.cancel()
 		for waiter in waiters:
@@ -708,16 +724,11 @@ async def run_pipe(stages: tuple[TaskNode, ...], ctx: RunContext) -> tuple[TaskR
 				continue
 			except BaseException:
 				# The shield raises the cancel here instead of reaching the spawn task — a
-				# cancelled spawn can still hand back the Process, so cancel it explicitly,
-				# take the Process it hands back, and kill it — or a live child is orphaned
-				# past every unwind path.
+				# cancelled spawn can still hand back the Process, so cancel it and detach the
+				# kill/reap: a second cancel inside this unwind must not be able to skip the
+				# kill and orphan the live child past every unwind path.
 				spawn_task.cancel()
-				with suppress(BaseException):
-					orphaned_proc = await spawn_task
-					with suppress(OSError):
-						orphaned_proc.kill()
-					with suppress(ProcessLookupError, OSError):
-						await orphaned_proc.wait()
+				reapers.append(asyncio.create_task(_reap_cancelled_spawn(spawn_task)))
 				raise
 			if not is_last:
 				os.close(stdout)

@@ -90,10 +90,16 @@ class BudgetReport(BaseModel):
 
 	budget_s: float
 	selected: tuple[str, ...]
-	"""Leaves that run: those whose estimate fit the budget, plus any unmeasured ones."""
+	"""Leaves that run: those whose estimate fit the budget, plus any unmeasured ones, plus
+	the over-budget pipe stages that run to measure untimed siblings.
+	"""
 	unmeasured: tuple[str, ...] = ()
 	"""The selected leaves with no prior estimate — run to record one, since skipping them
 	would keep them forever unmeasured.
+	"""
+	running_over_budget: tuple[ExcludedLeaf, ...] = ()
+	"""The over-budget leaves that run anyway — a pipe kept whole for its untimed siblings —
+	counted in ``selected``, not ``excluded``.
 	"""
 	excluded: tuple[ExcludedLeaf, ...]
 

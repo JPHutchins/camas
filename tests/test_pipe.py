@@ -251,7 +251,8 @@ def test_plan_under_keeps_a_pipe_with_an_untimed_stage_whole() -> None:
 	plan = plan_under(pipe, 1.0, {CacheKey("gen", 0): TaskTiming(9.0, 5)})
 	assert plan.node == pipe
 	assert plan.fits == ()
-	assert isinstance(plan.over_budget[0], OverBudget)
+	assert plan.over_budget == ()
+	assert isinstance(plan.running_over_budget[0], OverBudget)
 	assert isinstance(plan.untimed[0], Untimed)
 
 
@@ -277,8 +278,25 @@ def test_budget_summary_notes_over_budget_stages_running_for_untimed_siblings() 
 	sarif = Task("clippy-sarif", name="sarif")
 	plan = plan_under(Pipe(gen, sarif), 1.0, {CacheKey("gen", 0): TaskTiming(9.0, 5)})
 	lines = budget_summary_lines(plan)
-	assert "running anyway to measure untimed pipe siblings" in lines[1]
-	assert "excluded 0 over budget" in lines[0]
+	assert "running 2 leaf(s) (1 unmeasured), excluded 0 over budget" in lines[0]
+	assert "running anyway to measure untimed pipe siblings: gen ~9.00s" in lines[1]
+	assert all("  over budget:" not in line for line in lines)
+
+
+def test_budget_summary_counts_nothing_running_when_the_pipe_drops() -> None:
+	"""The running count derives from the runnable schedule — a fits leaf of a dropped pipe
+	is not running."""
+	from camas.main.dispatch import budget_summary_lines
+
+	gen = Task("cargo clippy", name="gen")
+	sarif = Task("clippy-sarif", name="sarif")
+	timings = {
+		CacheKey("gen", 0): TaskTiming(9.0, 5),
+		CacheKey("sarif", 0): TaskTiming(0.1, 5),
+	}
+	lines = budget_summary_lines(plan_under(Pipe(gen, sarif), 1.0, timings))
+	assert "running 0 leaf(s) (0 unmeasured), excluded 1 over budget" in lines[0]
+	assert "All leaves exceed the budget — nothing to run." in lines[-1]
 
 
 def test_scoped_tree_keeps_a_suffix_pruned_pipe_prefix() -> None:
@@ -569,20 +587,48 @@ def test_pipe_interrupt_mid_pipe_unwinds_the_spawned_stages() -> None:
 	assert [c.leaf_index for c in completions] == [0, 1]
 
 
-def test_pipe_interrupt_unwind_reports_an_unowned_finished_stage_finished() -> None:
+def test_pipe_interrupt_unwind_reports_an_unowned_finished_stage_finished(
+	monkeypatch: pytest.MonkeyPatch,
+) -> None:
 	"""The unwind labels each spawned stage by its state, like wait_and_complete does: a stage
 	the interrupt never owned — it finished naturally, its registration predating the press —
-	reads Finished with its own code; the owned stage reads Stopped."""
+	reads Finished with its own exit code; the owned stage reads Stopped."""
 	from contextlib import nullcontext
 	from datetime import datetime
 
-	from camas.core.execution import KILL_DEATH_RC, Interrupts, RunContext, run_pipe
+	from camas.core import execution as execution_module
+	from camas.core.execution import Interrupts, RunContext, run_pipe
 	from camas.v0.leaf_state import Running
 	from camas.v0.task_event import CompletedEvent, StartedEvent
 
+	original_spawn = execution_module._spawn_stage  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]  # the monkeypatched seam, kept for pass-through
+
+	async def delayed_spawn(
+		task: Task,
+		*,
+		stdin: int | None,
+		stdout: int,
+		stderr: int,
+		base: Path | None,
+		leaf_color: bool,
+	) -> asyncio.subprocess.Process:
+		if task.cmd == ("python", "-c", "import time; time.sleep(60)"):
+			# Let stage a finish and reap before the interrupt lands, so its natural exit
+			# code — not the unwind's kill — is the one observed.
+			await asyncio.sleep(0.1)
+		return await original_spawn(
+			task, stdin=stdin, stdout=stdout, stderr=stderr, base=base, leaf_color=leaf_color
+		)
+
+	monkeypatch.setattr(execution_module, "_spawn_stage", delayed_spawn)
 	a = Task(("python", "-c", "pass"))
 	b = Task(("python", "-c", "import time; time.sleep(60)"))
 	c = Task("c")
+	states: list[LeafState] = [
+		Running(a, datetime.now(), b""),
+		Running(b, datetime.now(), b""),
+		Waiting(c),
+	]
 	events: list[TaskEvent] = []
 	interrupts = Interrupts(procs={})
 
@@ -594,7 +640,6 @@ def test_pipe_interrupt_unwind_reports_an_unowned_finished_stage_finished() -> N
 	async def scenario() -> tuple[TaskResult, ...]:
 		leaves = (a, b, c)
 		index_map = {id(a): 0, id(b): 1, id(c): 2}
-		states: list[LeafState] = [Waiting(a), Running(b, datetime.now(), b""), Waiting(c)]
 		ctx = RunContext(
 			dispatch, leaves, index_map, nullcontext(), interrupts, states, None, None, True, None
 		)
@@ -602,7 +647,7 @@ def test_pipe_interrupt_unwind_reports_an_unowned_finished_stage_finished() -> N
 
 	results = asyncio.run(scenario())
 	assert isinstance(results[0].completion, Finished)
-	assert results[0].completion.returncode in (0, KILL_DEATH_RC)
+	assert results[0].completion.returncode == 0
 	assert isinstance(results[1].completion, Stopped)
 	assert results[2].completion.returncode == INTERRUPT_RC
 	completions = [e for e in events if isinstance(e, CompletedEvent)]
@@ -728,9 +773,10 @@ def test_pipe_cancel_during_spawn_kills_a_child_the_spawn_task_still_returns(
 		main_task.cancel()
 		with pytest.raises(asyncio.CancelledError):
 			await main_task
-		# The unwind killed and awaited the child before re-raising — the reaped
-		# returncode is the cross-platform proof; the pid probe adds the POSIX liveness
-		# check (on Windows it would read the transport's still-open handle).
+		# The detached reap kills and awaits the child before re-raising — give it a beat,
+		# then the reaped returncode is the cross-platform proof; the pid probe adds the
+		# POSIX liveness check (on Windows it would read the transport's still-open handle).
+		await asyncio.sleep(0.05)
 		assert spawned[0].returncode is not None
 		if (
 			sys.platform != "win32"

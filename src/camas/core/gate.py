@@ -267,10 +267,13 @@ async def run_gate(
 	"""Run the check ``node`` over the ``changed`` paths and classify the residual.
 
 	The check node is expanded, time-boxed (``under``), scoped to ``changed``, and run; the gate
-	never mutates. Untimed leaves are run (and thereby measured); only leaves measured to exceed
-	``under`` are skipped. ``green`` means the checks passed — or the change touched nothing the
-	checks cover, or every leaf was measured too slow for ``under``; ``needs_reasoning`` means a
-	check still fails. Budgeting precedes scoping, but budgets against observations taken at this
+	never mutates (the check node's leaves are non-mutating by convention). Untimed leaves are
+	run (and thereby measured); only leaves measured to exceed ``under`` are skipped — except a
+	pipe kept whole for its untimed siblings, which runs its over-budget stages too and counts
+	their failures against ``green``. ``green`` means the checks passed — or the change touched
+	nothing the checks cover, or every leaf was measured too slow for ``under``;
+	``needs_reasoning`` means a check still fails. Budgeting precedes scoping, but budgets
+	against observations taken at this
 	change's own scope (:func:`camas.core.timings.scope_of`) — a whole-tree record is not an
 	estimate of a two-file gate, and using it as one excluded the heavy-but-scopable checks from
 	exactly the small changes they are cheap on.

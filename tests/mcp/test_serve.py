@@ -13,7 +13,7 @@ from mcp import types
 from mcp.shared.memory import create_connected_server_and_client_session
 
 import camas
-from camas import AgentFormat, Config, Parallel, Sequential, Task
+from camas import AgentFormat, Config, Parallel, Pipe, Sequential, Task
 from camas.core import timings
 from camas.core.completion import RunResult, TaskResult
 from camas.main.check import CheckerErr, CheckerNotFound, CheckerOk
@@ -931,6 +931,24 @@ async def test_run_call_under_reports_untimed(tmp_path: Path) -> None:
 	assert "unmeasured (running to record an estimate): b" in _text(result)
 	assert result.structuredContent is not None
 	assert "b" in result.structuredContent["budget"]["unmeasured"]
+
+
+def test_budget_report_counts_an_untimed_whole_pipe_honestly() -> None:
+	"""A pipe kept whole for its untimed sibling runs its over-budget stages too — the wire
+	report counts them selected, not excluded."""
+	from camas.core.budget import plan_under
+	from camas.core.timings import CacheKey, TaskTiming
+
+	gen = Task("cargo clippy", name="gen")
+	sarif = Task("clippy-sarif", name="sarif")
+	plan = plan_under(Pipe(gen, sarif), 1.0, {CacheKey("gen", 0): TaskTiming(9.0, 5)})
+	report = serve.to_budget_report(plan)
+	assert set(report.selected) == {"gen", "sarif"}
+	assert {e.name for e in report.running_over_budget} == {"gen"}
+	assert report.excluded == ()
+	headline = serve.budget_headline(report)
+	assert "running 2 leaf(s) (1 unmeasured), excluded 0 over budget" in headline
+	assert "running anyway to measure untimed pipe siblings: gen ~9.00s" in headline
 
 
 async def test_run_call_under_no_task_no_default_errors(tmp_path: Path) -> None:

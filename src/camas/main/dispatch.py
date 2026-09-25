@@ -93,28 +93,21 @@ def dispatch_arg(arg: str, tasks: Mapping[str, TaskNode]) -> TaskNode:
 
 
 def budget_summary_lines(plan: BudgetPlan) -> list[str]:
-	"""The ``--under`` summary: how many leaves run (and which are unmeasured), and what was
-	excluded as measured-over-budget — a pipe kept whole for its untimed siblings runs its
-	over-budget stages anyway, and says so instead of counting them excluded.
+	"""The ``--under`` summary, derived from the runnable schedule: how many leaves run (and
+	which are unmeasured), what was excluded as measured-over-budget, and which over-budget
+	stages run anyway to measure untimed pipe siblings.
 	"""
-	running_over_budget: Final = (
-		tuple(
-			o
-			for o in plan.over_budget
-			if any(info.task is o.task for info in flatten_leaves(plan.node))
-		)
-		if plan.node is not None
-		else ()
-	)
+	runnable = tuple(flatten_leaves(plan.node)) if plan.node is not None else ()
 	lines = [
-		f"Time budget {plan.budget_s:.2f}s — running {len(plan.fits) + len(plan.untimed)} leaf(s) "
-		f"({len(plan.untimed)} unmeasured), excluded "
-		f"{len(plan.over_budget) - len(running_over_budget)} over budget."
+		f"Time budget {plan.budget_s:.2f}s — running {len(runnable)} leaf(s) "
+		f"({len(plan.untimed)} unmeasured), excluded {len(plan.over_budget)} over budget."
 	]
-	if running_over_budget:
+	if plan.running_over_budget:
 		lines.append(
 			"  running anyway to measure untimed pipe siblings: "
-			+ ", ".join(f"{task_label(o.task)} ~{o.estimated_s:.2f}s" for o in running_over_budget)
+			+ ", ".join(
+				f"{task_label(o.task)} ~{o.estimated_s:.2f}s" for o in plan.running_over_budget
+			)
 		)
 	if plan.over_budget:
 		lines.append(
