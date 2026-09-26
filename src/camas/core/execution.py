@@ -532,10 +532,11 @@ async def _reap_cancelled_spawn(spawn_task: asyncio.Task[asyncio.subprocess.Proc
 			task = asyncio.current_task()
 			assert task is not None
 			cancelling = getattr(task, "cancelling", None)
+			uncancel = getattr(task, "uncancel", None)
 			if (
-				cancelling is None or cancelling() > 0
-			):  # pragma: no cover  # pre-3.11 Task lacks cancelling()
-				task.uncancel()  # ty: ignore[unresolved-attribute]
+				uncancel is not None and (cancelling is None or cancelling() > 0)
+			):  # pragma: no branch  # both are 3.11+ Task APIs — the pre-3.11 arm is unreachable on every supported runner
+				uncancel()
 			if spawn_task.cancelled():  # pragma: no cover  # the retry arm only runs on pre-3.13 semantics — 3.13+ absorbs the cancel when the spawn hands its Process back
 				break  # the spawn itself cancelled — no Process to kill
 		except BaseException:
