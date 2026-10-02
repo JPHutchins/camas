@@ -10,7 +10,7 @@ name: Claude Code hook harness
 #
 # It uses the same DeepSeek backend the agentic review workflow does (ANTHROPIC_BASE_URL +
 # ANTHROPIC_AUTH_TOKEN=MODEL_API_KEY, a burner key with a hard spend cap), on the cheap
-# deepseek-v4-flash tier.
+# deepseek-flash tier.
 on:
   workflow_dispatch:
   schedule:
@@ -19,7 +19,7 @@ on:
     # what notices one. What it does cover is whatever the job leaves free to move: the runner image
     # and its system Python, the mutable action tags, the Node the setup action picks, the transitive
     # wheels the suite's own inner `uv sync`s resolve from camas's dependency ranges, and whatever
-    # DeepSeek serves behind the deepseek-v4-flash name.
+    # DeepSeek serves behind the deepseek-flash name.
     - cron: "17 6 * * 1"
   push:
     # Branch pushes only: GitHub does not evaluate `paths` for tag pushes, so a release tag ran the
@@ -99,13 +99,13 @@ jobs:
       - name: Run the Claude Code integration suite
         env:
           CAMAS_CC_E2E: "1"
-          CAMAS_CC_MODEL: deepseek-v4-flash
+          CAMAS_CC_MODEL: deepseek-flash
           ANTHROPIC_BASE_URL: https://api.deepseek.com/anthropic
           ANTHROPIC_AUTH_TOKEN: ${{ secrets.MODEL_API_KEY }}
           # The camas-fixer subagent is model: haiku; point the haiku tier at DeepSeek so the
           # fixer-loop test (criterion #3) drives a real subagent round-trip, as claude-code-review does.
-          ANTHROPIC_DEFAULT_HAIKU_MODEL: deepseek-v4-flash
-          CLAUDE_CODE_SUBAGENT_MODEL: deepseek-v4-flash
+          ANTHROPIC_DEFAULT_HAIKU_MODEL: deepseek-flash
+          CLAUDE_CODE_SUBAGENT_MODEL: deepseek-flash
           UV_PYTHON_DOWNLOADS: never
         run: |
           [ -n "$ANTHROPIC_AUTH_TOKEN" ] || { echo "::error::MODEL_API_KEY secret is not set"; exit 1; }
