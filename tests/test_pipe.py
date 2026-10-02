@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 from typing import TYPE_CHECKING
 
 import pytest
@@ -21,6 +22,7 @@ from camas.v0.leaf_state import Waiting
 from camas.v0.task import AgentFormat
 
 if TYPE_CHECKING:
+	import subprocess
 	from collections.abc import Sequence
 	from pathlib import Path
 
@@ -570,6 +572,221 @@ def test_pipe_cancel_inside_spawn_closes_the_fresh_pipe_fds() -> None:
 
 	asyncio.run(scenario())
 	monkeypatch.undo()
+
+
+def _cancelled_unwind(monkeypatch: pytest.MonkeyPatch) -> None:
+	"""Patch the unwind so a cancel lands on the unwinding task while the real unwind waits —
+	the shape of a caller's timeout firing mid-teardown."""
+	from typing import Any
+
+	from camas.core import execution as execution_module
+	from camas.core.unwind import unwind as real_unwind
+
+	async def cancelled_unwind(*args: Any, **kwargs: Any) -> Any:
+		current = asyncio.current_task()
+		assert current is not None
+		current.cancel()
+		return await real_unwind(*args, **kwargs)
+
+	monkeypatch.setattr(execution_module, "unwind", cancelled_unwind)
+
+
+async def test_a_cancel_inside_a_real_stage_spawn_leaves_no_child(
+	forked: list[subprocess.Popen[bytes]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+	"""asyncio's own transport kills and reaps a stage whose spawn is cancelled, so the pipe
+	needs no shield or detached reaper — pinned against the real spawn, not a fake suspension."""
+	from typing import Any
+
+	from camas.core import execution as execution_module
+
+	real_spawn = execution_module._spawn_stage  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]  # the monkeypatched seam, kept for pass-through
+
+	async def cancelled_mid_spawn(task: Task, **kwargs: Any) -> asyncio.subprocess.Process:
+		current = asyncio.current_task()
+		assert current is not None
+		asyncio.get_running_loop().call_soon(
+			current.cancel
+		)  # zuban: ignore[call-arg] # zuban drops Task.cancel's optional msg
+		return await real_spawn(task, **kwargs)
+
+	monkeypatch.setattr(execution_module, "_spawn_stage", cancelled_mid_spawn)
+	sleeper = ("python", "-c", "import time; time.sleep(60)")
+	with pytest.raises(asyncio.CancelledError):
+		await run(Pipe(Task(sleeper), Task(sleeper)), interactive=False)
+	assert len(forked) == 1
+	assert forked[0].returncode is not None
+
+
+async def test_the_spawn_failure_path_rethrows_a_cancel_its_unwind_absorbed(
+	monkeypatch: pytest.MonkeyPatch,
+) -> None:
+	"""The spawn-failure path returns results normally after its unwind — a cancel absorbed
+	there must still surface, or a caller's timeout silently becomes a success."""
+	from contextlib import nullcontext
+
+	from camas.core.execution import Interrupts, RunContext, run_pipe
+
+	_cancelled_unwind(monkeypatch)
+	a = Task(("python", "-c", "import time; time.sleep(60)"))
+	b = Task(("camas-no-such-executable-on-path",))
+
+	async def dispatch(leaf_idx: int, event: TaskEvent) -> None:
+		pass
+
+	states: list[LeafState] = [Waiting(a), Waiting(b)]
+	ctx = RunContext(
+		dispatch,
+		(a, b),
+		{id(a): 0, id(b): 1},
+		nullcontext(),
+		Interrupts(procs={}),
+		states,
+		None,
+		None,
+		True,
+		None,
+	)
+	with pytest.raises(asyncio.CancelledError):
+		await run_pipe((a, b), ctx)
+
+
+async def test_a_timeout_firing_during_the_spawn_failure_unwind_still_times_out(
+	monkeypatch: pytest.MonkeyPatch,
+) -> None:
+	"""A caller's ``wait_for`` deadline expiring while the spawn-failure path unwinds must
+	surface as ``TimeoutError``, not as the path's normal return — through 3.10's legacy
+	``wait_for`` and 3.12+'s ``timeout()``-based one alike."""
+	from contextlib import nullcontext
+	from typing import Any
+
+	from camas.core import execution as execution_module
+	from camas.core.execution import Interrupts, RunContext, run_pipe
+	from camas.core.unwind import unwind as real_unwind
+
+	async def slow_unwind(children: Any, tasks: Any, timeout_s: float = 5.0) -> Any:
+		lingering = asyncio.ensure_future(asyncio.sleep(0.3))
+		return await real_unwind(children, (*tasks, lingering), timeout_s)
+
+	monkeypatch.setattr(execution_module, "unwind", slow_unwind)
+	a = Task(("python", "-c", "import time; time.sleep(60)"))
+	b = Task(("camas-no-such-executable-on-path",))
+
+	async def dispatch(leaf_idx: int, event: TaskEvent) -> None:
+		pass
+
+	states: list[LeafState] = [Waiting(a), Waiting(b)]
+	ctx = RunContext(
+		dispatch,
+		(a, b),
+		{id(a): 0, id(b): 1},
+		nullcontext(),
+		Interrupts(procs={}),
+		states,
+		None,
+		None,
+		True,
+		None,
+	)
+	with pytest.raises(asyncio.TimeoutError):
+		await asyncio.wait_for(run_pipe((a, b), ctx), 0.1)
+
+
+async def test_the_interrupt_path_rethrows_a_cancel_its_unwind_absorbed(
+	monkeypatch: pytest.MonkeyPatch,
+) -> None:
+	"""The landed-interrupt path returns results normally after its unwind — a cancel absorbed
+	there must still surface."""
+	from contextlib import nullcontext
+
+	from camas.core.execution import Interrupts, RunContext, run_pipe
+
+	_cancelled_unwind(monkeypatch)
+	a = Task(("python", "-c", "import time; time.sleep(60)"))
+	b = Task(("python", "-c", "import time; time.sleep(60)"))
+	interrupts = Interrupts(procs={})
+
+	async def dispatch(leaf_idx: int, event: TaskEvent) -> None:
+		interrupts.count = 1
+
+	states: list[LeafState] = [Waiting(a), Waiting(b)]
+	ctx = RunContext(
+		dispatch,
+		(a, b),
+		{id(a): 0, id(b): 1},
+		nullcontext(),
+		interrupts,
+		states,
+		None,
+		None,
+		True,
+		None,
+	)
+	with pytest.raises(asyncio.CancelledError):
+		await run_pipe((a, b), ctx)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the grandchild handoff is POSIX-only")
+async def test_a_grandchild_holding_a_stage_pipe_cannot_wedge_the_unwind(
+	tmp_path: Path,
+	capsys: pytest.CaptureFixture[str],
+	forked: list[subprocess.Popen[bytes]],
+) -> None:
+	"""A stage's grandchild inherits its stderr and outlives the kill, so that reader never sees
+	EOF. The unwind drains it only until its one deadline, then drops the tail and lets the
+	cancel propagate — before, the drain waited on it forever."""
+	import os
+	import signal
+	import time
+	from contextlib import suppress
+
+	from camas.core.unwind import UNWIND_TIMEOUT_S
+
+	pid_file = tmp_path / "grandchild.pid"
+	pid_tmp = tmp_path / "grandchild.pid.tmp"
+	grandchild = (
+		f"import os, time; open({str(pid_tmp)!r}, 'w').write(str(os.getpid())); "
+		f"os.replace({str(pid_tmp)!r}, {str(pid_file)!r}); time.sleep(60)"
+	)
+	stage = (
+		f"import subprocess, sys, time; subprocess.Popen([sys.executable, '-c', {grandchild!r}]); "
+		"time.sleep(60)"
+	)
+	running = asyncio.ensure_future(
+		run(
+			Pipe(
+				Task(("python", "-c", stage)),
+				Task(("python", "-c", "import sys; sys.stdin.read()")),
+			),
+			interactive=False,
+		)
+	)
+	try:
+		deadline = time.monotonic() + 10
+		while not pid_file.exists():
+			if time.monotonic() > deadline:  # pragma: no cover — only a dead stage never forks
+				pytest.fail("the grandchild never announced its pid")
+			await asyncio.sleep(0.01)
+		started = time.monotonic()
+		assert running.cancel()
+		with pytest.raises(asyncio.CancelledError):
+			await running
+		assert time.monotonic() - started < UNWIND_TIMEOUT_S + 2
+		assert "1 output reader(s) still open" in capsys.readouterr().err
+	finally:
+		if pid_file.exists():  # pragma: no branch — the pid is announced before the cancel
+			with suppress(ProcessLookupError):
+				os.kill(int(pid_file.read_text()), signal.SIGKILL)
+		# The stage's transport closes only once the dead grandchild's end of the pipe EOFs;
+		# let it, or the transport is collected after the loop closes.
+		stage_stderr = forked[0].stderr
+		assert stage_stderr is not None
+		release = time.monotonic() + 10
+		while not stage_stderr.closed:
+			if time.monotonic() > release:  # pragma: no cover — only a live grandchild holds it
+				pytest.fail("the stage's stderr never closed")
+			await asyncio.sleep(0.01)
+		await asyncio.sleep(0)
 
 
 def test_render_shows_a_pipe_with_the_pipe_separator() -> None:

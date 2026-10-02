@@ -7,7 +7,8 @@ from __future__ import annotations
 
 import shutil
 import subprocess
-from typing import TYPE_CHECKING
+import sys
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -51,3 +52,22 @@ def unforced_color(monkeypatch: pytest.MonkeyPatch) -> None:
 	"""
 	for name in ("NO_COLOR", "FORCE_COLOR", "CLICOLOR_FORCE"):
 		monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture
+def forked(monkeypatch: pytest.MonkeyPatch) -> list[subprocess.Popen[bytes]]:
+	"""Every child the event loop's subprocess transport forks during the test: the handle for
+	checking a child the run never handed back as a ``Process`` (a spawn cancelled mid-flight).
+	The unix transport forks through ``subprocess.Popen``; the Windows one does not.
+	"""
+	if sys.platform == "win32":  # pragma: no cover — the Windows transport forks elsewhere
+		pytest.skip("the unix subprocess transport is the recording seam")
+	popens: list[subprocess.Popen[bytes]] = []
+
+	class Recording(subprocess.Popen[bytes]):
+		def __init__(self, *args: Any, **kwargs: Any) -> None:
+			super().__init__(*args, **kwargs)
+			popens.append(self)
+
+	monkeypatch.setattr(subprocess, "Popen", Recording)
+	return popens
