@@ -41,6 +41,7 @@ from camas.v0.leaf_state import Completed, Interrupting, LeafState, Running, Wai
 from camas.v0.task_event import CompletedEvent, OutputEvent, StartedEvent
 
 if TYPE_CHECKING:
+	import subprocess
 	from collections.abc import Sequence
 	from typing import Any, Final
 
@@ -1049,3 +1050,59 @@ async def test_run_rejects_identities_that_are_not_a_tuple() -> None:
 			tree,
 			identities=cast("tuple[CacheKey, ...]", {"a": CacheKey("a", 0), "b": CacheKey("b", 0)}),
 		)
+
+
+@pytest.mark.skipif(
+	sys.platform == "win32", reason="the forked seam is the unix subprocess transport"
+)
+@pytest.mark.usefixtures("cancel_inside_spawn")
+async def test_a_cancel_inside_the_real_spawn_leaves_no_child(
+	forked: list[subprocess.Popen[bytes]],
+) -> None:
+	"""asyncio's own transport kills and reaps a child whose spawn is cancelled, so the leaf
+	needs no shield around the spawn — pinned against the real spawn, not a fake suspension."""
+	with pytest.raises(asyncio.CancelledError):
+		await run(Task(("python", "-c", "import time; time.sleep(60)")), interactive=False)
+	assert len(forked) == 1
+	assert forked[0].returncode is not None
+
+
+@pytest.mark.skipif(
+	sys.platform == "win32", reason="the forked seam is the unix subprocess transport"
+)
+async def test_a_failing_effect_mid_stream_still_reaps_the_child(
+	forked: list[subprocess.Popen[bytes]],
+) -> None:
+	"""Any failure that interrupts a leaf — not only a cancel — kills and reaps its child before
+	propagating; an Effect raising on the leaf's output used to leave it running."""
+	from typing import NamedTuple
+
+	class Ctx(NamedTuple):
+		pass
+
+	class BoomError(Exception):
+		pass
+
+	class FailsOnOutput:
+		async def setup(self, task: TaskNode) -> Ctx:
+			return Ctx()
+
+		async def on_event(self, event: TaskEvent, states: Sequence[LeafState], ctx: Ctx) -> Ctx:
+			if isinstance(event, OutputEvent):
+				raise BoomError
+			return ctx
+
+		async def teardown(self, ctxs: tuple[Ctx, ...]) -> None:
+			pass
+
+	leaf = Task(("python", "-c", "print('ready', flush=True); import time; time.sleep(60)"))
+	try:
+		with pytest.raises(BoomError):
+			await run(leaf, effects=(FailsOnOutput(),), interactive=False)
+		assert len(forked) == 1
+		assert forked[0].returncode is not None
+	finally:
+		for child in forked:
+			if child.poll() is None:  # pragma: no cover — only an orphaned child is still alive
+				child.kill()
+				child.wait()
