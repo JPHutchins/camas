@@ -1071,6 +1071,9 @@ def _cancel_inside_the_real_spawn(monkeypatch: pytest.MonkeyPatch) -> None:
 	monkeypatch.setattr(execution_module, "_spawn_stage", cancelled_mid_spawn)
 
 
+@pytest.mark.skipif(
+	sys.platform == "win32", reason="the forked seam is the unix subprocess transport"
+)
 async def test_a_cancel_inside_the_real_spawn_leaves_no_child(
 	forked: list[subprocess.Popen[bytes]], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1083,6 +1086,9 @@ async def test_a_cancel_inside_the_real_spawn_leaves_no_child(
 	assert forked[0].returncode is not None
 
 
+@pytest.mark.skipif(
+	sys.platform == "win32", reason="the forked seam is the unix subprocess transport"
+)
 async def test_a_failing_effect_mid_stream_still_reaps_the_child(
 	forked: list[subprocess.Popen[bytes]],
 ) -> None:

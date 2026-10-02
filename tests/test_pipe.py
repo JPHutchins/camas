@@ -591,6 +591,9 @@ def _cancelled_unwind(monkeypatch: pytest.MonkeyPatch) -> None:
 	monkeypatch.setattr(execution_module, "unwind", cancelled_unwind)
 
 
+@pytest.mark.skipif(
+	sys.platform == "win32", reason="the forked seam is the unix subprocess transport"
+)
 async def test_a_cancel_inside_a_real_stage_spawn_leaves_no_child(
 	forked: list[subprocess.Popen[bytes]], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -776,7 +779,7 @@ async def test_a_grandchild_holding_a_stage_pipe_cannot_wedge_the_unwind(
 	finally:
 		if pid_file.exists():  # pragma: no branch — the pid is announced before the cancel
 			with suppress(ProcessLookupError):
-				os.kill(int(pid_file.read_text()), signal.SIGKILL)
+				os.kill(int(pid_file.read_text()), signal.SIGTERM)
 		# The stage's transport closes only once the dead grandchild's end of the pipe EOFs;
 		# let it, or the transport is collected after the loop closes.
 		stage_stderr = forked[0].stderr
