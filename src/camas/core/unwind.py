@@ -44,62 +44,59 @@ class Settled(NamedTuple):
 	cleanup is done."""
 
 
-class Unwound(NamedTuple):
-	"""How an unwind ended."""
-
-	unreaped: frozenset[int]
-	"""The keys of the children killed but not reaped by the deadline."""
-	cancelled: bool
-	"""A cancel landed during the unwind and was absorbed."""
-
-
-async def settle(
-	future: asyncio.Future[_T], deadline: float, *, cancelled: bool = False
-) -> Settled:
+async def settle(future: asyncio.Future[_T], deadline: float) -> Settled:
 	"""Wait for ``future`` until the loop-time ``deadline`` through any number of cancels.
 	A finished future's exception is retrieved so a faulted one never logs as unretrieved.
 	"""
-	remaining: Final = deadline - asyncio.get_running_loop().time()
-	if future.done() or remaining <= 0:
-		if future.done() and not future.cancelled():
-			future.exception()
-		return Settled(future.done(), cancelled)
-	try:
-		await asyncio.wait({future}, timeout=remaining)
-	except asyncio.CancelledError:
-		return await settle(future, deadline, cancelled=True)
-	return await settle(future, deadline, cancelled=cancelled)
+	loop: Final = asyncio.get_running_loop()
+	cancelled = False
+	while not future.done() and (remaining := deadline - loop.time()) > 0:
+		try:
+			await asyncio.wait({future}, timeout=remaining)
+		except asyncio.CancelledError:  # noqa: PERF203  # absorbing each cancel is the loop's purpose
+			cancelled = True
+	if future.done() and not future.cancelled():
+		future.exception()
+	return Settled(future.done(), cancelled)
 
 
 async def _settle_each(
 	futures: tuple[asyncio.Future[_T], ...], deadline: float
 ) -> tuple[Settled, ...]:
 	"""Each future settled in turn against the one deadline."""
-	if not futures:
-		return ()
-	return (await settle(futures[0], deadline), *await _settle_each(futures[1:], deadline))
+	outcomes: Final[list[Settled]] = []
+	for future in futures:
+		outcomes.append(await settle(future, deadline))
+	return tuple(outcomes)
 
 
-async def unwind(
-	children: Mapping[int, Reapable],
-	tasks: Sequence[asyncio.Future[None]],
-	timeout_s: float = UNWIND_TIMEOUT_S,
-) -> Unwound:
-	"""Kill every live child, then reap them and drain ``tasks`` against one deadline
-	``timeout_s`` away, so a wedge costs one bound, not one per child.
+def _reaped(reap: asyncio.Future[int]) -> bool:
+	"""A reap that settled with a result — a faulted or cancelled wait proves nothing about the
+	child.
 	"""
+	return reap.done() and not reap.cancelled() and reap.exception() is None
+
+
+class _TornDown(NamedTuple):
+	unreaped: frozenset[int]
+	cancelled: bool
+
+
+async def _teardown(
+	children: Mapping[int, Reapable], tasks: Sequence[asyncio.Future[None]], timeout_s: float
+) -> _TornDown:
 	deadline: Final = asyncio.get_running_loop().time() + timeout_s
 	for child in children.values():
 		if child.returncode is None:
 			with suppress(ProcessLookupError, OSError):
 				child.kill()
 	reaps: Final = {key: asyncio.ensure_future(child.wait()) for key, child in children.items()}
-	reaped: Final = tuple(
-		zip(reaps, await _settle_each(tuple(reaps.values()), deadline), strict=True)
+	reap_outcomes: Final = await _settle_each(tuple(reaps.values()), deadline)
+	task_outcomes: Final = await _settle_each(tuple(tasks), deadline)
+	unreaped: Final = frozenset(key for key, reap in reaps.items() if not _reaped(reap))
+	lingering: Final = tuple(
+		task for task, outcome in zip(tasks, task_outcomes, strict=True) if not outcome.finished
 	)
-	drained: Final = tuple(zip(tasks, await _settle_each(tuple(tasks), deadline), strict=True))
-	unreaped: Final = frozenset(key for key, outcome in reaped if not outcome.finished)
-	lingering: Final = tuple(task for task, outcome in drained if not outcome.finished)
 	for key in unreaped:
 		reaps[key].cancel()
 	for task in lingering:
@@ -116,35 +113,45 @@ async def unwind(
 			"grandchild holding the pipe?); dropping their unread tail",
 			file=sys.stderr,
 		)
-	return Unwound(
-		unreaped,
-		any(outcome.cancelled for _, outcome in reaped)
-		or any(outcome.cancelled for _, outcome in drained),
+	return _TornDown(
+		unreaped, any(outcome.cancelled for outcome in (*reap_outcomes, *task_outcomes))
 	)
 
 
-def reraise(unwound: Unwound, exc: BaseException) -> NoReturn:
-	"""Propagate the failure that triggered the unwind — unless the unwind absorbed a cancel
-	and ``exc`` is an ordinary failure: the cancel wins, so a caller's timeout still fires. A
-	``KeyboardInterrupt`` or ``SystemExit`` is never converted.
+async def unwind(
+	children: Mapping[int, Reapable],
+	tasks: Sequence[asyncio.Future[None]],
+	timeout_s: float = UNWIND_TIMEOUT_S,
+) -> frozenset[int]:
+	"""Kill every live child, then reap them and drain ``tasks`` against one deadline
+	``timeout_s`` away, so a wedge costs one bound, not one per child; the keys of the children
+	it could not reap.
 
 	Raises:
-		asyncio.CancelledError: when the unwind absorbed one and ``exc`` is an ``Exception``;
-			``exc`` itself is re-raised otherwise.
+		asyncio.CancelledError: once the teardown is done, when a cancel landed during it — a
+			cancellation never becomes a success.
 	"""
-	if unwound.cancelled and isinstance(exc, Exception):
-		raise asyncio.CancelledError from exc
-	raise exc
-
-
-def rethrow_cancel(unwound: Unwound) -> None:
-	"""On a path that returns normally after an unwind, re-raise a cancel the unwind absorbed —
-	a cancellation never becomes a success.
-
-	>>> rethrow_cancel(Unwound(frozenset(), False))
-
-	Raises:
-		asyncio.CancelledError: when the unwind absorbed one.
-	"""
-	if unwound.cancelled:
+	torn_down: Final = await _teardown(children, tasks, timeout_s)
+	if torn_down.cancelled:
 		raise asyncio.CancelledError
+	return torn_down.unreaped
+
+
+async def unwind_failure(
+	cause: BaseException,
+	children: Mapping[int, Reapable],
+	tasks: Sequence[asyncio.Future[None]],
+	timeout_s: float = UNWIND_TIMEOUT_S,
+) -> NoReturn:
+	"""Tear down after ``cause`` as :func:`unwind` does, then propagate it — unless a cancel
+	landed during the teardown and ``cause`` is an ordinary failure: the cancel wins, so a
+	caller's timeout still fires. A ``KeyboardInterrupt`` or ``SystemExit`` is never converted.
+
+	Raises:
+		asyncio.CancelledError: when a cancel landed and ``cause`` is an ``Exception``;
+			``cause`` itself is re-raised otherwise.
+	"""
+	torn_down: Final = await _teardown(children, tasks, timeout_s)
+	if torn_down.cancelled and isinstance(cause, Exception):
+		raise asyncio.CancelledError from cause
+	raise cause

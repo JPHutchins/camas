@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import shutil
 import subprocess
 from typing import TYPE_CHECKING, Any
@@ -12,7 +13,10 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 if TYPE_CHECKING:
+	from collections.abc import Awaitable, Callable
 	from pathlib import Path
+
+	from camas import Task
 
 
 @pytest.fixture
@@ -69,3 +73,38 @@ def forked(monkeypatch: pytest.MonkeyPatch) -> list[subprocess.Popen[bytes]]:
 
 	monkeypatch.setattr(subprocess, "Popen", Recording)
 	return popens
+
+
+@pytest.fixture
+def cancel_inside_spawn(monkeypatch: pytest.MonkeyPatch) -> None:
+	"""Cancel the spawning task while the real ``create_subprocess_exec`` awaits its transport
+	— after the fork, before a ``Process`` comes back."""
+	from camas.core import execution as execution_module
+
+	real_spawn = execution_module._spawn_stage  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]  # the monkeypatched seam, kept for pass-through
+
+	async def cancelled_mid_spawn(task: Task, **kwargs: Any) -> asyncio.subprocess.Process:
+		current = asyncio.current_task()
+		assert current is not None
+		asyncio.get_running_loop().call_soon(
+			current.cancel
+		)  # zuban: ignore[call-arg] # zuban drops Task.cancel's optional msg
+		return await real_spawn(task, **kwargs)
+
+	monkeypatch.setattr(execution_module, "_spawn_stage", cancelled_mid_spawn)
+
+
+@pytest.fixture
+def wait_until() -> Callable[[Callable[[], bool], float], Awaitable[None]]:
+	"""Polls a condition on the loop until it holds or the deadline passes — the
+	mechanism-awaiting stand-in for racing sleep margins against a thread hop or a child's
+	startup."""
+
+	async def poll(condition: Callable[[], bool], timeout: float = 2.0) -> None:
+		deadline = asyncio.get_running_loop().time() + timeout
+		while not condition() and asyncio.get_running_loop().time() < deadline:  # noqa: ASYNC110
+			await asyncio.sleep(0.05)
+		if not condition():
+			raise AssertionError(f"condition not met within {timeout}s")
+
+	return poll

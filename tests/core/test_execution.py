@@ -1052,34 +1052,15 @@ async def test_run_rejects_identities_that_are_not_a_tuple() -> None:
 		)
 
 
-def _cancel_inside_the_real_spawn(monkeypatch: pytest.MonkeyPatch) -> None:
-	"""Patch the spawn seam so the spawning task is cancelled while the real
-	``create_subprocess_exec`` awaits its transport — after the fork, before a ``Process``
-	comes back."""
-	from camas.core import execution as execution_module
-
-	real_spawn = execution_module._spawn_stage  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]  # the monkeypatched seam, kept for pass-through
-
-	async def cancelled_mid_spawn(task: Task, **kwargs: Any) -> asyncio.subprocess.Process:
-		current = asyncio.current_task()
-		assert current is not None
-		asyncio.get_running_loop().call_soon(
-			current.cancel
-		)  # zuban: ignore[call-arg] # zuban drops Task.cancel's optional msg
-		return await real_spawn(task, **kwargs)
-
-	monkeypatch.setattr(execution_module, "_spawn_stage", cancelled_mid_spawn)
-
-
 @pytest.mark.skipif(
 	sys.platform == "win32", reason="the forked seam is the unix subprocess transport"
 )
+@pytest.mark.usefixtures("cancel_inside_spawn")
 async def test_a_cancel_inside_the_real_spawn_leaves_no_child(
-	forked: list[subprocess.Popen[bytes]], monkeypatch: pytest.MonkeyPatch
+	forked: list[subprocess.Popen[bytes]],
 ) -> None:
 	"""asyncio's own transport kills and reaps a child whose spawn is cancelled, so the leaf
 	needs no shield around the spawn — pinned against the real spawn, not a fake suspension."""
-	_cancel_inside_the_real_spawn(monkeypatch)
 	with pytest.raises(asyncio.CancelledError):
 		await run(Task(("python", "-c", "import time; time.sleep(60)")), interactive=False)
 	assert len(forked) == 1

@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from camas.core.unwind import Settled, Unwound, reraise, rethrow_cancel, settle, unwind
+from camas.core.unwind import Settled, settle, unwind, unwind_failure
 
 if TYPE_CHECKING:
 	from collections.abc import Iterable
@@ -30,6 +30,39 @@ class Wedged:
 	async def wait(self) -> int:
 		await asyncio.Event().wait()
 		raise AssertionError("unreachable")
+
+
+class FaultedReap:
+	"""A killed child whose wait raises — the reap proves nothing about the child."""
+
+	@property
+	def returncode(self) -> int | None:
+		return None
+
+	def kill(self) -> None:
+		pass
+
+	async def wait(self) -> int:
+		raise RuntimeError("the wait faulted")
+
+
+class Exited:
+	"""A child already reaped — signalling it again could reach a recycled pid."""
+
+	@property
+	def returncode(self) -> int | None:
+		return 0
+
+	def kill(self) -> None:
+		raise AssertionError("an exited child must not be signalled")
+
+	async def wait(self) -> int:
+		return 0
+
+
+class Halt(BaseException):
+	"""A non-``Exception`` failure asyncio does not special-case, standing in for
+	``KeyboardInterrupt``/``SystemExit``, which escape the loop when raised from a task."""
 
 
 async def _forever() -> None:
@@ -100,7 +133,7 @@ async def test_unwind_kills_and_reaps_real_children() -> None:
 		i: await asyncio.create_subprocess_exec(sys.executable, "-c", "import time; time.sleep(60)")
 		for i in range(2)
 	}
-	assert await unwind(children, ()) == Unwound(unreaped=frozenset(), cancelled=False)
+	assert await unwind(children, ()) == frozenset()
 	assert all(child.returncode is not None for child in children.values())
 
 
@@ -108,49 +141,76 @@ async def test_unwind_bounds_every_wedged_child_by_one_shared_deadline(
 	capsys: pytest.CaptureFixture[str],
 ) -> None:
 	started = time.monotonic()
-	unwound = await unwind({i: Wedged() for i in range(3)}, (), timeout_s=0.2)
+	assert await unwind({i: Wedged() for i in range(3)}, (), timeout_s=0.2) == frozenset({0, 1, 2})
 	assert time.monotonic() - started < 0.5
-	assert unwound == Unwound(unreaped=frozenset({0, 1, 2}), cancelled=False)
 	assert "3 killed child(ren) not reaped within 0.2s" in capsys.readouterr().err
+
+
+async def test_unwind_leaves_an_exited_child_unsignalled() -> None:
+	assert await unwind({0: Exited()}, ()) == frozenset()
+
+
+async def test_unwind_counts_a_faulted_reap_as_unreaped(capsys: pytest.CaptureFixture[str]) -> None:
+	assert await unwind({0: FaultedReap()}, (), timeout_s=1) == frozenset({0})
+	assert "1 killed child(ren) not reaped" in capsys.readouterr().err
 
 
 async def test_unwind_cancels_and_reports_a_reader_that_never_drains(
 	capsys: pytest.CaptureFixture[str],
 ) -> None:
 	reader = asyncio.ensure_future(_forever())
-	assert await unwind({}, (reader,), timeout_s=0.1) == Unwound(frozenset(), cancelled=False)
+	assert await unwind({}, (reader,), timeout_s=0.1) == frozenset()
 	await asyncio.sleep(0)
 	assert reader.cancelled()
 	assert "1 output reader(s) still open after 0.1s" in capsys.readouterr().err
 
 
-async def test_unwind_reports_a_cancel_it_absorbed(capsys: pytest.CaptureFixture[str]) -> None:
+async def test_unwind_raises_a_cancel_it_absorbed_once_the_teardown_is_done(
+	capsys: pytest.CaptureFixture[str],
+) -> None:
 	unwinding = asyncio.ensure_future(unwind({0: Wedged()}, (), timeout_s=0.2))
 	await asyncio.sleep(0)
 	assert unwinding.cancel()
-	assert await unwinding == Unwound(unreaped=frozenset({0}), cancelled=True)
+	with pytest.raises(asyncio.CancelledError):
+		await unwinding
+	assert "1 killed child(ren) not reaped" in capsys.readouterr().err
+
+
+async def test_unwind_failure_lets_an_absorbed_cancel_win_over_an_ordinary_failure(
+	capsys: pytest.CaptureFixture[str],
+) -> None:
+	"""The exception is captured inside the cancelled task: awaiting a task that ended in a
+	cancel hands back a fresh ``CancelledError`` on 3.10, without the original's cause."""
+	failure = ValueError("stage overflowed")
+
+	async def captured() -> BaseException:
+		try:
+			await unwind_failure(failure, {0: Wedged()}, (), timeout_s=0.2)
+		except asyncio.CancelledError as exc:
+			return exc
+
+	unwinding = asyncio.ensure_future(captured())
+	await asyncio.sleep(0)
+	assert unwinding.cancel()
+	raised = await unwinding
+	assert isinstance(raised, asyncio.CancelledError)
+	assert raised.__cause__ is failure
 	capsys.readouterr()
 
 
-def test_reraise_lets_an_absorbed_cancel_win_over_an_ordinary_failure() -> None:
-	failure = ValueError("stage overflowed")
-	with pytest.raises(asyncio.CancelledError) as info:
-		reraise(Unwound(frozenset(), cancelled=True), failure)
-	assert info.value.__cause__ is failure
-
-
-def test_reraise_propagates_the_failure_itself_when_no_cancel_was_absorbed() -> None:
+async def test_unwind_failure_propagates_the_failure_itself_when_no_cancel_landed() -> None:
 	failure = ValueError("stage overflowed")
 	with pytest.raises(ValueError, match="stage overflowed") as info:
-		reraise(Unwound(frozenset(), cancelled=False), failure)
+		await unwind_failure(failure, {}, ())
 	assert info.value is failure
 
 
-def test_reraise_never_converts_a_keyboard_interrupt() -> None:
-	with pytest.raises(KeyboardInterrupt):
-		reraise(Unwound(frozenset(), cancelled=True), KeyboardInterrupt())
-
-
-def test_rethrow_cancel_raises_a_cancel_the_unwind_absorbed() -> None:
-	with pytest.raises(asyncio.CancelledError):
-		rethrow_cancel(Unwound(frozenset(), cancelled=True))
+async def test_unwind_failure_never_converts_a_non_exception_failure(
+	capsys: pytest.CaptureFixture[str],
+) -> None:
+	unwinding = asyncio.ensure_future(unwind_failure(Halt(), {0: Wedged()}, (), timeout_s=0.2))
+	await asyncio.sleep(0)
+	assert unwinding.cancel()
+	with pytest.raises(Halt):
+		await unwinding
+	capsys.readouterr()
