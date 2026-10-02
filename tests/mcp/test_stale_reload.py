@@ -104,7 +104,8 @@ async def test_probe_skips_the_walk_while_a_call_is_in_flight(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reload_exits: list[int], wait_until: Any
 ) -> None:
 	"""The pre-walk idle check: a probe firing while a call runs returns without walking the
-	package — the walk count stays at the build-time one."""
+	package — the walk count stays at the build-time one. The first call to finish arms the
+	probe while the other is still in flight, so no scheduling delay can open an idle window."""
 	monkeypatch.setattr(serve, "RELOAD_EXIT_DELAY", 0.5)
 	_fake_package(tmp_path, monkeypatch)
 	session = _session({"lint": PASS}, None, tmp_path)
@@ -117,21 +118,31 @@ async def test_probe_skips_the_walk_while_a_call_is_in_flight(
 		return {"changed": "1"} if walks > 1 else initial
 
 	monkeypatch.setattr(serve, "package_snapshot", counting_snapshot)
-	calls = 0
+	arrived = 0
+	both_in_flight = asyncio.Event()
+	release_last = asyncio.Event()
 
-	async def timed_call(session: Session, name: str, arguments: dict[str, Any]) -> Any:
-		nonlocal calls
-		calls += 1
-		await asyncio.sleep(0.3 if calls == 1 else serve.RELOAD_EXIT_DELAY + 0.2)
+	async def held_call(session: Session, name: str, arguments: dict[str, Any]) -> Any:
+		nonlocal arrived
+		arrived += 1
+		if arrived == 1:
+			await both_in_flight.wait()
+		else:
+			both_in_flight.set()
+			await release_last.wait()
 		return await _dispatch(session, name, arguments)
 
-	monkeypatch.setattr(serve, "call", timed_call)
+	monkeypatch.setattr(serve, "call", held_call)
 	async with create_connected_server_and_client_session(serve.build_server(session)) as client:
-		assert not (await client.call_tool("camas_list", {})).isError
+		calls = {asyncio.create_task(client.call_tool("camas_list", {})) for _ in range(2)}
+		done, (last,) = await asyncio.wait(calls, return_when=asyncio.FIRST_COMPLETED)
+		assert not done.pop().result().isError
+		await asyncio.sleep(
+			serve.RELOAD_EXIT_DELAY * 2
+		)  # one loop's timers: the armed probe fires first
 		assert walks == 1
-		second = asyncio.create_task(client.call_tool("camas_list", {}))
-		assert not (await second).isError
-		assert walks == 1
+		release_last.set()
+		assert not (await last).isError
 		await wait_until(lambda: bool(reload_exits))
 	assert reload_exits == [1]
 
