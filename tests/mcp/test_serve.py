@@ -13,7 +13,7 @@ from mcp import types
 from mcp.shared.memory import create_connected_server_and_client_session
 
 import camas
-from camas import AgentFormat, Config, Parallel, Sequential, Task
+from camas import AgentFormat, Config, Parallel, Pipe, Sequential, Task
 from camas.core import timings
 from camas.core.completion import RunResult, TaskResult
 from camas.main.check import CheckerErr, CheckerNotFound, CheckerOk
@@ -919,7 +919,44 @@ async def test_run_call_under_nothing_fits(tmp_path: Path) -> None:
 	session = _session({"p": Parallel(a, name="p")}, None, tmp_path)
 	result = await serve.run_call(session, {"task": "p", "under": 0.5})
 	assert result.isError is False
-	assert "Nothing ran" in _text(result)
+	assert "All leaves exceed the budget — nothing to run." in _text(result)
+
+
+async def test_run_call_under_mid_pipe_cut_says_what_actually_happened(tmp_path: Path) -> None:
+	_record(tmp_path, [("gen", 9.0), ("sarif", 0.1)])
+	gen = Task("cargo clippy", name="gen")
+	sarif = Task("clippy-sarif", name="sarif")
+	session = _session({"p": Pipe(gen, sarif, name="p")}, None, tmp_path)
+	result = await serve.run_call(session, {"task": "p", "under": 1.0})
+	assert result.isError is False
+	assert "A mid-pipe cut would rewire the pipeline — nothing to run." in _text(result)
+
+
+async def test_run_call_under_budget_drops_the_last_runnable_leaf(tmp_path: Path) -> None:
+	_record(tmp_path, [("gen", 9.0)])
+	gen = Task("cargo clippy", name="gen")
+	sarif = Task("clippy-sarif {paths}", name="sarif", paths="docs")
+	session = _session({"p": Pipe(gen, sarif, name="p")}, None, tmp_path)
+	result = await serve.run_call(session, {"task": "p", "under": 1.0, "paths": ["src/x.rs"]})
+	assert result.isError is False
+	assert (
+		"The budget dropped the last runnable leaf for the changed paths — nothing to run."
+		in _text(result)
+	)
+
+
+async def test_run_call_under_paths_covering_nothing_attaches_the_census(tmp_path: Path) -> None:
+	"""The coverage-emptied branch reports its census like every other nothing-ran branch."""
+	_record(tmp_path, [("check", 0.1)])
+	check = Task("check {paths}", name="check", paths="src")
+	session = _session({"p": Parallel(check, name="p")}, None, tmp_path, rich=True)
+	result = await serve.run_call(session, {"task": "p", "under": 1.0, "paths": ["docs/x.md"]})
+	assert result.isError is False
+	assert "No task leaf covers docs/x.md — nothing to run." in _text(result)
+	assert result.structuredContent is not None
+	budget = result.structuredContent["budget"]
+	assert budget["selected"] == []
+	assert [leaf["name"] for leaf in budget["not_covered"]] == ["check"]
 
 
 async def test_run_call_under_reports_untimed(tmp_path: Path) -> None:
@@ -931,6 +968,47 @@ async def test_run_call_under_reports_untimed(tmp_path: Path) -> None:
 	assert "unmeasured (running to record an estimate): b" in _text(result)
 	assert result.structuredContent is not None
 	assert "b" in result.structuredContent["budget"]["unmeasured"]
+
+
+def test_budget_report_counts_a_dropped_pipe_honestly() -> None:
+	"""A fitting stage of a dropped pipe does not run — the wire report's selected set comes
+	from the runnable schedule, not the disposition census."""
+	from camas.core.budget import plan_under, summarize
+	from camas.core.timings import CacheKey, TaskTiming
+
+	gen = Task("cargo clippy", name="gen")
+	sarif = Task("clippy-sarif", name="sarif")
+	timings = {
+		CacheKey("gen", 0): TaskTiming(9.0, 5),
+		CacheKey("sarif", 0): TaskTiming(0.1, 5),
+	}
+	summary = summarize(plan_under(Pipe(gen, sarif), 1.0, timings))
+	report = serve.to_budget_report(summary)
+	assert report.selected == ()
+	assert {e.name for e in report.excluded} == {"gen"}
+	assert {(e.name, e.reason) for e in report.dropped_by_pipe_cut} == {("sarif", "pipe_cut")}
+	headline = serve.headline(summary)
+	assert "running 0 leaf(s) (0 unmeasured), excluded 1 over budget" in headline
+	assert "dropped by pipe cut: sarif ~0.10s" in headline
+
+
+def test_budget_report_counts_an_untimed_whole_pipe_honestly() -> None:
+	"""A pipe kept whole for its untimed sibling runs its over-budget stages too — the wire
+	report counts them selected, not excluded."""
+	from camas.core.budget import plan_under, summarize
+	from camas.core.timings import CacheKey, TaskTiming
+
+	gen = Task("cargo clippy", name="gen")
+	sarif = Task("clippy-sarif", name="sarif")
+	summary = summarize(plan_under(Pipe(gen, sarif), 1.0, {CacheKey("gen", 0): TaskTiming(9.0, 5)}))
+	report = serve.to_budget_report(summary)
+	assert set(report.selected) == {"gen", "sarif"}
+	assert {e.name for e in report.running_over_budget} == {"gen"}
+	assert report.excluded == ()
+	assert report.dropped_by_pipe_cut == ()
+	headline = serve.headline(summary)
+	assert "running 2 leaf(s) (1 unmeasured), excluded 0 over budget" in headline
+	assert "running anyway to measure untimed pipe siblings: gen ~9.00s" in headline
 
 
 async def test_run_call_under_no_task_no_default_errors(tmp_path: Path) -> None:

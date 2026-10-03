@@ -18,6 +18,7 @@ from ..v0.completion import Errored, Finished, Skipped, Stopped
 from ..v0.task import Parallel, Pipe, Sequential, Task
 from .scope import PATHS_TOKEN, resolve_default_leaf
 from .task import task_label
+from .traversal import flatten_leaves
 
 if sys.version_info >= (3, 11):
 	from typing import assert_never
@@ -31,6 +32,7 @@ if TYPE_CHECKING:
 	from ..v0.completion import Completion
 	from ..v0.task import TaskNode
 	from .completion import RunResult
+	from .scope import Pruned
 
 
 CACHE_NAME: Final = "timings.txt"
@@ -232,7 +234,7 @@ def record_observed(camas_dir: Path | None, leaves: Sequence[tuple[CacheKey, flo
 
 class Observed(NamedTuple):
 	"""How one run is keyed and recorded: where its durations go, what size of change they describe,
-	the per-leaf identities and the tree to run with.
+	the per-leaf identities, the tree to run with, and the scoping's original-to-scoped pairing.
 
 	Built once where a run is set up, and carried to wherever the run finishes, so that no path can
 	run leaves and get part of this right. Deriving these by hand per call site is what let a gate
@@ -247,10 +249,31 @@ class Observed(NamedTuple):
 	takes as its ``identities``."""
 	node: TaskNode | None = None
 	"""The scoped tree to run; ``None`` when the changed paths cover no leaf."""
+	pairs: tuple[tuple[Task, Task], ...] = ()
+	"""Each surviving leaf as (original, scoped) — the bridge from a rebuilt stage back to the
+	plan disposition it came from.
+	"""
+	pipe_cut: tuple[Task, ...] = ()
+	"""The originals a mid-pipe cut dropped: the scoping's, then the post-scoping drop's
+	(:func:`narrowed`)."""
 
 	def record(self, result: RunResult) -> None:
 		"""Record ``result``'s timed leaves."""
 		record_observed(self.camas_dir, leaves_of(result, self.scope))
+
+	def original_for(self) -> dict[int, Task]:
+		"""Each scoped leaf's id → its original plan-space leaf — the one inversion of the
+		pairing, shared by every site that translates a rebuilt leaf back to its disposition.
+		"""
+		return pairs_index(self.pairs)
+
+
+def pairs_index(pairs: Iterable[tuple[Task, Task]]) -> dict[int, Task]:
+	"""The scoped-id → original inversion of a walk's pairing — the one translation shape for
+	``Observed.pairs``; a call site that meets a leaf missing from the pairs decides its own
+	miss policy around this single map.
+	"""
+	return {id(scoped): original for original, scoped in pairs}
 
 
 def leaf_key(task: Task, scope: int) -> CacheKey:
@@ -303,19 +326,50 @@ def observed(camas_dir: Path | None, expanded: TaskNode, changed: Sequence[str])
 	handed back is rebuilt from that walk's resolved leaves, so the commands a caller renders are
 	the ones the run executes — and the identities key the same leaves, in the same order.
 	"""
-	from .scope import scoped_leaves, scoped_tree_from_pairs
+	from .scope import scoped_walk
 
 	changed_t = tuple(changed)
-	narrowed: Final = bool(changed_t)
+	path_scoped: Final = bool(changed_t)
 	scope = scope_of(changed)
 
 	def keyed(original: Task, scoped: Task) -> CacheKey:
-		return leaf_key(original, scope) if narrowed else CacheKey(task_label(scoped), 0)
+		return leaf_key(original, scope) if path_scoped else CacheKey(task_label(scoped), 0)
 
-	pairs = scoped_leaves(expanded, changed_t)
-	identities = tuple(keyed(original, scoped) for original, scoped in pairs)
-	node = scoped_tree_from_pairs(expanded, pairs)
-	return Observed(camas_dir, scope, identities, node)
+	walk = scoped_walk(expanded, changed_t)
+	identities = tuple(keyed(original, scoped) for original, scoped in walk.pairs)
+	return Observed(camas_dir, scope, identities, walk.node, walk.pairs, walk.pipe_cut)
+
+
+def narrowed(keying: Observed, dropped: Pruned) -> Observed:
+	"""``keying`` narrowed to ``dropped`` — its tree after
+	:func:`camas.core.budget.drop_unjustified_running`: the identities parallel to the
+	dropped tree's leaves, taken from the original tree's leaf order (re-scoping a scoped
+	tree would derive different keys — the injected label is not the canonical one).
+	"""
+	if keying.node is None or dropped.node is keying.node:
+		return keying
+	assert keying.identities is not None
+	original_for: Final = keying.original_for()
+	keying_order: Final = {
+		id(original_for.get(id(info.task), info.task)): i
+		for i, info in enumerate(flatten_leaves(keying.node))
+	}
+	identities: Final = (
+		tuple(
+			keying.identities[keying_order[id(original_for.get(id(info.task), info.task))]]
+			for info in flatten_leaves(dropped.node)
+		)
+		if dropped.node is not None
+		else ()
+	)
+	return Observed(
+		keying.camas_dir,
+		keying.scope,
+		identities,
+		dropped.node,
+		keying.pairs,
+		keying.pipe_cut + dropped.pipe_cut,
+	)
 
 
 def ensure_camas_dir(camas_dir: Path) -> None:

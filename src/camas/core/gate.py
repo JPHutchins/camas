@@ -19,9 +19,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Final, Literal, NamedTuple, TypeAlias
 
 from ..v0.task import Group, Pipe, Task, rebuilt
-from .budget import plan_under
+from .budget import BudgetRun, NothingToRun, plan_under, resolve_budget
 from .execution import run
 from .matrix import expand_matrix
+from .scope import coverage_message
 from .timings import observed, scope_of
 
 if sys.version_info >= (3, 11):
@@ -33,9 +34,9 @@ if TYPE_CHECKING:
 	from collections.abc import Mapping
 
 	from ..v0.task import TaskNode
-	from .budget import BudgetPlan
+	from .budget import BudgetSummary
 	from .completion import RunResult
-	from .timings import CacheKey, TaskTiming
+	from .timings import CacheKey, Observed, TaskTiming
 
 
 ResidualClass: TypeAlias = Literal["green", "needs_reasoning"]
@@ -64,7 +65,12 @@ class GateOutcome(NamedTuple):
 	them only on ``needs_reasoning``.
 	"""
 	result: RunResult | None
-	budget: BudgetPlan | None
+	budget: BudgetSummary | None
+	"""The post-drop budget census — the honest counts on the nothing-ran branches too, so the
+	wire report never advertises leaves the gate did not run. ``None`` when no budget was asked.
+	"""
+	nothing_ran: str | None = None
+	"""Why nothing ran, when nothing did — the cause line the agent-facing text prints."""
 	report_paths: tuple[Path | None, ...] = ()
 	"""Each leaf's path-mode report file, DFS order aligned with ``node``'s leaves — set for a
 	leaf whose ``agent_format.args`` used :data:`REPORT_TOKEN`, ``None`` for every other leaf.
@@ -267,10 +273,13 @@ async def run_gate(
 	"""Run the check ``node`` over the ``changed`` paths and classify the residual.
 
 	The check node is expanded, time-boxed (``under``), scoped to ``changed``, and run; the gate
-	never mutates. Untimed leaves are run (and thereby measured); only leaves measured to exceed
-	``under`` are skipped. ``green`` means the checks passed — or the change touched nothing the
-	checks cover, or every leaf was measured too slow for ``under``; ``needs_reasoning`` means a
-	check still fails. Budgeting precedes scoping, but budgets against observations taken at this
+	never mutates (the check node's leaves are non-mutating by convention). Untimed leaves are
+	run (and thereby measured); only leaves measured to exceed ``under`` are skipped — except a
+	pipe kept whole for its untimed siblings, which runs its over-budget stages too and counts
+	their failures against ``green``. ``green`` means the checks passed — or the change touched
+	nothing the checks cover, or every leaf was measured too slow for ``under``;
+	``needs_reasoning`` means a check still fails. Budgeting precedes scoping, but budgets
+	against observations taken at this
 	change's own scope (:func:`camas.core.timings.scope_of`) — a whole-tree record is not an
 	estimate of a two-file gate, and using it as one excluded the heavy-but-scopable checks from
 	exactly the small changes they are cheap on.
@@ -281,15 +290,25 @@ async def run_gate(
 	accumulation.
 	"""
 	expanded = expand_matrix(node)
-	scope = scope_of(changed)
-	plan = plan_under(expanded, under, timings or {}, scope) if under is not None else None
-	budgeted = plan.node if plan is not None else expanded
-	if budgeted is None:
-		return GateOutcome("green", None, None, plan)
-	keying: Final = observed(None, budgeted, changed)
-	scoped = keying.node
-	if scoped is None:
-		return GateOutcome("green", None, None, plan)
+	final_keying: Observed
+	summary: BudgetSummary | None
+	if under is None:
+		final_keying, summary = observed(None, expanded, changed), None
+		if final_keying.node is None:
+			return GateOutcome("green", None, None, None, coverage_message(changed))
+	else:
+		outcome: Final = resolve_budget(
+			plan_under(expanded, under, timings or {}, scope_of(changed)), None, changed
+		)
+		match outcome:
+			case NothingToRun(summary=census, cause=cause):
+				return GateOutcome("green", None, None, census, cause)
+			case BudgetRun(keying=keying, summary=census):
+				final_keying, summary = keying, census
+			case _:
+				assert_never(outcome)
+	scoped = final_keying.node
+	assert scoped is not None
 	if uses_path_mode(scoped):
 		prune_stale_report_dirs()
 		report_dir = Path(tempfile.mkdtemp(prefix=REPORT_DIR_PREFIX))
@@ -302,13 +321,13 @@ async def run_gate(
 		base=base,
 		interactive=False,
 		leaf_color=leaf_color,
-		identities=keying.identities,
+		identities=final_keying.identities,
 	)
 	residual: ResidualClass = "needs_reasoning" if checks.returncode != 0 else "green"
 	return GateOutcome(
 		residual,
 		formatted.node,
 		checks,
-		plan,
-		formatted.report_paths,
+		summary,
+		report_paths=formatted.report_paths,
 	)

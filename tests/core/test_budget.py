@@ -5,9 +5,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from camas import Clean, Parallel, Sequential, Task
-from camas.core.budget import Fits, OverBudget, Untimed, classify, plan_under
-from camas.core.timings import CacheKey, TaskTiming
+from camas import Clean, Parallel, Pipe, Sequential, Task
+from camas.core.budget import Fits, OverBudget, Untimed, classify, plan_under, summarize
+from camas.core.task import task_label
+from camas.core.timings import CacheKey, Observed, TaskTiming
 
 
 def test_classify_fits_over_and_untimed() -> None:
@@ -299,3 +300,205 @@ def test_plan_under_carries_group_fields_onto_the_reordered_wrapper() -> None:
 	assert [f.task.name for f in plan.fits] == ["fmt", "lint"]
 	assert plan.over_budget == ()
 	assert plan.untimed == ()
+
+
+def test_summarize_an_empty_observed_tree_excludes_everything() -> None:
+	"""An observed whose tree scoped away: nothing runs, a running-over-budget stage joins the
+	excluded rather than the running-anyway set, no planned fit is counted dropped, and the
+	scope-pruned untimed leaf lands in the not-covered census."""
+	gen = Task("gen", name="gen")
+	sarif = Task("sarif", name="sarif")
+	plan = plan_under(Pipe(gen, sarif), 1.0, {CacheKey("sarif", 0): TaskTiming(9.0, 1)})
+	summary = summarize(
+		plan, Observed(camas_dir=None, scope=1, identities=None, node=None, pairs=())
+	)
+	assert summary.budget_s == 1.0
+	assert summary.runnable == ()
+	assert summary.unmeasured == ()
+	assert summary.running_anyway == ()
+	assert [o.task.name for o in summary.excluded] == ["sarif"]
+	assert summary.dropped == ()
+	assert [leaf.task.name for leaf in summary.not_covered] == ["gen"]
+
+
+def test_summarize_counts_a_fit_the_scope_cut_removed_as_dropped() -> None:
+	"""A fits leaf the plan selected but a mid-pipe scope cut removed (while a Parallel sibling
+	survived) must appear in the dropped census — a machine consumer cannot find it in any
+	other field."""
+	from camas.core import timings
+	from camas.core.budget import drop_unjustified_running
+
+	f = Task("f", name="f")
+	u = Task("u {paths}", name="u", paths="src")
+	o = Task("o", name="o")
+	g = Task("g {paths}", paths="docs")
+	plan = plan_under(
+		Parallel(Pipe(f, u, o), g),
+		1.0,
+		{
+			CacheKey("f", 0): TaskTiming(0.1, 1),
+			CacheKey("o", 0): TaskTiming(9.0, 1),
+			CacheKey("g {paths}", 0): TaskTiming(0.1, 1),
+		},
+	)
+	assert plan.node is not None
+	keying = timings.observed(None, plan.node, ("docs/x.md",))
+	assert keying.node is not None
+	dropped = drop_unjustified_running(keying.node, plan, keying.pairs)
+	summary = summarize(plan, timings.narrowed(keying, dropped))
+	assert [task_label(t) for t in summary.runnable] == ["g {paths}"]
+	assert [d.task.name for d in summary.dropped] == ["f"]
+	assert [o.task.name for o in summary.excluded] == ["o"]
+
+
+def test_summarize_reports_a_leaf_missing_from_the_pairs_by_its_own_label() -> None:
+	"""A hand-built Observed whose pairs miss a leaf: the fallback reports the leaf itself, so
+	a paired tree and an unpaired leaf never mix label spaces."""
+	a = Task("a {paths}", paths=".")
+	b = Task("b")
+	scoped_a = Task("a x.py", paths=".")
+	plan = plan_under(
+		Parallel(a, b),
+		60.0,
+		{CacheKey("a {paths}", 0): TaskTiming(0.1, 1), CacheKey("b", 0): TaskTiming(0.1, 1)},
+	)
+	observed = Observed(
+		camas_dir=None, scope=1, identities=None, node=Parallel(scoped_a, b), pairs=((a, scoped_a),)
+	)
+	assert [task_label(t) for t in summarize(plan, observed).runnable] == ["a {paths}", "b"]
+
+
+def test_summarize_labels_a_scope_pruned_fit_as_not_covered_not_pipe_cut() -> None:
+	"""A fitting leaf whose own paths missed the change set (no pipe anywhere near it) is
+	reported not-covered — the pipe_cut reason is reserved for pipe cuts."""
+	from camas.core import timings
+	from camas.core.budget import drop_unjustified_running
+
+	check = Task("check {paths}", name="check", paths="src")
+	lint = Task("lint {paths}", name="lint", paths="docs")
+	plan = plan_under(
+		Parallel(check, lint),
+		60.0,
+		{CacheKey("check", 0): TaskTiming(0.1, 1), CacheKey("lint", 0): TaskTiming(0.1, 1)},
+	)
+	assert plan.node is not None
+	keying = timings.observed(None, plan.node, ("docs/x.md",))
+	assert keying.node is not None
+	summary = summarize(
+		plan, timings.narrowed(keying, drop_unjustified_running(keying.node, plan, keying.pairs))
+	)
+	assert [task_label(t) for t in summary.runnable] == ["lint"]
+	assert summary.dropped == ()
+	assert [(leaf.task.name, leaf.estimated_s) for leaf in summary.not_covered] == [("check", 0.1)]
+
+
+def test_summarize_reports_the_plans_own_mid_pipe_cut_as_dropped() -> None:
+	"""The plan's own cut inside a surviving tree, on a full run with no path filtering: the
+	pipe's fitting stages were cut, not missed by their paths."""
+	a = Task("a", name="a")
+	b = Task("b", name="b")
+	c = Task("c", name="c")
+	d = Task("d", name="d")
+	plan = plan_under(
+		Parallel(Pipe(a, b, c), d),
+		1.0,
+		{
+			CacheKey("a", 0): TaskTiming(0.1, 1),
+			CacheKey("b", 0): TaskTiming(9.0, 1),
+			CacheKey("c", 0): TaskTiming(0.1, 1),
+			CacheKey("d", 0): TaskTiming(0.1, 1),
+		},
+	)
+	assert plan.node == Parallel(d)
+	summary = summarize(plan)
+	assert [leaf.task.name for leaf in summary.dropped] == ["a", "c"]
+	assert summary.not_covered == ()
+
+
+def test_resolve_budget_reports_a_coverage_emptied_pipe_as_not_covered() -> None:
+	"""Changed paths no stage covers prune each stage by its own paths — no pipe was cut, so
+	the census and the cause both blame the paths."""
+	from camas.core.budget import NothingToRun, resolve_budget
+	from camas.core.scope import coverage_message
+
+	f = Task("f {paths}", name="f", paths="docs")
+	g = Task("g {paths}", name="g", paths="docs")
+	h = Task("h {paths}", name="h", paths="src")
+	plan = plan_under(
+		Parallel(Pipe(f, g), h),
+		60.0,
+		{CacheKey(name, 0): TaskTiming(0.1, 1) for name in ("f", "g", "h")},
+	)
+	outcome = resolve_budget(plan, None, ("zzz/x.txt",))
+	assert isinstance(outcome, NothingToRun)
+	assert outcome.summary.dropped == ()
+	assert [leaf.task.name for leaf in outcome.summary.not_covered] == ["f", "g", "h"]
+	assert outcome.cause == coverage_message(("zzz/x.txt",))
+
+
+def test_resolve_budget_reports_an_untimed_stage_a_scope_cut_removed_as_dropped() -> None:
+	"""A mid-pipe scope cut takes a covered untimed stage down with its pipe — dropped, with
+	no estimate, while the stage whose paths missed is not covered."""
+	from camas.core.budget import BudgetRun, resolve_budget
+
+	head = Task("head {paths}", name="head", paths="docs")
+	untimed = Task("untimed", name="untimed")
+	other = Task("other {paths}", name="other", paths="src")
+	plan = plan_under(
+		Parallel(Pipe(head, untimed), other),
+		60.0,
+		{CacheKey("head", 0): TaskTiming(0.1, 1), CacheKey("other", 0): TaskTiming(0.1, 1)},
+	)
+	outcome = resolve_budget(plan, None, ("src/x.py",))
+	assert isinstance(outcome, BudgetRun)
+	assert [(leaf.task.name, leaf.estimated_s) for leaf in outcome.summary.dropped] == [
+		("untimed", None)
+	]
+	assert [leaf.task.name for leaf in outcome.summary.not_covered] == ["head"]
+
+
+def test_resolve_budget_reports_the_drops_own_cut_when_it_empties_the_run() -> None:
+	"""The post-scoping drop removes the running stage and, by the cut rule, its fitting
+	sibling — the census carries that cut even though nothing is left to run."""
+	from camas.core.budget import NothingToRun, resolve_budget
+
+	plan = plan_under(
+		Pipe(
+			Task("run", name="run"),
+			Task("mid-fit", name="midfit"),
+			Task("tail {paths}", name="tail", paths="docs"),
+		),
+		1.0,
+		{CacheKey("run", 0): TaskTiming(9.0, 5), CacheKey("midfit", 0): TaskTiming(0.1, 5)},
+	)
+	outcome = resolve_budget(plan, None, ("src/x.rs",))
+	assert isinstance(outcome, NothingToRun)
+	assert outcome.cause.startswith("The budget dropped the last runnable leaf")
+	assert [o.task.name for o in outcome.summary.excluded] == ["run"]
+	assert [(leaf.task.name, leaf.estimated_s) for leaf in outcome.summary.dropped] == [
+		("midfit", 0.1)
+	]
+	assert [leaf.task.name for leaf in outcome.summary.not_covered] == ["tail"]
+
+
+def test_narrowed_returns_the_keying_itself_when_the_drop_changed_nothing() -> None:
+	from camas.core import timings
+	from camas.core.scope import Pruned
+
+	a = Task("a", name="a")
+	keying = timings.observed(None, Parallel(a, Task("b", name="b")), ())
+	assert keying.node is not None
+	assert timings.narrowed(keying, Pruned(keying.node, ())) is keying
+	assert timings.narrowed(keying, Pruned(Parallel(a), ())).identities == (CacheKey("a", 0),)
+
+
+def test_drop_unjustified_running_fails_closed_on_a_stage_missing_from_the_pairs() -> None:
+	"""A stage the pairs do not cover is dropped — the guard fails closed rather than letting
+	an unjustified running-over-budget stage run."""
+	from camas.core.budget import drop_unjustified_running
+
+	a = Task("a", name="a")
+	u = Task("u", name="u")
+	plan = plan_under(Pipe(a, u), 1.0, {CacheKey("a", 0): TaskTiming(9.0, 1)})
+	assert plan.node is not None
+	assert drop_unjustified_running(plan.node, plan).node is None

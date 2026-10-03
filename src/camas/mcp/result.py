@@ -400,5 +400,6 @@ def to_gate_response(
 		residual_class=outcome.residual_class,
 		diagnostics=diagnostics,
 		budget=budget,
+		nothing_ran=outcome.nothing_ran,
 		rerun=rerun,
 	)

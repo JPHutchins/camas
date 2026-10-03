@@ -19,7 +19,7 @@ else:  # pragma: no cover
 	from typing_extensions import assert_never
 
 from ..core import timings
-from ..core.budget import plan_under
+from ..core.budget import BudgetRun, NothingToRun, outcome_lines, plan_under, resolve_budget
 from ..core.execution import run
 from ..core.gate import strip_agent_only_pipes
 from ..core.hook_event import stdin_changed
@@ -31,8 +31,8 @@ from ..core.matrix import (
 	unfilled_required_axes,
 )
 from ..core.render import print_tree, render_tree_lines
-from ..core.scope import requested_but_unusable, to_changed, with_default_paths
-from ..core.task import did_you_mean, task_label
+from ..core.scope import coverage_message, requested_but_unusable, to_changed, with_default_paths
+from ..core.task import did_you_mean
 from ..v0.config import Config
 from .argv import (
 	NAME_LIKE,
@@ -64,7 +64,6 @@ if TYPE_CHECKING:
 	import io
 	from collections.abc import Mapping, Sequence
 
-	from ..core.budget import BudgetPlan
 	from ..core.completion import RunResult
 	from ..v0.effect import Effect
 	from ..v0.task import TaskNode
@@ -91,29 +90,6 @@ def dispatch_arg(arg: str, tasks: Mapping[str, TaskNode]) -> TaskNode:
 	return parse_expression(arg, tasks=tasks)
 
 
-def budget_summary_lines(plan: BudgetPlan) -> list[str]:
-	"""The ``--under`` summary: how many leaves run (and which are unmeasured), and what was
-	excluded as measured-over-budget.
-	"""
-	lines = [
-		f"Time budget {plan.budget_s:.2f}s — running {len(plan.fits) + len(plan.untimed)} leaf(s) "
-		f"({len(plan.untimed)} unmeasured), excluded {len(plan.over_budget)} over budget."
-	]
-	if plan.over_budget:
-		lines.append(
-			"  over budget: "
-			+ ", ".join(f"{task_label(o.task)} ~{o.estimated_s:.2f}s" for o in plan.over_budget)
-		)
-	if plan.untimed:
-		lines.append(
-			"  unmeasured (running to record an estimate): "
-			+ ", ".join(task_label(u.task) for u in plan.untimed)
-		)
-	if plan.node is None:
-		lines.append("All leaves exceed the budget — nothing to run.")
-	return lines
-
-
 def run_under(
 	source: TaskNode,
 	budget_s: float,
@@ -137,36 +113,41 @@ def run_under(
 	if passthrough:
 		print("error: -- passthrough args cannot be combined with --under", file=sys.stderr)
 		return 2
-	plan = plan_under(
-		source,
-		budget_s,
-		timings.load(camas_dir) if camas_dir is not None else {},
-		timings.scope_of(changed),
+	outcome = resolve_budget(
+		plan_under(
+			source,
+			budget_s,
+			timings.load(camas_dir) if camas_dir is not None else {},
+			timings.scope_of(changed),
+		),
+		camas_dir,
+		changed,
 	)
-	for line in budget_summary_lines(plan):
+	for line in outcome_lines(outcome):
 		print(line)
-	if plan.node is None:
-		return 0
-	observed: Final = timings.observed(camas_dir, plan.node, changed)
-	scoped = observed.node
-	if scoped is None:
-		print(f"No task leaf covers {', '.join(changed)} — nothing to run.")
-		return 0
-	if dry_run:
-		print_tree(with_default_paths(scoped), show_cmd=True)
-		return 0
-	return finish_run(
-		asyncio.run(
-			run(
-				scoped,
-				effects=keyed_to_run(tuple(effects), observed),
-				jobs=jobs,
-				base=base,
-				leaf_color=leaf_color,
-				identities=observed.identities,
+	match outcome:
+		case NothingToRun():
+			return 0
+		case BudgetRun(keying=observed):
+			scoped = observed.node
+			assert scoped is not None
+			if dry_run:
+				print_tree(with_default_paths(scoped), show_cmd=True)
+				return 0
+			return finish_run(
+				asyncio.run(
+					run(
+						scoped,
+						effects=keyed_to_run(tuple(effects), observed),
+						jobs=jobs,
+						base=base,
+						leaf_color=leaf_color,
+						identities=observed.identities,
+					)
+				)
 			)
-		)
-	)
+		case _:
+			assert_never(outcome)
 
 
 def finish_run(result: RunResult) -> int:
@@ -215,13 +196,13 @@ def fix_cli(argv: list[str]) -> int:
 	changed = to_changed(requested, base)
 	if requested_but_unusable(requested, changed):
 		if args.dry_run:
-			print("No leaves cover the changed paths — nothing would run.")
+			print(coverage_message(requested))
 		return 0
 	expanded = expand_matrix(node)
 	keying: Final = timings.observed(state.config.camas_path(base), expanded, changed)
 	if args.dry_run:
 		if keying.node is None:
-			print("No leaves cover the changed paths — nothing would run.")
+			print(coverage_message(changed))
 		else:
 			plan = "\n".join(
 				render_tree_lines(with_default_paths(keying.node), show_cmd=True, color=False)
@@ -533,10 +514,7 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 			if requested_but_unusable(cli_requested, cli_changed):
 				# Checked ahead of both branches below, since --under exits before the scoping one is
 				# reached.
-				print(
-					f"No task leaf covers {', '.join(cli_requested) or '(no paths given)'}"
-					" — nothing to run."
-				)
+				print(coverage_message(cli_requested))
 				sys.exit(0)
 
 			if args.under is not None:
@@ -566,7 +544,7 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 			# Without a budget there is nothing to order against, so scope up front; with no paths
 			# named, that is every leaf at its full-run default.
 			if cli_observed.node is None:
-				print(f"No task leaf covers {', '.join(cli_changed)} — nothing to run.")
+				print(coverage_message(cli_changed))
 				sys.exit(0)
 			resolved = cli_observed.node
 

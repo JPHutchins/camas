@@ -457,9 +457,7 @@ def test_gate_cli_dry_run_no_match(
 		"_ = Config(default_task=check)\n"
 	)
 	assert serve.gate_cli(["--paths", "unrelated.txt", "--dry-run"]) == 0
-	out = capsys.readouterr().out
-	assert "No leaves cover" in out
-	assert "nothing would run" in out
+	assert "No task leaf covers unrelated.txt — nothing to run." in capsys.readouterr().out
 
 
 _BUDGET_TASKS = (
@@ -481,8 +479,7 @@ def test_gate_cli_dry_run_under_excludes_over_budget_leaf(
 	camas_dir.mkdir()
 	timings.record(camas_dir, [(CacheKey("fast", 0), 0.5), (CacheKey("slow", 0), 99.0)])
 	assert serve.gate_cli(["--paths", "sample.py", "--under", "5", "--dry-run"]) == 0
-	preview, _, headline = capsys.readouterr().out.partition("Time budget")
-	assert "Dry run" in preview
+	headline, _, preview = capsys.readouterr().out.partition("Dry run")
 	assert "fast" in preview
 	assert "slow" not in preview
 	assert "excluded 1 over budget" in headline
@@ -507,7 +504,7 @@ def test_gate_cli_under_ignores_a_whole_tree_estimate(
 	camas_dir.mkdir()
 	timings.record(camas_dir, [(CacheKey("slow", 0), 99.0)])
 	assert serve.gate_cli(["--paths", "sample.py", "--under", "5", "--dry-run"]) == 0
-	preview, _, headline = capsys.readouterr().out.partition("Time budget")
+	headline, _, preview = capsys.readouterr().out.partition("Dry run")
 	assert "slow" in preview
 	assert "excluded 0 over budget" in headline
 
@@ -527,9 +524,49 @@ def test_gate_cli_dry_run_under_all_over_budget(
 	timings.record(camas_dir, [(CacheKey("only", 0), 99.0)])
 	assert serve.gate_cli(["--paths", "sample.py", "--under", "5", "--dry-run"]) == 0
 	out = capsys.readouterr().out
-	assert "nothing would run" in out
+	assert "All leaves exceed the budget — nothing to run." in out
 	assert "excluded 1 over budget" in out
 	assert "only" in out
+
+
+def test_gate_cli_dry_run_under_coverage_emptied_blames_the_paths_not_the_budget(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	"""Scoping is what emptied the planned tree — the preview says no leaf covers the paths,
+	not that the budget dropped the last runnable leaf, and the census agrees."""
+	monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+	monkeypatch.chdir(tmp_path)
+	(tmp_path / "tasks.py").write_text(
+		"from camas import Config, Task\n"
+		'check = Task("echo hi {paths}", name="check", paths="src")\n'
+		"_ = Config(default_task=check)\n"
+	)
+	assert serve.gate_cli(["--paths", "docs/x.md", "--under", "5", "--dry-run"]) == 0
+	out = capsys.readouterr().out
+	assert "No task leaf covers docs/x.md — nothing to run." in out
+	assert "not covered by the changed paths: check" in out
+	assert "budget dropped" not in out
+
+
+def test_gate_cli_dry_run_under_previews_the_dropped_plan(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+	monkeypatch.chdir(tmp_path)
+	(tmp_path / "tasks.py").write_text(
+		"from camas import Config, Pipe, Task\n"
+		"gen = Task('python --version', name='gen')\n"
+		"sarif = Task('echo sarif {paths}', name='sarif', paths='docs')\n"
+		"_ = Config(default_task=Pipe(gen, sarif, name='check'))\n"
+	)
+	camas_dir = tmp_path / ".camas"
+	camas_dir.mkdir()
+	timings.record(camas_dir, [(CacheKey("gen", 0), 9.0)])
+	assert serve.gate_cli(["--paths", "sample.py", "--under", "5", "--dry-run"]) == 0
+	out = capsys.readouterr().out
+	assert (
+		"The budget dropped the last runnable leaf for the changed paths — nothing to run." in out
+	)
 
 
 _ALWAYS_FAILS_TASKS = (
@@ -586,5 +623,5 @@ def test_gate_cli_paths_all_outside_the_repo_run_nothing(
 	(tmp_path / "tasks.py").write_text(_BUDGET_TASKS)
 	timings.ensure_camas_dir(tmp_path / ".camas")
 	assert serve.gate_cli(["--paths", "/etc/passwd"]) == 0
-	assert "nothing would run" in capsys.readouterr().out
+	assert "No task leaf covers /etc/passwd — nothing to run." in capsys.readouterr().out
 	assert timings.load(tmp_path / ".camas") == {}
