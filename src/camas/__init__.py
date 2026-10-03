@@ -53,8 +53,9 @@ sequence, then the read-only rest in parallel — a fast, self-pruning
 inner-loop subset of a task. ``camas_run`` exposes the same budget as its
 ``under`` argument. That subset is what a pre-commit / git-hook wants;
 untimed leaves run (and are thereby measured), only leaves measured over
-budget are excluded, so a cold cache (a fresh clone) runs the whole tree
-under a budget until the leaves have been measured once.
+budget are excluded — except a pipe kept whole for its untimed siblings,
+which runs its over-budget stages too — so a cold cache (a fresh clone)
+runs the whole tree under a budget until the leaves have been measured once.
 
 Two authoring idioms the engine can't enforce: ``tasks.py`` is
 real Python, so source matrix axis values from the project's single

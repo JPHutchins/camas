@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from camas import Parallel, Pipe, Sequential, Task
-from camas.core.budget import Fits, plan_under
+from camas.core.budget import Fits, OverBudget, Untimed, plan_under
 from camas.core.execution import Interrupts, RunContext, run
 from camas.core.gate import strip_agent_only_pipes, with_agent_format
 from camas.core.matrix import expand_matrix
@@ -45,6 +45,30 @@ def test_pipe_coerces_stage_strings_and_rejects_nested_groups() -> None:
 	stage = Task("echo a")
 	with pytest.raises(ValueError, match="stages must be distinct"):
 		Pipe(stage, stage)
+
+
+def test_an_unresolved_ref_stage_dies_at_the_engine_boundary_with_the_stage_message() -> None:
+	"""A hand-written Ref in a pipe constructs (the expression surface resolves and
+	re-validates) but the engine rejects it with the stage message, not an assert_never."""
+	from typing import cast
+
+	from camas.core.matrix import expand_matrix
+	from camas.v0.ref import Ref
+
+	with pytest.raises(ValueError, match="stages must be Tasks"):
+		expand_matrix(Pipe(Task("a"), cast("Task", Ref("b"))))
+
+
+def test_a_ref_outside_a_pipe_dies_at_the_engine_boundary_with_the_resolution_message() -> None:
+	"""A hand-written Ref outside a pipe: the engine names the real rule — an unresolved
+	reference — instead of diagnosing an invalid pipe stage."""
+	from typing import cast
+
+	from camas.core.matrix import expand_matrix
+	from camas.v0.ref import Ref
+
+	with pytest.raises(ValueError, match="unresolved Ref reached the engine"):
+		expand_matrix(cast("TaskNode", Ref("b")))
 
 
 def test_pipe_equality_includes_agent_only() -> None:
@@ -212,9 +236,25 @@ def test_plan_under_preserves_pipe_stage_order() -> None:
 	assert plan.untimed == ()
 
 
-def test_plan_under_drops_the_whole_pipe_when_a_stage_is_over_budget() -> None:
-	"""A cut stage would rewire the pipeline — the survivor before the cut feeding the one
-	after it — so any dropped stage drops the whole pipe."""
+def test_plan_under_drops_the_whole_pipe_when_a_mid_stage_is_over_budget() -> None:
+	"""A cut mid-pipe would rewire the pipeline — the survivor before the cut feeding the one
+	after it — so a mid-pipe drop drops the whole pipe."""
+	gen = Task("cargo clippy", name="gen")
+	sarif = Task("clippy-sarif", name="sarif")
+	pipe = Pipe(gen, sarif)
+	timings = {
+		CacheKey("gen", 0): TaskTiming(9.0, 5),
+		CacheKey("sarif", 0): TaskTiming(0.1, 5),
+	}
+	plan = plan_under(pipe, 1.0, timings)
+	assert plan.node is None
+	assert plan.runnable == ()
+	assert plan.fits == (Fits(sarif, 0.1),)
+	assert plan.over_budget == (OverBudget(gen, 9.0),)
+
+
+def test_plan_under_keeps_a_pipe_prefix_when_only_the_last_stage_is_over_budget() -> None:
+	"""A suffix-only drop needs no rewiring — the surviving prefix runs as the pipeline."""
 	gen = Task("cargo clippy", name="gen")
 	sarif = Task("clippy-sarif", name="sarif")
 	pipe = Pipe(gen, sarif)
@@ -223,9 +263,230 @@ def test_plan_under_drops_the_whole_pipe_when_a_stage_is_over_budget() -> None:
 		CacheKey("sarif", 0): TaskTiming(9.0, 5),
 	}
 	plan = plan_under(pipe, 1.0, timings)
-	assert plan.node is None
+	assert plan.node == Pipe(gen)
 	assert plan.fits == (Fits(gen, 0.1),)
-	assert plan.over_budget == (plan.over_budget[0],)
+	assert isinstance(plan.over_budget[0], OverBudget)
+
+
+def test_plan_under_keeps_a_pipe_with_an_untimed_stage_whole() -> None:
+	"""Dropping the pipe would starve the untimed stage of the first run that measures it,
+	so the pipe runs whole — the over-budget stage included — and the timing data lets the
+	next budget drop it cleanly."""
+	gen = Task("cargo clippy", name="gen")
+	sarif = Task("clippy-sarif", name="sarif")
+	pipe = Pipe(gen, sarif)
+	plan = plan_under(pipe, 1.0, {CacheKey("gen", 0): TaskTiming(9.0, 5)})
+	assert plan.node == pipe
+	assert plan.runnable == (gen, sarif)
+	assert plan.fits == ()
+	assert plan.over_budget == ()
+	assert isinstance(plan.running_over_budget[0], OverBudget)
+	assert isinstance(plan.untimed[0], Untimed)
+
+
+def test_plan_under_reports_an_untimed_whole_pipe_mutating() -> None:
+	"""The untimed-whole-run executes the over-budget stage too — its mutates must reach the
+	parent's mutating-first ordering, or a Parallel could run it beside another mutator."""
+	gen = Task("cargo clippy", name="gen", mutates=True)
+	sarif = Task("clippy-sarif", name="sarif")
+	pipe = Pipe(gen, sarif)
+	plain = Task("other-mutator", name="plain", mutates=True)
+	plan = plan_under(
+		Parallel(pipe, plain),
+		1.0,
+		{CacheKey("gen", 0): TaskTiming(9.0, 5), CacheKey("plain", 0): TaskTiming(0.1, 5)},
+	)
+	assert plan.node == Sequential(pipe, plain)
+
+
+def test_budget_summary_notes_over_budget_stages_running_for_untimed_siblings() -> None:
+	from camas.core.budget import outcome_lines, resolve_budget
+
+	gen = Task("cargo clippy", name="gen")
+	sarif = Task("clippy-sarif", name="sarif")
+	plan = plan_under(Pipe(gen, sarif), 1.0, {CacheKey("gen", 0): TaskTiming(9.0, 5)})
+	lines = outcome_lines(resolve_budget(plan, None, ()))
+	assert "running 2 leaf(s) (1 unmeasured), excluded 0 over budget" in lines[0]
+	assert "running anyway to measure untimed pipe siblings: gen ~9.00s" in lines[1]
+	assert all("  over budget:" not in line for line in lines)
+
+
+def test_budget_summary_counts_nothing_running_when_the_pipe_drops() -> None:
+	"""The running count derives from the runnable schedule — a fits leaf of a dropped pipe
+	is not running."""
+	from camas.core.budget import outcome_lines, resolve_budget
+
+	gen = Task("cargo clippy", name="gen")
+	sarif = Task("clippy-sarif", name="sarif")
+	timings = {
+		CacheKey("gen", 0): TaskTiming(9.0, 5),
+		CacheKey("sarif", 0): TaskTiming(0.1, 5),
+	}
+	lines = outcome_lines(resolve_budget(plan_under(Pipe(gen, sarif), 1.0, timings), None, ()))
+	assert "running 0 leaf(s) (0 unmeasured), excluded 1 over budget" in lines[0]
+	assert "A mid-pipe cut would rewire the pipeline — nothing to run." in lines[-1]
+
+
+def test_budget_summary_names_the_all_exceed_case() -> None:
+	from camas.core.budget import outcome_lines, resolve_budget
+
+	slow = Task("slow", name="slow")
+	plan = plan_under(slow, 1.0, {CacheKey("slow", 0): TaskTiming(9.0, 5)})
+	lines = outcome_lines(resolve_budget(plan, None, ()))
+	assert "All leaves exceed the budget — nothing to run." in lines[-1]
+
+
+def test_drop_unjustified_running_drops_a_stage_whose_untimed_sibling_was_pruned() -> None:
+	"""The keep-whole decision is re-validated after scoping: a running-over-budget stage
+	whose untimed sibling did not survive scoping is dropped — the over-budget stage blows
+	the budget with nothing measured."""
+	from camas.core import timings
+	from camas.core.budget import drop_unjustified_running
+
+	gen = Task("cargo clippy {paths}", name="gen", paths="rust")
+	sarif = Task("clippy-sarif {paths}", name="sarif", paths="docs")
+	plan = plan_under(Pipe(gen, sarif), 1.0, {CacheKey("gen", 0): TaskTiming(9.0, 5)})
+	assert plan.node is not None
+	pruned_sibling = timings.observed(None, plan.node, ("rust/lib.rs",))
+	assert pruned_sibling.node is not None
+	assert drop_unjustified_running(pruned_sibling.node, plan, pruned_sibling.pairs).node is None
+	kept_sibling = timings.observed(None, plan.node, ("rust/lib.rs", "docs/readme.md"))
+	assert kept_sibling.node is not None
+	assert (
+		drop_unjustified_running(kept_sibling.node, plan, kept_sibling.pairs).node
+		== kept_sibling.node
+	)
+	plain_plan = plan_under(
+		Pipe(Task("gen", name="gen"), Task("sarif", name="sarif")),
+		1.0,
+		{CacheKey("gen", 0): TaskTiming(0.1, 5), CacheKey("sarif", 0): TaskTiming(0.1, 5)},
+	)
+	assert plain_plan.node is not None
+	assert drop_unjustified_running(plain_plan.node, plain_plan).node is plain_plan.node
+
+
+def test_drop_unjustified_running_applies_the_cut_semantics() -> None:
+	"""A running stage at the pipe's head drops the whole pipe (mid-pipe cut); a running
+	suffix drops to the surviving prefix."""
+	from camas.core import timings
+	from camas.core.budget import drop_unjustified_running
+
+	head = Pipe(
+		Task("run", name="run"),
+		Task("mid-fit", name="midfit"),
+		Task("tail {paths}", name="tail", paths="docs"),
+	)
+	plan = plan_under(
+		head,
+		1.0,
+		{CacheKey("run", 0): TaskTiming(9.0, 5), CacheKey("midfit", 0): TaskTiming(0.1, 5)},
+	)
+	assert plan.node is not None
+	scoped = timings.observed(None, plan.node, ("src/x.rs",))
+	assert scoped.node is not None
+	head_cut = drop_unjustified_running(scoped.node, plan, scoped.pairs)
+	assert head_cut.node is None
+	assert [t.name for t in head_cut.pipe_cut] == ["midfit"]
+
+	suffix = Pipe(
+		Task("gen", name="gen"),
+		Task("run", name="run"),
+		Task("tail {paths}", name="tail", paths="docs"),
+	)
+	plan = plan_under(
+		suffix,
+		1.0,
+		{CacheKey("gen", 0): TaskTiming(0.1, 5), CacheKey("run", 0): TaskTiming(9.0, 5)},
+	)
+	assert plan.node is not None
+	scoped = timings.observed(None, plan.node, ("src/x.rs",))
+	assert scoped.node is not None
+	suffix_cut = drop_unjustified_running(scoped.node, plan, scoped.pairs)
+	assert suffix_cut.node == Pipe(Task("gen", name="gen"))
+	assert suffix_cut.pipe_cut == ()
+
+
+def test_scoped_leaves_and_scoped_tree_agree_on_a_mid_pipe_prune() -> None:
+	"""The pairs follow the same pipe cut semantics as the tree — a mid-pipe prune drops the
+	pipe's pairs too, so the identities stay parallel to the tree. The surviving leaf carries
+	``{paths}`` so the pair's members differ, pinning the original-first orientation the
+	consumers rely on."""
+	from camas.core import timings
+	from camas.core.execution import run
+	from camas.core.scope import Pruned, prune_pipes, scoped_leaves
+
+	a = Task("a {paths}", name="a", paths="docs")
+	b = Task("b", name="b")
+	c = Task("c {paths}", name="c", paths=".")
+	scoped_c = Task("c src/x.rs", name="c", paths=".")
+	node = Parallel(Pipe(a, b), c)
+	keying = timings.observed(None, node, ("src/x.rs",))
+	assert keying.node == Parallel(scoped_c)
+	assert scoped_leaves(node, ("src/x.rs",)) == ((c, scoped_c),)
+	resolved = {id(b): b, id(c): scoped_c}
+	assert prune_pipes(node, lambda t: resolved.get(id(t))) == Pruned(Parallel(scoped_c), (b,))
+	assert keying.node is not None
+	asyncio.run(run(keying.node, identities=keying.identities))
+
+
+def test_dropped_prefix_runs_with_matching_identities() -> None:
+	"""drop_unjustified_running can shrink the scoped tree — the identities re-derived from
+	the dropped tree are parallel to its leaves, so run() accepts them."""
+	from camas.core import timings
+	from camas.core.budget import drop_unjustified_running
+	from camas.core.execution import run
+
+	a = Task(("python", "-c", "pass"), name="a")
+	b = Task(("python", "-c", "pass"), name="b")
+	c = Task("c {paths}", name="c", paths="docs")
+	plan = plan_under(
+		Pipe(a, b, c),
+		1.0,
+		{CacheKey("a", 0): TaskTiming(0.1, 5), CacheKey("b", 0): TaskTiming(9.0, 5)},
+	)
+	assert plan.node is not None
+	keying = timings.observed(None, plan.node, ("src/x.rs",))
+	assert keying.node is not None
+	dropped = drop_unjustified_running(keying.node, plan, keying.pairs)
+	assert dropped.node == Pipe(a)
+	final = timings.narrowed(keying, dropped)
+	assert final.node is not None
+	asyncio.run(run(final.node, identities=final.identities))
+
+
+def test_drop_unjustified_running_drops_an_all_dropped_group() -> None:
+	from camas.core.budget import drop_unjustified_running
+
+	a_pipe = Pipe(Task("a", name="a"), Task("au {paths}", name="au", paths="docs"))
+	b_pipe = Pipe(Task("b", name="b"), Task("bu {paths}", name="bu", paths="docs"))
+	plan = plan_under(
+		Parallel(a_pipe, b_pipe),
+		1.0,
+		{CacheKey("a", 0): TaskTiming(9.0, 5), CacheKey("b", 0): TaskTiming(9.0, 5)},
+	)
+	# plan_under works on expand_matrix's clones — take the stages from the plan's own tree.
+	assert isinstance(plan.node, Parallel)
+	pipe_a, pipe_b = plan.node.tasks
+	assert isinstance(pipe_a, Pipe)
+	assert isinstance(pipe_b, Pipe)
+	dropped = Parallel(Pipe(pipe_a.tasks[0]), Pipe(pipe_b.tasks[0]))
+	assert drop_unjustified_running(dropped, plan).node is None
+
+
+def test_prune_pipes_keeps_a_suffix_pruned_prefix_and_records_a_mid_pipe_cut() -> None:
+	"""A mid-pipe prune would rewire the pipeline, but a suffix-only prune keeps the prefix;
+	the stages a mid-pipe cut takes down with the pipe are recorded, the pruned ones are not."""
+	from camas.core.scope import Pruned, prune_pipes
+
+	a, b, c = Task("a"), Task("b"), Task("c")
+	pipe = Pipe(a, b, c)
+
+	def keeping(*kept: Task) -> Callable[[Task], Task | None]:
+		return lambda t: t if any(t is k for k in kept) else None
+
+	assert prune_pipes(pipe, keeping(a, b)) == Pruned(Pipe(a, b), ())
+	assert prune_pipes(pipe, keeping(a, c)) == Pruned(None, (a, c))
+	assert prune_pipes(pipe, keeping()) == Pruned(None, ())
 
 
 def test_expand_matrix_fans_out_a_pipe_matrix_as_pipe_clones() -> None:
@@ -344,7 +605,9 @@ def test_pipe_spawn_failure_never_starts_later_stages() -> None:
 	assert 2 not in started
 
 
-def test_pipe_spawn_failure_reports_a_finished_earlier_stage_as_stopped() -> None:
+def test_pipe_spawn_failure_reports_a_finished_earlier_stage_as_stopped(
+	monkeypatch: pytest.MonkeyPatch,
+) -> None:
 	"""A stage that genuinely ran before the failure reads Stopped with its own code — 0 when
 	it finished before the kill, a kill code otherwise — never Skipped with the failed
 	stage's 127, and it keeps the stderr its reader captured before the kill. The failed
@@ -383,7 +646,6 @@ def test_pipe_spawn_failure_reports_a_finished_earlier_stage_as_stopped() -> Non
 			task, stdin=stdin, stdout=stdout, stderr=stderr, base=base, leaf_color=leaf_color
 		)
 
-	monkeypatch = pytest.MonkeyPatch()
 	monkeypatch.setattr(execution_module, "_spawn_stage", failing_spawn)
 	pipe = Pipe(
 		Task(
@@ -396,7 +658,6 @@ def test_pipe_spawn_failure_reports_a_finished_earlier_stage_as_stopped() -> Non
 		Task("no-such-cmd-xyz"),
 	)
 	result = asyncio.run(run(pipe, jobs=1, effects=(Recorder(),)))
-	monkeypatch.undo()
 	first = result.results[0].completion
 	assert isinstance(first, Stopped)
 	assert first.returncode != 127
@@ -471,12 +732,15 @@ def test_pipe_interrupt_mid_pipe_unwinds_the_spawned_stages() -> None:
 	"""A landed interrupt after a stage spawned kills it and reports its own code, then
 	Stops the rest — nothing is abandoned."""
 	from contextlib import nullcontext
+	from datetime import datetime
 
 	from camas.core.execution import Interrupts, RunContext, run_pipe
+	from camas.v0.leaf_state import Running
 	from camas.v0.task_event import CompletedEvent, StartedEvent
 
 	a = Task(("python", "-c", "import time; time.sleep(60)"))
 	b = Task("b")
+	states: list[LeafState] = [Running(a, datetime.now(), b""), Waiting(b)]
 	events: list[TaskEvent] = []
 	interrupts = Interrupts(procs={})
 
@@ -488,7 +752,6 @@ def test_pipe_interrupt_mid_pipe_unwinds_the_spawned_stages() -> None:
 	async def scenario() -> tuple[TaskResult, ...]:
 		leaves = (a, b)
 		index_map = {id(a): 0, id(b): 1}
-		states: list[LeafState] = [Waiting(a), Waiting(b)]
 		ctx = RunContext(
 			dispatch, leaves, index_map, nullcontext(), interrupts, states, None, None, True, None
 		)
@@ -503,18 +766,59 @@ def test_pipe_interrupt_mid_pipe_unwinds_the_spawned_stages() -> None:
 	assert [c.leaf_index for c in completions] == [0, 1]
 
 
-def test_pipe_interrupt_after_a_spawn_failure_unwinds_with_the_failure_semantics() -> None:
-	"""An interrupt landing after a mid-pipe spawn failure still reports every stage exactly
-	once: the spawned one Stopped with its own code, the failed one Errored, the rest
-	Skipped — the failure's semantics, not a blanket interrupt."""
+def test_pipe_interrupt_unwind_reports_an_unowned_finished_stage_finished(
+	monkeypatch: pytest.MonkeyPatch,
+) -> None:
+	"""The unwind labels each spawned stage by its state, like wait_and_complete does: a stage
+	the interrupt never owned — it finished naturally, its registration predating the press —
+	reads Finished with its own exit code; the owned stage reads Stopped."""
+	import time
 	from contextlib import nullcontext
+	from datetime import datetime
 
+	from camas.core import execution as execution_module
 	from camas.core.execution import Interrupts, RunContext, run_pipe
+	from camas.v0.leaf_state import Running
 	from camas.v0.task_event import CompletedEvent, StartedEvent
 
-	a = Task(("python", "-c", "import time; time.sleep(60)"))
-	bad = Task("no-such-cmd-xyz")
+	original_spawn = execution_module._spawn_stage  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]  # the monkeypatched seam, kept for pass-through
+	a_proc: list[asyncio.subprocess.Process] = []
+
+	async def delayed_spawn(
+		task: Task,
+		*,
+		stdin: int | None,
+		stdout: int,
+		stderr: int,
+		base: Path | None,
+		leaf_color: bool,
+	) -> asyncio.subprocess.Process:
+		proc = await original_spawn(
+			task, stdin=stdin, stdout=stdout, stderr=stderr, base=base, leaf_color=leaf_color
+		)
+		if task.cmd == ("python", "-c", "pass"):
+			a_proc.append(proc)
+		if task.cmd == ("python", "-c", "import time; time.sleep(60)"):
+			# Wait for stage a's observed reap before the interrupt lands, so its natural
+			# exit code — not the unwind's kill — is the one observed.
+			deadline = time.monotonic() + 5
+			while a_proc and a_proc[0].returncode is None:
+				if (
+					time.monotonic() > deadline
+				):  # pragma: no cover  # only a stuck stage reaches the deadline
+					pytest.fail("stage a never exited")
+				await asyncio.sleep(0.01)
+		return proc
+
+	monkeypatch.setattr(execution_module, "_spawn_stage", delayed_spawn)
+	a = Task(("python", "-c", "pass"))
+	b = Task(("python", "-c", "import time; time.sleep(60)"))
 	c = Task("c")
+	states: list[LeafState] = [
+		Running(a, datetime.now(), b""),
+		Running(b, datetime.now(), b""),
+		Waiting(c),
+	]
 	events: list[TaskEvent] = []
 	interrupts = Interrupts(procs={})
 
@@ -524,9 +828,51 @@ def test_pipe_interrupt_after_a_spawn_failure_unwinds_with_the_failure_semantics
 		events.append(event)
 
 	async def scenario() -> tuple[TaskResult, ...]:
+		leaves = (a, b, c)
+		index_map = {id(a): 0, id(b): 1, id(c): 2}
+		ctx = RunContext(
+			dispatch, leaves, index_map, nullcontext(), interrupts, states, None, None, True, None
+		)
+		return await run_pipe((a, b, c), ctx)
+
+	results = asyncio.run(scenario())
+	assert isinstance(results[0].completion, Finished)
+	assert results[0].completion.returncode == 0
+	assert isinstance(results[1].completion, Stopped)
+	assert isinstance(results[2].completion, Stopped)
+	assert results[2].completion.returncode == INTERRUPT_RC
+	completions = [e for e in events if isinstance(e, CompletedEvent)]
+	assert [c.leaf_index for c in completions] == [0, 1, 2]
+
+
+def test_pipe_interrupt_after_a_spawn_failure_unwinds_with_the_failure_semantics() -> None:
+	"""An interrupt landing after a mid-pipe spawn failure still reports every stage exactly
+	once: the spawned one Stopped with its own code, the failed one Errored, the rest
+	Skipped — the failure's semantics, not a blanket interrupt."""
+	from contextlib import nullcontext
+	from datetime import datetime
+
+	from camas.core.execution import Interrupts, RunContext, run_pipe
+	from camas.core.leaf_state import to_interrupting
+	from camas.v0.leaf_state import Running
+	from camas.v0.task_event import CompletedEvent, StartedEvent
+
+	a = Task(("python", "-c", "import time; time.sleep(60)"))
+	bad = Task("no-such-cmd-xyz")
+	c = Task("c")
+	states: list[LeafState] = [Running(a, datetime.now(), b""), Waiting(bad), Waiting(c)]
+	events: list[TaskEvent] = []
+	interrupts = Interrupts(procs={})
+
+	async def dispatch(leaf_idx: int, event: TaskEvent) -> None:
+		if isinstance(event, StartedEvent) and event.leaf_index == 1:
+			interrupts.count = 1
+			states[0] = to_interrupting(states[0], 1)
+		events.append(event)
+
+	async def scenario() -> tuple[TaskResult, ...]:
 		leaves = (a, bad, c)
 		index_map = {id(a): 0, id(bad): 1, id(c): 2}
-		states: list[LeafState] = [Waiting(a), Waiting(bad), Waiting(c)]
 		ctx = RunContext(
 			dispatch, leaves, index_map, nullcontext(), interrupts, states, None, None, True, None
 		)
@@ -547,16 +893,34 @@ def test_pipe_interrupt_after_a_spawn_failure_unwinds_with_the_failure_semantics
 	assert started == {0, 1}
 
 
-def test_pipe_cancel_inside_spawn_closes_the_fresh_pipe_fds() -> None:
+def test_pipe_cancel_inside_spawn_closes_the_fresh_pipe_fds(
+	monkeypatch: pytest.MonkeyPatch,
+) -> None:
 	"""A cancel landing after os.pipe() but inside the spawn await closes the fresh pair —
-	nothing leaks toward EMFILE in a long-lived server."""
+	nothing leaks toward EMFILE in a long-lived server. The fake spawn is held on an event the
+	scenario releases, so the unwind does not pay a minute for a fake's sleep."""
+	import os
+
 	from camas.core import execution as execution_module
 
-	async def slow_spawn(*args: object, **kwargs: object) -> object:
-		await asyncio.sleep(60)
+	fds: list[int] = []
+	fds_recorded = asyncio.Event()
+	release = asyncio.Event()
+
+	async def slow_spawn(
+		task: Task,
+		*,
+		stdin: int | None,
+		stdout: int,
+		stderr: int,
+		base: Path | None,
+		leaf_color: bool,
+	) -> asyncio.subprocess.Process:
+		fds.extend(fd for fd in (stdin, stdout, stderr) if isinstance(fd, int) and fd >= 0)
+		fds_recorded.set()
+		await release.wait()
 		raise AssertionError("unreachable")
 
-	monkeypatch = pytest.MonkeyPatch()
 	monkeypatch.setattr(execution_module, "_spawn_stage", slow_spawn)
 	pipe = Pipe(
 		Task(("python", "-c", "pass")),
@@ -565,13 +929,16 @@ def test_pipe_cancel_inside_spawn_closes_the_fresh_pipe_fds() -> None:
 
 	async def scenario() -> None:
 		main_task = asyncio.ensure_future(run(pipe, jobs=1))
-		await asyncio.sleep(0.2)
+		await asyncio.wait_for(fds_recorded.wait(), 5)
 		main_task.cancel()
+		release.set()
 		with pytest.raises(asyncio.CancelledError):
 			await main_task
+		for fd in fds:
+			with pytest.raises(OSError):  # noqa: PT011  # EBADF's errno-specific form differs per platform
+				os.fstat(fd)
 
 	asyncio.run(scenario())
-	monkeypatch.undo()
 
 
 def _pipe_ctx(stages: tuple[Task, ...], interrupts: Interrupts | None = None) -> RunContext:

@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from camas import AgentFormat, Parallel, Sequential, Task
+from camas import AgentFormat, Parallel, Pipe, Sequential, Task
 from camas.core.completion import RunResult
 from camas.core.gate import (
 	REPORT_DIR_PREFIX,
@@ -71,7 +71,9 @@ async def test_gate_with_no_paths_carries_resolved_commands() -> None:
 
 async def test_gate_scoped_to_nothing_is_green_noop() -> None:
 	node = Task(("cargo", "check", "{paths}"), name="rust", paths="rust")
-	assert await run_gate(node, ("src/app.py",)) == GateOutcome("green", None, None, None)
+	assert await run_gate(node, ("src/app.py",)) == GateOutcome(
+		"green", None, None, None, "No task leaf covers src/app.py — nothing to run."
+	)
 
 
 async def test_gate_threads_base_into_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -122,7 +124,23 @@ async def test_gate_budget_skips_over_budget_check() -> None:
 	assert out.residual_class == "green"
 	assert out.result is None
 	assert out.budget is not None
-	assert out.budget.node is None
+	assert out.budget.runnable == ()
+	assert [o.task.name for o in out.budget.excluded] == [CHECK_PASS.name]
+
+
+async def test_gate_budget_drops_the_last_runnable_leaf() -> None:
+	"""The keep-whole re-validation: scoping prunes the untimed sibling, the over-budget
+	stage drops with it, and the gate reads green with nothing run."""
+	gen = Task("cargo clippy", name="gen")
+	sarif = Task("clippy-sarif {paths}", name="sarif", paths="docs")
+	out = await run_gate(
+		Pipe(gen, sarif),
+		("src/x.rs",),
+		under=1.0,
+		timings={CacheKey("gen", 0): TaskTiming(9.0, 5)},
+	)
+	assert out.residual_class == "green"
+	assert out.result is None
 
 
 def test_with_agent_format_appends_to_tuple_command(tmp_path: Path) -> None:

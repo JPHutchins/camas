@@ -17,7 +17,18 @@ if sys.version_info >= (3, 11):
 else:  # pragma: no cover
 	from typing_extensions import assert_never
 
-from ..v0.task import Group, Parallel, Pipe, Sequential, Task, TaskNode, rebuilt
+from ..v0.ref import Ref
+from ..v0.task import (
+	UNRESOLVED_REF_MESSAGE,
+	Group,
+	Parallel,
+	Pipe,
+	Sequential,
+	Task,
+	TaskNode,
+	rebuilt,
+	reject_refs,
+)
 from .task import MatrixBinding, VarBinding, node_label, task_label
 
 if TYPE_CHECKING:
@@ -585,6 +596,9 @@ def expand_matrix(
 	'code-gen'
 	>>> expand_matrix(Task("cargo build", cwd="code-gen", when="only")).when
 	'only'
+
+	Raises:
+		ValueError: if a pipe stage is not a Task, or if an unresolved Ref reaches the engine.
 	"""
 	parent_env: Final = dict(ancestor_env) if ancestor_env else {}
 	match task:
@@ -623,6 +637,7 @@ def expand_matrix(
 			)
 		):
 			ordered_env: Final = parent_env | env
+			reject_refs(task)
 			ordered_cwd: Final = cwd if cwd is not None else ancestor_cwd
 			ordered_paths: Final = paths if paths is not None else ancestor_paths
 			ordered_when: Final = when if when is not None else ancestor_when
@@ -658,5 +673,10 @@ def expand_matrix(
 			return expand_parallel_matrix(
 				par_expanded, node_bindings(matrix, variants), task.name, env, cwd, task.help
 			)
+		case Ref():  # pyright: ignore[reportUnnecessaryComparison]  # the Ref/TaskNode parse-time gap
+			# A Ref that reached the engine was never resolved — the expression surface resolves
+			# and re-validates, so a hand-written one dies here. A Ref inside a pipe raises the
+			# stage message from the pipe arm above; anywhere else, the resolution message.
+			raise ValueError(UNRESOLVED_REF_MESSAGE)
 		case _:
 			assert_never(task)

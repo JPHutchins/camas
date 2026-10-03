@@ -77,10 +77,12 @@ class LeafReport(BaseModel):
 
 
 class ExcludedLeaf(BaseModel):
-	"""A leaf a time budget did not run — measured to exceed the budget."""
+	"""A leaf a time budget did not run — measured over its limit, dropped by a pipe cut, or
+	(in ``BudgetReport.running_over_budget``) run anyway to measure an untimed pipe sibling.
+	"""
 
 	name: str
-	reason: Literal["over_budget"]
+	reason: Literal["over_budget", "pipe_cut", "not_covered"]
 	estimated_s: float | None = None
 	"""The leaf's observed estimate; null when it has never been timed."""
 
@@ -90,11 +92,22 @@ class BudgetReport(BaseModel):
 
 	budget_s: float
 	selected: tuple[str, ...]
-	"""Leaves that run: those whose estimate fit the budget, plus any unmeasured ones."""
+	"""Leaves that run: those whose estimate fit the budget, plus any unmeasured ones, plus
+	the over-budget pipe stages that run to measure untimed siblings.
+	"""
 	unmeasured: tuple[str, ...] = ()
 	"""The selected leaves with no prior estimate — run to record one, since skipping them
 	would keep them forever unmeasured.
 	"""
+	running_over_budget: tuple[ExcludedLeaf, ...] = ()
+	"""The over-budget leaves that run anyway — a pipe kept whole for its untimed siblings —
+	counted in ``selected``, not ``excluded``.
+	"""
+	dropped_by_pipe_cut: tuple[ExcludedLeaf, ...] = ()
+	"""Planned leaves that do not run — a mid-pipe cut dropped the pipe they sit in."""
+	not_covered: tuple[ExcludedLeaf, ...] = ()
+	"""Planned leaves the changed paths pruned themselves — scope-pruned fits and untimed
+	leaves, which otherwise vanish from the census."""
 	excluded: tuple[ExcludedLeaf, ...]
 
 
@@ -279,9 +292,10 @@ class RunRequest(BaseModel):
 		description="Wall-clock budget in seconds: run only the leaves whose recorded "
 		"estimate fits, mutating leaves (formatters) first then the read-only rest in "
 		"parallel. Untimed leaves run (and are thereby measured); only leaves measured "
-		"over budget are skipped, so a cold cache runs the whole tree. Omit 'task' to "
-		"budget the default task; the 'budget' field of the response reports what was "
-		"selected and excluded.",
+		"over budget are skipped — except a pipe kept whole for its untimed siblings, "
+		"which runs its over-budget stages too — so a cold cache runs the whole tree. "
+		"Omit 'task' to budget the default task; the 'budget' field of the response "
+		"reports what was selected and excluded.",
 	)
 	dry_run: bool = Field(
 		default=False,
@@ -354,7 +368,8 @@ class GateRequest(BaseModel):
 		default=None,
 		gt=0,
 		description="Wall-clock budget in seconds for the checks: leaves measured to exceed it are "
-		"skipped; untimed leaves run (and get measured). The gate never mutates.",
+		"skipped — except the over-budget stages of a pipe kept whole for its untimed "
+		"siblings — and untimed leaves run (and get measured). The gate never mutates.",
 	)
 	jobs: int | None = Field(
 		default=None, ge=1, description="Max concurrent leaf subprocesses; null = unbounded."
@@ -437,6 +452,9 @@ class GateResponse(BaseModel):
 	"""The failing leaves as AgentJSON envelopes (failures-only); null when the checks pass."""
 	budget: BudgetReport | None = None
 	"""How ``under`` partitioned the checks, when a budget was given."""
+	nothing_ran: str | None = None
+	"""Why nothing ran, when nothing did — the cause line the other surfaces print, carried to
+	the agent-facing text."""
 	rerun: GateRerun
 	"""The invocation that produced this verdict — the handle to re-gate the same scope."""
 

@@ -770,6 +770,23 @@ def test_name_scope_config_discovered_under_underscore_convention() -> None:
 	assert name_scope_config({"_": cfg}) == cfg
 
 
+def test_a_hand_written_ref_in_a_pipe_binding_dies_with_the_stage_message() -> None:
+	"""The expression surface resolves its Refs; one written by hand in tasks.py is rejected
+	at the load boundary, not by a walker's assert_never."""
+	from camas import Pipe
+	from camas.main.tasks import name_scope_bindings
+
+	with pytest.raises(ValueError, match="Pipe stages must be Tasks"):
+		name_scope_bindings({"check": Pipe(Task("a"), cast("Task", Ref("b")))})
+
+
+def test_a_hand_written_ref_in_a_group_binding_dies_with_the_resolution_message() -> None:
+	from camas.main.tasks import name_scope_bindings
+
+	with pytest.raises(ValueError, match="unresolved Ref"):
+		name_scope_bindings({"check": Sequential(Task("a"), cast("Task", Ref("b")))})
+
+
 def test_name_scope_config_multiple_raises() -> None:
 	scope = {"_": Config(), "other": Config()}
 	with pytest.raises(ValueError, match="multiple Config instances"):

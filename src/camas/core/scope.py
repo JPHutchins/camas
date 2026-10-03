@@ -35,11 +35,9 @@ from __future__ import annotations
 
 import shlex
 import sys
-from collections.abc import (
-	Mapping,  # noqa: TC003  # runtime name get_type_hints resolves; TYPE_CHECKING-only would NameError
-)
+from itertools import chain
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, Final, Literal, NamedTuple
+from typing import TYPE_CHECKING, Final, Literal, NamedTuple, cast
 
 if sys.version_info >= (3, 11):
 	from typing import assert_never
@@ -48,9 +46,10 @@ else:  # pragma: no cover
 
 from ..v0.task import Group, Pipe, Task, rebuilt
 from .task import task_label
+from .traversal import flatten_leaves
 
 if TYPE_CHECKING:
-	from collections.abc import Iterable, Sequence
+	from collections.abc import Callable, Iterable, Sequence
 
 	from ..v0.task import PathScope, TaskNode, WhenPredicate
 
@@ -98,6 +97,17 @@ def requested_but_unusable(paths: Sequence[str], changed: Sequence[str]) -> bool
 	False
 	"""
 	return bool(paths) and not changed
+
+
+def coverage_message(paths: Iterable[str]) -> str:
+	"""Why a path-scoped run is empty.
+
+	>>> coverage_message(("docs/x.md", "README.md"))
+	'No task leaf covers docs/x.md, README.md — nothing to run.'
+	>>> coverage_message(("",))
+	'No task leaf covers (no paths given) — nothing to run.'
+	"""
+	return f"No task leaf covers {', '.join(paths) or '(no paths given)'} — nothing to run."
 
 
 def _within(path: str, prefix: str) -> bool:
@@ -247,34 +257,58 @@ def scope_to_changed(node: TaskNode, changed: tuple[str, ...]) -> TaskNode | Non
 	>>> scope_to_changed(Task("cargo check", name="cargo", when="src"), ("src/a.rs",))
 	Task(cmd='cargo check', name='cargo', env={}, cwd=None, when='src')
 	"""
-	return scoped_tree_from_pairs(node, scoped_leaves(node, changed))
+	return scoped_walk(node, changed).node
 
 
-def scoped_tree_from_pairs(node: TaskNode, pairs: Sequence[tuple[Task, Task]]) -> TaskNode | None:
-	"""``scoped_tree`` from a precomputed pairing — the form :func:`camas.core.timings.observed`
-	uses, so its one walk feeds both the tree and the keying.
+def _suffix_only_prune(pruned: tuple[int, ...], kept: int, total: int) -> bool:
+	"""Whether the pruned positions are exactly the last ``total - kept`` — a suffix-only cut
+	needs no rewiring; a mid-pipe cut would rewire the pipeline.
 	"""
-	return scoped_tree(node, {id(original): scoped for original, scoped in pairs})
+	return pruned == tuple(range(kept, total))
 
 
-def scoped_tree(node: TaskNode, resolved: Mapping[int, Task]) -> TaskNode | None:
-	"""``node`` with each leaf replaced by its resolved form: leaves with no resolution pruned,
-	emptied groups dropped. Consults no leaf's paths/when — the resolution already happened in
-	the pairing handed in, so a run's tree and its keying derive from one walk.
+class Pruned(NamedTuple):
+	"""A tree after :func:`prune_pipes`, with what its pipe cuts removed."""
+
+	node: TaskNode | None
+	pipe_cut: tuple[Task, ...]
+	"""The input stages ``keep_stage`` kept that a mid-pipe cut dropped with their pipe."""
+
+
+def prune_pipes(
+	node: TaskNode,
+	keep_stage: Callable[[Task], Task | None],
+	keep_whole_pipe: Callable[[tuple[Task, ...]], bool] | None = None,
+) -> Pruned:
+	"""Each leaf mapped through ``keep_stage`` (``None`` prunes it), groups rebuilt around the
+	survivors; a pipe's prune follows the cut semantics — a suffix-only cut keeps the prefix,
+	a mid-pipe cut drops the whole pipe — unless ``keep_whole_pipe`` keeps it wholesale.
 	"""
 	match node:
 		case Task():
-			return resolved.get(id(node))
+			return Pruned(keep_stage(node), ())
 		case Pipe(tasks=stages):
-			kept = tuple(s for s in (scoped_tree(c, resolved) for c in stages) if s is not None)
-			# A pruned stage would rewire the pipeline (the survivor before the cut feeding
-			# the one after it), so any pruned stage drops the whole pipe.
-			return rebuilt(node, *kept) if len(kept) == len(stages) else None
-		case Group() as group:
-			kept = tuple(
-				s for s in (scoped_tree(c, resolved) for c in group.tasks) if s is not None
+			stage_tasks: Final = cast("tuple[Task, ...]", stages)
+			if keep_whole_pipe is not None and keep_whole_pipe(stage_tasks):
+				return Pruned(node, ())
+			mapped = tuple(keep_stage(t) for t in stage_tasks)
+			kept = tuple(stage for stage in mapped if stage is not None)
+			pruned_indices = tuple(i for i, stage in enumerate(mapped) if stage is None)
+			if kept and _suffix_only_prune(pruned_indices, len(kept), len(stage_tasks)):
+				return Pruned(rebuilt(node, *kept), ())
+			return Pruned(
+				None,
+				tuple(t for t, stage in zip(stage_tasks, mapped, strict=True) if stage is not None),
 			)
-			return rebuilt(group, *kept) if kept else None
+		case Group() as group:
+			pruned_children = tuple(
+				prune_pipes(c, keep_stage, keep_whole_pipe) for c in group.tasks
+			)
+			survivors = tuple(child.node for child in pruned_children if child.node is not None)
+			return Pruned(
+				rebuilt(group, *survivors) if survivors else None,
+				tuple(chain.from_iterable(child.pipe_cut for child in pruned_children)),
+			)
 		case _:
 			assert_never(node)
 
@@ -291,25 +325,51 @@ def with_default_paths(node: TaskNode) -> TaskNode:
 	return scope_to_changed(node, ()) or node
 
 
+class Scoped(NamedTuple):
+	"""One scoping walk: the scoped tree, its leaves paired with their originals, and the
+	originals a mid-pipe cut dropped.
+	"""
+
+	node: TaskNode | None
+	pairs: tuple[tuple[Task, Task], ...]
+	pipe_cut: tuple[Task, ...]
+
+
+def scoped_walk(node: TaskNode, changed: tuple[str, ...]) -> Scoped:
+	"""``node`` scoped to ``changed``."""
+	originals: dict[int, tuple[Task, Task]] = {}
+
+	def resolve_stage(task: Task) -> Task | None:
+		scoped = _resolve_leaf(task, changed)
+		if scoped is not None:
+			# The scoped clone rides in the value so a pipe cut dropping its mapped tuple cannot
+			# free it and let a later clone recycle the id this entry keys on.
+			originals[id(scoped)] = (task, scoped)
+		return scoped
+
+	pruned = prune_pipes(node, resolve_stage)
+	pairs = (
+		tuple(originals[id(info.task)] for info in flatten_leaves(pruned.node))
+		if pruned.node is not None
+		else ()
+	)
+	return Scoped(pruned.node, pairs, pruned.pipe_cut)
+
+
 def scoped_leaves(node: TaskNode, changed: tuple[str, ...]) -> tuple[tuple[Task, Task], ...]:
 	"""Each leaf of ``node`` that survives scoping to ``changed``, paired with its scoped form.
 
 	The pairing is what lets a caller relate what a leaf *reports* when it runs to what it *is*:
 	scoping rewrites a ``{paths}`` command, so a leaf with no ``name`` reports a different label for
-	every change set.
+	every change set. The pairs follow the same pipe cut semantics as :func:`prune_pipes`, so a
+	run's tree and its identities are always parallel.
 
 	>>> [(a.cmd, b.cmd) for a, b in scoped_leaves(Task("pylint {paths}", paths="."), ("a.py",))]
 	[('pylint {paths}', 'pylint a.py')]
 	>>> scoped_leaves(Task("pylint {paths}", paths="src"), ("docs/x.md",))
 	()
 	"""
-	from .traversal import flatten_leaves
-
-	return tuple(
-		(info.task, scoped)
-		for info in flatten_leaves(node)
-		if (scoped := _resolve_leaf(info.task, changed)) is not None
-	)
+	return scoped_walk(node, changed).pairs
 
 
 def resolve_default_leaf(task: Task) -> Task:

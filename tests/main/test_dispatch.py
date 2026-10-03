@@ -479,8 +479,7 @@ def test_fix_cli_dry_run_no_match(
 	monkeypatch.chdir(tmp_path)
 	assert fix_cli(["--paths", "docs/readme.md", "--dry-run"]) == 0
 	out = capsys.readouterr().out
-	assert "No leaves cover" in out
-	assert "nothing would run" in out
+	assert "No task leaf covers docs/readme.md — nothing to run." in out
 
 
 def test_dispatch_paths_scopes_to_changed(capsys: pytest.CaptureFixture[str]) -> None:
@@ -659,6 +658,37 @@ def test_run_under_reports_when_no_leaf_covers_the_changed_paths(
 	assert "No task leaf covers docs/readme.md" in capsys.readouterr().out
 
 
+def test_run_under_reports_when_the_budget_drops_the_last_runnable_leaf(
+	tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+	from camas import Pipe
+
+	camas = tmp_path / ".camas"
+	camas.mkdir()
+	timings.record(camas, [(timings.CacheKey("gen", 0), 9.0)])
+	source = Pipe(
+		Task("cargo clippy", name="gen"),
+		Task("clippy-sarif {paths}", name="sarif", paths="docs"),
+	)
+	assert (
+		run_under(
+			source,
+			1.0,
+			changed=("src/x.rs",),
+			camas_dir=camas,
+			effects=(),
+			jobs=None,
+			dry_run=False,
+			passthrough=(),
+		)
+		== 0
+	)
+	assert (
+		"The budget dropped the last runnable leaf for the changed paths — nothing to run."
+		in capsys.readouterr().out
+	)
+
+
 def test_paths_that_all_fall_outside_the_repo_run_nothing_even_under_a_budget(
 	monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -693,4 +723,4 @@ def test_fix_cli_dry_run_reports_unusable_paths(
 	(tmp_path / "tasks.py").write_text(_TIDY.format(scope="."))
 	monkeypatch.chdir(tmp_path)
 	assert fix_cli(["--dry-run", "--paths", "/etc/passwd"]) == 0
-	assert "nothing would run" in capsys.readouterr().out
+	assert "No task leaf covers /etc/passwd — nothing to run." in capsys.readouterr().out

@@ -31,7 +31,16 @@ from pydantic import AnyUrl, BaseModel, ValidationError
 from camas.paths import camas_package_dir
 
 from ..core import timings
-from ..core.budget import plan_under
+from ..core.budget import (
+	BudgetCensus,
+	BudgetRun,
+	NothingToRun,
+	census_of,
+	outcome_lines,
+	plan_under,
+	resolve_budget,
+	summary_lines,
+)
 from ..core.execution import run
 from ..core.gate import STALE_TEMP_MAX_AGE_S, GateOutcome, run_gate
 from ..core.hook_event import NO_EVENT, HookEvent, event_from_stdin
@@ -42,7 +51,7 @@ from ..core.matrix import (
 	unfilled_required_axes,
 )
 from ..core.render import render_tree_lines, strip_ansi
-from ..core.scope import requested_but_unusable, scope_to_changed, to_changed
+from ..core.scope import coverage_message, requested_but_unusable, scope_to_changed, to_changed
 from ..core.task import did_you_mean, task_label
 from ..main.argv import apply_passthrough
 from ..main.compose import load_py_tasks_state
@@ -80,7 +89,7 @@ else:  # pragma: no cover
 if TYPE_CHECKING:
 	from collections.abc import Mapping, Sequence
 
-	from ..core.budget import BudgetPlan
+	from ..core.budget import BudgetSummary, OverBudget
 	from ..core.completion import RunResult, TaskResult
 	from ..v0.task import TaskNode
 
@@ -548,7 +557,8 @@ def tools(task_names: tuple[str, ...], compat: Compat) -> Tools:
 				'-x'] to run and fail-fast on one test); composite tasks reject args, so target
 				a leaf. For a time-boxed inner loop, pass under=<seconds> to run only the leaves
 				whose recorded estimate fits — mutating leaves (formatters) first, then the
-				read-only rest in parallel; omit task to budget the project default. For an ad-hoc
+				read-only rest in parallel (a pipe kept whole for its untimed siblings runs its
+				over-budget stages too); omit task to budget the project default. For an ad-hoc
 				scoped run of any task, pass paths=[…] (changed files, like the CLI --paths): each
 				{paths} command is narrowed to the files it covers, and it combines with under
 				(scope first, then budget). Compact failures-first summary by default; dry_run=true
@@ -607,7 +617,8 @@ def tools(task_names: tuple[str, ...], compat: Compat) -> Tools:
 				'green' (decision 'continue') when the checks pass, or 'needs_reasoning' (decision
 				'block') when a check still fails — then diagnostics carries the failing leaves. Pass
 				paths=[…] (the changed files) to scope; omit to gate the whole check node. under=<seconds>
-				time-boxes the checks: leaves measured to exceed it are skipped, untimed leaves run.
+				time-boxes the checks: leaves measured to exceed it are skipped (except the over-budget
+				stages of a pipe kept whole for its untimed siblings), untimed leaves run.
 			""").strip(),
 			input_schema=wire.gate_input_schema(task_names),
 			output_model=wire.GateResponse,
@@ -840,9 +851,9 @@ def nothing_covered_result(session: Session, paths: list[str]) -> types.CallTool
 	"""The ``camas_run`` success for a path scope that matched no leaf — an empty run and a
 	message naming the uncovered paths, mirroring the CLI's ``No task leaf covers …``.
 	"""
-	empty = empty_run_response()
-	text = f"No task leaf covers {', '.join(paths)} — nothing to run."
-	return success(with_warning(session, text), empty, session.compat)
+	return success(
+		with_warning(session, coverage_message(paths)), empty_run_response(), session.compat
+	)
 
 
 def require_task(tasks: Mapping[str, TaskNode], name: str) -> TaskNode:
@@ -944,27 +955,46 @@ async def run_budget(
 	except ValueError as e:
 		return error_result(str(e))
 	changed = to_changed(req.paths, base_for(session))
-	expanded = expand_matrix(source)
-	scope = timings.scope_of(changed)
-	# Budget before scoping, as the gate does: an estimate is keyed by the label a leaf carries
-	# before its {paths} are injected, so budgeting the scoped tree looks up a label nothing records.
-	plan = plan_under(expanded, budget_s, timings.load(session.camas_dir), scope)
-	report = to_budget_report(plan)
-	unscoped = plan.node
-	if unscoped is None:
-		empty = empty_run_response()
-		text = f"{budget_headline(report)}\n\nNothing ran — no leaf fit the budget."
-		return success(with_warning(session, text), attach_budget(empty, report), session.compat)
 	if requested_but_unusable(req.paths, changed):
 		return nothing_covered_result(session, req.paths)
-	keying: Final = timings.observed(session.camas_dir, unscoped, changed)
-	if keying.node is None:
-		return nothing_covered_result(session, req.paths)
-	run_node: Final = keying.node
+	# Budget before scoping, as the gate does: an estimate is keyed by the label a leaf carries
+	# before its {paths} are injected, so budgeting the scoped tree looks up a label nothing records.
+	plan = plan_under(
+		expand_matrix(source),
+		budget_s,
+		timings.load(session.camas_dir),
+		timings.scope_of(changed),
+	)
+	outcome: Final = resolve_budget(plan, session.camas_dir, changed)
+	match outcome:
+		case NothingToRun(summary=summary, cause=cause):
+			return success(
+				with_warning(session, f"{headline(summary)}\n\n{cause}"),
+				attach_budget(empty_run_response(), to_budget_report(summary)),
+				session.compat,
+			)
+		case BudgetRun(keying=observed, summary=summary):
+			return await execute_budgeted(session, config, req, label, observed, summary)
+		case _:
+			assert_never(outcome)
+
+
+async def execute_budgeted(
+	session: Session,
+	config: Config | None,
+	req: wire.RunRequest,
+	label: str,
+	observed: timings.Observed,
+	summary: BudgetSummary,
+) -> types.CallToolResult:
+	"""Dry-run or execute a budget's final tree, reporting its census."""
+	run_node: Final = observed.node
+	assert run_node is not None
+	report = to_budget_report(summary)
 	if req.dry_run:
 		resp = attach_budget(to_plan_response(run_node), report)
 		return success(
-			with_warning(session, f"{budget_headline(report)}\n\n{dry_run_text(run_node)}"),
+			with_warning(session, f"{headline(summary)}\n\n{dry_run_text(run_node)}"),
 			resp,
 			session.compat,
 		)
@@ -974,10 +1004,10 @@ async def run_budget(
 		interactive=False,
 		base=base_for(session),
 		leaf_color=leaf_color_of(config),
-		identities=keying.identities,
+		identities=observed.identities,
 	)
 	logs = write_logs(create_run_log_dir(session.camas_dir, label, session.reserve_run()), result)
-	keying.record(result)
+	observed.record(result)
 	resp = attach_budget(
 		attach_logs(to_run_response(run_node, result, verbosity=req.verbosity), logs), report
 	)
@@ -986,7 +1016,7 @@ async def run_budget(
 		any_failing_without_agent_format=has_failing_leaf_without_agent_format(run_node, result),
 	)
 	return success(
-		with_warning(session, f"{budget_headline(report)}\n\n{run_text(label, resp, logs)}{nudge}"),
+		with_warning(session, f"{headline(summary)}\n\n{run_text(label, resp, logs)}{nudge}"),
 		resp,
 		session.compat,
 		links=failing_log_links(resp, logs),
@@ -1027,23 +1057,35 @@ def gate_source(tasks: Mapping[str, TaskNode], config: Config | None, task: str 
 	return check
 
 
-def to_budget_report(plan: BudgetPlan) -> wire.BudgetReport:
-	"""The wire ``BudgetReport`` for a plan: the leaves that run (fitting + unmeasured) and the
-	over-budget leaves that don't.
+def to_budget_report(summary: BudgetSummary) -> wire.BudgetReport:
+	"""The wire form of a budget census — the runnable labels, the over-budget leaves that
+	don't run, and the fitting leaves a pipe cut dropped.
 	"""
 	return wire.BudgetReport(
-		budget_s=plan.budget_s,
-		selected=(
-			*(task_label(f.task) for f in plan.fits),
-			*(task_label(u.task) for u in plan.untimed),
+		budget_s=summary.budget_s,
+		selected=tuple(task_label(t) for t in summary.runnable),
+		unmeasured=tuple(task_label(u.task) for u in summary.unmeasured),
+		running_over_budget=tuple(_excluded_leaf(o) for o in summary.running_anyway),
+		dropped_by_pipe_cut=tuple(
+			wire.ExcludedLeaf(name=task_label(f.task), reason="pipe_cut", estimated_s=f.estimated_s)
+			for f in summary.dropped
 		),
-		unmeasured=tuple(task_label(u.task) for u in plan.untimed),
-		excluded=tuple(
+		not_covered=tuple(
 			wire.ExcludedLeaf(
-				name=task_label(o.task), reason="over_budget", estimated_s=o.estimated_s
+				name=task_label(leaf.task), reason="not_covered", estimated_s=leaf.estimated_s
 			)
-			for o in plan.over_budget
+			for leaf in summary.not_covered
 		),
+		excluded=tuple(_excluded_leaf(o) for o in summary.excluded),
+	)
+
+
+def _excluded_leaf(o: OverBudget) -> wire.ExcludedLeaf:
+	"""The wire form of an over-budget disposition — a leaf the budget did not run, or (in
+	``running_over_budget``) one it runs anyway to measure an untimed pipe sibling.
+	"""
+	return wire.ExcludedLeaf(
+		name=task_label(o.task), reason="over_budget", estimated_s=o.estimated_s
 	)
 
 
@@ -1052,25 +1094,24 @@ def attach_budget(resp: wire.RunResponse, report: wire.BudgetReport) -> wire.Run
 	return resp.model_copy(update={"budget": report})
 
 
-def budget_headline(report: wire.BudgetReport) -> str:
-	"""The load-bearing budget summary: leaves running (and which are unmeasured), and which
-	were excluded as measured-over-budget.
+def census_of_report(report: wire.BudgetReport) -> BudgetCensus:
+	"""The shared formatter's display projection of a wire report — the gate text renders the
+	response's own census through the one formatter.
 	"""
-	lines = [
-		f"Time budget {report.budget_s:.2f}s — running {len(report.selected)} leaf(s) "
-		f"({len(report.unmeasured)} unmeasured), excluded {len(report.excluded)} over budget."
-	]
-	if report.excluded:
-		lines.append("  over budget: " + ", ".join(excluded_note(e) for e in report.excluded))
-	if report.unmeasured:
-		lines.append(
-			"  unmeasured (running to record an estimate): " + ", ".join(report.unmeasured)
-		)
-	return "\n".join(lines)
+	return BudgetCensus(
+		budget_s=report.budget_s,
+		running=len(report.selected),
+		unmeasured=tuple(report.unmeasured),
+		running_anyway=tuple((e.name, e.estimated_s) for e in report.running_over_budget),
+		dropped=tuple((e.name, e.estimated_s) for e in report.dropped_by_pipe_cut),
+		not_covered=tuple((e.name, e.estimated_s) for e in report.not_covered),
+		excluded=tuple((e.name, e.estimated_s) for e in report.excluded),
+	)
 
 
-def excluded_note(leaf: wire.ExcludedLeaf) -> str:
-	return f"{leaf.name} ~{leaf.estimated_s:.2f}s" if leaf.estimated_s is not None else leaf.name
+def headline(summary: BudgetSummary) -> str:
+	"""The shared formatter's lines joined — the budget text every surface prefixes."""
+	return "\n".join(summary_lines(census_of(summary)))
 
 
 def create_run_log_dir(camas_dir: Path, task: str, seq: int) -> Path:
@@ -1688,14 +1729,16 @@ def github_matrix_text(resp: wire.GithubMatrixResponse) -> str:
 
 def gate_text(resp: wire.GateResponse) -> str:
 	"""The load-bearing agent-facing summary for ``camas_gate`` — verdict, budget, residual."""
-	headline = (
+	verdict = (
 		"CONTINUE — checks green; no residual needs reasoning"
 		if resp.decision == "continue"
 		else "BLOCK — a residual needs reasoning"
 	)
-	lines: list[str] = [f"camas_gate: {headline} (residual_class={resp.residual_class})"]
+	lines: list[str] = [f"camas_gate: {verdict} (residual_class={resp.residual_class})"]
 	if resp.budget is not None:
-		lines.extend(["", budget_headline(resp.budget)])
+		lines.extend(["", "\n".join(summary_lines(census_of_report(resp.budget)))])
+	if resp.nothing_ran is not None:
+		lines.extend(["", resp.nothing_ran])
 	if resp.diagnostics is not None:
 		lines.extend(["", "Residual (failing checks):"])
 		for env in resp.diagnostics:
@@ -1897,6 +1940,36 @@ def gate_cli(argv: list[str]) -> int:
 			assert_never(state)
 
 
+def gate_dry_run_text(
+	node: TaskNode, changed: tuple[str, ...], under: float | None, camas_dir: Path
+) -> str:
+	"""The gate CLI's dry-run preview: the resolved path-scoped plan, or why nothing would run."""
+	expanded: Final = expand_matrix(node)
+	if under is None:
+		scoped = scope_to_changed(expanded, changed)
+		return coverage_message(changed) if scoped is None else path_scoped_plan_text(scoped)
+	outcome: Final = resolve_budget(
+		plan_under(expanded, under, timings.load(camas_dir), timings.scope_of(changed)),
+		camas_dir,
+		changed,
+	)
+	match outcome:
+		case NothingToRun():
+			return "\n".join(outcome_lines(outcome))
+		case BudgetRun(keying=observed):
+			run_node: Final = observed.node
+			assert run_node is not None
+			return "\n".join((*outcome_lines(outcome), path_scoped_plan_text(run_node)))
+		case _:
+			assert_never(outcome)
+
+
+def path_scoped_plan_text(node: TaskNode) -> str:
+	"""A gate dry run's resolved plan — nothing is executed."""
+	tree: Final = "\n".join(render_tree_lines(node, show_cmd=True, color=False))
+	return f"Dry run — resolved path-scoped plan, nothing executed:\n{tree}"
+
+
 def run_gate_cli(
 	args: GateArgs, base: Path, tasks: Mapping[str, TaskNode], config: Config | None
 ) -> int:
@@ -1914,25 +1987,11 @@ def run_gate_cli(
 		# Green either way, nudge or not: nothing the checks cover changed, so there is nothing to
 		# block the turn on — and running the whole tree over an edit outside the repo is what
 		# scoping was asked to prevent.
-		print(f"No leaves cover {', '.join(requested)} — nothing would run.")
+		print(coverage_message(requested))
 		return 0
 	camas_dir = (config if config is not None else Config()).camas_path(base)
 	if args.dry_run:
-		expanded = expand_matrix(node)
-		plan = (
-			plan_under(expanded, args.under, timings.load(camas_dir), timings.scope_of(changed))
-			if args.under is not None
-			else None
-		)
-		budgeted = plan.node if plan is not None else expanded
-		scoped = scope_to_changed(budgeted, changed) if budgeted is not None else None
-		if scoped is None:
-			print("No leaves cover the changed paths — nothing would run.")
-		else:
-			tree = "\n".join(render_tree_lines(scoped, show_cmd=True, color=False))
-			print(f"Dry run — resolved path-scoped plan, nothing executed:\n{tree}")
-		if plan is not None:
-			print(budget_headline(to_budget_report(plan)))
+		print(gate_dry_run_text(node, changed, args.under, camas_dir))
 		return 0
 	outcome = asyncio.run(
 		run_gate(

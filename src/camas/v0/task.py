@@ -12,6 +12,8 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Final, Literal, NamedTuple, TypeAlias, TypeVar, cast, get_args
 
+from .ref import Ref
+
 if TYPE_CHECKING:
 	from collections.abc import Callable, Mapping
 	from typing import Any
@@ -389,11 +391,15 @@ class Task:
 		``other`` (a right-side :class:`Pipe` contributes its stages and carries its fields).
 
 		``>`` is a comparison operator, so Python chains it as ``a > b > c`` = ``(a > b) and
-		(b > c)`` — parenthesize a chain of more than two: ``(a > b) > c``.
+		(b > c)`` — parenthesize a chain of more than two: ``(a > b) > c``. A composed pipe is
+		always truthy, so a boolean context (``if a > b:``) silently passes — compare with
+		``==`` instead.
 
 		>>> (Task("gen") > "upper").tasks == (Task("gen"), Task("upper"))
 		True
 		>>> ((Task("a") > "b") > "c").tasks == (Task("a"), Task("b"), Task("c"))
+		True
+		>>> bool(Task("a") > "b")
 		True
 		"""
 		return _pipe_of(self, other)
@@ -581,6 +587,13 @@ class Parallel(Group):  # pyrefly: ignore[bad-class-definition]
 		return _pipe_of(self, other)
 
 
+STAGE_MESSAGE: Final = (
+	"Pipe stages must be Tasks — a nested group would mean several commands sharing one stream"
+)
+"""The stage-validation error, shared by the constructor and the engine boundary so a reword
+cannot leave the two disagreeing."""
+
+
 @dataclass(frozen=True, slots=True, init=False, repr=False)
 class Pipe(Group):
 	"""A group of leaf stages piped fd-to-fd, each stage its own argv vector — no shell.
@@ -642,11 +655,8 @@ class Pipe(Group):
 		object.__setattr__(self, "agent_only", agent_only)
 		if not self.tasks:
 			raise ValueError("Pipe needs at least one stage")
-		if any(not isinstance(t, Task) for t in self.tasks):
-			raise ValueError(
-				"Pipe stages must be Tasks — a nested group would mean several commands "
-				"sharing one stream"
-			)
+		if any(not isinstance(t, (Task, Ref)) for t in self.tasks):
+			raise ValueError(STAGE_MESSAGE)
 		if len({id(t) for t in self.tasks}) != len(self.tasks):
 			raise ValueError(
 				"Pipe stages must be distinct Tasks — a repeated stage would collide in the "
@@ -675,7 +685,8 @@ class Pipe(Group):
 		"""``>`` appends ``other`` as the next stage (a right-side :class:`Pipe` contributes
 		its stages). Fields and type carry from the operand that brings them, like ``|`` and
 		``+``; either side's ``agent_only`` marks the combined pipe. Like ``Task.__gt__``,
-		parenthesize a chain of more than two.
+		parenthesize a chain of more than two, and compare with ``==`` in a boolean context —
+		a composed pipe is always truthy.
 
 		>>> (Pipe("a") > "b").tasks == (Task("a"), Task("b"))
 		True
@@ -684,6 +695,21 @@ class Pipe(Group):
 
 
 TaskNode: TypeAlias = Task | Sequential | Parallel | Pipe
+
+
+UNRESOLVED_REF_MESSAGE: Final = (
+	"an unresolved Ref reached the engine — task references must be resolved before a run"
+)
+
+
+def reject_refs(group: Group) -> None:
+	"""Reject a :class:`~camas.v0.ref.Ref` child of ``group``.
+
+	Raises:
+		ValueError: the stage message inside a pipe, the resolution message elsewhere.
+	"""
+	if any(isinstance(t, Ref) for t in group.tasks):
+		raise ValueError(STAGE_MESSAGE if isinstance(group, Pipe) else UNRESOLVED_REF_MESSAGE)
 
 
 def _group_repr_parts(group: Group) -> tuple[str, ...]:

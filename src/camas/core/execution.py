@@ -467,6 +467,15 @@ async def _spawn_stage(
 	)
 
 
+def _completion(state: LeafState, rc: int, elapsed: float, output: Sequence[bytes]) -> Completion:
+	"""The one interrupt-attribution rule for every path that reaps a leaf."""
+	return (
+		Stopped(rc, elapsed, tuple(output))
+		if isinstance(state, Interrupting)
+		else Finished(rc, elapsed, tuple(output))
+	)
+
+
 async def run_cmd(task: Task, leaf_index: int, ctx: RunContext) -> TaskResult:
 	"""Run one leaf as a subprocess, dispatching Started/Output/Completed events. Whatever
 	interrupts it — a cancel, a failing Effect — kills and reaps the child through
@@ -512,11 +521,7 @@ async def run_cmd(task: Task, leaf_index: int, ctx: RunContext) -> TaskResult:
 			await proc.wait()
 			elapsed: Final = time.perf_counter() - start_pc
 			rc: Final = proc.returncode or 0
-			completion: Final = (
-				Stopped(rc, elapsed, output)
-				if isinstance(ctx.states[leaf_index], Interrupting)
-				else Finished(rc, elapsed, output)
-			)
+			completion: Final = _completion(ctx.states[leaf_index], rc, elapsed, output)
 			await ctx.dispatch(
 				leaf_index, CompletedEvent(task, leaf_index, completion, datetime.now())
 			)
@@ -589,10 +594,8 @@ async def run_pipe(stages: tuple[TaskNode, ...], ctx: RunContext) -> tuple[TaskR
 			await asyncio.shield(reader)
 		elapsed = time.perf_counter() - started_pc[leaf_index]
 		rc = proc.returncode or 0
-		completion: Completion = (
-			Stopped(rc, elapsed, tuple(outputs[leaf_index]))
-			if isinstance(ctx.states[leaf_index], Interrupting)
-			else Finished(rc, elapsed, tuple(outputs[leaf_index]))
+		completion: Completion = _completion(
+			ctx.states[leaf_index], rc, elapsed, outputs[leaf_index]
 		)
 		completions[leaf_index] = completion
 		await ctx.dispatch(
@@ -678,10 +681,11 @@ async def run_pipe(stages: tuple[TaskNode, ...], ctx: RunContext) -> tuple[TaskR
 		unreaped = await unwind(procs, detach(prev_read))
 		for leaf_index, interrupted_proc in procs.items():
 			stopped_rc = unwound_rc(unreaped, leaf_index, interrupted_proc.returncode)
-			spawned_completion: Completion = Stopped(
+			spawned_completion: Completion = _completion(
+				ctx.states[leaf_index],
 				stopped_rc,
 				time.perf_counter() - started_pc[leaf_index],
-				tuple(outputs[leaf_index]),
+				outputs[leaf_index],
 			)
 			await ctx.dispatch(
 				leaf_index,

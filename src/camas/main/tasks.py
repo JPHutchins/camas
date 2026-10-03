@@ -18,7 +18,7 @@ else:  # pragma: no cover
 
 from ..v0.config import Agent, Claude, Config
 from ..v0.effect import Effect
-from ..v0.task import Group, Parallel, Pipe, Sequential, Task, TaskNode, rebuilt
+from ..v0.task import Group, Parallel, Pipe, Sequential, Task, TaskNode, rebuilt, reject_refs
 from .expression import Ref, parse_task_value, resolve_refs
 from .state import LoadOk
 
@@ -217,6 +217,7 @@ def name_scope_bindings(scope: Mapping[str, object]) -> dict[str, TaskNode]:
 			case Task():
 				return source
 			case Group() as group:
+				reject_refs(group)
 				return rebuilt(group, *(promote(ch) for ch in group.tasks))
 			case _:
 				assert_never(source)

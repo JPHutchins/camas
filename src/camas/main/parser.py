@@ -335,8 +335,9 @@ def build_parser(state: TasksState = EMPTY_STATE) -> argparse.ArgumentParser:
 		help="run only the task's leaves whose timed estimate fits DURATION (e.g. 1s, "
 		"500ms, 2m), mutating leaves (formatters) first then the read-only rest in "
 		"parallel; untimed leaves run (and are thereby measured), only leaves measured "
-		"over budget are skipped, so a cold cache runs the whole tree. Operates on the "
-		"named task, or the Config default when none is given",
+		"over budget are skipped — except a pipe kept whole for its untimed siblings, "
+		"which runs its over-budget stages too — so a cold cache runs the whole tree. "
+		"Operates on the named task, or the Config default when none is given",
 	)
 	parser.add_argument(
 		"--paths",
