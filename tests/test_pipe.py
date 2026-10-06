@@ -109,6 +109,14 @@ def test_gt_operator_rejects_a_scoped_right_pipe() -> None:
 	assert Pipe("a").extend(scoped.tasks) == Pipe("a", "b")
 
 
+def test_gt_operator_rejects_a_right_pipe_subclass_naming_its_type() -> None:
+	class Staged(Pipe):  # pyrefly: ignore[bad-class-definition]
+		__slots__ = ()
+
+	with pytest.raises(ValueError, match=r"cannot splice Staged .* subclass type"):
+		_ = Pipe("a") > Staged("b")
+
+
 def test_gt_operator_rejects_a_group_stage() -> None:
 	with pytest.raises(ValueError, match="stages must be Tasks"):
 		_ = Sequential("a") > "b"

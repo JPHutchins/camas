@@ -11,7 +11,17 @@ from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Final, Literal, NamedTuple, TypeAlias, TypeVar, cast, get_args
+from typing import (
+	TYPE_CHECKING,
+	Final,
+	Literal,
+	NamedTuple,
+	TypeAlias,
+	TypeVar,
+	cast,
+	get_args,
+	overload,
+)
 
 from .ref import Ref
 
@@ -384,7 +394,7 @@ class Task:
 		>>> Task("a") | Parallel("b", "c") == Parallel("a", Parallel("b", "c"))
 		True
 		"""
-		return _parallel_of(self, other)
+		return _composed(Parallel, self, other)
 
 	def __add__(self, other: Nodes) -> Sequential:
 		"""``+`` composes in sequence: ``Sequential(self).extend(other)``. ``+`` binds tighter
@@ -393,7 +403,7 @@ class Task:
 		>>> (Task("build") + Task("test")).tasks == (Task("build"), Task("test"))
 		True
 		"""
-		return _sequential_of(self, other)
+		return _composed(Sequential, self, other)
 
 	def __gt__(self, other: Nodes) -> Pipe:
 		"""``>`` pipes this leaf's stdout into ``other``: ``Pipe(self).extend(other)``, a plain
@@ -521,7 +531,7 @@ class Group:
 		>>> Parallel("a").extend(("python", "-c", "print(1)"))
 		Traceback (most recent call last):
 		    ...
-		TypeError: cannot compose 'python' from a sequence: a str there reads as part of a tuple command — wrap each one in Task(...)
+		TypeError: cannot compose 'python' from a sequence: a str there is ambiguous with a tuple command — pass Task((...)) for one command or Task(...) for each
 		"""
 		return rebuilt(self, *_nodes(self.tasks), *_children(nodes))
 
@@ -542,9 +552,9 @@ class Group:
 			ValueError: when one of ``nodes`` is not a direct child.
 		"""
 		targets = _children(nodes)
-		absent = tuple(target for target in targets if target not in self.tasks)
-		if absent:
-			raise ValueError(f"cannot remove {absent[0]!r}: not a direct child")
+		absent = next((target for target in targets if target not in self.tasks), None)
+		if absent is not None:
+			raise ValueError(f"cannot remove {absent!r}: not a direct child")
 		return rebuilt(self, *(child for child in _nodes(self.tasks) if child not in targets))
 
 	def __sub__(self, other: Nodes) -> Self:
@@ -567,7 +577,7 @@ class Sequential(Group):  # pyrefly: ignore[bad-class-definition]
 		>>> (seq | "lint").tasks == (seq, Task("lint"))
 		True
 		"""
-		return _parallel_of(self, other)
+		return _composed(Parallel, self, other)
 
 	def __add__(self, other: Nodes) -> Sequential:
 		"""``+`` is :meth:`extend` on a plain sequence — exactly ``Sequential``, every field at its
@@ -584,7 +594,7 @@ class Sequential(Group):  # pyrefly: ignore[bad-class-definition]
 		>>> Sequential("a", cwd="w") + "b" == Sequential(Sequential("a", cwd="w"), "b")
 		True
 		"""
-		return _sequential_of(self, other)
+		return _composed(Sequential, self, other)
 
 	def __gt__(self, other: Nodes) -> Pipe:
 		"""``>`` cannot pipe a composite — stages must be leaves. Raises the same
@@ -621,7 +631,7 @@ class Parallel(Group):  # pyrefly: ignore[bad-class-definition]
 		>>> Parallel("a", cwd="w") | "b" == Parallel(Parallel("a", cwd="w"), "b")
 		True
 		"""
-		return _parallel_of(self, other)
+		return _composed(Parallel, self, other)
 
 	def __add__(self, other: Nodes) -> Sequential:
 		"""``+`` composes in sequence: ``Sequential(self).extend(other)``. ``+`` binds tighter
@@ -631,7 +641,7 @@ class Parallel(Group):  # pyrefly: ignore[bad-class-definition]
 		>>> (check + "integration").tasks == (check, Task("integration"))
 		True
 		"""
-		return _sequential_of(self, other)
+		return _composed(Sequential, self, other)
 
 	def __gt__(self, other: Nodes) -> Pipe:
 		"""``>`` cannot pipe a composite — stages must be leaves. Raises the same
@@ -733,11 +743,11 @@ class Pipe(Group):
 
 	def __or__(self, other: Nodes) -> Parallel:
 		"""``|`` composes in parallel: ``Parallel(self).extend(other)``."""
-		return _parallel_of(self, other)
+		return _composed(Parallel, self, other)
 
 	def __add__(self, other: Nodes) -> Sequential:
 		"""``+`` composes in sequence: ``Sequential(self).extend(other)``."""
-		return _sequential_of(self, other)
+		return _composed(Sequential, self, other)
 
 	def __gt__(self, other: Nodes) -> Pipe:
 		"""``>`` is :meth:`extend`, keeping this pipe's fields and ``agent_only`` — a stage can't
@@ -753,7 +763,7 @@ class Pipe(Group):
 		>>> Pipe("a") > Pipe("b", agent_only=True)
 		Traceback (most recent call last):
 		    ...
-		ValueError: cannot splice Pipe(tasks=(Task(cmd='b', name=None, env={}, cwd=None),), name=None, matrix=None, env={}, cwd=None, agent_only=True) into a pipe: its fields would be dropped — extend with its .tasks to run its stages in the left pipe's scope
+		ValueError: cannot splice Pipe Pipe(tasks=(Task(cmd='b', name=None, env={}, cwd=None),), name=None, matrix=None, env={}, cwd=None, agent_only=True) into a pipe: its fields, agent_only, or subclass type would be dropped — extend with its .tasks to run its stages in the left pipe's scope
 		"""
 		return _pipe_of(self, other)
 
@@ -833,11 +843,11 @@ class ProjectRef:
 
 	def __or__(self, other: Nodes) -> Parallel:
 		"""Composes like a task node — see :meth:`Task.__or__`."""
-		return _parallel_of(cast("TaskNode", self), other)
+		return _composed(Parallel, cast("TaskNode", self), other)
 
 	def __add__(self, other: Nodes) -> Sequential:
 		"""Composes like a task node — see :meth:`Task.__add__`."""
-		return _sequential_of(cast("TaskNode", self), other)
+		return _composed(Sequential, cast("TaskNode", self), other)
 
 	def __gt__(self, other: Nodes) -> Pipe:
 		"""A referenced project is a group, not a leaf stage — the composition raises the same
@@ -902,8 +912,8 @@ def _member(node: object) -> TaskNode:
 	"""
 	if isinstance(node, str):
 		raise TypeError(
-			f"cannot compose {node!r} from a sequence: a str there reads as part of a tuple "
-			"command — wrap each one in Task(...)"
+			f"cannot compose {node!r} from a sequence: a str there is ambiguous with a tuple "
+			"command — pass Task((...)) for one command or Task(...) for each"
 		)
 	return _node(node)
 
@@ -924,18 +934,19 @@ def _plain(group: Group) -> bool:
 	)
 
 
-def _parallel_of(left: TaskNode, right: Nodes) -> Parallel:
-	"""The ``|`` composition — see :meth:`Parallel.__or__`."""
-	node: Final = _node(left)
-	return (node if isinstance(node, Parallel) and _plain(node) else Parallel(node)).extend(right)
-
-
-def _sequential_of(left: TaskNode, right: Nodes) -> Sequential:
-	"""The ``+`` composition — see :meth:`Sequential.__add__`."""
-	node: Final = _node(left)
-	return (node if isinstance(node, Sequential) and _plain(node) else Sequential(node)).extend(
-		right
-	)
+@overload
+def _composed(kind: type[Parallel], left: TaskNode, right: Nodes) -> Parallel: ...
+@overload
+def _composed(kind: type[Sequential], left: TaskNode, right: Nodes) -> Sequential: ...
+def _composed(
+	kind: type[Parallel | Sequential], left: TaskNode, right: Nodes
+) -> Parallel | Sequential:
+	"""The ``|`` (``kind=Parallel``) and ``+`` (``kind=Sequential``) composition — see
+	:meth:`Parallel.__or__` and :meth:`Sequential.__add__`.
+	"""
+	if isinstance(left, kind) and _plain(left):
+		return left.extend(right)
+	return kind(left).extend(right)
 
 
 def _pipe_of(left: TaskNode, right: Nodes) -> Pipe:
@@ -945,14 +956,14 @@ def _pipe_of(left: TaskNode, right: Nodes) -> Pipe:
 		ValueError: when a stage is a group, or ``right`` is a :class:`Pipe` whose fields or
 			``agent_only`` splicing would drop.
 	"""
-	node: Final = _node(left)
-	head: Final = node if isinstance(node, Pipe) else Pipe(node)
+	head: Final = left if isinstance(left, Pipe) else Pipe(left)
 	if not isinstance(right, Pipe):
 		return head.extend(right)
 	if not _plain(right):
 		raise ValueError(
-			f"cannot splice {right!r} into a pipe: its fields would be dropped — extend with its "
-			".tasks to run its stages in the left pipe's scope"
+			f"cannot splice {type(right).__name__} {right!r} into a pipe: its fields, agent_only, "
+			"or subclass type would be dropped — extend with its .tasks to run its stages in the "
+			"left pipe's scope"
 		)
 	return head.extend(right.tasks)
 

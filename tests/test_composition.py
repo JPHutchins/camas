@@ -247,7 +247,7 @@ def test_remove_rejects_a_node_that_is_not_a_direct_child() -> None:
 
 def test_a_str_inside_a_sequence_is_rejected_not_split() -> None:
 	"""``("python", "-c", "...")`` is a tuple command, never three tasks."""
-	with pytest.raises(TypeError, match="tuple command"):
+	with pytest.raises(TypeError, match=r"tuple command — pass Task\(\(\.\.\.\)\) for one command"):
 		_ = a | cast("tuple[TaskNode, ...]", ("python", "-c", "print(1)"))
 	with pytest.raises(TypeError, match="tuple command"):
 		Parallel(a).remove(cast("tuple[TaskNode, ...]", ("a",)))
