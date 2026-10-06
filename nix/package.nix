@@ -66,6 +66,7 @@ python3Packages.buildPythonApplication {
       pytestCheckHook
       pytest-asyncio
       cyclopts
+      hypothesis
       jsonschema
     ])
     ++ optional-dependencies.all;
