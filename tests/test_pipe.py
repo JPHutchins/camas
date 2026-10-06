@@ -102,10 +102,12 @@ def test_gt_operator_rejects_a_scoped_right_pipe() -> None:
 	"""A stage can't nest, so a right pipe's fields or ``agent_only`` would be dropped by a
 	splice; ``.extend(right.tasks)`` runs its stages in the left pipe's scope instead."""
 	scoped = Pipe("b", env={"K": "v"})
-	with pytest.raises(ValueError, match=r"extend with its \.tasks"):
+	with pytest.raises(ValueError, match=r"pipe its \.tasks instead: x > y\.tasks"):
 		_ = Pipe("a") > scoped
-	with pytest.raises(ValueError, match=r"extend with its \.tasks"):
+	with pytest.raises(ValueError, match=r"pipe its \.tasks instead: x > y\.tasks"):
 		_ = Task("a") > Pipe("b", agent_only=True)
+	assert (Task("a") > scoped.tasks) == Pipe("a", "b")
+	assert (Pipe("a") > scoped.tasks) == Pipe("a", "b")
 	assert Pipe("a").extend(scoped.tasks) == Pipe("a", "b")
 
 

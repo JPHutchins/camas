@@ -45,7 +45,7 @@ changed set and is never called for a full run (``changed == ()``)."""
 Nodes: TypeAlias = "TaskNode | str | Sequence[TaskNode]"
 """One node (a ``str`` as its :class:`Task`) or a sequence of nodes: what :meth:`Group.extend`,
 :meth:`Group.remove`, and the composition operators take. A group is one node — its ``.tasks``
-is the sequence of its children."""
+is the sequence of its children, which leave its ``cwd``/``env``/``matrix`` scope behind."""
 
 
 def _prefix(value: str | Path) -> str:
@@ -520,7 +520,8 @@ class Group:
 	def extend(self, nodes: Nodes) -> Self:
 		"""This group with ``nodes`` appended, keeping its fields and type — the appended nodes
 		join its ``cwd``/``env``/``matrix`` scope. A group in ``nodes`` is one child; its
-		``.tasks`` are its children.
+		``.tasks`` are its children. A subclass must accept the Group constructor kwargs for its
+		type to carry.
 
 		>>> Parallel("a").extend(Parallel("b", "c")) == Parallel("a", Parallel("b", "c"))
 		True
@@ -537,7 +538,7 @@ class Group:
 
 	def remove(self, nodes: Nodes) -> Self:
 		"""This group without every direct child equal to one of ``nodes``, keeping its fields and
-		type.
+		type, as :meth:`extend` does.
 
 		>>> Parallel("a", "b", "c").remove(Task("b")) == Parallel("a", "c")
 		True
@@ -752,7 +753,7 @@ class Pipe(Group):
 	def __gt__(self, other: Nodes) -> Pipe:
 		"""``>`` is :meth:`extend`, keeping this pipe's fields and ``agent_only`` — a stage can't
 		nest, so a pipe is always extended. A plain right-side :class:`Pipe` contributes its
-		stages; one with fields or ``agent_only`` raises rather than drop them — extend with its
+		stages; one with fields or ``agent_only`` raises rather than drop them — pipe its
 		``.tasks`` instead. Like ``Task.__gt__``, parenthesize a chain of more than two, and
 		compare with ``==`` in a boolean context — a composed pipe is always truthy.
 
@@ -763,7 +764,7 @@ class Pipe(Group):
 		>>> Pipe("a") > Pipe("b", agent_only=True)
 		Traceback (most recent call last):
 		    ...
-		ValueError: cannot splice Pipe Pipe(tasks=(Task(cmd='b', name=None, env={}, cwd=None),), name=None, matrix=None, env={}, cwd=None, agent_only=True) into a pipe: its fields, agent_only, or subclass type would be dropped — extend with its .tasks to run its stages in the left pipe's scope
+		ValueError: cannot splice Pipe Pipe(tasks=(Task(cmd='b', name=None, env={}, cwd=None),), name=None, matrix=None, env={}, cwd=None, agent_only=True) into a pipe: its fields, agent_only, or subclass type would be dropped — pipe its .tasks instead: x > y.tasks
 		"""
 		return _pipe_of(self, other)
 
@@ -919,8 +920,13 @@ def _member(node: object) -> TaskNode:
 
 
 def _children(nodes: Nodes) -> tuple[TaskNode, ...]:
-	"""The children ``nodes`` adds: one node, or each member of a sequence."""
-	if isinstance(nodes, Sequence) and not isinstance(nodes, str):
+	"""The children ``nodes`` adds: one node, or each member of a sequence — a ``str``, a
+	bytes-like value, a ``range``, or a :class:`~camas.v0.ref.Ref` (a ``NamedTuple``) is one
+	value, never a sequence of nodes.
+	"""
+	if isinstance(nodes, Sequence) and not isinstance(
+		nodes, (str, bytes, bytearray, memoryview, range, Ref)
+	):
 		return tuple(_member(node) for node in nodes)
 	return (_node(nodes),)
 
@@ -964,8 +970,7 @@ def _pipe_of(left: TaskNode, right: Nodes) -> Pipe:
 	if not _plain(right, Pipe):
 		raise ValueError(
 			f"cannot splice {type(right).__name__} {right!r} into a pipe: its fields, agent_only, "
-			"or subclass type would be dropped — extend with its .tasks to run its stages in the "
-			"left pipe's scope"
+			"or subclass type would be dropped — pipe its .tasks instead: x > y.tasks"
 		)
 	return head.extend(right.tasks)
 

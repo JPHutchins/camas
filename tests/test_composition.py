@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from collections import deque
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Final, cast
 
@@ -14,6 +15,7 @@ from typing_extensions import assert_type
 from camas import Parallel, Pipe, Project, Sequential, Task
 from camas.core.matrix import expand_matrix
 from camas.core.traversal import flatten_leaves
+from camas.v0.ref import Ref
 from camas.v0.task import GROUP_FIELDS, Group, fieldless
 
 if TYPE_CHECKING:
@@ -245,12 +247,35 @@ def test_remove_rejects_a_node_that_is_not_a_direct_child() -> None:
 		nested.remove((a, c))
 
 
+def test_a_ref_or_bytes_operand_is_one_value_not_a_sequence_of_nodes() -> None:
+	"""A ``Ref`` is a ``NamedTuple`` and ``bytes`` a sequence of ints: each is one non-node value
+	with the not-a-node TypeError, while a real sequence of nodes of any type still adds them."""
+	with pytest.raises(TypeError, match="of type Ref"):
+		_ = Parallel("a") | cast("TaskNode", Ref("b"))
+	with pytest.raises(TypeError, match="of type bytes"):
+		Parallel("a").extend(cast("TaskNode", b""))
+	with pytest.raises(TypeError, match="of type range"):
+		Parallel("a").extend(cast("TaskNode", range(0)))
+	assert Parallel(a, b, c) == Parallel(a).extend(deque((b, c)))
+
+
 def test_a_str_inside_a_sequence_is_rejected_not_split() -> None:
 	"""``("python", "-c", "...")`` is a tuple command, never three tasks."""
 	with pytest.raises(TypeError, match=r"tuple command — pass Task\(\(\.\.\.\)\) for one command"):
 		_ = a | cast("tuple[TaskNode, ...]", ("python", "-c", "print(1)"))
 	with pytest.raises(TypeError, match="tuple command"):
 		Parallel(a).remove(cast("tuple[TaskNode, ...]", ("a",)))
+
+
+class SubParallel(Parallel):  # pyrefly: ignore[bad-class-definition]
+	__slots__ = ()
+
+
+class SubSequential(Sequential):  # pyrefly: ignore[bad-class-definition]
+	__slots__ = ()
+
+
+GROUP_KINDS: Final = (Parallel, Sequential, SubParallel, SubSequential)
 
 
 def tree(
@@ -267,7 +292,7 @@ def trees(base: st.SearchStrategy[TaskNode]) -> st.SearchStrategy[TaskNode]:
 		base,
 		lambda children: st.builds(
 			tree,
-			st.sampled_from((Parallel, Sequential)),
+			st.sampled_from(GROUP_KINDS),
 			st.lists(children, max_size=3),
 			st.sampled_from((None, "front", "back")),
 			st.sampled_from(({}, {"K": "1"}, {"K": "2"})),
@@ -298,7 +323,7 @@ NODES: Final = trees(st.one_of(LEAVES, PIPES, st.sampled_from(("libs", "api")).m
 RUNNABLE_NODES: Final = trees(st.one_of(LEAVES, PIPES))
 GROUPS: Final = st.builds(
 	tree,
-	st.sampled_from((Parallel, Sequential)),
+	st.sampled_from(GROUP_KINDS),
 	st.lists(RUNNABLE_NODES, max_size=4),
 	st.sampled_from((None, "w")),
 	st.sampled_from(({}, {"K": "1"})),
@@ -306,7 +331,11 @@ GROUPS: Final = st.builds(
 
 
 def kept(kind: type[Group], left: TaskNode) -> tuple[TaskNode, ...]:
-	return left.tasks if isinstance(left, kind) and fieldless(left) else (left,)
+	return (
+		left.tasks
+		if isinstance(left, kind) and type(left) in (Parallel, Sequential) and fieldless(left)
+		else (left,)
+	)
 
 
 @given(NODES, operands(NODES))
