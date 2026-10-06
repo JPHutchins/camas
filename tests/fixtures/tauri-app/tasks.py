@@ -8,33 +8,22 @@ src_tauri = Path("src-tauri")
 python_sdk = Path("python-sdk")
 node = Path("node_modules/.bin")
 
-frontend = Sequential(
-	f"{node}/prettier --write .",
-	Parallel(
-		f"{node}/eslint src/",
-		f"{node}/tsc --noEmit",
-		f"{node}/vitest run",
-	),
+frontend = Task(f"{node}/prettier --write .") + (
+	Task(f"{node}/eslint src/") | Task(f"{node}/tsc --noEmit") | Task(f"{node}/vitest run")
 )
 
-backend = Sequential(
-	Task("cargo fmt --all", cwd=src_tauri),
-	Parallel(
-		Task("cargo clippy --all-targets --locked -- -D warnings", cwd=src_tauri),
-		Task("cargo test --all-targets --locked", cwd=src_tauri),
-	),
+backend = Task("cargo fmt --all", cwd=src_tauri) + (
+	Task("cargo clippy --all-targets --locked -- -D warnings", cwd=src_tauri)
+	| Task("cargo test --all-targets --locked", cwd=src_tauri)
 )
 
-sdk = Sequential(
-	Task("uv run ruff check --fix .", cwd=python_sdk),
-	Task("uv run ruff format .", cwd=python_sdk),
-	Parallel(
-		Task("uv run mypy .", cwd=python_sdk),
-		Task("uv run pytest", cwd=python_sdk),
-	),
+sdk = (
+	Task("uv run ruff check --fix .", cwd=python_sdk)
+	+ Task("uv run ruff format .", cwd=python_sdk)
+	+ (Task("uv run mypy .", cwd=python_sdk) | Task("uv run pytest", cwd=python_sdk))
 )
 
-all = Parallel(frontend, backend, sdk)
+all = frontend | backend | sdk
 
 fix = Parallel(
 	f"{node}/prettier --write .",
