@@ -925,10 +925,12 @@ def _children(nodes: Nodes) -> tuple[TaskNode, ...]:
 	return (_node(nodes),)
 
 
-def _plain(group: Group) -> bool:
-	"""Whether an operator may extend or splice ``group`` in place of nesting it."""
+def _plain(group: Group, kind: type[Group]) -> bool:
+	"""Whether an operator may extend or splice ``group`` — exactly a ``kind`` — in place of
+	nesting it.
+	"""
 	return (
-		type(group) in (Sequential, Parallel, Pipe)
+		type(group) is kind
 		and fieldless(group)
 		and not (isinstance(group, Pipe) and group.agent_only)
 	)
@@ -944,7 +946,7 @@ def _composed(
 	"""The ``|`` (``kind=Parallel``) and ``+`` (``kind=Sequential``) composition — see
 	:meth:`Parallel.__or__` and :meth:`Sequential.__add__`.
 	"""
-	if isinstance(left, kind) and _plain(left):
+	if isinstance(left, (Parallel, Sequential)) and _plain(left, kind):
 		return left.extend(right)
 	return kind(left).extend(right)
 
@@ -959,7 +961,7 @@ def _pipe_of(left: TaskNode, right: Nodes) -> Pipe:
 	head: Final = left if isinstance(left, Pipe) else Pipe(left)
 	if not isinstance(right, Pipe):
 		return head.extend(right)
-	if not _plain(right):
+	if not _plain(right, Pipe):
 		raise ValueError(
 			f"cannot splice {type(right).__name__} {right!r} into a pipe: its fields, agent_only, "
 			"or subclass type would be dropped — extend with its .tasks to run its stages in the "
