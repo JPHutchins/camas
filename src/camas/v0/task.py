@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import re
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from types import MappingProxyType
@@ -18,6 +19,8 @@ if TYPE_CHECKING:
 	from collections.abc import Callable, Mapping
 	from typing import Any
 
+	from typing_extensions import Self
+
 
 PathScope: TypeAlias = "Callable[[tuple[str, ...]], tuple[str, ...]]"
 """Maps the changed paths to the args injected at ``{paths}``: called with ``()`` for a
@@ -27,6 +30,12 @@ full run (return the default target), with the changed set otherwise (``()`` →
 WhenPredicate: TypeAlias = "Callable[[tuple[str, ...]], bool]"
 """A run-if-changed predicate for :attr:`Task.when` / :attr:`Group.when`: receives the
 changed set and is never called for a full run (``changed == ()``)."""
+
+
+Nodes: TypeAlias = "TaskNode | str | Sequence[TaskNode]"
+"""One node (a ``str`` as its :class:`Task`) or a sequence of nodes: what :meth:`Group.extend`,
+:meth:`Group.remove`, and the composition operators take. A group is one node — its ``.tasks``
+is the sequence of its children."""
 
 
 def _prefix(value: str | Path) -> str:
@@ -367,28 +376,28 @@ class Task:
 		)
 		return f"Task({', '.join(parts)})"
 
-	def __or__(self, other: TaskNode | str) -> Parallel:
-		"""``|`` composes nodes in parallel: a :class:`Parallel` of this leaf and ``other``
-		(a right-side ``Parallel`` contributes its children and carries its fields).
+	def __or__(self, other: Nodes) -> Parallel:
+		"""``|`` composes in parallel: ``Parallel(self).extend(other)``.
 
 		>>> (Task("format") | Task("lint")).tasks == (Task("format"), Task("lint"))
+		True
+		>>> Task("a") | Parallel("b", "c") == Parallel("a", Parallel("b", "c"))
 		True
 		"""
 		return _parallel_of(self, other)
 
-	def __add__(self, other: TaskNode | str) -> Sequential:
-		"""``+`` composes nodes in sequence: a :class:`Sequential` of this leaf then ``other``
-		(a right-side ``Sequential`` contributes its children and carries its fields). ``+``
-		binds tighter than ``|`` — parenthesize a mixed chain to control its shape.
+	def __add__(self, other: Nodes) -> Sequential:
+		"""``+`` composes in sequence: ``Sequential(self).extend(other)``. ``+`` binds tighter
+		than ``|`` — parenthesize a mixed chain to control its shape.
 
 		>>> (Task("build") + Task("test")).tasks == (Task("build"), Task("test"))
 		True
 		"""
 		return _sequential_of(self, other)
 
-	def __gt__(self, other: TaskNode | str) -> Pipe:
-		"""``>`` pipes this leaf's stdout into ``other``: a :class:`Pipe` of this leaf then
-		``other`` (a right-side :class:`Pipe` contributes its stages and carries its fields).
+	def __gt__(self, other: Nodes) -> Pipe:
+		"""``>`` pipes this leaf's stdout into ``other``: ``Pipe(self).extend(other)``, a plain
+		right-side :class:`Pipe` contributing its stages (see :meth:`Pipe.__gt__`).
 
 		``>`` is a comparison operator, so Python chains it as ``a > b > c`` = ``(a > b) and
 		(b > c)`` — parenthesize a chain of more than two: ``(a > b) > c``. A composed pipe is
@@ -498,6 +507,49 @@ class Group:
 	def __repr__(self) -> str:
 		return f"{type(self).__name__}({', '.join(_group_repr_parts(self))})"
 
+	def extend(self, nodes: Nodes) -> Self:
+		"""This group with ``nodes`` appended, keeping its fields and type — the appended nodes
+		join its ``cwd``/``env``/``matrix`` scope. A group in ``nodes`` is one child; its
+		``.tasks`` are its children.
+
+		>>> Parallel("a").extend(Parallel("b", "c")) == Parallel("a", Parallel("b", "c"))
+		True
+		>>> Parallel("a").extend(Parallel("b", "c").tasks) == Parallel("a", "b", "c")
+		True
+		>>> Parallel("a", cwd="w").extend("b") == Parallel("a", "b", cwd="w")
+		True
+		>>> Parallel("a").extend(("python", "-c", "print(1)"))
+		Traceback (most recent call last):
+		    ...
+		TypeError: cannot compose 'python' from a sequence: a str there reads as part of a tuple command — wrap each one in Task(...)
+		"""
+		return rebuilt(self, *_nodes(self.tasks), *_children(nodes))
+
+	def remove(self, nodes: Nodes) -> Self:
+		"""This group without every direct child equal to one of ``nodes``, keeping its fields and
+		type.
+
+		>>> Parallel("a", "b", "c").remove(Task("b")) == Parallel("a", "c")
+		True
+		>>> Sequential("a", "b", "a").remove((Task("a"),)) == Sequential("b")
+		True
+		>>> Parallel("a", Parallel("b")).remove("b")
+		Traceback (most recent call last):
+		    ...
+		ValueError: cannot remove Task(cmd='b', name=None, env={}, cwd=None): not a direct child
+
+		Raises:
+			ValueError: when one of ``nodes`` is not a direct child.
+		"""
+		targets = _children(nodes)
+		absent = tuple(target for target in targets if target not in self.tasks)
+		if absent:
+			raise ValueError(f"cannot remove {absent[0]!r}: not a direct child")
+		return rebuilt(self, *(child for child in _nodes(self.tasks) if child not in targets))
+
+	def __sub__(self, other: Nodes) -> Self:
+		return self.remove(other)
+
 
 class Sequential(Group):  # pyrefly: ignore[bad-class-definition]
 	"""A group of tasks that run one after another, short-circuiting on failure.
@@ -508,9 +560,8 @@ class Sequential(Group):  # pyrefly: ignore[bad-class-definition]
 
 	__slots__ = ()
 
-	def __or__(self, other: TaskNode | str) -> Parallel:
-		"""``|`` composes in parallel: a :class:`Parallel` of this whole group and ``other``
-		(a right-side ``Parallel`` contributes its children and carries its fields).
+	def __or__(self, other: Nodes) -> Parallel:
+		"""``|`` composes in parallel: ``Parallel(self).extend(other)``.
 
 		>>> seq = Sequential("build", "test")
 		>>> (seq | "lint").tasks == (seq, Task("lint"))
@@ -518,20 +569,24 @@ class Sequential(Group):  # pyrefly: ignore[bad-class-definition]
 		"""
 		return _parallel_of(self, other)
 
-	def __add__(self, other: TaskNode | str) -> Sequential:
-		"""``+`` appends ``other`` to this sequence (a right-side ``Sequential`` contributes
-		its children). Fields and type carry from the operand that brings them: the left's,
-		except when the left carries only constructor defaults and the right carries fields or
-		a non-plain (subclass) type — then the right's. A subclass operand must accept the
-		Group constructor kwargs for its type to carry. ``+`` binds tighter than ``|`` —
-		parenthesize a mixed chain to control its shape.
+	def __add__(self, other: Nodes) -> Sequential:
+		"""``+`` is :meth:`extend` on a plain sequence — exactly ``Sequential``, every field at its
+		default — and ``Sequential(self).extend(other)`` on any other, so it runs exactly like
+		``Sequential(self, other)``. ``+`` binds tighter than ``|`` — parenthesize a mixed chain to
+		control its shape.
 
 		>>> (Sequential("build") + "test").tasks == (Task("build"), Task("test"))
+		True
+		>>> Sequential("a") + Sequential("b", "c") == Sequential("a", Sequential("b", "c"))
+		True
+		>>> Sequential("a") + Sequential("b", "c").tasks == Sequential("a", "b", "c")
+		True
+		>>> Sequential("a", cwd="w") + "b" == Sequential(Sequential("a", cwd="w"), "b")
 		True
 		"""
 		return _sequential_of(self, other)
 
-	def __gt__(self, other: TaskNode | str) -> Pipe:
+	def __gt__(self, other: Nodes) -> Pipe:
 		"""``>`` cannot pipe a composite — stages must be leaves. Raises the same
 		``ValueError`` the :class:`Pipe` constructor raises for a nested stage.
 
@@ -552,22 +607,25 @@ class Parallel(Group):  # pyrefly: ignore[bad-class-definition]
 
 	__slots__ = ()
 
-	def __or__(self, other: TaskNode | str) -> Parallel:
-		"""``|`` appends ``other`` to this group (a right-side ``Parallel`` contributes its
-		children). Fields and type carry from the operand that brings them: the left's, except
-		when the left carries only constructor defaults and the right carries fields or a
-		non-plain (subclass) type — then the right's. A subclass operand must accept the Group
-		constructor kwargs for its type to carry.
+	def __or__(self, other: Nodes) -> Parallel:
+		"""``|`` is :meth:`extend` on a plain group — exactly ``Parallel``, every field at its
+		default — and ``Parallel(self).extend(other)`` on any other, so it runs exactly like
+		``Parallel(self, other)``.
 
 		>>> (Parallel("format") | "lint").tasks == (Task("format"), Task("lint"))
+		True
+		>>> Parallel("a") | Parallel("b", "c") == Parallel("a", Parallel("b", "c"))
+		True
+		>>> Parallel("a") | Parallel("b", "c").tasks == Parallel("a", "b", "c")
+		True
+		>>> Parallel("a", cwd="w") | "b" == Parallel(Parallel("a", cwd="w"), "b")
 		True
 		"""
 		return _parallel_of(self, other)
 
-	def __add__(self, other: TaskNode | str) -> Sequential:
-		"""``+`` builds a :class:`Sequential` that runs this whole group first, then ``other``
-		(a right-side ``Sequential`` contributes its children and carries its fields). ``+``
-		binds tighter than ``|`` — parenthesize a mixed chain to control its shape.
+	def __add__(self, other: Nodes) -> Sequential:
+		"""``+`` composes in sequence: ``Sequential(self).extend(other)``. ``+`` binds tighter
+		than ``|`` — parenthesize a mixed chain to control its shape.
 
 		>>> check = Parallel("format")
 		>>> (check + "integration").tasks == (check, Task("integration"))
@@ -575,7 +633,7 @@ class Parallel(Group):  # pyrefly: ignore[bad-class-definition]
 		"""
 		return _sequential_of(self, other)
 
-	def __gt__(self, other: TaskNode | str) -> Pipe:
+	def __gt__(self, other: Nodes) -> Pipe:
 		"""``>`` cannot pipe a composite — stages must be leaves. Raises the same
 		``ValueError`` the :class:`Pipe` constructor raises for a nested stage.
 
@@ -673,23 +731,29 @@ class Pipe(Group):
 		)
 		return f"Pipe({', '.join(parts)})"
 
-	def __or__(self, other: TaskNode | str) -> Parallel:
-		"""``|`` composes in parallel: a :class:`Parallel` of this whole pipe and ``other``."""
+	def __or__(self, other: Nodes) -> Parallel:
+		"""``|`` composes in parallel: ``Parallel(self).extend(other)``."""
 		return _parallel_of(self, other)
 
-	def __add__(self, other: TaskNode | str) -> Sequential:
-		"""``+`` builds a :class:`Sequential` that runs this whole pipe first, then ``other``."""
+	def __add__(self, other: Nodes) -> Sequential:
+		"""``+`` composes in sequence: ``Sequential(self).extend(other)``."""
 		return _sequential_of(self, other)
 
-	def __gt__(self, other: TaskNode | str) -> Pipe:
-		"""``>`` appends ``other`` as the next stage (a right-side :class:`Pipe` contributes
-		its stages). Fields and type carry from the operand that brings them, like ``|`` and
-		``+``; either side's ``agent_only`` marks the combined pipe. Like ``Task.__gt__``,
-		parenthesize a chain of more than two, and compare with ``==`` in a boolean context —
-		a composed pipe is always truthy.
+	def __gt__(self, other: Nodes) -> Pipe:
+		"""``>`` is :meth:`extend`, keeping this pipe's fields and ``agent_only`` — a stage can't
+		nest, so a pipe is always extended. A plain right-side :class:`Pipe` contributes its
+		stages; one with fields or ``agent_only`` raises rather than drop them — extend with its
+		``.tasks`` instead. Like ``Task.__gt__``, parenthesize a chain of more than two, and
+		compare with ``==`` in a boolean context — a composed pipe is always truthy.
 
 		>>> (Pipe("a") > "b").tasks == (Task("a"), Task("b"))
 		True
+		>>> (Pipe("a", env={"K": "v"}) > Pipe("b", "c")) == Pipe("a", "b", "c", env={"K": "v"})
+		True
+		>>> Pipe("a") > Pipe("b", agent_only=True)
+		Traceback (most recent call last):
+		    ...
+		ValueError: cannot splice Pipe(tasks=(Task(cmd='b', name=None, env={}, cwd=None),), name=None, matrix=None, env={}, cwd=None, agent_only=True) into a pipe: its fields would be dropped — extend with its .tasks to run its stages in the left pipe's scope
 		"""
 		return _pipe_of(self, other)
 
@@ -767,15 +831,15 @@ class ProjectRef:
 
 	path: str
 
-	def __or__(self, other: TaskNode | str) -> Parallel:
+	def __or__(self, other: Nodes) -> Parallel:
 		"""Composes like a task node — see :meth:`Task.__or__`."""
 		return _parallel_of(cast("TaskNode", self), other)
 
-	def __add__(self, other: TaskNode | str) -> Sequential:
+	def __add__(self, other: Nodes) -> Sequential:
 		"""Composes like a task node — see :meth:`Task.__add__`."""
 		return _sequential_of(cast("TaskNode", self), other)
 
-	def __gt__(self, other: TaskNode | str) -> Pipe:
+	def __gt__(self, other: Nodes) -> Pipe:
 		"""A referenced project is a group, not a leaf stage — the composition raises the same
 		``ValueError`` the :class:`Pipe` constructor raises for a nested stage.
 		"""
@@ -829,60 +893,68 @@ def fieldless(group: Group) -> bool:
 	)
 
 
-def _parallel_of(left: TaskNode | str, right: TaskNode | str) -> Parallel:
-	"""The ``|`` composition — see :meth:`Sequential.__or__` and :meth:`Parallel.__or__`."""
-	left_node, right_node = _node(left), _node(right)
-	if isinstance(left_node, Parallel):
-		if isinstance(right_node, Parallel):
-			if fieldless(left_node) and (
-				not fieldless(right_node) or type(right_node) is not Parallel
-			):
-				return rebuilt(right_node, *_nodes(left_node.tasks), *_nodes(right_node.tasks))
-			return rebuilt(left_node, *_nodes(left_node.tasks), *_nodes(right_node.tasks))
-		return rebuilt(left_node, *_nodes(left_node.tasks), right_node)
-	if isinstance(right_node, Parallel):
-		return rebuilt(right_node, left_node, *_nodes(right_node.tasks))
-	return Parallel(left_node, right_node)
+def _member(node: object) -> TaskNode:
+	"""A sequence member as a task node — a ``str`` reads as part of a tuple command there
+	(``("python", "-c", "...")``), so it is rejected rather than coerced.
+
+	Raises:
+		TypeError: when ``node`` is a ``str`` or not a task node.
+	"""
+	if isinstance(node, str):
+		raise TypeError(
+			f"cannot compose {node!r} from a sequence: a str there reads as part of a tuple "
+			"command — wrap each one in Task(...)"
+		)
+	return _node(node)
 
 
-def _sequential_of(left: TaskNode | str, right: TaskNode | str) -> Sequential:
-	"""The ``+`` composition — see :meth:`Sequential.__add__` and :meth:`Parallel.__add__`."""
-	left_node, right_node = _node(left), _node(right)
-	if isinstance(left_node, Sequential):
-		if isinstance(right_node, Sequential):
-			if fieldless(left_node) and (
-				not fieldless(right_node) or type(right_node) is not Sequential
-			):
-				return rebuilt(right_node, *_nodes(left_node.tasks), *_nodes(right_node.tasks))
-			return rebuilt(left_node, *_nodes(left_node.tasks), *_nodes(right_node.tasks))
-		return rebuilt(left_node, *_nodes(left_node.tasks), right_node)
-	if isinstance(right_node, Sequential):
-		return rebuilt(right_node, left_node, *_nodes(right_node.tasks))
-	return Sequential(left_node, right_node)
+def _children(nodes: Nodes) -> tuple[TaskNode, ...]:
+	"""The children ``nodes`` adds: one node, or each member of a sequence."""
+	if isinstance(nodes, Sequence) and not isinstance(nodes, str):
+		return tuple(_member(node) for node in nodes)
+	return (_node(nodes),)
 
 
-def _pipe_of(left: TaskNode | str, right: TaskNode | str) -> Pipe:
-	"""The ``>`` composition — see :meth:`Task.__gt__` and :meth:`Pipe.__gt__`."""
-	left_node, right_node = _node(left), _node(right)
-	if isinstance(left_node, Pipe):
-		if isinstance(right_node, Pipe):
-			if fieldless(left_node) and (not fieldless(right_node) or type(right_node) is not Pipe):
-				return rebuilt(
-					right_node,
-					*_nodes(left_node.tasks),
-					*_nodes(right_node.tasks),
-					agent_only=left_node.agent_only or right_node.agent_only,
-				)
-			return rebuilt(
-				left_node,
-				*_nodes(left_node.tasks),
-				*_nodes(right_node.tasks),
-				agent_only=left_node.agent_only or right_node.agent_only,
-			)
-		return rebuilt(left_node, *_nodes(left_node.tasks), right_node)
-	if isinstance(right_node, Pipe):
-		return rebuilt(right_node, left_node, *_nodes(right_node.tasks))
-	return Pipe(left_node, right_node)
+def _plain(group: Group) -> bool:
+	"""Whether an operator may extend or splice ``group`` in place of nesting it."""
+	return (
+		type(group) in (Sequential, Parallel, Pipe)
+		and fieldless(group)
+		and not (isinstance(group, Pipe) and group.agent_only)
+	)
+
+
+def _parallel_of(left: TaskNode, right: Nodes) -> Parallel:
+	"""The ``|`` composition — see :meth:`Parallel.__or__`."""
+	node: Final = _node(left)
+	return (node if isinstance(node, Parallel) and _plain(node) else Parallel(node)).extend(right)
+
+
+def _sequential_of(left: TaskNode, right: Nodes) -> Sequential:
+	"""The ``+`` composition — see :meth:`Sequential.__add__`."""
+	node: Final = _node(left)
+	return (node if isinstance(node, Sequential) and _plain(node) else Sequential(node)).extend(
+		right
+	)
+
+
+def _pipe_of(left: TaskNode, right: Nodes) -> Pipe:
+	"""The ``>`` composition — see :meth:`Pipe.__gt__`.
+
+	Raises:
+		ValueError: when a stage is a group, or ``right`` is a :class:`Pipe` whose fields or
+			``agent_only`` splicing would drop.
+	"""
+	node: Final = _node(left)
+	head: Final = node if isinstance(node, Pipe) else Pipe(node)
+	if not isinstance(right, Pipe):
+		return head.extend(right)
+	if not _plain(right):
+		raise ValueError(
+			f"cannot splice {right!r} into a pipe: its fields would be dropped — extend with its "
+			".tasks to run its stages in the left pipe's scope"
+		)
+	return head.extend(right.tasks)
 
 
 def GIT_PORCELAIN() -> Task:  # noqa: N802  # constructor-style factory, like Task/Parallel

@@ -7,18 +7,19 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Final, cast
 
 import pytest
-from hypothesis import given
+from hypothesis import assume, given
 from hypothesis import strategies as st
 from typing_extensions import assert_type
 
 from camas import Parallel, Pipe, Project, Sequential, Task
 from camas.core.matrix import expand_matrix
 from camas.core.traversal import flatten_leaves
+from camas.v0.task import GROUP_FIELDS, Group, fieldless
 
 if TYPE_CHECKING:
 	from pathlib import Path
 
-	from camas.v0.task import Group, TaskNode
+	from camas.v0.task import Nodes, TaskNode
 
 a = Task("a")
 b = Task("b")
@@ -26,6 +27,13 @@ c = Task("c")
 d = Task("d")
 e = Task("e")
 f = Task("f")
+
+
+def executed(node: TaskNode) -> tuple[tuple[str | tuple[str, ...], Path | None, str], ...]:
+	return tuple(
+		(leaf.task.cmd, leaf.task.cwd, repr(sorted(leaf.task.env.items())))
+		for leaf in flatten_leaves(expand_matrix(node))
+	)
 
 
 def test_parallel_2() -> None:
@@ -60,8 +68,9 @@ def test_parallel_merge_associative() -> None:
 	y = a | (b | c)
 	assert_type(x, Parallel)
 	assert_type(y, Parallel)
-	assert x == y
-	assert Parallel(a, b, c) == y
+	assert Parallel(a, b, c) == x
+	assert Parallel(a, Parallel(b, c)) == y
+	assert executed(x) == executed(y)
 
 
 def test_parallel_merge_with_sequential() -> None:
@@ -72,21 +81,25 @@ def test_parallel_merge_with_sequential() -> None:
 
 
 def test_parallel_merge_of_parallels() -> None:
-	x = (a | b) | (c | d)
-	y = (a | b) | (c | d) | (e | f)
-	assert_type(x, Parallel)
-	assert_type(y, Parallel)
-	assert Parallel(a, b, c, d) == x
-	assert Parallel(a, b, c, d, e, f) == y
+	x = a | b
+	y = c | d
+	z = x | y
+	merged = x | y.tasks
+	assert_type(z, Parallel)
+	assert_type(merged, Parallel)
+	assert Parallel(a, b, y) == z
+	assert a | b | c | d == merged
+	assert x.extend(y.tasks) == merged
+	assert executed(merged) == executed(z)
 
 
-def test_parallel_merge_keeps_sequentials_and_pipes_whole() -> None:
+def test_parallel_merge_keeps_right_groups_whole() -> None:
 	x = (a + b) | (c | d)
 	y = (a | b) | (c > d) | (e | f)
 	assert_type(x, Parallel)
 	assert_type(y, Parallel)
-	assert Parallel(Sequential(a, b), c, d) == x
-	assert Parallel(a, b, Pipe(c, d), e, f) == y
+	assert Parallel(Sequential(a, b), Parallel(c, d)) == x
+	assert Parallel(a, b, Pipe(c, d), Parallel(e, f)) == y
 
 
 def test_parallel_merge_is_one_level_deep() -> None:
@@ -127,8 +140,9 @@ def test_sequential_merge_associative() -> None:
 	y = a + (b + c)
 	assert_type(x, Sequential)
 	assert_type(y, Sequential)
-	assert x == y
-	assert Sequential(a, b, c) == y
+	assert Sequential(a, b, c) == x
+	assert Sequential(a, Sequential(b, c)) == y
+	assert executed(x) == executed(y)
 
 
 def test_sequential_merge_with_parallel() -> None:
@@ -139,23 +153,27 @@ def test_sequential_merge_with_parallel() -> None:
 
 
 def test_sequential_merge_of_sequentials() -> None:
-	x = (a + b) + (c + d)
-	y = (a + b) + (c + d) + (e + f)
-	assert_type(x, Sequential)
-	assert_type(y, Sequential)
-	assert Sequential(a, b, c, d) == x
-	assert Sequential(a, b, c, d, e, f) == y
+	x = a + b
+	y = c + d
+	z = x + y
+	merged = x + y.tasks
+	assert_type(z, Sequential)
+	assert_type(merged, Sequential)
+	assert Sequential(a, b, y) == z
+	assert a + b + c + d == merged
+	assert x.extend(y.tasks) == merged
+	assert executed(merged) == executed(z)
 
 
-def test_sequential_merge_keeps_parallels_and_pipes_whole() -> None:
+def test_sequential_merge_keeps_right_groups_whole() -> None:
 	x = (a | b) + (c + d)
 	y = (a + b) + (c > d) + (e + f)
 	z = (a | b) + (c | d)
 	assert_type(x, Sequential)
 	assert_type(y, Sequential)
 	assert_type(z, Sequential)
-	assert Sequential(Parallel(a, b), c, d) == x
-	assert Sequential(a, b, Pipe(c, d), e, f) == y
+	assert Sequential(Parallel(a, b), Sequential(c, d)) == x
+	assert Sequential(a, b, Pipe(c, d), Sequential(e, f)) == y
 	assert Sequential(Parallel(a, b), Parallel(c, d)) == z
 
 
@@ -177,118 +195,211 @@ def test_add_binds_tighter_than_or() -> None:
 	assert Sequential(Parallel(a, b), c) == z
 
 
-def group(
+def test_check_keeps_typecheck_whole_and_gate_swaps_test_for_coverage() -> None:
+	format_check = Task("ruff format --check")
+	lint = Task("ruff check")
+	actionlint = Task("actionlint")
+	typecheck = Task("mypy") | Task("pyright")
+	test = Task("pytest")
+	coverage = Task("pytest --cov")
+	check = format_check | lint | actionlint | typecheck | test
+	gate = (check - test) | coverage
+	assert_type(check, Parallel)
+	assert_type(gate, Parallel)
+	assert Parallel(format_check, lint, actionlint, typecheck, test) == check
+	assert Parallel(format_check, lint, actionlint, typecheck, coverage) == gate
+
+
+def test_extend_adds_a_group_whole_and_its_tasks_as_children() -> None:
+	x = Parallel(a, b)
+	y = Parallel(c, d)
+	assert_type(x.extend(y), Parallel)
+	assert Parallel(a, b, y) == x.extend(y)
+	assert Parallel(a, b, c, d) == x.extend(y.tasks)
+	assert Parallel(a, b, c) == x.extend("c")
+	assert Parallel(a, b) == x.extend(())
+
+
+def test_or_nests_a_scoped_left_and_extend_joins_its_scope() -> None:
+	scoped = Parallel(a, cwd="w")
+	assert Parallel(scoped, b) == scoped | b
+	assert Parallel(a, b, cwd="w") == scoped.extend(b)
+	assert executed(Parallel(Task("a", cwd="w"), b)) == executed(scoped | b)
+	assert executed(Parallel(Task("a", cwd="w"), Task("b", cwd="w"))) == executed(scoped.extend(b))
+
+
+def test_remove_drops_every_equal_direct_child_and_keeps_fields() -> None:
+	assert_type(Parallel(a, b).remove(b), Parallel)
+	assert_type(Parallel(a, b) - b, Parallel)
+	assert Parallel(a, c, cwd="w") == Parallel(a, b, c, b, cwd="w").remove(b)
+	assert Sequential(c) == Sequential(a, b, c).remove((a, b))
+	assert Parallel(a) == Parallel(a, b) - b
+	assert Sequential(a, c) == (a + b + c) - b
+
+
+def test_remove_rejects_a_node_that_is_not_a_direct_child() -> None:
+	nested = Parallel(a, Parallel(b))
+	with pytest.raises(ValueError, match="not a direct child"):
+		_ = nested - b
+	with pytest.raises(ValueError, match="not a direct child"):
+		nested.remove((a, c))
+
+
+def test_a_str_inside_a_sequence_is_rejected_not_split() -> None:
+	"""``("python", "-c", "...")`` is a tuple command, never three tasks."""
+	with pytest.raises(TypeError, match="tuple command"):
+		_ = a | cast("tuple[TaskNode, ...]", ("python", "-c", "print(1)"))
+	with pytest.raises(TypeError, match="tuple command"):
+		Parallel(a).remove(cast("tuple[TaskNode, ...]", ("a",)))
+
+
+def tree(
 	kind: type[Parallel | Sequential],
 	children: list[TaskNode],
-	cwd: str | None = None,
-	env: dict[str, str] | None = None,
+	cwd: str | None,
+	env: dict[str, str],
 ) -> Parallel | Sequential:
 	return kind(*children, cwd=cwd, env=env)
 
 
-LEAVES: Final = st.builds(Task, st.sampled_from(("a", "b", "c", "d")))
-PIPES: Final = st.lists(LEAVES, min_size=1, max_size=3).map(lambda stages: Pipe(*stages))
-PROJECTS: Final = st.sampled_from(("libs", "api")).map(Project)
-GROUP_KINDS: Final = st.sampled_from((Parallel, Sequential))
-
-PLAIN_NODES: Final[st.SearchStrategy[TaskNode]] = st.recursive(
-	st.one_of(LEAVES, PIPES, PROJECTS),
-	lambda children: st.builds(group, GROUP_KINDS, st.lists(children, max_size=3)),
-	max_leaves=8,
-)
-OPERANDS: Final[st.SearchStrategy[TaskNode | str]] = st.one_of(
-	PLAIN_NODES, st.sampled_from(("x", "y"))
-)
-SCOPED_NODES: Final[st.SearchStrategy[TaskNode]] = st.recursive(
-	st.one_of(LEAVES, PIPES),
-	lambda children: st.builds(
-		group,
-		GROUP_KINDS,
-		st.lists(children, max_size=3),
-		st.sampled_from((None, "front", "back")),
-		st.sampled_from(({}, {"K": "1"}, {"K": "2"})),
-	),
-	max_leaves=8,
-)
-
-
-def contributed(kind: type[Group], operand: TaskNode | str) -> tuple[TaskNode, ...]:
-	if isinstance(operand, str):
-		return (Task(operand),)
-	return operand.tasks if isinstance(operand, kind) else (operand,)
-
-
-def executed(node: TaskNode) -> tuple[tuple[str | tuple[str, ...], Path | None, str], ...]:
-	return tuple(
-		(leaf.task.cmd, leaf.task.cwd, repr(sorted(leaf.task.env.items())))
-		for leaf in flatten_leaves(expand_matrix(node))
+def trees(base: st.SearchStrategy[TaskNode]) -> st.SearchStrategy[TaskNode]:
+	return st.recursive(
+		base,
+		lambda children: st.builds(
+			tree,
+			st.sampled_from((Parallel, Sequential)),
+			st.lists(children, max_size=3),
+			st.sampled_from((None, "front", "back")),
+			st.sampled_from(({}, {"K": "1"}, {"K": "2"})),
+		),
+		max_leaves=8,
 	)
 
 
-@given(PLAIN_NODES, OPERANDS)
-def test_or_contributes_a_parallels_children_and_any_other_operand_whole(
-	left: TaskNode, right: TaskNode | str
+def operand(drawn: TaskNode | str | list[TaskNode]) -> tuple[Nodes, tuple[TaskNode, ...]]:
+	match drawn:
+		case str():
+			return drawn, (Task(drawn),)
+		case list():
+			return tuple(drawn), tuple(drawn)
+		case _:
+			return drawn, (drawn,)
+
+
+def operands(
+	nodes: st.SearchStrategy[TaskNode],
+) -> st.SearchStrategy[tuple[Nodes, tuple[TaskNode, ...]]]:
+	return st.one_of(nodes, st.sampled_from(("x", "y")), st.lists(nodes, max_size=3)).map(operand)
+
+
+LEAVES: Final = st.builds(Task, st.sampled_from(("a", "b", "c", "d")))
+PIPES: Final = st.lists(LEAVES, min_size=1, max_size=3).map(lambda stages: Pipe(*stages))
+NODES: Final = trees(st.one_of(LEAVES, PIPES, st.sampled_from(("libs", "api")).map(Project)))
+RUNNABLE_NODES: Final = trees(st.one_of(LEAVES, PIPES))
+GROUPS: Final = st.builds(
+	tree,
+	st.sampled_from((Parallel, Sequential)),
+	st.lists(RUNNABLE_NODES, max_size=4),
+	st.sampled_from((None, "w")),
+	st.sampled_from(({}, {"K": "1"})),
+)
+
+
+def kept(kind: type[Group], left: TaskNode) -> tuple[TaskNode, ...]:
+	return left.tasks if isinstance(left, kind) and fieldless(left) else (left,)
+
+
+@given(NODES, operands(NODES))
+def test_or_extends_a_plain_parallel_and_adds_the_right_operand_as_given(
+	left: TaskNode, operand: tuple[Nodes, tuple[TaskNode, ...]]
 ) -> None:
+	right, children = operand
 	composed = left | right
 	assert_type(composed, Parallel)
-	assert Parallel(*contributed(Parallel, left), *contributed(Parallel, right)) == composed
+	assert Parallel(*kept(Parallel, left), *children) == composed
 
 
-@given(PLAIN_NODES, OPERANDS)
-def test_add_contributes_a_sequentials_children_and_any_other_operand_whole(
-	left: TaskNode, right: TaskNode | str
+@given(NODES, operands(NODES))
+def test_add_extends_a_plain_sequential_and_adds_the_right_operand_as_given(
+	left: TaskNode, operand: tuple[Nodes, tuple[TaskNode, ...]]
 ) -> None:
+	right, children = operand
 	composed = left + right
 	assert_type(composed, Sequential)
-	assert Sequential(*contributed(Sequential, left), *contributed(Sequential, right)) == composed
+	assert Sequential(*kept(Sequential, left), *children) == composed
 
 
-@given(PLAIN_NODES, PLAIN_NODES, OPERANDS)
-def test_or_is_associative(x: TaskNode, y: TaskNode, z: TaskNode | str) -> None:
+@given(RUNNABLE_NODES, operands(RUNNABLE_NODES))
+def test_or_runs_every_leaf_as_the_nested_parallel_would(
+	left: TaskNode, operand: tuple[Nodes, tuple[TaskNode, ...]]
+) -> None:
+	right, children = operand
+	composed = left | right
+	assert_type(composed, Parallel)
+	assert executed(Parallel(left, *children)) == executed(composed)
+
+
+@given(RUNNABLE_NODES, operands(RUNNABLE_NODES))
+def test_add_runs_every_leaf_as_the_nested_sequential_would(
+	left: TaskNode, operand: tuple[Nodes, tuple[TaskNode, ...]]
+) -> None:
+	right, children = operand
+	composed = left + right
+	assert_type(composed, Sequential)
+	assert executed(Sequential(left, *children)) == executed(composed)
+
+
+@given(RUNNABLE_NODES, RUNNABLE_NODES, operands(RUNNABLE_NODES))
+def test_or_is_associative_in_execution(
+	x: TaskNode, y: TaskNode, operand: tuple[Nodes, tuple[TaskNode, ...]]
+) -> None:
+	z, _ = operand
 	left_first = (x | y) | z
 	right_first = x | (y | z)
 	assert_type(left_first, Parallel)
 	assert_type(right_first, Parallel)
-	assert left_first == right_first
+	assert executed(left_first) == executed(right_first)
 
 
-@given(PLAIN_NODES, PLAIN_NODES, OPERANDS)
-def test_add_is_associative(x: TaskNode, y: TaskNode, z: TaskNode | str) -> None:
+@given(RUNNABLE_NODES, RUNNABLE_NODES, operands(RUNNABLE_NODES))
+def test_add_is_associative_in_execution(
+	x: TaskNode, y: TaskNode, operand: tuple[Nodes, tuple[TaskNode, ...]]
+) -> None:
+	z, _ = operand
 	left_first = (x + y) + z
 	right_first = x + (y + z)
 	assert_type(left_first, Sequential)
 	assert_type(right_first, Sequential)
-	assert left_first == right_first
+	assert executed(left_first) == executed(right_first)
 
 
-@pytest.mark.xfail(strict=True, reason="flattening moves leaves into or out of a group's cwd/env")
-@given(SCOPED_NODES, SCOPED_NODES)
-def test_or_runs_every_leaf_as_the_nested_parallel_would(left: TaskNode, right: TaskNode) -> None:
-	composed = left | right
-	assert_type(composed, Parallel)
-	assert executed(Parallel(left, right)) == executed(composed)
-
-
-@pytest.mark.xfail(strict=True, reason="flattening moves leaves into or out of a group's cwd/env")
-@given(SCOPED_NODES, SCOPED_NODES)
-def test_add_runs_every_leaf_as_the_nested_sequential_would(
-	left: TaskNode, right: TaskNode
+@given(GROUPS, st.data())
+def test_sub_removes_every_equal_direct_child_and_keeps_fields(
+	group: Parallel | Sequential, data: st.DataObject
 ) -> None:
-	composed = left + right
-	assert_type(composed, Sequential)
-	assert executed(Sequential(left, right)) == executed(composed)
+	assume(group.tasks)
+	target = data.draw(st.sampled_from(group.tasks))
+	removed = group - target
+	assert group.remove(target) == removed
+	assert tuple(child for child in group.tasks if child != target) == removed.tasks
+	assert all(getattr(removed, field) == getattr(group, field) for field in GROUP_FIELDS)
 
 
-def test_a_fresh_plain_left_operand_adopts_the_right_fields() -> None:
-	"""The tie-break's default table, pinned through public behavior: a freshly constructed
-	plain group counts as fieldless, so the right operand's fields adopt — a new Group field
-	whose stored default is not ``None`` (or, for ``env``, not empty) makes the fresh left
-	fieldful and breaks this assert."""
-	assert Parallel("a") | Parallel("b", name="n") == Parallel("a", "b", name="n")
-	assert Sequential("a") + Sequential("b", name="n") == Sequential("a", "b", name="n")
-	assert Parallel("a", env=cast("dict[str, str]", MappingProxyType({}))) | Parallel(
-		"b", name="n"
-	) == Parallel("a", "b", name="n")
+@given(GROUPS, RUNNABLE_NODES)
+def test_remove_undoes_extend(group: Parallel | Sequential, node: TaskNode) -> None:
+	assume(node not in group.tasks)
+	assert group == group.extend(node).remove(node)
+
+
+def test_a_fresh_group_is_plain() -> None:
+	"""A freshly constructed group has every field at its default, so ``|``/``+`` extend it — a
+	new Group field whose stored default is not ``None`` (or, for ``env``, not empty) nests every
+	fresh left operand instead and breaks this assert."""
+	assert Parallel("a") | "b" == Parallel("a", "b")
+	assert Sequential("a") + "b" == Sequential("a", "b")
+	assert Parallel("a", env=cast("dict[str, str]", MappingProxyType({}))) | "b" == Parallel(
+		"a", "b"
+	)
 
 
 def test_or_appends_to_a_parallel() -> None:
@@ -318,6 +429,12 @@ def test_operators_assert_their_declared_types() -> None:
 	assert_type(Task("a") > Pipe("b"), Pipe)
 	assert_type(Pipe("a") > "b", Pipe)
 	assert_type(Pipe("a") > Pipe("b", "c"), Pipe)
+	assert_type(check | check.tasks, Parallel)
+	assert_type(check - "tests", Parallel)
+	assert_type(Sequential("a") - "a", Sequential)
+	assert_type(Pipe("a", "b") - "b", Pipe)
+	assert_type(check.extend(check.tasks), Parallel)
+	assert_type(check.remove(check.tasks), Parallel)
 
 
 def test_or_nests_a_sequential_as_one_child() -> None:
@@ -336,17 +453,19 @@ def test_add_coerces_a_parallel_to_a_sequential() -> None:
 	assert check + "integration" == Sequential(check, Task("integration"))
 
 
-def test_composition_is_associative() -> None:
-	assert (a | b) | c == a | (b | c)
-	assert (a + b) + c == a + (b + c)
+def test_composition_is_associative_in_execution() -> None:
+	assert executed((a | b) | c) == executed(a | (b | c))
+	assert executed((a + b) + c) == executed(a + (b + c))
 	left_named = Parallel("a", name="n")
-	assert (left_named | Parallel("b")) | Parallel("c") == left_named | (
-		Parallel("b") | Parallel("c")
+	assert executed((left_named | Parallel("b")) | Parallel("c")) == executed(
+		left_named | (Parallel("b") | Parallel("c"))
 	)
-	assert (a | b) | Parallel("c", name="n") == a | (b | Parallel("c", name="n"))
-	assert (a + b) + Sequential("c", name="n") == a + (b + Sequential("c", name="n"))
-	assert (a | b) | Parallel("c", matrix={}) == a | (b | Parallel("c", matrix={}))
-	assert (a + b) + Sequential("c", matrix={}) == a + (b + Sequential("c", matrix={}))
+	assert executed((a | b) | Parallel("c", name="n")) == executed(
+		a | (b | Parallel("c", name="n"))
+	)
+	assert executed((a + b) + Sequential("c", name="n")) == executed(
+		a + (b + Sequential("c", name="n"))
+	)
 
 	class Named(Parallel):  # pyrefly: ignore[bad-class-definition]
 		__slots__ = ()
@@ -354,45 +473,49 @@ def test_composition_is_associative() -> None:
 	class Staged(Sequential):  # pyrefly: ignore[bad-class-definition]
 		__slots__ = ()
 
-	assert (a | b) | Named("c") == a | (b | Named("c"))
-	assert (a + b) + Staged("c") == a + (b + Staged("c"))
+	assert executed((a | b) | Named("c")) == executed(a | (b | Named("c")))
+	assert executed((a + b) + Staged("c")) == executed(a + (b + Staged("c")))
 
 
 def test_operators_leave_their_operands_unchanged() -> None:
 	check = Parallel("format")
 	_ = check | "lint"
 	_ = check + "integration"
+	_ = check - "format"
+	_ = check.extend("lint")
 	assert check == Parallel("format")
 
 
-def test_parallel_operand_carries_its_fields_and_type() -> None:
+def test_a_scoped_subclass_left_nests_and_extend_carries_its_fields_and_type() -> None:
 	class Named(Parallel):  # pyrefly: ignore[bad-class-definition]
 		__slots__ = ()
 
 	check = Named("format", name="check", paths=".")
-	ci = check | "lint"
-	assert type(ci) is Named
-	assert ci == Named("format", "lint", name="check", paths=".")
+	assert Parallel(check, Task("lint")) == check | "lint"
+	extended = check.extend("lint")
+	assert type(extended) is Named
+	assert Named("format", "lint", name="check", paths=".") == extended
 
 
-def test_left_parallel_wins_when_both_sides_are_parallels() -> None:
-	"""Both sides flatten; the fields of the right-side Parallel have no home, so the
-	left's carry — the documented tie-break."""
-	assert Parallel("a", name="left") | Parallel("b", name="right") == Parallel(
-		"a", "b", name="left"
+def test_named_parallels_nest_whole() -> None:
+	left = Parallel("a", name="left")
+	right = Parallel("b", name="right")
+	assert Parallel(left, right) == left | right
+
+
+def test_a_right_parallel_is_one_child_of_a_leaf() -> None:
+	assert Task("a") | Parallel("b", name="check") == Parallel(
+		Task("a"), Parallel("b", name="check")
 	)
 
 
-def test_right_parallel_carries_when_the_left_is_a_leaf() -> None:
-	assert Task("a") | Parallel("b", name="check") == Parallel("a", "b", name="check")
-
-
-def test_sequential_operand_carries_its_fields_and_type() -> None:
+def test_a_right_subclass_sequential_is_one_child() -> None:
 	class Staged(Sequential):  # pyrefly: ignore[bad-class-definition]
 		__slots__ = ()
 
 	staged = Staged("b", name="stage")
-	assert Parallel("a") + staged == Staged(Parallel("a"), "b", name="stage")
+	assert Parallel("a") + staged == Sequential(Parallel("a"), staged)
+	assert type(staged.extend("c")) is Staged
 
 
 def test_composition_rejects_non_nodes_loudly() -> None:
@@ -402,9 +525,12 @@ def test_composition_rejects_non_nodes_loudly() -> None:
 
 def test_composition_reguards_a_group_operands_children() -> None:
 	"""A group built through the lenient constructor can hold a non-node child; composition
-	re-checks its children instead of carrying the broken tree along."""
+	re-checks the children it touches — an extended group's, and a merged ``.tasks`` — instead
+	of carrying the broken tree along."""
 	with pytest.raises(TypeError, match="None"):
-		_ = Parallel("a") | Parallel(cast("TaskNode", None))
+		_ = Parallel(cast("TaskNode", None)) | "a"
+	with pytest.raises(TypeError, match="None"):
+		_ = Parallel("a") | Parallel(cast("TaskNode", None)).tasks
 
 
 def test_or_composes_a_project_reference() -> None:
