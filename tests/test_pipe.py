@@ -91,13 +91,32 @@ def test_gt_operator_composes_pipe_stages() -> None:
 	assert (Pipe("a") > "b").tasks == (Task("a"), Task("b"))
 
 
-def test_gt_operator_carries_fields_and_agent_only() -> None:
+def test_gt_operator_extends_the_left_pipe_keeping_its_fields_and_agent_only() -> None:
 	extended = Pipe("a", env={"K": "v"}, agent_only=True) > "b"
 	assert extended.env == {"K": "v"}
 	assert extended.agent_only is True
-	assert (Pipe("a") > Pipe("b", env={"K": "v"})).env == {"K": "v"}
 	assert (Pipe("a", agent_only=True) > Pipe("b")).agent_only is True
-	assert (Pipe("a") > Pipe("b", agent_only=True)).agent_only is True
+
+
+def test_gt_operator_rejects_a_scoped_right_pipe() -> None:
+	"""A stage can't nest, so a right pipe's fields or ``agent_only`` would be dropped by a
+	splice; ``.extend(right.tasks)`` runs its stages in the left pipe's scope instead."""
+	scoped = Pipe("b", env={"K": "v"})
+	with pytest.raises(ValueError, match=r"pipe its \.tasks instead: x > y\.tasks"):
+		_ = Pipe("a") > scoped
+	with pytest.raises(ValueError, match=r"pipe its \.tasks instead: x > y\.tasks"):
+		_ = Task("a") > Pipe("b", agent_only=True)
+	assert (Task("a") > scoped.tasks) == Pipe("a", "b")
+	assert (Pipe("a") > scoped.tasks) == Pipe("a", "b")
+	assert Pipe("a").extend(scoped.tasks) == Pipe("a", "b")
+
+
+def test_gt_operator_rejects_a_right_pipe_subclass_naming_its_type() -> None:
+	class Staged(Pipe):  # pyrefly: ignore[bad-class-definition]
+		__slots__ = ()
+
+	with pytest.raises(ValueError, match=r"cannot splice Staged .* subclass type"):
+		_ = Pipe("a") > Staged("b")
 
 
 def test_gt_operator_rejects_a_group_stage() -> None:

@@ -80,6 +80,7 @@ dev = [
 "pytest-asyncio>=1,<2",
 "pytest-cov>=7,<8",
 "cyclopts>=4,<5",
+"hypothesis>=6,<7",
 "ruff>=0.12,<1",
 "zuban>=0.7,<1",
 "pyrefly>=0.61,<1",
@@ -101,7 +102,7 @@ default-groups = ["dev", "lint"]
 
 [tool.pytest.ini_options]
 testpaths = ["src", "tests"]
-norecursedirs = ["fixtures", "examples"]
+norecursedirs = ["fixtures", "examples", ".hypothesis"]
 markers = ["slow: visual demo tests with real delays"]
 asyncio_mode = "auto"
 

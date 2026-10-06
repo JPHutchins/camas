@@ -12,7 +12,7 @@ from tail import Tail as Tail
 from camas.v0.config import Config
 from camas.v0.effect import Effect
 from camas.v0.leaf_state import LeafState
-from camas.v0.task import Parallel, Sequential, Task, TaskNode
+from camas.v0.task import Parallel, Task, TaskNode
 from camas.v0.task_event import OutputEvent, StartedEvent, TaskEvent
 
 
@@ -71,7 +71,7 @@ fast = _ticker("fast", 2)
 slow = _ticker("slow", 3)
 done = Task(("python", "-c", "print('done')"), name="done")
 
-check = Sequential(Parallel(fast, slow), done)
+check = (fast | slow) + done
 
 build = Parallel(
 	Task(("python", "-c", "print('built {STAGE}')")),
