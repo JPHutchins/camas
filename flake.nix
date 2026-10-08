@@ -104,10 +104,19 @@
                 inherit lib;
                 pname = "camas";
               };
-              realExtras = (lib.importTOML ./pyproject.toml).project.optional-dependencies;
+              pyproject = lib.importTOML ./pyproject.toml;
+              realExtras = pyproject.project.optional-dependencies;
               resolveNames =
                 pyprojectExtras: python3Packages: extra:
                 map (drv: drv.name) (resolver.mkResolveExtra { inherit python3Packages pyprojectExtras; } extra);
+              resolveGroupNames =
+                pyprojectGroups: python3Packages: group:
+                map (drv: drv.name) (
+                  resolver.mkResolveGroup {
+                    inherit python3Packages pyprojectGroups;
+                    pyprojectExtras = realExtras;
+                  } group
+                );
               forced = value: builtins.tryEval (builtins.deepSeq value value);
               fakePackages = {
                 httpx = {
@@ -121,6 +130,32 @@
                 extra: _: resolveNames realExtras pkgs.python3Packages extra
               ) realExtras;
               realResolves = (forced realResolved).success;
+              realTestGroupResolves =
+                (forced (resolveGroupNames pyproject.dependency-groups pkgs.python3Packages "test")).success;
+              includeGroupFollowed =
+                resolveGroupNames {
+                  a = [
+                    { include-group = "b"; }
+                    "httpx"
+                  ];
+                  b = [ "msgspec" ];
+                } fakePackages "a" == [
+                  "msgspec"
+                  "httpx"
+                ];
+              groupCyclicFails =
+                !(forced (
+                  resolveGroupNames {
+                    a = [ { include-group = "b"; } ];
+                    b = [ { include-group = "a"; } ];
+                  } fakePackages "a"
+                )).success;
+              tableFails =
+                !(forced (
+                  resolveGroupNames {
+                    t = [ { path = "x"; } ];
+                  } fakePackages "t"
+                )).success;
               cyclicFails =
                 !(forced (
                   resolveNames {
@@ -142,6 +177,10 @@
                 )).success;
             in
             assert realResolves;
+            assert realTestGroupResolves;
+            assert includeGroupFollowed;
+            assert groupCyclicFails;
+            assert tableFails;
             assert cyclicFails;
             assert missingFails;
             assert unparseableFails;
