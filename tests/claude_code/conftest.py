@@ -13,6 +13,7 @@ review workflow does. Excluded from coverage (see ``pyproject.toml`` ``[tool.cov
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -45,7 +46,9 @@ def run_headless() -> Callable[..., CompletedProcess[str]]:
 	The returned callable accepts optional keyword-only overrides:
 
 	- ``permission_mode`` (default ``acceptEdits``): ``--permission-mode`` value.
-	- ``strict_mcp`` (default ``False``): pass ``--strict-mcp-config``.
+	- ``strict_mcp`` (default ``False``): load only the cwd's ``.mcp.json`` (``--mcp-config``
+	  plus ``--strict-mcp-config``; the strict flag alone loads no server at all).
+	- ``output_format`` ``"stream-json"`` adds the ``--verbose`` it requires in print mode.
 	- ``append_system_prompt`` (default ``None``): appended via ``--append-system-prompt``.
 	- ``output_format`` (default ``None``): ``--output-format`` value.
 	"""
@@ -67,11 +70,13 @@ def run_headless() -> Callable[..., CompletedProcess[str]]:
 	) -> CompletedProcess[str]:
 		argv = ["claude", "-p", prompt, "--model", model, "--permission-mode", permission_mode]
 		if strict_mcp:
-			argv.append("--strict-mcp-config")
+			argv.extend(("--mcp-config", str(cwd / ".mcp.json"), "--strict-mcp-config"))
 		if append_system_prompt is not None:
 			argv.extend(("--append-system-prompt", append_system_prompt))
 		if output_format is not None:
 			argv.extend(("--output-format", output_format))
+		if output_format == "stream-json":
+			argv.append("--verbose")
 		return subprocess.run(
 			argv,
 			cwd=cwd,
@@ -82,3 +87,16 @@ def run_headless() -> Callable[..., CompletedProcess[str]]:
 		)
 
 	return _run
+
+
+@pytest.fixture
+def mcp_server_status() -> Callable[[str], dict[str, str]]:
+	"""Each MCP server's status (``connected``, ``failed``, ...) from a ``stream-json`` run's init
+	message — ``claude -p`` exits 0 whether or not a server started."""
+
+	def _status(stream: str) -> dict[str, str]:
+		messages = (json.loads(line) for line in stream.splitlines() if line.strip())
+		init = next(m for m in messages if m.get("type") == "system" and m.get("subtype") == "init")
+		return {server["name"]: server["status"] for server in init.get("mcp_servers", [])}
+
+	return _status

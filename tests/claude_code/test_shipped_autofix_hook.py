@@ -47,9 +47,9 @@ _PYPROJECT = (
 
 _FIXER = (
 	"import pathlib, sys\n"
-	"for p in sys.argv[1:]:\n"
-	"    fp = pathlib.Path(p)\n"
-	'    fp.write_text(fp.read_text().replace("BANANA", "FIXED"))\n'
+	"for p in map(pathlib.Path, sys.argv[1:]):\n"
+	"    for fp in (p.rglob('*.txt') if p.is_dir() else [p]):\n"
+	'        fp.write_text(fp.read_text().replace("BANANA", "FIXED"))\n'
 )
 
 _TASKS = (

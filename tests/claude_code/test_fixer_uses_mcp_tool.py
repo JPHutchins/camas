@@ -5,16 +5,17 @@
 reaches green via the MCP gate tool (criterion #3).
 
 The ``camas-lint-fixer-haiku`` agent definition ships with ``tools: Read, Edit,
-mcp__camas__camas_gate, mcp__camas__camas_fix`` and ``model: haiku`` — it has no Bash, so it
-physically cannot shell out to the CLI; using the MCP tool is structurally enforced (not
-measured by introspection — ``camas_gate``/``camas_fix`` write no server-side run-log, only
-``camas_run`` does).
+mcp__camas__camas_gate`` and ``model: haiku`` — it has no Bash, so it physically cannot shell
+out to the CLI; using the MCP tool is structurally enforced (not measured by introspection —
+``camas_gate`` writes no server-side run-log, only ``camas_run`` does).
 
 Happy path: set up a tasks.py whose check node fails when a file contains ``FORBIDDEN_TOKEN``
 and whose fix node mechanically replaces it with ``ALLOWED_TOKEN``. After ``init --claude``,
-run headless (``--permission-mode bypassPermissions --strict-mcp-config``), instruct the main
-agent to write the forbidden token and spawn camas-lint-fixer-haiku on the scope. Assert the
-marker is fixed on disk — proving the MCP-gated fixer loop works end to end.
+run headless against the project's ``.mcp.json`` (``--permission-mode bypassPermissions``),
+instruct the main agent to write the forbidden token and spawn camas-lint-fixer-haiku on the
+scope. Nothing fixes between edits, and the turn-end Stop fix runs only after the assertion's
+file is final, so the marker is fixed on disk only if the fixer's ``camas_gate`` settled the
+fix node — proving the MCP-gated fixer loop works end to end.
 
 No broken variant: a sabotaged fixer (``tools:`` dropping ``mcp__camas__camas_gate``) does NOT
 fail to reach green, because both the main agent and the fixer still have ``Edit`` and fix the
@@ -49,7 +50,7 @@ _PYPROJECT = (
 	'name = "test-harness"\n'
 	'version = "0.0.0"\n'
 	'requires-python = ">=3.10"\n'
-	'dependencies = ["camas"]\n'
+	'dependencies = ["camas[mcp]"]\n'
 	"\n[tool.uv.sources]\n"
 	f'camas = {{ path = "{_REPO_ROOT}" }}\n'
 )
@@ -127,6 +128,7 @@ def _marker_is_fixed(sentinel: Path) -> bool:
 def test_fixer_subagent_drives_scope_to_green_via_mcp_gate(
 	tmp_path: Path,
 	run_headless: Callable[..., CompletedProcess[str]],
+	mcp_server_status: Callable[[str], dict[str, str]],
 ) -> None:
 	_setup_project(tmp_path)
 	_init_claude(tmp_path)
@@ -136,8 +138,10 @@ def test_fixer_subagent_drives_scope_to_green_via_mcp_gate(
 		_DELEGATE_PROMPT,
 		permission_mode="bypassPermissions",
 		strict_mcp=True,
+		output_format="stream-json",
 	)
 	assert headless.returncode == 0, headless.stderr
+	assert mcp_server_status(headless.stdout).get("camas") == "connected", headless.stdout[:2000]
 
 	sentinel = tmp_path / "sentinel.txt"
 	assert _marker_is_fixed(sentinel), (
