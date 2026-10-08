@@ -140,13 +140,16 @@ def record_settled(event: HookEvent) -> None:
 
 
 def _settle_state(marker: Path, prompt_id: str) -> Literal["settled", "settling", "absent"]:
+	"""The marker's state for ``prompt_id`` — an empty marker is one caught mid-write, so its writer
+	is still running.
+	"""
 	try:
 		content: Final = marker.read_text(encoding="utf-8")
 	except (OSError, ValueError):
 		return "absent"
 	if content == prompt_id:
 		return "settled"
-	return "settling" if content == f"{prompt_id}{SETTLING}" else "absent"
+	return "settling" if content in ("", f"{prompt_id}{SETTLING}") else "absent"
 
 
 def await_settled(

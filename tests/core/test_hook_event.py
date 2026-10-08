@@ -102,3 +102,10 @@ def test_record_settled_sweeps_only_stale_markers(markers_in: Path) -> None:
 	record_settled(STOP)
 	assert not stale.exists()
 	assert fresh.exists()
+
+
+def test_await_settled_reads_a_marker_caught_mid_write_as_settling() -> None:
+	"""``write_text`` truncates before it writes; the empty file in between is never "no fix"."""
+	settled_marker("s-1").write_text("")
+	threading.Timer(0.2, record_settled, (STOP,)).start()
+	assert await_settled(STOP, start=0.05, timeout=5.0, poll=0.01)
