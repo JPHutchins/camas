@@ -626,7 +626,8 @@ def tools(task_names: tuple[str, ...], compat: Compat) -> Tools:
 				may have rewritten it. residual_class is
 				'green' (decision 'continue') when the checks pass, or 'needs_reasoning' (decision
 				'block') when a check still fails — then diagnostics carries the failing leaves. Pass
-				paths=[…] (the changed files) to scope; omit to gate the whole check node. under=<seconds>
+				paths=[…] (the changed files) to scope; omit to gate the whole check node, which also
+				runs the autofix over the whole tree. under=<seconds>
 				time-boxes the checks: leaves measured to exceed it are skipped (except the over-budget
 				stages of a pipe kept whole for its untimed siblings), untimed leaves run.
 			""").strip(),
@@ -1583,12 +1584,19 @@ async def gate_for(
 
 
 def settle_note(settled: RunResult | None) -> str:
-	"""A gate-text line naming the autofix's non-zero exit; empty when it did not run or exited 0."""
-	if settled is None or settled.returncode == 0:
+	"""A gate-text line naming each autofix leaf that exited non-zero; empty when the autofix did
+	not run or every leaf exited 0.
+	"""
+	failed: Final = tuple(
+		f"{result.name} exited {result.completion.returncode}"
+		for result in (settled.results if settled is not None else ())
+		if result.completion.returncode != 0 and not isinstance(result.completion, Skipped)
+	)
+	if not failed:
 		return ""
 	return (
-		f"\n\nThe autofix (Config.agent.fix) exited {settled.returncode} before the checks ran, so"
-		" some of its fixes may not have applied — camas_fix shows its output."
+		f"\n\nThe autofix (Config.agent.fix) failed before the checks ran — {', '.join(failed)} —"
+		" so some of its fixes may not have applied; camas_gate settles it again."
 	)
 
 

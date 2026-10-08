@@ -19,7 +19,7 @@ import tempfile
 import time
 from contextlib import suppress
 from pathlib import Path
-from typing import Final, NamedTuple, cast
+from typing import Final, Literal, NamedTuple, cast
 
 
 class HookEvent(NamedTuple):
@@ -90,14 +90,38 @@ STALE_TEMP_MAX_AGE_S: Final = 3600.0
 """Age past which a prior run's leftovers in the system temp dir are swept — the settled and nudge
 markers and the gate's report directories age out together."""
 
-SETTLE_WAIT_S: Final = 60.0
-"""How long the async Stop-hook nudge waits for its sibling autofix before checking anyway."""
+SETTLE_START_S: Final = 15.0
+"""How long the async Stop-hook nudge waits for its sibling autofix to mark the prompt settling
+before checking anyway — the fix hook never started."""
+
+SETTLE_WAIT_S: Final = 600.0
+"""How long the nudge waits on an autofix that marked the prompt settling before checking anyway."""
+
+SETTLING: Final = " settling"
+"""The suffix on a settled marker's prompt_id while that prompt's autofix is still running."""
 
 
 def settled_marker(session_id: str) -> Path:
-	"""The session's settled marker; its content is the last prompt_id the Stop autofix ran for."""
+	"""The session's settled marker: the last prompt_id the Stop autofix ran for, suffixed with
+	:data:`SETTLING` while it runs.
+	"""
 	digest = hashlib.sha256(session_id.encode("utf-8")).hexdigest()[:16]
 	return Path(tempfile.gettempdir()) / f"{SETTLED_MARKER_PREFIX}{digest}"
+
+
+def _marks(event: HookEvent) -> bool:
+	return event.changed is None and bool(event.session_id) and bool(event.prompt_id)
+
+
+def record_settling(event: HookEvent) -> None:
+	"""Mark ``event``'s prompt settling — its autofix has started — for :func:`await_settled`; a
+	no-op for an event that carries a tool batch or lacks session and prompt ids.
+	"""
+	if _marks(event):
+		with suppress(OSError):
+			settled_marker(str(event.session_id)).write_text(
+				f"{event.prompt_id}{SETTLING}", encoding="utf-8"
+			)
 
 
 def record_settled(event: HookEvent) -> None:
@@ -105,28 +129,45 @@ def record_settled(event: HookEvent) -> None:
 	older than :data:`STALE_TEMP_MAX_AGE_S` first — a no-op for an event that carries a tool batch
 	or lacks session and prompt ids.
 	"""
-	if event.changed is None and event.session_id and event.prompt_id:
+	if _marks(event):
 		cutoff: Final = time.time() - STALE_TEMP_MAX_AGE_S
 		for marker in Path(tempfile.gettempdir()).glob(f"{SETTLED_MARKER_PREFIX}*"):
 			with suppress(OSError):
 				if marker.stat().st_mtime < cutoff:
 					marker.unlink()
 		with suppress(OSError):
-			settled_marker(event.session_id).write_text(event.prompt_id, encoding="utf-8")
+			settled_marker(str(event.session_id)).write_text(str(event.prompt_id), encoding="utf-8")
 
 
-def await_settled(event: HookEvent, *, timeout: float = SETTLE_WAIT_S, poll: float = 0.1) -> bool:
-	"""Wait until ``event``'s prompt is marked settled, answering whether it was within ``timeout``;
-	an event without session and prompt ids answers ``True`` at once.
+def _settle_state(marker: Path, prompt_id: str) -> Literal["settled", "settling", "absent"]:
+	try:
+		content: Final = marker.read_text(encoding="utf-8")
+	except (OSError, ValueError):
+		return "absent"
+	if content == prompt_id:
+		return "settled"
+	return "settling" if content == f"{prompt_id}{SETTLING}" else "absent"
+
+
+def await_settled(
+	event: HookEvent,
+	*,
+	start: float = SETTLE_START_S,
+	timeout: float = SETTLE_WAIT_S,
+	poll: float = 0.1,
+) -> bool:
+	"""Wait until ``event``'s prompt is marked settled, answering whether it was: up to ``start``
+	for its autofix to mark it settling, then up to ``timeout`` while it does; an event without
+	session and prompt ids answers ``True`` at once.
 	"""
 	if not event.session_id or not event.prompt_id:
 		return True
 	marker: Final = settled_marker(event.session_id)
-	deadline: Final = time.monotonic() + timeout
+	begun: Final = time.monotonic()
 	while True:
-		with suppress(OSError, ValueError):
-			if marker.read_text(encoding="utf-8") == event.prompt_id:
-				return True
-		if time.monotonic() >= deadline:
+		state = _settle_state(marker, event.prompt_id)
+		if state == "settled":
+			return True
+		if time.monotonic() - begun >= (timeout if state == "settling" else start):
 			return False
 		time.sleep(poll)

@@ -1647,7 +1647,7 @@ async def test_gate_call_names_an_autofix_that_exited_non_zero(tmp_path: Path) -
 	session = _session({"lint": PASS}, config, tmp_path)
 	text = _text(await serve.call(session, "camas_gate", {}))
 	assert "CONTINUE" in text
-	assert "The autofix (Config.agent.fix) exited 1" in text
+	assert "The autofix (Config.agent.fix) failed before the checks ran — fmt exited 3 —" in text
 
 
 async def test_gate_call_load_error(tmp_path: Path) -> None:

@@ -456,6 +456,16 @@ def test_fix_cli_marks_a_stop_events_prompt_settled_after_the_fix_whatever_it_fo
 	assert (tmp_path / "fixed.txt").exists() == ("tidy" in tasks)
 
 
+def test_fix_cli_dry_run_marks_no_prompt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+	(tmp_path / "tasks.py").write_text(_TIDY.format(scope="."))
+	monkeypatch.chdir(tmp_path)
+	monkeypatch.setattr("camas.core.hook_event.tempfile.gettempdir", lambda: str(tmp_path))
+	monkeypatch.setattr("sys.stdin", io.StringIO(_STOP_EVENT))
+	assert fix_cli(["--dry-run"]) == 0
+	assert not settled_marker("s-1").exists()
+	assert not (tmp_path / "fixed.txt").exists()
+
+
 def test_fix_cli_noop_without_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 	monkeypatch.chdir(tmp_path)
 	assert fix_cli(["--paths", "x.py"]) == 0

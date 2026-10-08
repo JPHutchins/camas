@@ -23,8 +23,9 @@ Usage:
                               camas-fixer agents + gate skill; --launcher forces
                               the launch strategy instead of auto-detecting
   camas mcp fix [--paths P]… run the registered agent fix node (Config.agent.fix) over the
-                              changed paths (--paths, else a piped PostToolBatch/Stop event) —
-                              the Stop autofix hook; no-op if unregistered
+                              changed paths (--paths, else a piped PostToolBatch event; a Stop
+                              event names none, so the whole tree) — the Stop autofix hook;
+                              no-op if unregistered
   camas mcp gate [task]     run the gate once, headless and read-only — print the verdict as
     [--paths P]… [--under D]  JSON, exit 0 (continue) / 2 (block); scope to --paths or a piped
     [--jobs N] [--nudge]      PostToolBatch event; a Stop event gates the whole tree (CI +

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import os
+import threading
 import time
 from typing import TYPE_CHECKING
 
@@ -15,6 +16,7 @@ from camas.core.hook_event import (
 	HookEvent,
 	await_settled,
 	record_settled,
+	record_settling,
 	settled_marker,
 )
 
@@ -46,8 +48,25 @@ def test_record_settled_marks_a_stop_events_prompt() -> None:
 def test_record_settled_ignores_a_tool_batch_and_an_event_without_ids(
 	markers_in: Path, event: HookEvent
 ) -> None:
+	record_settling(event)
 	record_settled(event)
 	assert list(markers_in.iterdir()) == []
+
+
+def test_record_settling_marks_a_stop_events_prompt_as_running() -> None:
+	record_settling(STOP)
+	assert settled_marker("s-1").read_text(encoding="utf-8") == "p-1 settling"
+
+
+def test_await_settled_waits_past_the_start_window_while_the_fix_is_settling() -> None:
+	record_settling(STOP)
+	threading.Timer(0.2, record_settled, (STOP,)).start()
+	assert await_settled(STOP, start=0.05, timeout=5.0, poll=0.01)
+
+
+def test_await_settled_gives_up_on_a_settling_fix_at_the_deadline() -> None:
+	record_settling(STOP)
+	assert not await_settled(STOP, start=0.0, timeout=0.05, poll=0.01)
 
 
 def test_await_settled_returns_once_its_prompt_is_marked() -> None:
@@ -57,11 +76,11 @@ def test_await_settled_returns_once_its_prompt_is_marked() -> None:
 
 def test_await_settled_gives_up_on_another_prompts_marker_at_the_deadline() -> None:
 	record_settled(STOP._replace(prompt_id="p-0"))
-	assert not await_settled(STOP, timeout=0.05, poll=0.01)
+	assert not await_settled(STOP, start=0.05, poll=0.01)
 
 
 def test_await_settled_gives_up_without_a_marker_at_the_deadline() -> None:
-	assert not await_settled(STOP, timeout=0.05, poll=0.01)
+	assert not await_settled(STOP, start=0.05, poll=0.01)
 
 
 def test_await_settled_does_not_wait_on_an_event_without_ids() -> None:
@@ -70,7 +89,7 @@ def test_await_settled_does_not_wait_on_an_event_without_ids() -> None:
 
 def test_await_settled_polls_past_an_undecodable_marker() -> None:
 	settled_marker("s-1").write_bytes(b"\xff\xfe")
-	assert not await_settled(STOP, timeout=0.05, poll=0.01)
+	assert not await_settled(STOP, start=0.05, poll=0.01)
 
 
 def test_record_settled_sweeps_only_stale_markers(markers_in: Path) -> None:

@@ -22,7 +22,7 @@ from ..core import timings
 from ..core.budget import BudgetRun, NothingToRun, outcome_lines, plan_under, resolve_budget
 from ..core.execution import run
 from ..core.gate import strip_agent_only_pipes
-from ..core.hook_event import NO_EVENT, event_from_stdin, record_settled
+from ..core.hook_event import NO_EVENT, event_from_stdin, record_settled, record_settling
 from ..core.matrix import (
 	empty_variant_labels,
 	expand_matrix,
@@ -164,8 +164,9 @@ def fix_cli(argv: list[str]) -> int:
 	Code ``Stop`` autofix hook, or a hand-wired one). In the ``camas mcp`` namespace so it never
 	collides with a user's own ``camas <task>``. Always exits ``0`` — it runs the fix node for its
 	mutations, not as a pass/fail check; an unregistered fix node is simply a no-op. A ``Stop``
-	event's prompt is marked settled once this returns, whatever it found to do, releasing the
-	async nudge waiting on it (:func:`camas.core.hook_event.await_settled`).
+	event's prompt is marked settling before the fix and settled once it returns, whatever it found
+	to do, releasing the async nudge waiting on it (:func:`camas.core.hook_event.await_settled`);
+	``--dry-run`` marks nothing.
 	"""
 	parser = argparse.ArgumentParser(
 		prog="camas mcp fix", description="Run the registered agent fix node."
@@ -185,10 +186,12 @@ def fix_cli(argv: list[str]) -> int:
 	)
 	args = parser.parse_args(argv)
 	event: Final = event_from_stdin() if not args.paths else NO_EVENT
+	marked: Final = NO_EVENT if args.dry_run else event
+	record_settling(marked)
 	try:
 		return _fix(tuple(args.paths), event.changed, dry_run=args.dry_run)
 	finally:
-		record_settled(event)
+		record_settled(marked)
 
 
 def _fix(paths: tuple[str, ...], stdin: tuple[str, ...] | None, *, dry_run: bool) -> int:
