@@ -257,7 +257,7 @@ jobs:
   wheels:
     strategy:
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest, windows-11-arm]
         python: ["311", "312", "313", "314"]
       fail-fast: false
     runs-on: ${{ matrix.os }}
@@ -280,6 +280,9 @@ jobs:
           CIBW_BUILD_VERBOSITY: 1
           CIBW_BEFORE_ALL_LINUX: git config --global --add safe.directory '*'
           CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: ""
+          # cryptography (camas[mcp] -> pyjwt[crypto]) last shipped win_arm64 wheels in 46.0.3; prefer
+          # that wheel over a newer sdist whose build needs OpenSSL.
+          CIBW_TEST_ENVIRONMENT: ${{ matrix.os == 'windows-11-arm' && 'PIP_PREFER_BINARY=1' || '' }}
           CIBW_TEST_EXTRAS: all
           CIBW_TEST_GROUPS: test
           CIBW_TEST_COMMAND: >
