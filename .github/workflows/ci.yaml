@@ -270,7 +270,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: pypa/cibuildwheel@v3.4.1
+      - uses: pypa/cibuildwheel@v4.3.0
         env:
           CIBW_BUILD: "cp${{ matrix.python }}-*"
           CIBW_SKIP: "*-musllinux_i686 *-win32"
