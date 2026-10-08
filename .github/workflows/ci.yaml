@@ -257,7 +257,7 @@ jobs:
   wheels:
     strategy:
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest, windows-11-arm]
         python: ["311", "312", "313", "314"]
       fail-fast: false
     runs-on: ${{ matrix.os }}
