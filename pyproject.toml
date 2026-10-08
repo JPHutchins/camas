@@ -72,7 +72,7 @@ camas = ["py.typed"]
 [tool.setuptools_scm]
 
 [dependency-groups]
-# The test environment for uv (through dev), cibuildwheel (CIBW_TEST_GROUPS), and nix (nativeCheckInputs).
+# The test environment for uv (through dev), cibuildwheel (CIBW_TEST_GROUPS), and nix (nativeCheckInputs, by name only).
 test = [
 "pytest>=9,<10",
 "pytest-asyncio>=1,<2",

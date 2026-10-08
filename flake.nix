@@ -16,7 +16,8 @@
       ];
       forAllSystems = lib.genAttrs systems;
 
-      extraNames = builtins.attrNames (lib.importTOML ./pyproject.toml).project.optional-dependencies;
+      pyproject = lib.importTOML ./pyproject.toml;
+      extraNames = builtins.attrNames pyproject.project.optional-dependencies;
       perExtra = builtins.filter (extra: extra != "all") extraNames;
       withExtraName = extra: "with-${lib.replaceStrings [ "_" ] [ "-" ] extra}";
 
@@ -104,7 +105,6 @@
                 inherit lib;
                 pname = "camas";
               };
-              pyproject = lib.importTOML ./pyproject.toml;
               realExtras = pyproject.project.optional-dependencies;
               realGroups = pyproject.dependency-groups or { };
               resolverArgs =
@@ -131,8 +131,33 @@
                   name = "msgspec";
                 };
               };
-              realResolves = !fails (builtins.mapAttrs (extra: _: resolveNames { } extra) realExtras);
-              realTestGroupResolves = !fails (resolveGroupNames { } "test");
+              realResolves = builtins.deepSeq (builtins.mapAttrs (
+                extra: _: resolveNames { } extra
+              ) realExtras) true;
+              realTestGroupResolves = builtins.deepSeq (resolveGroupNames { } "test") true;
+              missingExtraFails = fails (
+                resolveNames {
+                  extras.a = [ "camas[nope]" ];
+                  packages = fakePackages;
+                } "a"
+              );
+              extrasSpecFails = fails (
+                resolveNames {
+                  extras.e = [ "httpx[http2]>=0.28" ];
+                  packages = fakePackages;
+                } "e"
+              );
+              directReferenceFails = fails (
+                resolveNames {
+                  extras.d = [ "httpx @ git+https://example/httpx" ];
+                  packages = fakePackages;
+                } "d"
+              );
+              markerSpecResolves =
+                resolveNames {
+                  extras.m = [ "msgspec>=0.19,<1; python_version < '3.15'" ];
+                  packages = fakePackages;
+                } "m" == [ "msgspec" ];
               includeGroupFollowed =
                 resolveGroupNames {
                   groups = {
@@ -221,6 +246,10 @@
             in
             assert realResolves;
             assert realTestGroupResolves;
+            assert missingExtraFails;
+            assert extrasSpecFails;
+            assert directReferenceFails;
+            assert markerSpecResolves;
             assert includeGroupFollowed;
             assert groupReachesExtras;
             assert groupCyclicFails;

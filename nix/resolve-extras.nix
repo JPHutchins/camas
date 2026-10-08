@@ -7,8 +7,9 @@
 #   1. a PyPI name whose nixpkgs attr differs (map it in pypiToNixAttr),
 #   2. a package absent from python3Packages,
 #   3. a mutually self-referential extra or group pair (cycle),
-#   4. a spec that is neither a parseable PEP 508 name nor an include-group
-#      table holding only that key, and
+#   4. a spec that is neither a PEP 508 name with an optional version and
+#      marker (extras and direct references name no nixpkgs attr) nor an
+#      include-group table holding only that key, and
 #   5. an include-group or `camas[...]` naming no group or extra.
 # It resolves names only: version specifiers and environment markers are not
 # evaluated, so a pin is whatever nixpkgs ships.
@@ -29,10 +30,10 @@ let
       }
     else
       let
-        matched = builtins.match "([A-Za-z0-9._-]+).*" spec;
+        matched = builtins.match "([A-Za-z0-9._-]+)[^[@]*" spec;
       in
       if matched == null then
-        throw "camas resolve-extras: cannot parse requirement ${builtins.toJSON spec}; expected a spec beginning with a PEP 508 name ([A-Za-z0-9._-])"
+        throw "camas resolve-extras: cannot parse requirement ${builtins.toJSON spec}; expected a PEP 508 name ([A-Za-z0-9._-]) with an optional version and marker, not extras or a direct reference"
       else
         { pkg = builtins.head matched; };
 
@@ -74,19 +75,17 @@ let
             ) specs
           );
 
+      member =
+        section: table: name:
+        table.${name} or (throw "camas resolve-extras: '${name}' is not in ${section}");
+
       resolveExtra =
         seen: extra:
-        if pyprojectExtras ? ${extra} then
-          resolve seen "extra '${extra}'" pyprojectExtras.${extra}
-        else
-          throw "camas resolve-extras: extra '${extra}' is not in [project.optional-dependencies]";
+        resolve seen "extra '${extra}'" (member "[project.optional-dependencies]" pyprojectExtras extra);
 
       resolveGroup =
         seen: group:
-        if pyprojectGroups ? ${group} then
-          resolve seen "dependency group '${group}'" pyprojectGroups.${group}
-        else
-          throw "camas resolve-extras: dependency group '${group}' is not in [dependency-groups]";
+        resolve seen "dependency group '${group}'" (member "[dependency-groups]" pyprojectGroups group);
     in
     {
       extra = resolveExtra [ ];
