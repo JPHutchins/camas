@@ -106,7 +106,7 @@
               };
               pyproject = lib.importTOML ./pyproject.toml;
               realExtras = pyproject.project.optional-dependencies;
-              realGroups = pyproject.dependency-groups;
+              realGroups = pyproject.dependency-groups or { };
               resolverArgs =
                 {
                   extras ? realExtras,
@@ -132,8 +132,7 @@
                 };
               };
               realResolves = !fails (builtins.mapAttrs (extra: _: resolveNames { } extra) realExtras);
-              realTestGroupResolves =
-                builtins.length (resolveGroupNames { } "test") == builtins.length realGroups.test;
+              realTestGroupResolves = !fails (resolveGroupNames { } "test");
               includeGroupFollowed =
                 resolveGroupNames {
                   groups = {

@@ -9,7 +9,7 @@
 #   3. a mutually self-referential extra or group pair (cycle),
 #   4. a spec that is neither a parseable PEP 508 name nor an include-group
 #      table holding only that key, and
-#   5. an include-group naming no [dependency-groups] entry.
+#   5. an include-group or `camas[...]` naming no group or extra.
 # It resolves names only: version specifiers and environment markers are not
 # evaluated, so a pin is whatever nixpkgs ships.
 {
@@ -74,7 +74,12 @@ let
             ) specs
           );
 
-      resolveExtra = seen: extra: resolve seen "extra '${extra}'" pyprojectExtras.${extra};
+      resolveExtra =
+        seen: extra:
+        if pyprojectExtras ? ${extra} then
+          resolve seen "extra '${extra}'" pyprojectExtras.${extra}
+        else
+          throw "camas resolve-extras: extra '${extra}' is not in [project.optional-dependencies]";
 
       resolveGroup =
         seen: group:
