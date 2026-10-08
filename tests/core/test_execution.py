@@ -12,7 +12,7 @@ from contextlib import nullcontext
 from datetime import datetime
 from pathlib import Path
 from subprocess import DEVNULL
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -398,9 +398,6 @@ def test_unusable_cwd_answers_none_when_the_cwd_cannot_be_inspected(
 
 
 _SHIM = "camas-shim"
-_BATCH_NAME = _SHIM if sys.platform == "win32" else f"{_SHIM}.cmd"
-"""The bare name that reaches a batch shim: Windows appends ``PATHEXT``, elsewhere only the literal
-file name exists."""
 
 
 def _batch_shim(directory: Path) -> Path:
@@ -427,7 +424,7 @@ def test_resolve_program_finds_a_batch_shim_on_the_leaf_path_under_any_key_case(
 	tmp_path: Path,
 ) -> None:
 	shim = _batch_shim(tmp_path)
-	program, *args = resolve_program((_BATCH_NAME, "hi"), {"Path": str(tmp_path)})
+	program, *args = resolve_program((_SHIM, "hi"), {"Path": str(tmp_path)})
 	assert Path(program) == shim
 	assert args == ["hi"]
 
@@ -466,7 +463,7 @@ def test_resolve_program_passes_through_an_env_without_path(
 	"""Never the spawner's own ``PATH`` — the one ``shutil.which`` falls back to."""
 	_batch_shim(tmp_path)
 	monkeypatch.setenv("PATH", str(tmp_path))
-	assert resolve_program((_BATCH_NAME, "hi"), {"OTHER": "x"}) == (_BATCH_NAME, "hi")
+	assert resolve_program((_SHIM, "hi"), {"OTHER": "x"}) == (_SHIM, "hi")
 
 
 def test_resolve_program_leaves_a_program_that_is_not_a_batch_shim_to_process_creation(
@@ -480,13 +477,55 @@ def test_resolve_program_leaves_a_program_that_is_not_a_batch_shim_to_process_cr
 	assert resolve_program(("camas-exe", "hi"), {"PATH": str(tmp_path)}) == ("camas-exe", "hi")
 
 
+def test_resolve_program_finds_npms_cmd_shim_beside_its_extensionless_twin(tmp_path: Path) -> None:
+	"""npm installs ``npx``, ``npx.cmd`` and ``npx.ps1`` side by side; only the ``.cmd`` runs."""
+	(tmp_path / _SHIM).write_bytes(b"#!/bin/sh\n")
+	(tmp_path / f"{_SHIM}.ps1").write_bytes(b"")
+	shim = _batch_shim(tmp_path)
+	program, *_ = resolve_program((_SHIM,), {"PATH": str(tmp_path)})
+	assert Path(program) == shim
+
+
+@pytest.mark.parametrize(
+	("first", "second", "substituted"),
+	[
+		((".exe", ".cmd"), (), False),
+		((".exe",), (".cmd",), False),
+		((".cmd",), (".exe",), True),
+		((".bat", ".cmd"), (), True),
+	],
+)
+def test_resolve_program_lets_the_first_program_cmd_exe_would_find_decide(
+	tmp_path: Path, first: tuple[str, ...], second: tuple[str, ...], substituted: bool
+) -> None:
+	"""PATH order across directories, then ``.com``/``.exe``/``.bat``/``.cmd`` within one — an
+	``.exe`` found first passes through to process creation, a batch script found first is
+	substituted."""
+	directories = (tmp_path / "first", tmp_path / "second")
+	for directory, suffixes in zip(directories, (first, second), strict=True):
+		directory.mkdir()
+		for suffix in suffixes:
+			(directory / f"{_SHIM}{suffix}").write_bytes(b"")
+	env = {"PATH": os.pathsep.join(map(str, directories))}
+	assert (resolve_program((_SHIM, "hi"), env) != (_SHIM, "hi")) == substituted
+
+
+def test_resolve_program_reads_path_like_tokens_as_their_file_system_strings() -> None:
+	"""``subprocess`` accepts path-like argv, so the refusal does too — no crash on a ``Path``."""
+	plain = cast("tuple[str, ...]", (Path("tool"), Path("a&b")))
+	assert resolve_program(plain, {}) == plain
+	batch = cast("tuple[str, ...]", (Path("tools") / "build.cmd", "a&b"))
+	with pytest.raises(OSError, match=r"cmd\.exe metacharacter"):
+		resolve_program(batch, {})
+
+
 @pytest.mark.parametrize("arg", ["a&b", "x|y", "<in", "50%", "^", 'say "hi"', "two\nlines"])
 def test_resolve_program_refuses_an_argument_cmd_exe_would_reparse(
 	tmp_path: Path, arg: str
 ) -> None:
 	_batch_shim(tmp_path)
 	with pytest.raises(OSError, match=r"cmd\.exe metacharacter") as raised:
-		resolve_program((_BATCH_NAME, "ok", arg), {"PATH": str(tmp_path)})
+		resolve_program((_SHIM, "ok", arg), {"PATH": str(tmp_path)})
 	assert raised.value.filename == arg
 
 
@@ -505,7 +544,7 @@ def test_resolve_program_refuses_a_shim_whose_own_path_holds_a_metacharacter(
 	directory.mkdir()
 	shim = _batch_shim(directory)
 	with pytest.raises(OSError, match=r"cmd\.exe metacharacter") as raised:
-		resolve_program((_BATCH_NAME, "ok"), {"PATH": str(directory)})
+		resolve_program((_SHIM, "ok"), {"PATH": str(directory)})
 	assert Path(raised.value.filename) == shim
 
 
@@ -515,7 +554,7 @@ def test_resolve_program_answers_an_absolute_shim_for_a_relative_path_entry(
 	"""The child spawns in the leaf's own cwd, so the shim must not be named relative to camas's."""
 	shim = _batch_shim(tmp_path)
 	monkeypatch.chdir(tmp_path)
-	program, *_ = resolve_program((_BATCH_NAME,), {"PATH": "."})
+	program, *_ = resolve_program((_SHIM,), {"PATH": "."})
 	assert Path(program).is_absolute()
 	assert Path(program) == shim
 
