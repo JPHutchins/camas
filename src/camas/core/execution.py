@@ -352,28 +352,43 @@ CMD_METACHARACTERS: Final = frozenset('&|<>^%"\r\n')
 
 
 def resolve_program(argv: tuple[str, ...], env: Mapping[str, str]) -> tuple[str, ...]:
-	"""``argv`` with a bare program name replaced by the ``.cmd``/``.bat`` shim it names on ``env``'s
-	``PATH`` (its key matched case-insensitively); any other program, a name with a directory, an
-	``env`` without ``PATH``, or a miss passes through for process creation's own search.
-
-	Raises:
-		OSError: when an argument holds a :data:`CMD_METACHARACTERS` character the shim's
-			``cmd.exe`` would execute or expand instead of passing it through.
+	"""``argv`` with a bare program name replaced by the absolute path of the ``.cmd``/``.bat`` shim
+	it names on ``env``'s ``PATH`` (its key matched case-insensitively); any other program, a name
+	with a directory, an ``env`` without ``PATH``, or a miss passes through for process creation's
+	own search. Whatever runs a batch script, substituted or written, passes
+	:func:`refuse_cmd_reparse`.
 	"""
+	return refuse_cmd_reparse(_shim_on_path(argv, env) or argv)
+
+
+def _shim_on_path(argv: tuple[str, ...], env: Mapping[str, str]) -> tuple[str, ...] | None:
 	path: Final = next((value for key, value in env.items() if key.casefold() == "path"), None)
 	if not argv or path is None or Path(argv[0]).name != argv[0]:
-		return argv
+		return None
 	found: Final = shutil.which(argv[0], path=path)
 	if found is None or not found.lower().endswith(BATCH_SUFFIXES):
-		return argv
-	if any(CMD_METACHARACTERS.intersection(arg) for arg in argv[1:]):
+		return None
+	return (str(Path(found).absolute()), *argv[1:])
+
+
+def refuse_cmd_reparse(argv: tuple[str, ...]) -> tuple[str, ...]:
+	"""``argv`` unchanged, unless it runs a ``.cmd``/``.bat`` script and one of its tokens — the
+	script's path included — holds a :data:`CMD_METACHARACTERS` character.
+
+	Raises:
+		OSError: naming that token, which ``cmd.exe`` would execute or expand instead of passing it
+			through.
+	"""
+	batch: Final = bool(argv) and argv[0].lower().endswith(BATCH_SUFFIXES)
+	unsafe: Final = next((token for token in argv if CMD_METACHARACTERS.intersection(token)), None)
+	if batch and unsafe is not None:
 		raise OSError(
 			errno.EINVAL,
-			'refusing to pass an argument holding a cmd.exe metacharacter (& | < > ^ % " or a line '
-			"break) to a batch shim, which would run it as a command",
-			found,
+			'refusing to run a batch script with a token holding a cmd.exe metacharacter (& | < > ^ % "'
+			" or a line break), which cmd.exe would run as a command",
+			unsafe,
 		)
-	return (found, *argv[1:])
+	return argv
 
 
 def spawn_cwd(base: Path | None, cwd: Path | None) -> Path | None:

@@ -484,10 +484,40 @@ def test_resolve_program_leaves_a_program_that_is_not_a_batch_shim_to_process_cr
 def test_resolve_program_refuses_an_argument_cmd_exe_would_reparse(
 	tmp_path: Path, arg: str
 ) -> None:
-	shim = _batch_shim(tmp_path)
+	_batch_shim(tmp_path)
 	with pytest.raises(OSError, match=r"cmd\.exe metacharacter") as raised:
 		resolve_program((_BATCH_NAME, "ok", arg), {"PATH": str(tmp_path)})
+	assert raised.value.filename == arg
+
+
+@pytest.mark.parametrize("program", [f"./{_SHIM}.cmd", f"tools/{_SHIM}.BAT", f"/abs/{_SHIM}.cmd"])
+def test_resolve_program_refuses_for_a_batch_script_spelled_with_a_directory(program: str) -> None:
+	"""cmd.exe re-parses a batch script's command line however the script was named."""
+	with pytest.raises(OSError, match=r"cmd\.exe metacharacter") as raised:
+		resolve_program((program, "a&whoami"), {})
+	assert raised.value.filename == "a&whoami"
+
+
+def test_resolve_program_refuses_a_shim_whose_own_path_holds_a_metacharacter(
+	tmp_path: Path,
+) -> None:
+	directory = tmp_path / "R&D"
+	directory.mkdir()
+	shim = _batch_shim(directory)
+	with pytest.raises(OSError, match=r"cmd\.exe metacharacter") as raised:
+		resolve_program((_BATCH_NAME, "ok"), {"PATH": str(directory)})
 	assert Path(raised.value.filename) == shim
+
+
+def test_resolve_program_answers_an_absolute_shim_for_a_relative_path_entry(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	"""The child spawns in the leaf's own cwd, so the shim must not be named relative to camas's."""
+	shim = _batch_shim(tmp_path)
+	monkeypatch.chdir(tmp_path)
+	program, *_ = resolve_program((_BATCH_NAME,), {"PATH": "."})
+	assert Path(program).is_absolute()
+	assert Path(program) == shim
 
 
 def test_a_leaf_launches_a_program_found_only_on_its_own_path(tmp_path: Path) -> None:
