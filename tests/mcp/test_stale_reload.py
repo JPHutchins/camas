@@ -1,12 +1,14 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""The live reload contract of the camas MCP server, driven over real stdio (#58)."""
+"""The live server contract of the camas MCP server, driven over real stdio: reload (#58) and a
+cancelled call (#317)."""
 
 from __future__ import annotations
 
 import asyncio
 import functools
+import json
 import os
 import queue
 import select
@@ -579,6 +581,113 @@ def test_live_server_answers_then_dies_when_the_package_changes(tmp_path: Path) 
 			server.kill()  # pragma: no cover  # only a wedged server takes this
 		server.wait()
 		server.stdin.close()
+		server.stdout.close()
+		server.stderr.close()
+	assert server.returncode == 0
+
+
+def _write(server: subprocess.Popen[str], message: dict[str, Any]) -> None:
+	assert server.stdin is not None
+	server.stdin.write(json.dumps(message) + "\n")
+	server.stdin.flush()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="select on pipes is POSIX-only")
+def test_live_server_survives_a_cancelled_call_and_answers_the_next(tmp_path: Path) -> None:
+	"""#317: cancelling an in-flight ``camas_run`` kills its leaf and leaves the server serving the
+	next request. The cancelled id never gets a result — mcp 1.x still answers it with a
+	``Request cancelled`` error (python-sdk#2480, fixed in mcp 2), which this tolerates."""
+	pid_file = tmp_path / "leaf.pid"
+	(tmp_path / "leaf.py").write_text(
+		"import os, pathlib, time\n"
+		"pathlib.Path('leaf.pid').write_text(str(os.getpid()))\n"
+		"time.sleep(60)\n"
+	)
+	(tmp_path / "tasks.py").write_text(
+		"from camas import Task\nslow = Task(('python', 'leaf.py'))\n"
+	)
+	server = subprocess.Popen(
+		[
+			sys.executable,
+			"-c",
+			"import sys; from camas.mcp.serve import serve_stdio; serve_stdio(sys.argv[1:])",
+			"--plain",
+		],
+		cwd=tmp_path,
+		stdin=subprocess.PIPE,
+		stdout=subprocess.PIPE,
+		stderr=subprocess.PIPE,
+		text=True,
+		bufsize=1,
+	)
+	assert server.stdin is not None
+	assert server.stdout is not None
+	assert server.stderr is not None
+	stderr_chunks: list[bytes] = []
+	stderr_fd = server.stderr.fileno()
+
+	def drain() -> None:
+		for chunk in iter(lambda: os.read(stderr_fd, 4096), b""):
+			stderr_chunks.append(chunk)  # pragma: no cover  # noqa: PERF402
+
+	threading.Thread(target=drain, daemon=True).start()
+	try:
+		_write(
+			server,
+			{
+				"jsonrpc": "2.0",
+				"id": 0,
+				"method": "initialize",
+				"params": {
+					"protocolVersion": "2025-06-18",
+					"capabilities": {},
+					"clientInfo": {"name": "t", "version": "1"},
+				},
+			},
+		)
+		assert '"id":0' in _readline(server, stderr_chunks=stderr_chunks)
+		_write(server, {"jsonrpc": "2.0", "method": "notifications/initialized"})
+		_write(
+			server,
+			{
+				"jsonrpc": "2.0",
+				"id": 1,
+				"method": "tools/call",
+				"params": {"name": "camas_run", "arguments": {"task": "slow"}},
+			},
+		)
+		deadline = time.monotonic() + 15
+		while not pid_file.exists() and time.monotonic() < deadline:
+			time.sleep(0.05)
+		leaf = int(pid_file.read_text())
+		_write(
+			server,
+			{"jsonrpc": "2.0", "method": "notifications/cancelled", "params": {"requestId": 1}},
+		)
+		_write(server, {"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+		answers: dict[int, dict[str, Any]] = {}
+		while 2 not in answers:
+			message = json.loads(_readline(server, stderr_chunks=stderr_chunks))
+			answers[message["id"]] = message
+		assert "result" not in answers.get(1, {})
+		assert any(tool["name"] == "camas_run" for tool in answers[2]["result"]["tools"])
+		assert server.poll() is None
+		deadline = time.monotonic() + 15
+		while time.monotonic() < deadline:  # pragma: no branch  # a surviving leaf fails below
+			try:
+				os.kill(leaf, 0)
+			except ProcessLookupError:
+				break
+			time.sleep(0.05)  # pragma: no cover  # only a leaf still being reaped takes this
+		with pytest.raises(ProcessLookupError):
+			os.kill(leaf, 0)
+	finally:
+		server.stdin.close()
+		try:
+			server.wait(timeout=15)
+		except subprocess.TimeoutExpired:  # pragma: no cover  # only a wedged server takes this
+			server.kill()
+			server.wait()
 		server.stdout.close()
 		server.stderr.close()
 	assert server.returncode == 0
