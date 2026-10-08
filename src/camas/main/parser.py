@@ -347,8 +347,7 @@ def build_parser(state: TasksState = EMPTY_STATE) -> argparse.ArgumentParser:
 		help="scope the run to these changed paths (repeatable): inject them into each "
 		"leaf's {paths} and drop leaves that match none (a leaf's when= predicate also "
 		"prunes on no match), e.g. camas check --paths src/a.py. "
-		"A PostToolBatch hook drives the agent fix node this way, feeding camas mcp fix the "
-		"changed files on stdin",
+		"The camas_gate MCP tool scopes the agent fix node and the checks this way",
 	)
 	return parser
 

@@ -12,6 +12,8 @@ import os
 import time
 from typing import TYPE_CHECKING
 
+import pytest
+
 from camas.core import timings
 from camas.core.hook_event import HookEvent, changed_from_stdin
 from camas.core.timings import CacheKey
@@ -20,7 +22,20 @@ from camas.mcp import serve, wire
 if TYPE_CHECKING:
 	from pathlib import Path
 
-	import pytest
+
+@pytest.fixture(autouse=True)
+def settled(monkeypatch: pytest.MonkeyPatch) -> list[HookEvent]:
+	"""Every nudge here finds its sibling Stop autofix already settled — the events it waited on,
+	recorded instead of polled (:func:`camas.core.hook_event.await_settled` has its own tests)."""
+	waited: list[HookEvent] = []
+
+	def already_settled(event: HookEvent) -> bool:
+		waited.append(event)
+		return True
+
+	monkeypatch.setattr(serve, "await_settled", already_settled)
+	return waited
+
 
 _TASKS = (
 	"from camas import Config, Task\n\ncheck = Task(\n"
@@ -195,6 +210,31 @@ def test_gate_cli_nudge_fix_only_project_exits_zero(
 	(tmp_path / "tasks.py").write_text(_FIX_ONLY_TASKS)
 	assert serve.gate_cli(["--nudge"]) == 0
 	assert "no check node" in capsys.readouterr().err
+
+
+def test_gate_cli_nudge_waits_for_the_stop_autofix_before_it_checks(
+	tmp_path: Path,
+	monkeypatch: pytest.MonkeyPatch,
+	capsys: pytest.CaptureFixture[str],
+	settled: list[HookEvent],
+) -> None:
+	"""The async nudge runs in parallel with its sibling Stop autofix, so before a check that may
+	wake the agent it waits for that fix to settle; a nudge that cannot wake, and a plain gate,
+	wait for nothing."""
+	_chdir_project(tmp_path, monkeypatch, "FIXME")
+	(tmp_path / "sample.py").write_text("FIXME\n")
+	marker_dir = tmp_path / "markers"
+	marker_dir.mkdir()
+	monkeypatch.setattr("camas.mcp.serve.tempfile.gettempdir", lambda: str(marker_dir))
+	monkeypatch.setattr("sys.stdin", io.StringIO(_stop_event("p-1", stop_hook_active=True)))
+	assert serve.gate_cli(["--nudge"]) == 0
+	assert settled == []
+	monkeypatch.setattr("sys.stdin", io.StringIO(_stop_event("p-1")))
+	assert serve.gate_cli(["--nudge"]) == 2
+	assert [event.prompt_id for event in settled] == ["p-1"]
+	capsys.readouterr()
+	assert serve.gate_cli(["--paths", "sample.py"]) == 2
+	assert len(settled) == 1
 
 
 def test_gate_cli_nudge_load_error_exits_zero(

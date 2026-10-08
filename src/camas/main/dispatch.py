@@ -22,7 +22,7 @@ from ..core import timings
 from ..core.budget import BudgetRun, NothingToRun, outcome_lines, plan_under, resolve_budget
 from ..core.execution import run
 from ..core.gate import strip_agent_only_pipes
-from ..core.hook_event import stdin_changed
+from ..core.hook_event import NO_EVENT, event_from_stdin, record_settled
 from ..core.matrix import (
 	empty_variant_labels,
 	expand_matrix,
@@ -160,10 +160,12 @@ def finish_run(result: RunResult) -> int:
 def fix_cli(argv: list[str]) -> int:
 	"""``camas mcp fix [--paths P]…``: run the project's *registered* agent fix node
 	(``Config.agent.fix`` — whatever the user named it), scoped to the changed paths — taken from
-	``--paths`` or, failing that, the ``PostToolBatch`` or ``Stop`` event piped on stdin (the
-	Claude Code autofix hook and the settle-time Stop fix hook). In the ``camas mcp`` namespace so
-	it never collides with a user's own ``camas <task>``. Always exits ``0`` — it runs the fix
-	node for its mutations, not as a pass/fail check; an unregistered fix node is simply a no-op.
+	``--paths`` or, failing that, a ``Stop`` or ``PostToolBatch`` event piped on stdin (the Claude
+	Code ``Stop`` autofix hook, or a hand-wired one). In the ``camas mcp`` namespace so it never
+	collides with a user's own ``camas <task>``. Always exits ``0`` — it runs the fix node for its
+	mutations, not as a pass/fail check; an unregistered fix node is simply a no-op. A ``Stop``
+	event's prompt is marked settled once this returns, whatever it found to do, releasing the
+	async nudge waiting on it (:func:`camas.core.hook_event.await_settled`).
 	"""
 	parser = argparse.ArgumentParser(
 		prog="camas mcp fix", description="Run the registered agent fix node."
@@ -182,6 +184,15 @@ def fix_cli(argv: list[str]) -> int:
 		help="print the resolved path-scoped leaf plan without executing",
 	)
 	args = parser.parse_args(argv)
+	event: Final = event_from_stdin() if not args.paths else NO_EVENT
+	try:
+		return _fix(tuple(args.paths), event.changed, dry_run=args.dry_run)
+	finally:
+		record_settled(event)
+
+
+def _fix(paths: tuple[str, ...], stdin: tuple[str, ...] | None, *, dry_run: bool) -> int:
+	""":func:`fix_cli` past its argument and event parsing."""
 	state, _ = resolve_tasks_source([])
 	if not isinstance(state, LoadOk) or state.config is None:
 		return 0
@@ -189,18 +200,17 @@ def fix_cli(argv: list[str]) -> int:
 	if node is None:
 		return 0
 	base = state.source.parent if state.source is not None else Path.cwd()
-	stdin = stdin_changed() if not args.paths else None
-	if not args.paths and stdin is not None and not stdin:
+	if not paths and stdin is not None and not stdin:
 		return 0
-	requested = args.paths or (stdin or ())
+	requested = paths or (stdin or ())
 	changed = to_changed(requested, base)
 	if requested_but_unusable(requested, changed):
-		if args.dry_run:
+		if dry_run:
 			print(coverage_message(requested))
 		return 0
 	expanded = expand_matrix(node)
 	keying: Final = timings.observed(state.config.camas_path(base), expanded, changed)
-	if args.dry_run:
+	if dry_run:
 		if keying.node is None:
 			print(coverage_message(changed))
 		else:

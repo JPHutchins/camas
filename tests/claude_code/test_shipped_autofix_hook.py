@@ -6,9 +6,9 @@
 Like ``test_autofix_e2e.py``, but the ``.claude/settings.json`` is produced by
 ``camas mcp init --claude`` instead of hand-crafted — the hook is the one users actually get.
 The registered fixer rewrites ``BANANA`` to ``FIXED``; the edit writes ``BANANA``; the shipped
-``PostToolBatch`` hook fires and leaves ``FIXED`` on disk.
+synchronous ``Stop`` hook fires as the turn ends and leaves ``FIXED`` on disk.
 
-Broken variant: mutate the shipped settings to move the camas hook from ``PostToolBatch`` to
+Broken variant: mutate the shipped settings to move the camas hooks from ``Stop`` to
 ``FileChanged`` (the wrong event — ``FileChanged`` does not fire on Claude's own edits, as
 proved by ``test_hook_contract.py``). Re-run the edit; assert ``BANANA`` survives, proving
 a wrong-event regression fails the harness.
@@ -97,7 +97,7 @@ def _init_claude(tmp_path: Path) -> None:
 	)
 
 
-def test_shipped_post_tool_batch_hook_runs_the_autofix(
+def test_shipped_stop_hook_runs_the_autofix(
 	tmp_path: Path,
 	run_headless: Callable[..., CompletedProcess[str]],
 ) -> None:
@@ -128,8 +128,7 @@ def test_moved_to_filechanged_event_does_not_fire(
 		json.loads((tmp_path / ".claude" / "settings.json").read_text(encoding="utf-8")),
 	)
 	hooks = cast("dict[str, list[dict[str, object]]]", settings["hooks"])
-	ptb = hooks.pop("PostToolBatch", [])
-	hooks["FileChanged"] = ptb
+	hooks["FileChanged"] = hooks.pop("Stop")
 	settings["hooks"] = hooks
 	(tmp_path / ".claude" / "settings.json").write_text(
 		json.dumps(settings, indent=2) + "\n", encoding="utf-8"

@@ -426,9 +426,10 @@ leaves rather than delaying the nudge."""
 
 
 def write_hooks(argv: list[str], *, quiet: bool = False, launcher: Launcher | None = None) -> int:
-	"""Write the ``PostToolBatch`` autofix hook and the two ``Stop`` hooks (a settle-time fix,
-	and an async check that nudges the main agent to launch the fixer ladder) into
-	``.claude/settings.json``.
+	"""Write the two camas ``Stop`` hooks into ``.claude/settings.json``: the synchronous autofix,
+	which holds the turn until the registered fix node has run, and an async check that waits for
+	that fix (:func:`camas.core.hook_event.await_settled`) and then nudges the main agent to launch
+	the fixer ladder when the workspace is not green.
 
 	The fix hook trails ``|| exit 0`` so a best-effort, zero-token autofix can never block the
 	turn: a launcher/env/config failure degrades to a no-op instead of a hard stop, the same
@@ -475,10 +476,7 @@ def write_hooks(argv: list[str], *, quiet: bool = False, launcher: Launcher | No
 		dumps_prettier(
 			_with_camas_hooks(
 				cast("dict[str, Any]", raw),
-				{
-					"PostToolBatch": [{"hooks": [fix_hook]}],
-					"Stop": [{"hooks": [fix_hook, nudge_hook]}],
-				},
+				{"Stop": [{"hooks": [fix_hook, nudge_hook]}]},
 			)
 		)
 		+ "\n",
@@ -486,8 +484,7 @@ def write_hooks(argv: list[str], *, quiet: bool = False, launcher: Launcher | No
 	)
 	if not quiet:
 		print(
-			f"Wrote the camas autofix and Stop hooks to {settings_path}\n"
-			f"  PostToolBatch:      {fix_command}\n"
+			f"Wrote the camas Stop hooks to {settings_path}\n"
 			f"  Stop (fix):         {fix_command}\n"
 			f"  Stop (async nudge): {nudge_command}\n"
 			f"\nReload Claude Code for the hooks to take effect."
@@ -529,7 +526,7 @@ def write_agent_skill_templates() -> None:
 
 
 def write_claude(argv: list[str], *, launcher: Launcher | None = None) -> int:
-	"""Write ``.mcp.json``, the autofix/Stop hooks, and the tiered camas-fixer/gate templates.
+	"""Write ``.mcp.json``, the Stop hooks, and the tiered camas-fixer/gate templates.
 
 	Returns 0 on success, 2 on launcher-resolution or validation failure.
 	"""

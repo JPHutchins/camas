@@ -184,7 +184,9 @@ def test_tools_rich_includes_title_annotations_and_schema() -> None:
 	assert tool_gate.title == "SA-delegation gate"
 	assert tool_gate.outputSchema is not None
 	assert tool_gate.annotations is not None
-	assert tool_gate.annotations.readOnlyHint is True
+	assert tool_gate.annotations.readOnlyHint is False
+	assert tool_gate.annotations.destructiveHint is False
+	assert tool_gate.annotations.idempotentHint is True
 	assert tool_fix.title == "Run deterministic autofix"
 	assert tool_fix.outputSchema is not None
 	assert tool_fix.annotations is not None
@@ -1603,6 +1605,38 @@ def _text(result: types.CallToolResult) -> str:
 
 
 GATE_FIX = Task(("python", "-c", "print('fixed')"), name="fmt", mutates=True)
+
+
+SETTLES_SAMPLE = Task(
+	("python", "-c", "import pathlib; pathlib.Path('sample.py').write_text('clean')"),
+	name="settle",
+	mutates=True,
+)
+CLEAN_SAMPLE = Task(
+	(
+		"python",
+		"-c",
+		"import pathlib, sys; sys.exit('dirty' in pathlib.Path('sample.py').read_text())",
+	),
+	name="clean",
+)
+
+
+async def test_gate_call_settles_the_registered_fix_before_it_checks(tmp_path: Path) -> None:
+	(tmp_path / "sample.py").write_text("dirty")
+	config = Config(default_task=CLEAN_SAMPLE, agent=Claude(fix=SETTLES_SAMPLE))
+	session = _session({"clean": CLEAN_SAMPLE}, config, tmp_path)
+	result = await serve.call(session, "camas_gate", {})
+	assert "CONTINUE" in _text(result)
+	assert (tmp_path / "sample.py").read_text() == "clean"
+
+
+async def test_gate_call_skips_the_fix_when_every_path_is_outside_the_repo(tmp_path: Path) -> None:
+	(tmp_path / "sample.py").write_text("dirty")
+	config = Config(default_task=CLEAN_SAMPLE, agent=Claude(fix=SETTLES_SAMPLE))
+	session = _session({"clean": CLEAN_SAMPLE}, config, tmp_path)
+	await serve.call(session, "camas_gate", {"paths": [str(tmp_path.parent / "elsewhere.py")]})
+	assert (tmp_path / "sample.py").read_text() == "dirty"
 
 
 async def test_gate_call_load_error(tmp_path: Path) -> None:

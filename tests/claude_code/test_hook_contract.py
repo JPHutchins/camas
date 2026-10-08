@@ -7,8 +7,8 @@
   ``tool_calls[].tool_input.file_path`` (what ``camas mcp fix`` reads from stdin).
 - ``${file_path}`` is NOT interpolated into a command hook — it shell-expands to nothing, which
   is why the hook delivers the path on stdin instead of via ``--paths ${file_path}``.
-- ``FileChanged`` does NOT fire on Claude's own edits (it is a disk watcher), so the autofix hook
-  is on ``PostToolBatch``.
+- ``FileChanged`` does NOT fire on Claude's own edits (it is a disk watcher), so a per-edit
+  autofix hook would have to be on ``PostToolBatch`` — the shipped one runs at ``Stop`` instead.
 
 If a future Claude Code changes any of these, this suite fails and camas's hook is revisited.
 """

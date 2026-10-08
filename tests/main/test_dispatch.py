@@ -13,6 +13,7 @@ from camas import Config, Parallel, Sequential, Task
 from camas.core import timings
 from camas.core.color import WHITE
 from camas.core.completion import RunResult
+from camas.core.hook_event import settled_marker
 from camas.main.dispatch import dispatch, fix_cli, mcp_cli_hint, print_interrupt_banner, run_under
 from camas.main.state import LoadOk
 
@@ -435,6 +436,24 @@ def test_fix_cli_empty_post_tool_batch_event_is_noop(
 	monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"tool_calls": [{"tool_input": {}}]})))
 	assert fix_cli([]) == 0
 	assert not (tmp_path / "fixed.txt").exists()
+
+
+_STOP_EVENT = json.dumps({"hook_event_name": "Stop", "session_id": "s-1", "prompt_id": "p-1"})
+
+
+@pytest.mark.parametrize("tasks", [_TIDY.format(scope="."), "x = 1\n"])
+def test_fix_cli_marks_a_stop_events_prompt_settled_after_the_fix_whatever_it_found(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tasks: str
+) -> None:
+	"""The async Stop-hook nudge waits on this marker, so it is written whether the project
+	registers a fix node or not."""
+	(tmp_path / "tasks.py").write_text(tasks)
+	monkeypatch.chdir(tmp_path)
+	monkeypatch.setattr("camas.core.hook_event.tempfile.gettempdir", lambda: str(tmp_path))
+	monkeypatch.setattr("sys.stdin", io.StringIO(_STOP_EVENT))
+	assert fix_cli([]) == 0
+	assert settled_marker("s-1").read_text(encoding="utf-8") == "p-1"
+	assert (tmp_path / "fixed.txt").exists() == ("tidy" in tasks)
 
 
 def test_fix_cli_noop_without_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -42,8 +42,14 @@ from ..core.budget import (
 	summary_lines,
 )
 from ..core.execution import run
-from ..core.gate import STALE_TEMP_MAX_AGE_S, GateOutcome, run_gate
-from ..core.hook_event import NO_EVENT, HookEvent, event_from_stdin
+from ..core.gate import STALE_TEMP_MAX_AGE_S, GateOutcome, run_gate, settle
+from ..core.hook_event import (
+	NO_EVENT,
+	SETTLED_MARKER_PREFIX,
+	HookEvent,
+	await_settled,
+	event_from_stdin,
+)
 from ..core.matrix import (
 	empty_variant_labels,
 	expand_matrix,
@@ -118,7 +124,9 @@ RUN_ANNOTATIONS: Final = types.ToolAnnotations(
 )
 CHECK_ANNOTATIONS: Final = types.ToolAnnotations(readOnlyHint=True, openWorldHint=False)
 DOCS_ANNOTATIONS: Final = types.ToolAnnotations(readOnlyHint=True, openWorldHint=False)
-GATE_ANNOTATIONS: Final = types.ToolAnnotations(readOnlyHint=True, openWorldHint=False)
+GATE_ANNOTATIONS: Final = types.ToolAnnotations(
+	readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False
+)
 FIX_ANNOTATIONS: Final = types.ToolAnnotations(
 	readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=True
 )
@@ -611,9 +619,11 @@ def tools(task_names: tuple[str, ...], compat: Compat) -> Tools:
 			compat,
 			name=ToolName.GATE.value,
 			description=textwrap.dedent("""\
-				The SA-delegation gate: scope THIS project's checks to the
-				files just changed, run them, and return a binary verdict. It does not mutate — the
-				deterministic fixers run separately on PostToolBatch (camas mcp fix). residual_class is
+				The SA-delegation gate: first run the project's registered deterministic autofix
+				(Config.agent.fix — formatters, --fix linters) over the files just changed, then scope
+				THIS project's checks to them, run them, and return a binary verdict, so a residual is
+				never one the autofix settles. Re-read a file before editing it after a gate: the autofix
+				may have rewritten it. residual_class is
 				'green' (decision 'continue') when the checks pass, or 'needs_reasoning' (decision
 				'block') when a check still fails — then diagnostics carries the failing leaves. Pass
 				paths=[…] (the changed files) to scope; omit to gate the whole check node. under=<seconds>
@@ -1534,6 +1544,15 @@ async def gate_for(
 	except ValueError as e:
 		return error_result(str(e))
 	changed = to_changed(req.paths, base_for(session))
+	if not requested_but_unusable(req.paths, changed):
+		await settle(
+			config.gate_fix() if config is not None else None,
+			changed,
+			camas_dir=session.camas_dir,
+			jobs=req.jobs,
+			base=base_for(session),
+			leaf_color=leaf_color_of(config),
+		)
 	outcome = await run_gate(
 		node,
 		changed,
@@ -1798,13 +1817,15 @@ def _unlink_if_stale(path: Path, cutoff: float) -> None:
 
 
 def prune_stale_nudge_markers(max_age_s: float = STALE_TEMP_MAX_AGE_S) -> None:
-	"""Best-effort sweep of prior sessions' nudge markers older than ``max_age_s`` — bounds their
-	accumulation in the system temp dir, mirroring :func:`camas.core.gate.prune_stale_report_dirs`.
+	"""Best-effort sweep of prior sessions' nudge and settled markers older than ``max_age_s`` —
+	bounds their accumulation in the system temp dir, mirroring
+	:func:`camas.core.gate.prune_stale_report_dirs`.
 	"""
 	base = Path(tempfile.gettempdir())
 	cutoff = time.time() - max_age_s
-	for marker in base.glob(f"{NUDGE_MARKER_PREFIX}*"):
-		_unlink_if_stale(marker, cutoff)
+	for prefix in (NUDGE_MARKER_PREFIX, SETTLED_MARKER_PREFIX):
+		for marker in base.glob(f"{prefix}*"):
+			_unlink_if_stale(marker, cutoff)
 
 
 def should_nudge(event: HookEvent) -> bool:
@@ -1919,8 +1940,9 @@ def gate_cli_load_error(state: TasksState, source: Path, exception: Exception) -
 
 
 def gate_cli(argv: list[str]) -> int:
-	"""Run the gate once, headless: scope this project's checks to the changed paths (``--paths``,
-	else the files in a ``PostToolBatch``/``Stop`` event on stdin), print the ``GateResponse`` as
+	"""Run the gate once, headless and read-only: scope this project's checks to the changed paths
+	(``--paths``, else the files in a ``PostToolBatch`` event on stdin; a ``Stop`` event names
+	none, so the whole tree), print the ``GateResponse`` as
 	JSON to stdout, and exit ``0`` (continue) / ``2`` (block) — on a block the agent-facing
 	summary goes to stderr. With ``--nudge``, prints the Stop-hook nudge text instead of the JSON
 	verdict, self-limiting per :class:`GateArgs`. The process-isolated, machine-readable gate
@@ -1973,7 +1995,10 @@ def path_scoped_plan_text(node: TaskNode) -> str:
 def run_gate_cli(
 	args: GateArgs, base: Path, tasks: Mapping[str, TaskNode], config: Config | None
 ) -> int:
-	"""Resolve the check node, run the gate over the changed paths, emit the verdict."""
+	"""Resolve the check node, run the gate over the changed paths, emit the verdict. Read-only: a
+	nudge that may wake the agent first waits for its sibling ``Stop`` autofix to settle
+	(:func:`camas.core.hook_event.await_settled`), so its check reads the fixed files.
+	"""
 	try:
 		node = gate_source(tasks, config, args.task)
 		require_filled_axes(node)
@@ -1993,6 +2018,8 @@ def run_gate_cli(
 	if args.dry_run:
 		print(gate_dry_run_text(node, changed, args.under, camas_dir))
 		return 0
+	if args.nudge and should_nudge(event):
+		_ = await_settled(event)
 	outcome = asyncio.run(
 		run_gate(
 			node,
