@@ -277,6 +277,9 @@ jobs:
           CIBW_ENVIRONMENT: CAMAS_USE_MYPYC=1
           CIBW_BUILD_VERBOSITY: 1
           CIBW_BEFORE_ALL_LINUX: git config --global --add safe.directory '*'
+          # cryptography (camas[mcp] -> pyjwt[crypto]) last shipped win_arm64 wheels in 46.0.3; prefer
+          # that wheel over a newer sdist whose build needs OpenSSL.
+          CIBW_TEST_ENVIRONMENT: ${{ matrix.os == 'windows-11-arm' && 'PIP_PREFER_BINARY=1' || '' }}
           CIBW_TEST_REQUIRES: camas[all] pytest pytest-asyncio cyclopts hypothesis jsonschema
           CIBW_TEST_COMMAND: >
             python -c "import camas.main.dispatch, camas.main.entrypoint, camas.effect.summary, camas.effect.termtree;
