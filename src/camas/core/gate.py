@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""The SA-delegation gate: settle the registered fix node over the changed paths (:func:`settle`),
-then scope the check node to them, run the checks, and classify the residual ``green`` vs
-``needs_reasoning``.
+"""The SA-delegation gate: scope the check node to the changed paths, run the checks, and
+classify the residual ``green`` vs ``needs_reasoning``; ``camas_gate`` first settles the
+registered fix node over the same paths (:func:`settle`).
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Final, Literal, NamedTuple, TypeAlias
 from ..v0.task import Group, Pipe, Task, rebuilt
 from .budget import BudgetRun, NothingToRun, plan_under, resolve_budget
 from .execution import run
+from .hook_event import STALE_TEMP_MAX_AGE_S
 from .matrix import expand_matrix
 from .scope import coverage_message
 from .timings import observed, scope_of
@@ -49,10 +50,6 @@ REPORT_DIR_PREFIX: Final = "camas-report-"
 """Prefix on this machine's path-mode report directories, one per gate run — swept by
 :func:`prune_stale_report_dirs` once older than its max age.
 """
-
-STALE_TEMP_MAX_AGE_S: Final = 3600.0
-"""Age past which a prior run's leftovers in the system temp dir are swept — shared by
-:func:`prune_stale_report_dirs` and the MCP nudge-marker sweep so both age out together."""
 
 
 class GateOutcome(NamedTuple):
@@ -270,7 +267,7 @@ async def settle(
 	leaf_color: bool = True,
 ) -> RunResult | None:
 	"""Run the ``fix`` node (``Config.agent.fix``) scoped to ``changed`` and record its timings — the
-	deterministic autofix every gate entry point runs before its checks; ``None`` when there is no
+	deterministic autofix ``camas_gate`` runs before its checks; ``None`` when there is no
 	fix node or no fix leaf covers ``changed``.
 	"""
 	if fix is None:

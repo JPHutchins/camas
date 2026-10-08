@@ -96,7 +96,10 @@ def mcp_server_status() -> Callable[[str], dict[str, str]]:
 
 	def _status(stream: str) -> dict[str, str]:
 		messages = (json.loads(line) for line in stream.splitlines() if line.strip())
-		init = next(m for m in messages if m.get("type") == "system" and m.get("subtype") == "init")
+		init = next(
+			(m for m in messages if m.get("type") == "system" and m.get("subtype") == "init"), None
+		)
+		assert init is not None, f"no init message in the stream-json output: {stream[:500]!r}"
 		return {server["name"]: server["status"] for server in init.get("mcp_servers", [])}
 
 	return _status

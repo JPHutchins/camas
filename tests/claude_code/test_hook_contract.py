@@ -7,6 +7,7 @@
   ``tool_calls[].tool_input.file_path`` (what ``camas mcp fix`` reads from stdin).
 - ``${file_path}`` is NOT interpolated into a command hook — it shell-expands to nothing, which
   is why the hook delivers the path on stdin instead of via ``--paths ${file_path}``.
+- ``Stop`` carries ``session_id`` and ``prompt_id`` (what the nudge's settle wait keys on).
 - ``FileChanged`` does NOT fire on Claude's own edits (it is a disk watcher), so a per-edit
   autofix hook would have to be on ``PostToolBatch`` — the shipped one runs at ``Stop`` instead.
 
@@ -42,6 +43,7 @@ def _settings() -> dict[str, object]:
 				}
 			],
 			"PostToolBatch": [{"hooks": [probe("PostToolBatch")]}],
+			"Stop": [{"hooks": [probe("Stop")]}],
 		}
 	}
 
@@ -101,6 +103,13 @@ def test_post_tool_batch_is_the_edit_event_and_file_path_is_not_interpolated(
 	assert any(p.endswith("PROBE.txt") for p in batch_paths), (
 		f"PostToolBatch carried no path to the edited file: {batch_paths}"
 	)
+
+	stops = [_get(r, "stdin_json") for r in records if _event(r) == "Stop"]
+	assert stops, "Stop did not fire at the end of the turn"
+	assert all(
+		isinstance(_get(stop, "session_id"), str) and isinstance(_get(stop, "prompt_id"), str)
+		for stop in stops
+	), f"a Stop event lacked session_id or prompt_id: {stops}"
 
 	interpolated = [r for r in records if "--paths" in _argv(r)]
 	assert interpolated, "expected a hook whose command contained --paths ${file_path}"

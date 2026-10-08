@@ -11,11 +11,11 @@ out to the CLI; using the MCP tool is structurally enforced (not measured by int
 
 Happy path: set up a tasks.py whose check node fails when a file contains ``FORBIDDEN_TOKEN``
 and whose fix node mechanically replaces it with ``ALLOWED_TOKEN``. After ``init --claude``,
-run headless against the project's ``.mcp.json`` (``--permission-mode bypassPermissions``),
-instruct the main agent to write the forbidden token and spawn camas-lint-fixer-haiku on the
-scope. Nothing fixes between edits, and the turn-end Stop fix runs only after the assertion's
-file is final, so the marker is fixed on disk only if the fixer's ``camas_gate`` settled the
-fix node — proving the MCP-gated fixer loop works end to end.
+drop the Stop hooks it wrote, run headless against the project's ``.mcp.json``
+(``--permission-mode bypassPermissions``), and instruct the main agent to write the forbidden
+token and spawn camas-lint-fixer-haiku on the scope. Nothing fixes between edits and no Stop hook
+runs, so the marker is fixed on disk only if the fixer's ``camas_gate`` settled the fix node —
+proving the MCP-gated fixer loop works end to end.
 
 No broken variant: a sabotaged fixer (``tools:`` dropping ``mcp__camas__camas_gate``) does NOT
 fail to reach green, because both the main agent and the fixer still have ``Edit`` and fix the
@@ -27,6 +27,7 @@ instrumenting the MCP server, out of scope here.
 
 from __future__ import annotations
 
+import json
 import os
 import shlex
 import shutil
@@ -132,6 +133,10 @@ def test_fixer_subagent_drives_scope_to_green_via_mcp_gate(
 ) -> None:
 	_setup_project(tmp_path)
 	_init_claude(tmp_path)
+	settings_path = tmp_path / ".claude" / "settings.json"
+	settings = json.loads(settings_path.read_text(encoding="utf-8"))
+	del settings["hooks"]["Stop"]
+	settings_path.write_text(json.dumps(settings), encoding="utf-8")
 
 	headless = run_headless(
 		tmp_path,

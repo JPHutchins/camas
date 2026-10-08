@@ -42,10 +42,10 @@ from ..core.budget import (
 	summary_lines,
 )
 from ..core.execution import run
-from ..core.gate import STALE_TEMP_MAX_AGE_S, GateOutcome, run_gate, settle
+from ..core.gate import GateOutcome, run_gate, settle
 from ..core.hook_event import (
 	NO_EVENT,
-	SETTLED_MARKER_PREFIX,
+	STALE_TEMP_MAX_AGE_S,
 	HookEvent,
 	await_settled,
 	event_from_stdin,
@@ -125,7 +125,7 @@ RUN_ANNOTATIONS: Final = types.ToolAnnotations(
 CHECK_ANNOTATIONS: Final = types.ToolAnnotations(readOnlyHint=True, openWorldHint=False)
 DOCS_ANNOTATIONS: Final = types.ToolAnnotations(readOnlyHint=True, openWorldHint=False)
 GATE_ANNOTATIONS: Final = types.ToolAnnotations(
-	readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False
+	readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=True
 )
 FIX_ANNOTATIONS: Final = types.ToolAnnotations(
 	readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=True
@@ -1544,15 +1544,19 @@ async def gate_for(
 	except ValueError as e:
 		return error_result(str(e))
 	changed = to_changed(req.paths, base_for(session))
-	if not requested_but_unusable(req.paths, changed):
-		await settle(
-			config.gate_fix() if config is not None else None,
-			changed,
-			camas_dir=session.camas_dir,
-			jobs=req.jobs,
-			base=base_for(session),
-			leaf_color=leaf_color_of(config),
-		)
+	rerun = wire.GateRerun(task=req.task, paths=changed, under=req.under)
+	if requested_but_unusable(req.paths, changed):
+		nothing: Final = GateOutcome("green", None, None, None, coverage_message(req.paths))
+		resp = to_gate_response(nothing, None, rerun)
+		return success(with_warning(session, gate_text(resp)), resp, session.compat)
+	settled = await settle(
+		config.gate_fix() if config is not None else None,
+		changed,
+		camas_dir=session.camas_dir,
+		jobs=req.jobs,
+		base=base_for(session),
+		leaf_color=leaf_color_of(config),
+	)
 	outcome = await run_gate(
 		node,
 		changed,
@@ -1564,7 +1568,6 @@ async def gate_for(
 	)
 	record_gate(session.camas_dir, outcome)
 	budget = to_budget_report(outcome.budget) if outcome.budget is not None else None
-	rerun = wire.GateRerun(task=req.task, paths=changed, under=req.under)
 	resp = to_gate_response(outcome, budget, rerun)
 	nudge = improve_loop_nudge(
 		any_truncated=any(env.truncated for env in resp.diagnostics or ()),
@@ -1574,7 +1577,19 @@ async def gate_for(
 			and has_failing_leaf_without_agent_format(outcome.node, outcome.result)
 		),
 	)
-	return success(with_warning(session, gate_text(resp) + nudge), resp, session.compat)
+	return success(
+		with_warning(session, gate_text(resp) + settle_note(settled) + nudge), resp, session.compat
+	)
+
+
+def settle_note(settled: RunResult | None) -> str:
+	"""A gate-text line naming the autofix's non-zero exit; empty when it did not run or exited 0."""
+	if settled is None or settled.returncode == 0:
+		return ""
+	return (
+		f"\n\nThe autofix (Config.agent.fix) exited {settled.returncode} before the checks ran, so"
+		" some of its fixes may not have applied — camas_fix shows its output."
+	)
 
 
 async def fix_call(session: Session, arguments: dict[str, Any]) -> types.CallToolResult:
@@ -1766,7 +1781,13 @@ def gate_text(resp: wire.GateResponse) -> str:
 			if env.truncated:
 				lines.append("    … earlier output truncated")
 	if resp.decision == "block":
-		lines.extend(["", f"Re-gate this scope: {rerun_command(resp.rerun)}"])
+		lines.extend(
+			[
+				"",
+				f"Re-gate this scope: {rerun_command(resp.rerun)} (read-only; camas_gate settles"
+				" the autofix first)",
+			]
+		)
 	return "\n".join(lines)
 
 
@@ -1817,15 +1838,13 @@ def _unlink_if_stale(path: Path, cutoff: float) -> None:
 
 
 def prune_stale_nudge_markers(max_age_s: float = STALE_TEMP_MAX_AGE_S) -> None:
-	"""Best-effort sweep of prior sessions' nudge and settled markers older than ``max_age_s`` —
-	bounds their accumulation in the system temp dir, mirroring
-	:func:`camas.core.gate.prune_stale_report_dirs`.
+	"""Best-effort sweep of prior sessions' nudge markers older than ``max_age_s`` — bounds their
+	accumulation in the system temp dir, mirroring :func:`camas.core.gate.prune_stale_report_dirs`.
 	"""
 	base = Path(tempfile.gettempdir())
 	cutoff = time.time() - max_age_s
-	for prefix in (NUDGE_MARKER_PREFIX, SETTLED_MARKER_PREFIX):
-		for marker in base.glob(f"{prefix}*"):
-			_unlink_if_stale(marker, cutoff)
+	for marker in base.glob(f"{NUDGE_MARKER_PREFIX}*"):
+		_unlink_if_stale(marker, cutoff)
 
 
 def should_nudge(event: HookEvent) -> bool:
@@ -2018,7 +2037,7 @@ def run_gate_cli(
 	if args.dry_run:
 		print(gate_dry_run_text(node, changed, args.under, camas_dir))
 		return 0
-	if args.nudge and should_nudge(event):
+	if args.nudge and should_nudge(event) and config is not None and config.gate_fix() is not None:
 		_ = await_settled(event)
 	outcome = asyncio.run(
 		run_gate(

@@ -82,25 +82,13 @@ def event_from_stdin() -> HookEvent:
 	)
 
 
-def stdin_changed() -> tuple[str, ...] | None:
-	"""The edited files in a ``PostToolBatch`` event piped on stdin (the Claude Code plugin's
-	autofix/gate hook), de-duplicated in order: a (possibly empty) tuple when such an event is
-	present, or ``None`` when stdin is a tty, empty, or not such an event — letting the caller
-	tell "the batch changed nothing" (empty tuple) from "no event, use my default" (``None``).
-	"""
-	return event_from_stdin().changed
-
-
-def changed_from_stdin() -> tuple[str, ...]:
-	"""The edited files from a stdin ``PostToolBatch`` event, ``()`` when there is no such event
-	— the gate's view, where an empty changed set falls back to the whole check node.
-	"""
-	return stdin_changed() or ()
-
-
 SETTLED_MARKER_PREFIX: Final = "camas-settled-"
 """Prefix on the per-session markers in the machine temp dir naming the last prompt whose ``Stop``
 autofix has run."""
+
+STALE_TEMP_MAX_AGE_S: Final = 3600.0
+"""Age past which a prior run's leftovers in the system temp dir are swept — the settled and nudge
+markers and the gate's report directories age out together."""
 
 SETTLE_WAIT_S: Final = 60.0
 """How long the async Stop-hook nudge waits for its sibling autofix before checking anyway."""
@@ -113,10 +101,16 @@ def settled_marker(session_id: str) -> Path:
 
 
 def record_settled(event: HookEvent) -> None:
-	"""Mark ``event``'s prompt settled for :func:`await_settled` — a no-op for an event that carries
-	a tool batch or lacks session and prompt ids.
+	"""Mark ``event``'s prompt settled for :func:`await_settled`, sweeping prior sessions' markers
+	older than :data:`STALE_TEMP_MAX_AGE_S` first — a no-op for an event that carries a tool batch
+	or lacks session and prompt ids.
 	"""
 	if event.changed is None and event.session_id and event.prompt_id:
+		cutoff: Final = time.time() - STALE_TEMP_MAX_AGE_S
+		for marker in Path(tempfile.gettempdir()).glob(f"{SETTLED_MARKER_PREFIX}*"):
+			with suppress(OSError):
+				if marker.stat().st_mtime < cutoff:
+					marker.unlink()
 		with suppress(OSError):
 			settled_marker(event.session_id).write_text(event.prompt_id, encoding="utf-8")
 
@@ -130,7 +124,7 @@ def await_settled(event: HookEvent, *, timeout: float = SETTLE_WAIT_S, poll: flo
 	marker: Final = settled_marker(event.session_id)
 	deadline: Final = time.monotonic() + timeout
 	while True:
-		with suppress(OSError):
+		with suppress(OSError, ValueError):
 			if marker.read_text(encoding="utf-8") == event.prompt_id:
 				return True
 		if time.monotonic() >= deadline:

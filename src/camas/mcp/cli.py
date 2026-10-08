@@ -27,11 +27,11 @@ Usage:
                               the Stop autofix hook; no-op if unregistered
   camas mcp gate [task]     run the gate once, headless and read-only — print the verdict as
     [--paths P]… [--under D]  JSON, exit 0 (continue) / 2 (block); scope to --paths or a piped
-    [--jobs N] [--nudge]      PostToolBatch/Stop event (CI + benchmark); --under takes a
-                              duration (5, 1.5s, 500ms, 2m, 1h); --nudge waits for the Stop
-                              autofix, then emits the async Stop-hook nudge text instead of the
-                              JSON verdict — at most once per prompt, and exit 0 (no rewake)
-                              when no check node or camas[mcp] is missing
+    [--jobs N] [--nudge]      PostToolBatch event; a Stop event gates the whole tree (CI +
+                              benchmark); --under takes a duration (5, 1.5s, 500ms, 2m, 1h);
+                              --nudge waits for the Stop autofix, then emits the async Stop-hook
+                              nudge text instead of the JSON verdict — at most once per prompt,
+                              and exit 0 (no rewake) when no check node or camas[mcp] is missing
 
 Options:
   --rich        accepted for back-compat; rich output is the default
