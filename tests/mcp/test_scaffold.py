@@ -1087,15 +1087,16 @@ def test_write_claude_stops_on_mcp_json_failure(
 
 
 def test_write_claude_idempotent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+	"""A re-run overwrites the generated files rather than skipping them — asserted on content, not
+	mtimes, which two writes inside one clock tick leave equal on a fast runner."""
 	monkeypatch.chdir(tmp_path)
 	monkeypatch.setattr("shutil.which", which("camas"))
-	# First run
+	agent = tmp_path / ".claude" / "agents" / "camas-lint-fixer-haiku.md"
 	assert write_claude([]) == 0
-	mtime1 = (tmp_path / ".claude" / "agents" / "camas-lint-fixer-haiku.md").stat().st_mtime
-	# Second run should overwrite
+	shipped = agent.read_text()
+	agent.write_text("stale")
 	assert write_claude([]) == 0
-	mtime2 = (tmp_path / ".claude" / "agents" / "camas-lint-fixer-haiku.md").stat().st_mtime
-	assert mtime2 > mtime1
+	assert agent.read_text() == shipped
 
 
 _PEP723_TASKS = (
