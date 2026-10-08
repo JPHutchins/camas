@@ -369,7 +369,7 @@ def resolve_program(argv: tuple[str, ...], env: Mapping[str, str]) -> tuple[str,
 	if any(CMD_METACHARACTERS.intersection(arg) for arg in argv[1:]):
 		raise OSError(
 			errno.EINVAL,
-			"refusing to pass an argument holding a cmd.exe metacharacter (& | < > ^ % \" or a line "
+			'refusing to pass an argument holding a cmd.exe metacharacter (& | < > ^ % " or a line '
 			"break) to a batch shim, which would run it as a command",
 			found,
 		)

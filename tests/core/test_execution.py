@@ -410,15 +410,17 @@ def _batch_shim(directory: Path) -> Path:
 	return shim
 
 
-def _launchable_shim(directory: Path) -> Path:
-	"""A program named ``camas-shim`` that echoes its arguments — an npm-style ``.cmd`` shim on
-	Windows, an executable script elsewhere."""
-	if sys.platform == "win32":
-		return _batch_shim(directory)
+def _script_shim(directory: Path) -> Path:
 	shim = directory / _SHIM
 	shim.write_bytes(b'#!/bin/sh\necho shim "$@"\n')
 	shim.chmod(0o755)
 	return shim
+
+
+def _launchable_shim(directory: Path) -> Path:
+	"""A program named ``camas-shim`` that echoes its arguments — an npm-style ``.cmd`` shim on
+	Windows, an executable script elsewhere."""
+	return _batch_shim(directory) if sys.platform == "win32" else _script_shim(directory)
 
 
 def test_resolve_program_finds_a_batch_shim_on_the_leaf_path_under_any_key_case(
