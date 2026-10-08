@@ -29,7 +29,7 @@ let
 
   resolverArgs = {
     inherit python3Packages pyprojectExtras;
-    pyprojectGroups = pyproject.dependency-groups;
+    pyprojectGroups = pyproject.dependency-groups or { };
   };
 
   optional-dependencies = lib.mapAttrs (

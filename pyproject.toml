@@ -79,6 +79,7 @@ test = [
 "cyclopts>=4,<5",
 "hypothesis>=6,<7",
 "jsonschema>=4,<5; python_version < '3.15'",
+"typing-extensions>=4.12",
 ]
 dev = [
 { include-group = "test" },
@@ -93,7 +94,6 @@ dev = [
 "exceptiongroup>=1.2",
 "taskgroup>=0.2",
 "tomli>=2",
-"typing_extensions>=4.12",
 "types-jsonschema; python_version < '3.15'",
 ]
 # actionlint-py is sdist-only and downloads the actionlint binary from GitHub releases at build

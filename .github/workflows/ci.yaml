@@ -270,6 +270,8 @@ jobs:
         with:
           fetch-depth: 0
 
+      # v4.3.0 or later: CIBW_TEST_GROUPS passes the group's `<`/`>` specifiers through cmd.exe on
+      # Windows, which 3.x misreads as redirection.
       - uses: pypa/cibuildwheel@v4.3.0
         env:
           CIBW_BUILD: "cp${{ matrix.python }}-*"
@@ -277,6 +279,7 @@ jobs:
           CIBW_ENVIRONMENT: CAMAS_USE_MYPYC=1
           CIBW_BUILD_VERBOSITY: 1
           CIBW_BEFORE_ALL_LINUX: git config --global --add safe.directory '*'
+          CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: ""
           CIBW_TEST_EXTRAS: all
           CIBW_TEST_GROUPS: test
           CIBW_TEST_COMMAND: >
