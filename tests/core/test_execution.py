@@ -397,37 +397,100 @@ def test_unusable_cwd_answers_none_when_the_cwd_cannot_be_inspected(
 	assert unusable_cwd(tmp_path) is None
 
 
-def _shim(directory: Path) -> Path:
-	"""A program named ``tool`` that echoes its arguments — an npm-style ``.cmd`` shim on Windows,
-	an executable script elsewhere."""
-	shim = directory / ("tool.cmd" if sys.platform == "win32" else "tool")
-	shim.write_text(
-		"@echo shim %*\r\n" if sys.platform == "win32" else '#!/bin/sh\necho shim "$@"\n'
-	)
+_SHIM = "camas-shim"
+_BATCH_NAME = _SHIM if sys.platform == "win32" else f"{_SHIM}.cmd"
+"""The bare name that reaches a batch shim: Windows appends ``PATHEXT``, elsewhere only the literal
+file name exists."""
+
+
+def _batch_shim(directory: Path) -> Path:
+	shim = directory / f"{_SHIM}.cmd"
+	shim.write_bytes(b"@echo shim %*\r\n")
 	shim.chmod(0o755)
 	return shim
 
 
-def test_resolve_program_finds_a_bare_name_on_the_leaf_path_under_any_key_case(
+def _launchable_shim(directory: Path) -> Path:
+	"""A program named ``camas-shim`` that echoes its arguments — an npm-style ``.cmd`` shim on
+	Windows, an executable script elsewhere."""
+	if sys.platform == "win32":
+		return _batch_shim(directory)
+	shim = directory / _SHIM
+	shim.write_bytes(b'#!/bin/sh\necho shim "$@"\n')
+	shim.chmod(0o755)
+	return shim
+
+
+def test_resolve_program_finds_a_batch_shim_on_the_leaf_path_under_any_key_case(
 	tmp_path: Path,
 ) -> None:
-	shim = _shim(tmp_path)
-	program, *args = resolve_program(("tool", "hi"), {"Path": str(tmp_path)})
+	shim = _batch_shim(tmp_path)
+	program, *args = resolve_program((_BATCH_NAME, "hi"), {"Path": str(tmp_path)})
 	assert Path(program) == shim
 	assert args == ["hi"]
 
 
-@pytest.mark.parametrize("argv", [(), ("definitely-not-a-camas-program",), ("./tool", "hi")])
+@pytest.mark.parametrize(
+	"argv",
+	[
+		(),
+		("definitely-not-a-camas-program",),
+		(f"./{_SHIM}.cmd", "hi"),
+		pytest.param(
+			(f"dir\\{_SHIM}", "hi"),
+			marks=pytest.mark.skipif(sys.platform != "win32", reason="a Windows path spelling"),
+		),
+		pytest.param(
+			(f"C:{_SHIM}", "hi"),
+			marks=pytest.mark.skipif(sys.platform != "win32", reason="a Windows path spelling"),
+		),
+	],
+)
 def test_resolve_program_passes_through_an_empty_argv_a_miss_and_a_name_with_a_directory(
-	tmp_path: Path, argv: tuple[str, ...]
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch, argv: tuple[str, ...]
 ) -> None:
-	_shim(tmp_path)
+	"""Each spelling would reach a shim the lookup can see from the cwd — so only the guard keeps it
+	from being substituted."""
+	_batch_shim(tmp_path)
+	(tmp_path / "dir").mkdir()
+	_batch_shim(tmp_path / "dir")
+	monkeypatch.chdir(tmp_path)
 	assert resolve_program(argv, {"PATH": str(tmp_path)}) == argv
 
 
+def test_resolve_program_passes_through_an_env_without_path(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	"""Never the spawner's own ``PATH`` — the one ``shutil.which`` falls back to."""
+	_batch_shim(tmp_path)
+	monkeypatch.setenv("PATH", str(tmp_path))
+	assert resolve_program((_BATCH_NAME, "hi"), {"OTHER": "x"}) == (_BATCH_NAME, "hi")
+
+
+def test_resolve_program_leaves_a_program_that_is_not_a_batch_shim_to_process_creation(
+	tmp_path: Path,
+) -> None:
+	"""An ``.exe`` (or, elsewhere, any executable) keeps process creation's own search order, which
+	consults the system directories before ``PATH``."""
+	program = tmp_path / ("camas-exe.exe" if sys.platform == "win32" else "camas-exe")
+	program.write_bytes(b"")
+	program.chmod(0o755)
+	assert resolve_program(("camas-exe", "hi"), {"PATH": str(tmp_path)}) == ("camas-exe", "hi")
+
+
+@pytest.mark.parametrize("arg", ["a&b", "x|y", "<in", "50%", "^", 'say "hi"', "two\nlines"])
+def test_resolve_program_refuses_an_argument_cmd_exe_would_reparse(
+	tmp_path: Path, arg: str
+) -> None:
+	shim = _batch_shim(tmp_path)
+	with pytest.raises(OSError, match=r"cmd\.exe metacharacter") as raised:
+		resolve_program((_BATCH_NAME, "ok", arg), {"PATH": str(tmp_path)})
+	assert Path(raised.value.filename) == shim
+
+
 def test_a_leaf_launches_a_program_found_only_on_its_own_path(tmp_path: Path) -> None:
-	_shim(tmp_path)
-	task = Task(("tool", "hello"), env={"PATH": f"{tmp_path}{os.pathsep}{os.environ['PATH']}"})
+	_launchable_shim(tmp_path)
+	task = Task((_SHIM, "hello"), env={"PATH": f"{tmp_path}{os.pathsep}{os.environ['PATH']}"})
 	completion = asyncio.run(run(task)).results[0].completion
 	assert isinstance(completion, Finished)
 	assert b"shim hello" in b"".join(completion.output)

@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import os
 import shutil
 import signal
@@ -342,15 +343,37 @@ def drop_case_variants(overlay: dict[str, str], inherited: dict[str, str]) -> di
 	return {k: v for k, v in inherited.items() if k.casefold() not in folded}
 
 
+BATCH_SUFFIXES: Final = (".bat", ".cmd")
+"""The scripts Windows runs through ``cmd.exe`` — found by :func:`resolve_program`, never by
+process creation's own search."""
+
+CMD_METACHARACTERS: Final = frozenset('&|<>^%"\r\n')
+"""Characters ``cmd.exe`` re-parses in a batch script's command line rather than passing through."""
+
+
 def resolve_program(argv: tuple[str, ...], env: Mapping[str, str]) -> tuple[str, ...]:
-	"""``argv`` with a bare program name looked up through ``PATHEXT`` on ``env``'s ``PATH``, its key
-	matched case-insensitively; a name with a directory, or one the lookup misses, passes through.
+	"""``argv`` with a bare program name replaced by the ``.cmd``/``.bat`` shim it names on ``env``'s
+	``PATH`` (its key matched case-insensitively); any other program, a name with a directory, an
+	``env`` without ``PATH``, or a miss passes through for process creation's own search.
+
+	Raises:
+		OSError: when an argument holds a :data:`CMD_METACHARACTERS` character the shim's
+			``cmd.exe`` would execute or expand instead of passing it through.
 	"""
-	if not argv or Path(argv[0]).name != argv[0]:
-		return argv
 	path: Final = next((value for key, value in env.items() if key.casefold() == "path"), None)
+	if not argv or path is None or Path(argv[0]).name != argv[0]:
+		return argv
 	found: Final = shutil.which(argv[0], path=path)
-	return argv if found is None else (found, *argv[1:])
+	if found is None or not found.lower().endswith(BATCH_SUFFIXES):
+		return argv
+	if any(CMD_METACHARACTERS.intersection(arg) for arg in argv[1:]):
+		raise OSError(
+			errno.EINVAL,
+			"refusing to pass an argument holding a cmd.exe metacharacter (& | < > ^ % \" or a line "
+			"break) to a batch shim, which would run it as a command",
+			found,
+		)
+	return (found, *argv[1:])
 
 
 def spawn_cwd(base: Path | None, cwd: Path | None) -> Path | None:
