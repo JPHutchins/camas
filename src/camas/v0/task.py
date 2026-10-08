@@ -255,6 +255,10 @@ caller can't accidentally mutate other Tasks via ``task.env``."""
 class Task:
 	"""A leaf task that executes a shell command.
 
+	``cmd`` is a tuple of argv tokens, or a string split into them by POSIX shell rules
+	(:func:`shlex.split`), so a path written into a string command, or a matrix value substituted
+	into one, uses ``/`` on every OS.
+
 	``env`` is a ``Mapping`` (read-only contract). The default is a shared
 	``MappingProxyType({})``; user-provided dicts are stored as-is.
 

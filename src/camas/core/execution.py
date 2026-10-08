@@ -6,13 +6,16 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import os
+import shutil
 import signal
 import sys
 import time
 from contextlib import nullcontext, suppress
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from subprocess import DEVNULL, STDOUT
 from typing import TYPE_CHECKING, Any, Final, NamedTuple, Protocol, TypeAlias, cast
 
@@ -51,8 +54,7 @@ from .traversal import flatten_leaves, subtree_leaf_indices
 from .unwind import unwind, unwind_failure
 
 if TYPE_CHECKING:
-	from collections.abc import Sequence
-	from pathlib import Path
+	from collections.abc import Mapping, Sequence
 
 	from ..v0.effect import Effect
 	from .effect import EventSink
@@ -341,6 +343,54 @@ def drop_case_variants(overlay: dict[str, str], inherited: dict[str, str]) -> di
 	return {k: v for k, v in inherited.items() if k.casefold() not in folded}
 
 
+BATCH_SUFFIXES: Final = (".bat", ".cmd")
+"""The scripts Windows runs through ``cmd.exe`` — found by :func:`resolve_program`, never by
+process creation's own search."""
+
+CMD_METACHARACTERS: Final = frozenset('&|<>^%"\r\n')
+"""Characters ``cmd.exe`` re-parses in a batch script's command line rather than passing through."""
+
+
+def resolve_program(argv: tuple[str, ...], env: Mapping[str, str]) -> tuple[str, ...]:
+	"""``argv`` with a bare program name replaced by the absolute path of the ``.cmd``/``.bat`` shim
+	it names on ``env``'s ``PATH`` (its key matched case-insensitively); any other program, a name
+	with a directory, an ``env`` without ``PATH``, or a miss passes through for process creation's
+	own search. Whatever runs a batch script, substituted or written, passes
+	:func:`refuse_cmd_reparse`.
+	"""
+	return refuse_cmd_reparse(_shim_on_path(argv, env) or argv)
+
+
+def _shim_on_path(argv: tuple[str, ...], env: Mapping[str, str]) -> tuple[str, ...] | None:
+	path: Final = next((value for key, value in env.items() if key.casefold() == "path"), None)
+	if not argv or path is None or Path(argv[0]).name != argv[0]:
+		return None
+	found: Final = shutil.which(argv[0], path=path)
+	if found is None or not found.lower().endswith(BATCH_SUFFIXES):
+		return None
+	return (str(Path(found).absolute()), *argv[1:])
+
+
+def refuse_cmd_reparse(argv: tuple[str, ...]) -> tuple[str, ...]:
+	"""``argv`` unchanged, unless it runs a ``.cmd``/``.bat`` script and one of its tokens — the
+	script's path included — holds a :data:`CMD_METACHARACTERS` character.
+
+	Raises:
+		OSError: naming that token, which ``cmd.exe`` would execute or expand instead of passing it
+			through.
+	"""
+	batch: Final = bool(argv) and argv[0].lower().endswith(BATCH_SUFFIXES)
+	unsafe: Final = next((token for token in argv if CMD_METACHARACTERS.intersection(token)), None)
+	if batch and unsafe is not None:
+		raise OSError(
+			errno.EINVAL,
+			'refusing to run a batch script with a token holding a cmd.exe metacharacter (& | < > ^ % "'
+			" or a line break), which cmd.exe would run as a command",
+			unsafe,
+		)
+	return argv
+
+
 def spawn_cwd(base: Path | None, cwd: Path | None) -> Path | None:
 	"""A leaf's spawn-time cwd: ``cwd`` is authored relative to ``base``; an absolute ``cwd``,
 	an unset ``cwd``, or an unset ``base`` each pass through unresolved.
@@ -457,12 +507,14 @@ async def _spawn_stage(
 		if sys.platform == "win32"
 		else dict(os.environ)
 	)
+	env: Final = subprocess_env({**inherited, **task.env}, color=leaf_color)
+	argv: Final = resolve_cmd(task.cmd)
 	return await asyncio.create_subprocess_exec(
-		*resolve_cmd(task.cmd),
+		*(resolve_program(argv, env) if sys.platform == "win32" else argv),
 		stdin=stdin,
 		stdout=stdout,
 		stderr=stderr,
-		env=subprocess_env({**inherited, **task.env}, color=leaf_color),
+		env=env,
 		cwd=spawn_cwd(base, task.cwd),
 	)
 
