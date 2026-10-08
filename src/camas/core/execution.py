@@ -7,12 +7,14 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shutil
 import signal
 import sys
 import time
 from contextlib import nullcontext, suppress
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from subprocess import DEVNULL, STDOUT
 from typing import TYPE_CHECKING, Any, Final, NamedTuple, Protocol, TypeAlias, cast
 
@@ -51,8 +53,7 @@ from .traversal import flatten_leaves, subtree_leaf_indices
 from .unwind import unwind, unwind_failure
 
 if TYPE_CHECKING:
-	from collections.abc import Sequence
-	from pathlib import Path
+	from collections.abc import Mapping, Sequence
 
 	from ..v0.effect import Effect
 	from .effect import EventSink
@@ -341,6 +342,17 @@ def drop_case_variants(overlay: dict[str, str], inherited: dict[str, str]) -> di
 	return {k: v for k, v in inherited.items() if k.casefold() not in folded}
 
 
+def resolve_program(argv: tuple[str, ...], env: Mapping[str, str]) -> tuple[str, ...]:
+	"""``argv`` with a bare program name looked up through ``PATHEXT`` on ``env``'s ``PATH``, its key
+	matched case-insensitively; a name with a directory, or one the lookup misses, passes through.
+	"""
+	if not argv or Path(argv[0]).name != argv[0]:
+		return argv
+	path: Final = next((value for key, value in env.items() if key.casefold() == "path"), None)
+	found: Final = shutil.which(argv[0], path=path)
+	return argv if found is None else (found, *argv[1:])
+
+
 def spawn_cwd(base: Path | None, cwd: Path | None) -> Path | None:
 	"""A leaf's spawn-time cwd: ``cwd`` is authored relative to ``base``; an absolute ``cwd``,
 	an unset ``cwd``, or an unset ``base`` each pass through unresolved.
@@ -457,12 +469,14 @@ async def _spawn_stage(
 		if sys.platform == "win32"
 		else dict(os.environ)
 	)
+	env: Final = subprocess_env({**inherited, **task.env}, color=leaf_color)
+	argv: Final = resolve_cmd(task.cmd)
 	return await asyncio.create_subprocess_exec(
-		*resolve_cmd(task.cmd),
+		*(resolve_program(argv, env) if sys.platform == "win32" else argv),
 		stdin=stdin,
 		stdout=stdout,
 		stderr=stderr,
-		env=subprocess_env({**inherited, **task.env}, color=leaf_color),
+		env=env,
 		cwd=spawn_cwd(base, task.cwd),
 	)
 

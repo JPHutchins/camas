@@ -25,6 +25,7 @@ from camas.core.execution import (
 	Signalable,
 	await_run,
 	recovered_results,
+	resolve_program,
 	restore_tty,
 	run,
 	run_cmd,
@@ -394,6 +395,42 @@ def test_unusable_cwd_answers_none_when_the_cwd_cannot_be_inspected(
 
 	monkeypatch.setattr(Path, "is_dir", denied)
 	assert unusable_cwd(tmp_path) is None
+
+
+def _shim(directory: Path) -> Path:
+	"""A program named ``tool`` that echoes its arguments — an npm-style ``.cmd`` shim on Windows,
+	an executable script elsewhere."""
+	shim = directory / ("tool.cmd" if sys.platform == "win32" else "tool")
+	shim.write_text(
+		"@echo shim %*\r\n" if sys.platform == "win32" else '#!/bin/sh\necho shim "$@"\n'
+	)
+	shim.chmod(0o755)
+	return shim
+
+
+def test_resolve_program_finds_a_bare_name_on_the_leaf_path_under_any_key_case(
+	tmp_path: Path,
+) -> None:
+	shim = _shim(tmp_path)
+	program, *args = resolve_program(("tool", "hi"), {"Path": str(tmp_path)})
+	assert Path(program) == shim
+	assert args == ["hi"]
+
+
+@pytest.mark.parametrize("argv", [(), ("definitely-not-a-camas-program",), ("./tool", "hi")])
+def test_resolve_program_passes_through_an_empty_argv_a_miss_and_a_name_with_a_directory(
+	tmp_path: Path, argv: tuple[str, ...]
+) -> None:
+	_shim(tmp_path)
+	assert resolve_program(argv, {"PATH": str(tmp_path)}) == argv
+
+
+def test_a_leaf_launches_a_program_found_only_on_its_own_path(tmp_path: Path) -> None:
+	_shim(tmp_path)
+	task = Task(("tool", "hello"), env={"PATH": f"{tmp_path}{os.pathsep}{os.environ['PATH']}"})
+	completion = asyncio.run(run(task)).results[0].completion
+	assert isinstance(completion, Finished)
+	assert b"shim hello" in b"".join(completion.output)
 
 
 def test_sequential_skip_nested_group() -> None:
