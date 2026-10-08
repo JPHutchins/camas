@@ -16,7 +16,8 @@
       ];
       forAllSystems = lib.genAttrs systems;
 
-      extraNames = builtins.attrNames (lib.importTOML ./pyproject.toml).project.optional-dependencies;
+      pyproject = lib.importTOML ./pyproject.toml;
+      extraNames = builtins.attrNames pyproject.project.optional-dependencies;
       perExtra = builtins.filter (extra: extra != "all") extraNames;
       withExtraName = extra: "with-${lib.replaceStrings [ "_" ] [ "-" ] extra}";
 
@@ -104,11 +105,24 @@
                 inherit lib;
                 pname = "camas";
               };
-              realExtras = (lib.importTOML ./pyproject.toml).project.optional-dependencies;
-              resolveNames =
-                pyprojectExtras: python3Packages: extra:
-                map (drv: drv.name) (resolver.mkResolveExtra { inherit python3Packages pyprojectExtras; } extra);
+              realExtras = pyproject.project.optional-dependencies;
+              realGroups = pyproject.dependency-groups or { };
+              resolverArgs =
+                {
+                  extras ? realExtras,
+                  groups ? realGroups,
+                  packages ? pkgs.python3Packages,
+                }:
+                {
+                  python3Packages = packages;
+                  pyprojectExtras = extras;
+                  pyprojectGroups = groups;
+                };
+              names = map (drv: drv.name);
+              resolveNames = args: extra: names (resolver.mkResolveExtra (resolverArgs args) extra);
+              resolveGroupNames = args: group: names (resolver.mkResolveGroup (resolverArgs args) group);
               forced = value: builtins.tryEval (builtins.deepSeq value value);
+              fails = value: !(forced value).success;
               fakePackages = {
                 httpx = {
                   name = "httpx";
@@ -117,31 +131,131 @@
                   name = "msgspec";
                 };
               };
-              realResolved = builtins.mapAttrs (
-                extra: _: resolveNames realExtras pkgs.python3Packages extra
-              ) realExtras;
-              realResolves = (forced realResolved).success;
-              cyclicFails =
-                !(forced (
-                  resolveNames {
+              realResolves = builtins.deepSeq (builtins.mapAttrs (
+                extra: _: resolveNames { } extra
+              ) realExtras) true;
+              realTestGroupResolves = builtins.deepSeq (resolveGroupNames { } "test") true;
+              missingExtraFails = fails (
+                resolveNames {
+                  extras.a = [ "camas[nope]" ];
+                  packages = fakePackages;
+                } "a"
+              );
+              extrasSpecFails = fails (
+                resolveNames {
+                  extras.e = [ "httpx[http2]>=0.28" ];
+                  packages = fakePackages;
+                } "e"
+              );
+              directReferenceFails = fails (
+                resolveNames {
+                  extras.d = [ "httpx @ git+https://example/httpx" ];
+                  packages = fakePackages;
+                } "d"
+              );
+              markerSpecResolves =
+                resolveNames {
+                  extras.m = [ "msgspec>=0.19,<1; python_version < '3.15'" ];
+                  packages = fakePackages;
+                } "m" == [ "msgspec" ];
+              includeGroupFollowed =
+                resolveGroupNames {
+                  groups = {
+                    a = [
+                      { include-group = "b"; }
+                      "httpx"
+                    ];
+                    b = [ "msgspec" ];
+                  };
+                  packages = fakePackages;
+                } "a" == [
+                  "msgspec"
+                  "httpx"
+                ];
+              groupReachesExtras =
+                resolveGroupNames {
+                  extras.x = [ "msgspec" ];
+                  groups = {
+                    g = [
+                      { include-group = "h"; }
+                      "camas[x]"
+                    ];
+                    h = [ "httpx" ];
+                  };
+                  packages = fakePackages;
+                } "g" == [
+                  "httpx"
+                  "msgspec"
+                ];
+              groupCyclicFails = fails (
+                resolveGroupNames {
+                  groups = {
+                    a = [ { include-group = "b"; } ];
+                    b = [ { include-group = "a"; } ];
+                  };
+                  packages = fakePackages;
+                } "a"
+              );
+              missingGroupFails = fails (
+                resolveGroupNames {
+                  groups.a = [ { include-group = "nope"; } ];
+                  packages = fakePackages;
+                } "a"
+              );
+              tableFails = fails (
+                resolveGroupNames {
+                  groups.t = [ { path = "x"; } ];
+                  packages = fakePackages;
+                } "t"
+              );
+              mixedTableFails = fails (
+                resolveGroupNames {
+                  groups = {
+                    t = [
+                      {
+                        include-group = "u";
+                        path = "x";
+                      }
+                    ];
+                    u = [ "httpx" ];
+                  };
+                  packages = fakePackages;
+                } "t"
+              );
+              cyclicFails = fails (
+                resolveNames {
+                  extras = {
                     a = [ "camas[b]" ];
                     b = [ "camas[a]" ];
-                  } fakePackages "a"
-                )).success;
-              missingFails =
-                !(forced (
-                  resolveNames {
-                    x = [ "definitely-absent-pkg" ];
-                  } fakePackages "x"
-                )).success;
-              unparseableFails =
-                !(forced (
-                  resolveNames {
-                    y = [ "@vcs+https://example/x" ];
-                  } fakePackages "y"
-                )).success;
+                  };
+                  packages = fakePackages;
+                } "a"
+              );
+              missingFails = fails (
+                resolveNames {
+                  extras.x = [ "definitely-absent-pkg" ];
+                  packages = fakePackages;
+                } "x"
+              );
+              unparseableFails = fails (
+                resolveNames {
+                  extras.y = [ "@vcs+https://example/x" ];
+                  packages = fakePackages;
+                } "y"
+              );
             in
             assert realResolves;
+            assert realTestGroupResolves;
+            assert missingExtraFails;
+            assert extrasSpecFails;
+            assert directReferenceFails;
+            assert markerSpecResolves;
+            assert includeGroupFollowed;
+            assert groupReachesExtras;
+            assert groupCyclicFails;
+            assert missingGroupFails;
+            assert tableFails;
+            assert mixedTableFails;
             assert cyclicFails;
             assert missingFails;
             assert unparseableFails;

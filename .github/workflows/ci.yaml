@@ -270,17 +270,22 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: pypa/cibuildwheel@v3.4.1
+      # v4.3.0 or later: CIBW_TEST_GROUPS passes the group's `<`/`>` specifiers through cmd.exe on
+      # Windows, which earlier releases let it misread as redirection.
+      - uses: pypa/cibuildwheel@v4.3.0
         env:
           CIBW_BUILD: "cp${{ matrix.python }}-*"
           CIBW_SKIP: "*-musllinux_i686 *-win32"
           CIBW_ENVIRONMENT: CAMAS_USE_MYPYC=1
           CIBW_BUILD_VERBOSITY: 1
           CIBW_BEFORE_ALL_LINUX: git config --global --add safe.directory '*'
+          # Ship Windows wheels as built, as 3.x did; 4.x defaults to a delvewheel repair.
+          CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: ""
           # cryptography (camas[mcp] -> pyjwt[crypto]) last shipped win_arm64 wheels in 46.0.3; prefer
           # that wheel over a newer sdist whose build needs OpenSSL.
           CIBW_TEST_ENVIRONMENT: ${{ matrix.os == 'windows-11-arm' && 'PIP_PREFER_BINARY=1' || '' }}
-          CIBW_TEST_REQUIRES: camas[all] pytest pytest-asyncio cyclopts hypothesis jsonschema
+          CIBW_TEST_EXTRAS: all
+          CIBW_TEST_GROUPS: test
           CIBW_TEST_COMMAND: >
             python -c "import camas.main.dispatch, camas.main.entrypoint, camas.effect.summary, camas.effect.termtree;
             assert all(not m.__file__.endswith('.py') for m in (camas.main.dispatch, camas.main.entrypoint, camas.effect.summary, camas.effect.termtree))" &&

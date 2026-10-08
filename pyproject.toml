@@ -72,15 +72,21 @@ camas = ["py.typed"]
 [tool.setuptools_scm]
 
 [dependency-groups]
+# The test environment for uv (through dev), cibuildwheel (CIBW_TEST_GROUPS), and nix (nativeCheckInputs, by name only).
+test = [
+"pytest>=9,<10",
+"pytest-asyncio>=1,<2",
+"cyclopts>=4,<5",
+"hypothesis>=6,<7",
+"jsonschema>=4,<5; python_version < '3.15'",
+"typing-extensions>=4.12",
+]
 dev = [
+{ include-group = "test" },
 "camas[all]",
 "mypy>=1.19,<2",
 "pyright>=1.1.408,<2",
-"pytest>=9,<10",
-"pytest-asyncio>=1,<2",
 "pytest-cov>=7,<8",
-"cyclopts>=4,<5",
-"hypothesis>=6,<7",
 "ruff>=0.12,<1",
 "zuban>=0.7,<1",
 "pyrefly>=0.61,<1",
@@ -88,8 +94,6 @@ dev = [
 "exceptiongroup>=1.2",
 "taskgroup>=0.2",
 "tomli>=2",
-"typing_extensions>=4.12",
-"jsonschema>=4,<5; python_version < '3.15'",
 "types-jsonschema; python_version < '3.15'",
 ]
 # actionlint-py is sdist-only and downloads the actionlint binary from GitHub releases at build

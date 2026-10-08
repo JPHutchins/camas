@@ -109,6 +109,14 @@ dev = [
 lint = [
     { name = "actionlint-py" },
 ]
+test = [
+    { name = "cyclopts" },
+    { name = "hypothesis" },
+    { name = "jsonschema", marker = "python_full_version < '3.15'" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "typing-extensions" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -147,6 +155,14 @@ dev = [
     { name = "zuban", specifier = ">=0.7,<1" },
 ]
 lint = [{ name = "actionlint-py", specifier = ">=1.7,<2" }]
+test = [
+    { name = "cyclopts", specifier = ">=4,<5" },
+    { name = "hypothesis", specifier = ">=6,<7" },
+    { name = "jsonschema", marker = "python_full_version < '3.15'", specifier = ">=4,<5" },
+    { name = "pytest", specifier = ">=9,<10" },
+    { name = "pytest-asyncio", specifier = ">=1,<2" },
+    { name = "typing-extensions", specifier = ">=4.12" },
+]
 
 [[package]]
 name = "certifi"
