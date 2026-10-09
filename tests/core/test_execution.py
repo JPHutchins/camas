@@ -80,7 +80,7 @@ the forced color breaks (a Rust ``assert_cmd`` test, here in python)."""
 @pytest.mark.parametrize(
 	("program", "line"),
 	[
-		("print('x' * 200_000)", b"x" * 200_000 + b"\n"),
+		("import sys; sys.stdout.buffer.write(b'x' * 200_000 + b'\\n')", b"x" * 200_000 + b"\n"),
 		("import sys; sys.stdout.write('y' * 200_000)", b"y" * 200_000),
 	],
 	ids=("newline", "no-newline"),

@@ -1204,12 +1204,14 @@ async def test_a_pipe_runs_its_stages_together_in_its_one_slot() -> None:
 async def test_a_stage_line_past_the_stream_limit_arrives_whole() -> None:
 	"""The last stage's reader takes a line longer than asyncio's 64 KiB stream limit whole
 	(#342) instead of failing the run."""
-	pipe = Pipe(Task(("python", "-c", "print('x' * 200_000)")), Task(ECHO_UPPER))
+	pipe = Pipe(
+		Task(("python", "-c", "import sys; sys.stdout.write('x' * 200_000)")), Task(ECHO_UPPER)
+	)
 	result = await run(pipe, jobs=1)
 	assert result.returncode == 0
 	last = result.results[1].completion
 	assert isinstance(last, Finished)
-	assert last.output == (b"X" * 200_000 + b"\n",)
+	assert last.output == (b"X" * 200_000,)
 
 
 def test_render_shows_a_pipe_with_the_pipe_separator() -> None:
