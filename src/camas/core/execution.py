@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import errno
 import os
+import shutil
 import signal
 import sys
 import time
@@ -346,19 +347,15 @@ BATCH_SUFFIXES: Final = (".bat", ".cmd")
 """The scripts Windows runs through ``cmd.exe`` — found by :func:`resolve_program`, never by
 process creation's own search."""
 
-PROGRAM_SUFFIXES: Final = (".com", ".exe", *BATCH_SUFFIXES)
-"""The extensions ``cmd.exe`` tries, in order, for a program named without one."""
-
 CMD_METACHARACTERS: Final = frozenset('&|<>^%"\r\n')
 """Characters ``cmd.exe`` re-parses in a batch script's command line rather than passing through."""
 
 
 def resolve_program(argv: tuple[str, ...], env: Mapping[str, str]) -> tuple[str, ...]:
 	"""``argv`` with a bare program name replaced by the absolute path of the ``.cmd``/``.bat`` shim
-	it names on ``env``'s ``PATH`` (its key matched case-insensitively): each directory in order,
-	each of :data:`PROGRAM_SUFFIXES` in turn, the first file found deciding. An ``.exe``/``.com``
-	found first, a name with a directory, an ``env`` without ``PATH``, or a miss passes through for
-	process creation's own search. Whatever runs a batch script, substituted or written, passes
+	it names on ``env``'s ``PATH`` (its key matched case-insensitively); any other program, a name
+	with a directory, an ``env`` without ``PATH``, or a miss passes through for process creation's
+	own search. Whatever runs a batch script, substituted or written, passes
 	:func:`refuse_cmd_reparse`.
 	"""
 	return refuse_cmd_reparse(_shim_on_path(argv, env) or argv)
@@ -366,39 +363,26 @@ def resolve_program(argv: tuple[str, ...], env: Mapping[str, str]) -> tuple[str,
 
 def _shim_on_path(argv: tuple[str, ...], env: Mapping[str, str]) -> tuple[str, ...] | None:
 	path: Final = next((value for key, value in env.items() if key.casefold() == "path"), None)
-	if not argv or path is None or Path(argv[0]).name != argv[0]:
+	program: Final = os.fsdecode(argv[0]) if argv else ""
+	if not program or path is None or Path(program).name != program:
 		return None
-	names: Final = (
-		(argv[0],)
-		if argv[0].lower().endswith(PROGRAM_SUFFIXES)
-		else tuple(f"{argv[0]}{suffix}" for suffix in PROGRAM_SUFFIXES)
-	)
-	found: Final = next(
-		(
-			candidate
-			for directory in path.split(os.pathsep)
-			if directory
-			for name in names
-			if (candidate := Path(directory, name)).is_file()
-		),
-		None,
-	)
-	if found is None or not found.name.lower().endswith(BATCH_SUFFIXES):
+	found: Final = shutil.which(program, path=path)
+	if found is None or not found.lower().endswith(BATCH_SUFFIXES):
 		return None
-	return (str(found.absolute()), *argv[1:])
+	return (str(Path(found).absolute()), *argv[1:])
 
 
 def refuse_cmd_reparse(argv: tuple[str, ...]) -> tuple[str, ...]:
-	"""``argv`` unchanged, unless it runs a ``.cmd``/``.bat`` script and one of its tokens — the
-	script's path included, a path-like token as its file-system string — holds a
-	:data:`CMD_METACHARACTERS` character.
+	"""``argv`` unchanged, unless it runs a ``.cmd``/``.bat`` script — however Windows spells it,
+	trailing dots and spaces included — and one of its tokens, the script's path included and a
+	path-like token read as its file-system string, holds a :data:`CMD_METACHARACTERS` character.
 
 	Raises:
 		OSError: naming that token, which ``cmd.exe`` would execute or expand instead of passing it
 			through.
 	"""
 	tokens: Final = tuple(map(os.fsdecode, argv))
-	batch: Final = bool(tokens) and tokens[0].lower().endswith(BATCH_SUFFIXES)
+	batch: Final = bool(tokens) and tokens[0].rstrip(". ").lower().endswith(BATCH_SUFFIXES)
 	unsafe: Final = next(
 		(token for token in tokens if CMD_METACHARACTERS.intersection(token)), None
 	)
