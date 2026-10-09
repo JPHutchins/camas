@@ -2,8 +2,8 @@
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
 """The SA-delegation gate: scope the check node to the changed paths, run the checks, and
-classify the residual ``green`` vs ``needs_reasoning``. The gate
-never mutates — the deterministic fixers run separately on ``PostToolBatch`` (``camas mcp fix``).
+classify the residual ``green`` vs ``needs_reasoning``; ``camas_gate`` first settles the
+registered fix node over the same paths (:func:`settle`).
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Final, Literal, NamedTuple, TypeAlias
 from ..v0.task import Group, Pipe, Task, rebuilt
 from .budget import BudgetRun, NothingToRun, plan_under, resolve_budget
 from .execution import run
+from .hook_event import STALE_TEMP_MAX_AGE_S
 from .matrix import expand_matrix
 from .scope import coverage_message
 from .timings import observed, scope_of
@@ -49,10 +50,6 @@ REPORT_DIR_PREFIX: Final = "camas-report-"
 """Prefix on this machine's path-mode report directories, one per gate run — swept by
 :func:`prune_stale_report_dirs` once older than its max age.
 """
-
-STALE_TEMP_MAX_AGE_S: Final = 3600.0
-"""Age past which a prior run's leftovers in the system temp dir are swept — shared by
-:func:`prune_stale_report_dirs` and the MCP nudge-marker sweep so both age out together."""
 
 
 class GateOutcome(NamedTuple):
@@ -258,6 +255,36 @@ def prune_stale_report_dirs(max_age_s: float = STALE_TEMP_MAX_AGE_S) -> None:
 	cutoff = time.time() - max_age_s
 	for stale in base.glob(f"{REPORT_DIR_PREFIX}*"):
 		_rmtree_if_stale(stale, cutoff)
+
+
+async def settle(
+	fix: TaskNode | None,
+	changed: tuple[str, ...],
+	*,
+	camas_dir: Path | None,
+	jobs: int | None = None,
+	base: Path | None = None,
+	leaf_color: bool = True,
+) -> RunResult | None:
+	"""Run the ``fix`` node (``Config.agent.fix``) scoped to ``changed`` and record its timings — the
+	deterministic autofix ``camas_gate`` runs before its checks; ``None`` when there is no
+	fix node or no fix leaf covers ``changed``.
+	"""
+	if fix is None:
+		return None
+	keying: Final = observed(camas_dir, expand_matrix(fix), changed)
+	if keying.node is None:
+		return None
+	result: Final = await run(
+		keying.node,
+		jobs=jobs,
+		base=base,
+		interactive=False,
+		leaf_color=leaf_color,
+		identities=keying.identities,
+	)
+	keying.record(result)
+	return result
 
 
 async def run_gate(

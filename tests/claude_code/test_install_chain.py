@@ -9,7 +9,7 @@ files; the ``.mcp.json`` camas entry uses the ``uv`` launcher that project's loc
 which this fixture is not); and a headless ``claude -p --strict-mcp-config`` loads it and calls
 the ``camas_list`` MCP tool without error.
 
-The shipped PostToolBatch hook command uses the same portable launcher as ``.mcp.json`` and ends
+The shipped Stop autofix hook command uses the same portable launcher as ``.mcp.json`` and ends
 with the ``fix`` subcommand — a deterministic file-level assertion (Claude Code's headless ``-p``
 is lenient about bad config, so a corrupted-config broken variant does not work).
 """
@@ -43,7 +43,7 @@ _PYPROJECT = (
 	'name = "test-harness"\n'
 	'version = "0.0.0"\n'
 	'requires-python = ">=3.10"\n'
-	'dependencies = ["camas"]\n'
+	'dependencies = ["camas[mcp]"]\n'
 	"\n[tool.uv.sources]\n"
 	f'camas = {{ path = "{_REPO_ROOT}" }}\n'
 )
@@ -117,6 +117,7 @@ def _init_claude(tmp_path: Path) -> subprocess.CompletedProcess[str]:
 def test_init_claude_writes_generated_files_and_mcp_uses_portable_launcher(
 	tmp_path: Path,
 	run_headless: Callable[..., CompletedProcess[str]],
+	mcp_server_status: Callable[[str], dict[str, str]],
 ) -> None:
 	_setup_project(tmp_path)
 	_init_claude(tmp_path)
@@ -133,17 +134,19 @@ def test_init_claude_writes_generated_files_and_mcp_uses_portable_launcher(
 		"Call the camas_list MCP tool. Report how many tasks it lists. "
 		"Use only the MCP tool — no shell commands.",
 		strict_mcp=True,
+		output_format="stream-json",
 	)
 	assert headless.returncode == 0, (
 		f"headless failed to load .mcp.json: rc={headless.returncode} stderr={headless.stderr}"
 	)
+	assert mcp_server_status(headless.stdout).get("camas") == "connected", headless.stdout[:2000]
 
 
 @pytest.mark.skipif(not _ENABLED, reason="set CAMAS_CC_E2E=1 with claude on PATH")
 def test_shipped_hook_command_uses_the_portable_launcher_and_fix_subcommand(
 	tmp_path: Path,
 ) -> None:
-	"""The shipped PostToolBatch hook camas writes must run the portable launcher with the ``fix``
+	"""The shipped Stop autofix hook camas writes must run the portable launcher with the ``fix``
 	subcommand — the structural invariant the historical "bare ``camas``" and "wrong command"
 	regions broke. Claude Code's headless ``-p`` is lenient about bad config (it warns and exits 0),
 	so a deliberately-corrupted ``.mcp.json`` does NOT fail ``--strict-mcp-config``; assert the
@@ -157,8 +160,9 @@ def test_shipped_hook_command_uses_the_portable_launcher_and_fix_subcommand(
 		json.loads((tmp_path / ".claude" / "settings.json").read_text(encoding="utf-8")),
 	)
 	hooks = cast("dict[str, object]", settings["hooks"])
-	batch = cast("list[dict[str, object]]", hooks["PostToolBatch"])
-	group = batch[-1]
+	assert "PostToolBatch" not in hooks
+	stop = cast("list[dict[str, object]]", hooks["Stop"])
+	group = stop[-1]
 	raw_commands = (h.get("command") for h in cast("list[dict[str, object]]", group["hooks"]))
 	commands = [c for c in raw_commands if isinstance(c, str)]
 	hook_command = next(c for c in commands if "mcp fix" in c)

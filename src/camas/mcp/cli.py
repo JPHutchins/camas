@@ -19,19 +19,20 @@ Usage:
   camas mcp [--plain]        run the MCP stdio server (rich output by default)
   camas mcp init [--claude]  write this project's .mcp.json entry for the camas server;
     [--launcher uv|uvx|camas]  with --claude also configure Claude Code: .mcp.json +
-                              PostToolBatch/Stop autofix hooks + async Stop nudge hook +
-                              the tiered camas-fixer agents + gate skill; --launcher forces
+                              the Stop hooks (autofix + async nudge) + the tiered
+                              camas-fixer agents + gate skill; --launcher forces
                               the launch strategy instead of auto-detecting
   camas mcp fix [--paths P]… run the registered agent fix node (Config.agent.fix) over the
-                              changed paths (--paths, else a piped PostToolBatch/Stop event) —
-                              the autofix hook; no-op if unregistered
-  camas mcp gate [task]     run the gate once, headless — print the verdict as JSON, exit
-    [--paths P]… [--under D]  0 (continue) / 2 (block); scope to --paths or a piped
-    [--jobs N] [--nudge]      PostToolBatch/Stop event (the camas-fixer agents + benchmark);
-                              --under takes a duration (5, 1.5s, 500ms, 2m, 1h); --nudge emits
-                              the async Stop-hook nudge text instead of the JSON verdict — at
-                              most once per prompt, and exit 0 (no rewake) when no check node
-                              or camas[mcp] is missing
+                              changed paths (--paths, else a piped PostToolBatch event; a Stop
+                              event names none, so the whole tree) — the Stop autofix hook;
+                              no-op if unregistered
+  camas mcp gate [task]     run the gate once, headless and read-only — print the verdict as
+    [--paths P]… [--under D]  JSON, exit 0 (continue) / 2 (block); scope to --paths or a piped
+    [--jobs N] [--nudge]      PostToolBatch event; a Stop event gates the whole tree (CI +
+                              benchmark); --under takes a duration (5, 1.5s, 500ms, 2m, 1h);
+                              --nudge waits for the Stop autofix, then emits the async Stop-hook
+                              nudge text instead of the JSON verdict — at most once per prompt,
+                              and exit 0 (no rewake) when no check node or camas[mcp] is missing
 
 Options:
   --rich        accepted for back-compat; rich output is the default

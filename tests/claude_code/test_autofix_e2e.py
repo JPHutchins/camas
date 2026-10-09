@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""End-to-end proof of the shipped autofix hook: a real headless edit fires ``PostToolBatch``,
-which runs the registered ``Config.agent.fix`` node over the just-changed file (path delivered on
+"""End-to-end proof of a hand-wired ``PostToolBatch`` autofix hook (the shipped one runs at
+``Stop`` — ``test_shipped_autofix_hook.py``): a real headless edit fires ``PostToolBatch``, which
+runs the registered ``Config.agent.fix`` node over the just-changed file (path delivered on
 stdin), with zero model tokens. The registered fixer rewrites ``BANANA`` to ``FIXED``; the edit
 writes ``BANANA``; a green run leaves ``FIXED`` on disk.
 

@@ -82,8 +82,9 @@ README's Versioning section.
 
 ``Config(agent=Claude(fix=..., check=..., default=...))`` wires the Claude
 Code plugin's gate. ``fix`` is the deterministic, behavior-preserving
-autofix node the ``PostToolBatch`` hook runs over the changed files (scope
-it with ``{paths}``, on a leaf or a whole group; zero model tokens) —
+autofix node ``camas_gate`` settles over the changed files before it checks,
+and the ``Stop`` hook runs at every turn end (scope it with ``{paths}``, on
+a leaf or a whole group; zero model tokens) —
 declared, not inferred from ``mutates=``, since a mutating leaf may be a
 compiler or codegen rather than a fixer. A leaf whose command can't take
 ``{paths}`` (``cargo build``, ``nix flake check``) instead sets ``when=`` —

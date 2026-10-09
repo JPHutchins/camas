@@ -19,9 +19,9 @@ _REPO = Path(__file__).resolve().parents[2]
 _TEMPLATES = _REPO / "src" / "camas" / "main"
 
 _GUARDED = (
-	("claude_agent_lint_haiku.md", "camas-lint-fixer-haiku", "haiku", 5),
-	("claude_agent_lint_sonnet.md", "camas-lint-fixer-sonnet", "sonnet", 5),
-	("claude_agent_test_fixer.md", "camas-test-fixer", "sonnet", 7),
+	("claude_agent_lint_haiku.md", "camas-lint-fixer-haiku", "haiku", 11),
+	("claude_agent_lint_sonnet.md", "camas-lint-fixer-sonnet", "sonnet", 11),
+	("claude_agent_test_fixer.md", "camas-test-fixer", "sonnet", 14),
 )
 """One row per shipped template, cross-checked against ``AGENT_TEMPLATES`` — the list the wheel
 actually writes — so a tier added there cannot land unguarded here."""
@@ -30,10 +30,11 @@ _AGENT_TEMPLATES = tuple((source, name, model) for source, name, model, _ in _GU
 
 _MANDATED_TURNS = tuple((source, mandated) for source, _, _, mandated in _GUARDED)
 """``(template, the longest chain of turns its own steps mandate)``: the conditional
-``camas_gate``, the ``Read`` that Edit's contract forces before an edit, the edit, ``camas_fix``,
-and the final report — plus, for the test tier, its closing re-gate and a second read, since its
-step 2 diagnoses across the failing test *and* the source, so the file it must edit is then not the
-file it read. Each step depends on the previous one's result, so each costs an assistant turn.
+``camas_gate``, then up to 3 rounds of the ``Read`` that Edit's contract forces before an edit, the
+edit, and the re-gate, then the final report — for the lint tiers ``1 + 3 * 3 + 1``. The test tier
+reads twice a round, since its step 2 diagnoses across the failing test *and* the source, so the
+file it must edit is then not the file it read: ``1 + 3 * 4 + 1``. Each step depends on the
+previous one's result, so each costs an assistant turn.
 
 ``maxTurns`` caps those turns and stops the agent before its final message: a budget *below* this
 count hands the delegating agent no report at all, and one exactly equal to it completes with no
@@ -43,6 +44,9 @@ _SPARE_ROUND = 2
 """The read and the edit one more file in the scope costs, or a retry of an edit whose
 ``old_string`` was not unique. A budget has to clear the mandated chain by this much rather than
 merely exceed it: one spare turn buys neither, since each needs a read before an edit."""
+
+_SPARE_ROUNDS = 3
+"""One spare read-and-edit per round the template allows."""
 
 
 def _frontmatter(text: str) -> list[str]:
@@ -71,10 +75,10 @@ def test_frontmatter_cuts_at_the_closing_delimiter_whatever_the_line_ending(newl
 
 
 @pytest.mark.parametrize(("filename", "mandated"), _MANDATED_TURNS)
-def test_agent_template_budgets_its_mandated_chain_plus_a_spare_round(
+def test_agent_template_budgets_its_mandated_chain_plus_a_spare_round_per_round(
 	filename: str, mandated: int
 ) -> None:
-	assert _max_turns(filename) >= mandated + _SPARE_ROUND
+	assert _max_turns(filename) >= mandated + _SPARE_ROUNDS * _SPARE_ROUND
 
 
 def test_the_guards_cover_every_agent_template_the_wheel_ships() -> None:
@@ -110,7 +114,14 @@ def test_agent_template_has_correct_frontmatter(filename: str, name: str, model:
 	agent = (_TEMPLATES / filename).read_text()
 	assert f"name: {name}" in agent
 	assert f"model: {model}" in agent
-	assert "tools: Read, Edit, mcp__camas__camas_gate, mcp__camas__camas_fix" in agent
+	assert "tools: Read, Edit, mcp__camas__camas_gate\n" in agent
+
+
+@pytest.mark.parametrize("filename", [*(source for source, *_ in _GUARDED), "claude_gate_skill.md"])
+def test_no_template_leaves_the_autofix_to_the_agent(filename: str) -> None:
+	"""The autofix runs inside every ``camas_gate`` and at every ``Stop`` — never as a step an
+	agent is told to take."""
+	assert "camas_fix" not in (_TEMPLATES / filename).read_text()
 
 
 def test_skill_template_has_correct_frontmatter_name() -> None:

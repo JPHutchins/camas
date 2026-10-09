@@ -184,7 +184,7 @@ def test_tools_rich_includes_title_annotations_and_schema() -> None:
 	assert tool_gate.title == "SA-delegation gate"
 	assert tool_gate.outputSchema is not None
 	assert tool_gate.annotations is not None
-	assert tool_gate.annotations.readOnlyHint is True
+	assert tool_gate.annotations == tool_fix.annotations
 	assert tool_fix.title == "Run deterministic autofix"
 	assert tool_fix.outputSchema is not None
 	assert tool_fix.annotations is not None
@@ -1603,6 +1603,51 @@ def _text(result: types.CallToolResult) -> str:
 
 
 GATE_FIX = Task(("python", "-c", "print('fixed')"), name="fmt", mutates=True)
+
+
+SETTLES_SAMPLE = Task(
+	("python", "-c", "import pathlib; pathlib.Path('sample.py').write_text('clean')"),
+	name="settle",
+	mutates=True,
+)
+CLEAN_SAMPLE = Task(
+	(
+		"python",
+		"-c",
+		"import pathlib, sys; sys.exit('dirty' in pathlib.Path('sample.py').read_text())",
+	),
+	name="clean",
+)
+
+
+async def test_gate_call_settles_the_registered_fix_before_it_checks(tmp_path: Path) -> None:
+	(tmp_path / "sample.py").write_text("dirty")
+	config = Config(default_task=CLEAN_SAMPLE, agent=Claude(fix=SETTLES_SAMPLE))
+	session = _session({"clean": CLEAN_SAMPLE}, config, tmp_path)
+	result = await serve.call(session, "camas_gate", {})
+	assert "CONTINUE" in _text(result)
+	assert (tmp_path / "sample.py").read_text() == "clean"
+
+
+async def test_gate_call_runs_nothing_when_every_path_is_outside_the_repo(tmp_path: Path) -> None:
+	"""Neither the autofix nor the checks — the headless gate's answer for the same input."""
+	(tmp_path / "sample.py").write_text("dirty")
+	config = Config(default_task=CLEAN_SAMPLE, agent=Claude(fix=SETTLES_SAMPLE))
+	session = _session({"clean": CLEAN_SAMPLE}, config, tmp_path)
+	elsewhere = str(tmp_path.parent / "elsewhere.py")
+	result = await serve.call(session, "camas_gate", {"paths": [elsewhere]})
+	assert "CONTINUE" in _text(result)
+	assert elsewhere in _text(result)
+	assert (tmp_path / "sample.py").read_text() == "dirty"
+
+
+async def test_gate_call_names_an_autofix_that_exited_non_zero(tmp_path: Path) -> None:
+	failing_fix = Task(("python", "-c", "raise SystemExit(3)"), name="fmt", mutates=True)
+	config = Config(default_task=PASS, agent=Claude(fix=failing_fix))
+	session = _session({"lint": PASS}, config, tmp_path)
+	text = _text(await serve.call(session, "camas_gate", {}))
+	assert "CONTINUE" in text
+	assert "The autofix (Config.agent.fix) failed before the checks ran — fmt exited 3 —" in text
 
 
 async def test_gate_call_load_error(tmp_path: Path) -> None:

@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from camas import AgentFormat, Parallel, Pipe, Sequential, Task
+from camas.core import timings
 from camas.core.completion import RunResult
 from camas.core.gate import (
 	REPORT_DIR_PREFIX,
@@ -16,6 +17,7 @@ from camas.core.gate import (
 	decision_of,
 	prune_stale_report_dirs,
 	run_gate,
+	settle,
 	uses_path_mode,
 	with_agent_format,
 )
@@ -23,6 +25,7 @@ from camas.core.matrix import resolve_cmd
 from camas.core.task import task_label
 from camas.core.timings import CacheKey, TaskTiming
 from camas.core.traversal import flatten_leaves
+from camas.v0.completion import Finished
 
 if TYPE_CHECKING:
 	import pytest
@@ -261,3 +264,24 @@ async def test_gate_canonical_survives_agent_format_rewriting_the_command() -> N
 	reported = outcome.result.results[0].name
 	assert "--output-format sarif" in reported
 	assert outcome.result.results[0].identity == CacheKey("python -c pass .", 1)
+
+
+async def test_settle_without_a_fix_node_runs_nothing(tmp_path: Path) -> None:
+	assert await settle(None, ("a.py",), camas_dir=tmp_path) is None
+
+
+async def test_settle_runs_nothing_when_no_fix_leaf_covers_the_change(tmp_path: Path) -> None:
+	fix = Task(("python", "-c", "raise SystemExit(9)", "{paths}"), name="fmt", paths="src")
+	assert await settle(fix, ("docs/a.md",), camas_dir=tmp_path) is None
+
+
+async def test_settle_runs_the_fix_scoped_to_the_change_and_records_it(tmp_path: Path) -> None:
+	fix = Task(
+		("python", "-c", "import sys; print(sys.argv[1:])", "{paths}"), name="fmt", paths="."
+	)
+	result = await settle(fix, ("src/a.py",), camas_dir=tmp_path)
+	assert result is not None
+	completion = result.results[0].completion
+	assert isinstance(completion, Finished)
+	assert b"".join(completion.output).strip() == b"['src/a.py']"
+	assert timings.load(tmp_path)

@@ -118,6 +118,7 @@ def test_pep723_init_claude_via_script_entry_writes_uv_launcher(
 def test_pep723_init_claude_headless_server_loads(
 	tmp_path: Path,
 	run_headless: Callable[..., CompletedProcess[str]],
+	mcp_server_status: Callable[[str], dict[str, str]],
 ) -> None:
 	if not _HEADLESS:
 		pytest.skip("set CAMAS_CC_PEP723_HEADLESS=1 to run the uvx server-load step (builds camas)")
@@ -130,11 +131,13 @@ def test_pep723_init_claude_headless_server_loads(
 		"Call the camas_list MCP tool. Report how many tasks it lists. "
 		"Use only the MCP tool — no shell commands.",
 		strict_mcp=True,
+		output_format="stream-json",
 	)
 	assert headless.returncode == 0, (
 		f"headless failed to load the uvx-launched .mcp.json: "
 		f"rc={headless.returncode} stderr={headless.stderr}"
 	)
+	assert mcp_server_status(headless.stdout).get("camas") == "connected", headless.stdout[:2000]
 
 
 @pytest.mark.skipif(not _ENABLED, reason="set CAMAS_CC_E2E=1 with claude on PATH")

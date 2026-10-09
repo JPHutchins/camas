@@ -12,15 +12,30 @@ import os
 import time
 from typing import TYPE_CHECKING
 
+import pytest
+
 from camas.core import timings
-from camas.core.hook_event import HookEvent, changed_from_stdin
+from camas.core.hook_event import HookEvent, event_from_stdin
 from camas.core.timings import CacheKey
 from camas.mcp import serve, wire
 
 if TYPE_CHECKING:
 	from pathlib import Path
 
-	import pytest
+
+@pytest.fixture(autouse=True)
+def settled(monkeypatch: pytest.MonkeyPatch) -> list[HookEvent]:
+	"""Every nudge here finds its sibling Stop autofix already settled — the events it waited on,
+	recorded instead of polled (:func:`camas.core.hook_event.await_settled` has its own tests)."""
+	waited: list[HookEvent] = []
+
+	def already_settled(event: HookEvent) -> bool:
+		waited.append(event)
+		return True
+
+	monkeypatch.setattr(serve, "await_settled", already_settled)
+	return waited
+
 
 _TASKS = (
 	"from camas import Config, Task\n\ncheck = Task(\n"
@@ -195,6 +210,39 @@ def test_gate_cli_nudge_fix_only_project_exits_zero(
 	(tmp_path / "tasks.py").write_text(_FIX_ONLY_TASKS)
 	assert serve.gate_cli(["--nudge"]) == 0
 	assert "no check node" in capsys.readouterr().err
+
+
+def test_gate_cli_nudge_waits_for_the_stop_autofix_before_it_checks(
+	tmp_path: Path,
+	monkeypatch: pytest.MonkeyPatch,
+	capsys: pytest.CaptureFixture[str],
+	settled: list[HookEvent],
+) -> None:
+	"""The async nudge runs in parallel with its sibling Stop autofix, so before a check that may
+	wake the agent it waits for that fix to settle; a nudge that cannot wake, a plain gate, and a
+	project registering no fix node wait for nothing."""
+	_chdir_project(tmp_path, monkeypatch, "FIXME")
+	(tmp_path / "sample.py").write_text("FIXME\n")
+	marker_dir = tmp_path / "markers"
+	marker_dir.mkdir()
+	monkeypatch.setattr("camas.mcp.serve.tempfile.gettempdir", lambda: str(marker_dir))
+	monkeypatch.setattr("sys.stdin", io.StringIO(_stop_event("p-0")))
+	assert serve.gate_cli(["--nudge"]) == 2
+	assert settled == []
+	(tmp_path / "tasks.py").write_text(
+		(tmp_path / "tasks.py").read_text()
+		+ "from camas import Claude\n"
+		+ "_ = Config(default_task=check, agent=Claude(fix=Task(('python', '-c', 'pass'))))\n"
+	)
+	monkeypatch.setattr("sys.stdin", io.StringIO(_stop_event("p-1", stop_hook_active=True)))
+	assert serve.gate_cli(["--nudge"]) == 0
+	assert settled == []
+	monkeypatch.setattr("sys.stdin", io.StringIO(_stop_event("p-1")))
+	assert serve.gate_cli(["--nudge"]) == 2
+	assert [event.prompt_id for event in settled] == ["p-1"]
+	capsys.readouterr()
+	assert serve.gate_cli(["--paths", "sample.py"]) == 2
+	assert len(settled) == 1
 
 
 def test_gate_cli_nudge_load_error_exits_zero(
@@ -390,7 +438,7 @@ def test_gate_text_marks_truncated_diagnostic() -> None:
 	assert "Re-gate this scope" in text
 
 
-def test_changed_from_stdin_extracts_edited_files(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_event_from_stdin_extracts_edited_files(monkeypatch: pytest.MonkeyPatch) -> None:
 	event = json.dumps(
 		{
 			"tool_calls": [
@@ -403,36 +451,38 @@ def test_changed_from_stdin_extracts_edited_files(monkeypatch: pytest.MonkeyPatc
 		}
 	)
 	monkeypatch.setattr("sys.stdin", io.StringIO(event))
-	assert changed_from_stdin() == ("a.py", "b.py")
+	assert event_from_stdin().changed == ("a.py", "b.py")
 
 
-def test_changed_from_stdin_tty_is_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_event_from_stdin_tty_carries_no_batch(monkeypatch: pytest.MonkeyPatch) -> None:
 	class _Tty(io.StringIO):
 		def isatty(self) -> bool:
 			return True
 
 	monkeypatch.setattr("sys.stdin", _Tty("x"))
-	assert changed_from_stdin() == ()
+	assert event_from_stdin().changed is None
 
 
-def test_changed_from_stdin_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_event_from_stdin_empty_carries_no_batch(monkeypatch: pytest.MonkeyPatch) -> None:
 	monkeypatch.setattr("sys.stdin", io.StringIO("  "))
-	assert changed_from_stdin() == ()
+	assert event_from_stdin().changed is None
 
 
-def test_changed_from_stdin_bad_json(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_event_from_stdin_bad_json_carries_no_batch(monkeypatch: pytest.MonkeyPatch) -> None:
 	monkeypatch.setattr("sys.stdin", io.StringIO("not json"))
-	assert changed_from_stdin() == ()
+	assert event_from_stdin().changed is None
 
 
-def test_changed_from_stdin_dict_without_tool_calls(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_event_from_stdin_dict_without_tool_calls_carries_no_batch(
+	monkeypatch: pytest.MonkeyPatch,
+) -> None:
 	monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"foo": "bar"})))
-	assert changed_from_stdin() == ()
+	assert event_from_stdin().changed is None
 
 
-def test_changed_from_stdin_non_dict_event(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_event_from_stdin_non_dict_event_carries_no_batch(monkeypatch: pytest.MonkeyPatch) -> None:
 	monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps([1, 2])))
-	assert changed_from_stdin() == ()
+	assert event_from_stdin().changed is None
 
 
 def test_gate_cli_dry_run_shows_plan(

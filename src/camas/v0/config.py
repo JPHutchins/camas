@@ -23,8 +23,8 @@ class Claude(NamedTuple):
 	"""The Claude Code agent integration: the explicitly declared fix, check, and default nodes."""
 
 	fix: TaskNode
-	"""The deterministic, behavior-preserving autofix node the PostToolBatch hook runs (scoped,
-	zero tokens). Declared, not derived from ``mutates`` — a mutating leaf may be codegen or a
+	"""The deterministic, behavior-preserving autofix node ``camas_gate`` settles before it checks,
+	and the ``Stop`` hook runs at every turn end (scoped, zero tokens). Declared, not derived from ``mutates`` — a mutating leaf may be codegen or a
 	compiler, which is not a fixer.
 	"""
 	check: TaskNode | None = None

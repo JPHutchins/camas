@@ -304,8 +304,9 @@ ci = Sequential(
 # One leaf opts out on its own with env={"NO_COLOR": "1"}, which wins either way.
 #
 # agent= takes an Agent — today that union is just Claude, wiring the Claude Code plugin: fix
-# is the registered PostToolBatch autofix node (fmt, above); check is what the gate validates
-# (None would defer to default_task/github_task, scoped by --paths and time-boxed by --under);
+# is the registered autofix node (fmt, above) that camas_gate and the turn-end Stop hook run;
+# check is what the gate validates (None would defer to default_task/github_task, scoped by
+# --paths and time-boxed by --under);
 # default is what a no-task `camas_run` runs (None would defer to check, then
 # github_task/default_task).
 # Bind the CI-only extension to a name so camas_list reports it as the github default; an

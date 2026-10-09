@@ -42,8 +42,14 @@ from ..core.budget import (
 	summary_lines,
 )
 from ..core.execution import run
-from ..core.gate import STALE_TEMP_MAX_AGE_S, GateOutcome, run_gate
-from ..core.hook_event import NO_EVENT, HookEvent, event_from_stdin
+from ..core.gate import GateOutcome, run_gate, settle
+from ..core.hook_event import (
+	NO_EVENT,
+	STALE_TEMP_MAX_AGE_S,
+	HookEvent,
+	await_settled,
+	event_from_stdin,
+)
 from ..core.matrix import (
 	empty_variant_labels,
 	expand_matrix,
@@ -118,7 +124,9 @@ RUN_ANNOTATIONS: Final = types.ToolAnnotations(
 )
 CHECK_ANNOTATIONS: Final = types.ToolAnnotations(readOnlyHint=True, openWorldHint=False)
 DOCS_ANNOTATIONS: Final = types.ToolAnnotations(readOnlyHint=True, openWorldHint=False)
-GATE_ANNOTATIONS: Final = types.ToolAnnotations(readOnlyHint=True, openWorldHint=False)
+GATE_ANNOTATIONS: Final = types.ToolAnnotations(
+	readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=True
+)
 FIX_ANNOTATIONS: Final = types.ToolAnnotations(
 	readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=True
 )
@@ -611,12 +619,15 @@ def tools(task_names: tuple[str, ...], compat: Compat) -> Tools:
 			compat,
 			name=ToolName.GATE.value,
 			description=textwrap.dedent("""\
-				The SA-delegation gate: scope THIS project's checks to the
-				files just changed, run them, and return a binary verdict. It does not mutate — the
-				deterministic fixers run separately on PostToolBatch (camas mcp fix). residual_class is
+				The SA-delegation gate: first run the project's registered deterministic autofix
+				(Config.agent.fix — formatters, --fix linters) over the files just changed, then scope
+				THIS project's checks to them, run them, and return a binary verdict, so a residual is
+				never one the autofix settles. Re-read a file before editing it after a gate: the autofix
+				may have rewritten it. residual_class is
 				'green' (decision 'continue') when the checks pass, or 'needs_reasoning' (decision
 				'block') when a check still fails — then diagnostics carries the failing leaves. Pass
-				paths=[…] (the changed files) to scope; omit to gate the whole check node. under=<seconds>
+				paths=[…] (the changed files) to scope; omit to gate the whole check node, which also
+				runs the autofix over the whole tree. under=<seconds>
 				time-boxes the checks: leaves measured to exceed it are skipped (except the over-budget
 				stages of a pipe kept whole for its untimed siblings), untimed leaves run.
 			""").strip(),
@@ -1534,6 +1545,19 @@ async def gate_for(
 	except ValueError as e:
 		return error_result(str(e))
 	changed = to_changed(req.paths, base_for(session))
+	rerun = wire.GateRerun(task=req.task, paths=changed, under=req.under)
+	if requested_but_unusable(req.paths, changed):
+		nothing: Final = GateOutcome("green", None, None, None, coverage_message(req.paths))
+		resp = to_gate_response(nothing, None, rerun)
+		return success(with_warning(session, gate_text(resp)), resp, session.compat)
+	settled = await settle(
+		config.gate_fix() if config is not None else None,
+		changed,
+		camas_dir=session.camas_dir,
+		jobs=req.jobs,
+		base=base_for(session),
+		leaf_color=leaf_color_of(config),
+	)
 	outcome = await run_gate(
 		node,
 		changed,
@@ -1545,7 +1569,6 @@ async def gate_for(
 	)
 	record_gate(session.camas_dir, outcome)
 	budget = to_budget_report(outcome.budget) if outcome.budget is not None else None
-	rerun = wire.GateRerun(task=req.task, paths=changed, under=req.under)
 	resp = to_gate_response(outcome, budget, rerun)
 	nudge = improve_loop_nudge(
 		any_truncated=any(env.truncated for env in resp.diagnostics or ()),
@@ -1555,7 +1578,26 @@ async def gate_for(
 			and has_failing_leaf_without_agent_format(outcome.node, outcome.result)
 		),
 	)
-	return success(with_warning(session, gate_text(resp) + nudge), resp, session.compat)
+	return success(
+		with_warning(session, gate_text(resp) + settle_note(settled) + nudge), resp, session.compat
+	)
+
+
+def settle_note(settled: RunResult | None) -> str:
+	"""A gate-text line naming each autofix leaf that exited non-zero; empty when the autofix did
+	not run or every leaf exited 0.
+	"""
+	failed: Final = tuple(
+		f"{result.name} exited {result.completion.returncode}"
+		for result in (settled.results if settled is not None else ())
+		if result.completion.returncode != 0 and not isinstance(result.completion, Skipped)
+	)
+	if not failed:
+		return ""
+	return (
+		f"\n\nThe autofix (Config.agent.fix) failed before the checks ran — {', '.join(failed)} —"
+		" so some of its fixes may not have applied; camas_gate settles it again."
+	)
 
 
 async def fix_call(session: Session, arguments: dict[str, Any]) -> types.CallToolResult:
@@ -1747,7 +1789,13 @@ def gate_text(resp: wire.GateResponse) -> str:
 			if env.truncated:
 				lines.append("    … earlier output truncated")
 	if resp.decision == "block":
-		lines.extend(["", f"Re-gate this scope: {rerun_command(resp.rerun)}"])
+		lines.extend(
+			[
+				"",
+				f"Re-gate this scope: {rerun_command(resp.rerun)} (read-only; camas_gate settles"
+				" the autofix first)",
+			]
+		)
 	return "\n".join(lines)
 
 
@@ -1919,8 +1967,9 @@ def gate_cli_load_error(state: TasksState, source: Path, exception: Exception) -
 
 
 def gate_cli(argv: list[str]) -> int:
-	"""Run the gate once, headless: scope this project's checks to the changed paths (``--paths``,
-	else the files in a ``PostToolBatch``/``Stop`` event on stdin), print the ``GateResponse`` as
+	"""Run the gate once, headless and read-only: scope this project's checks to the changed paths
+	(``--paths``, else the files in a ``PostToolBatch`` event on stdin; a ``Stop`` event names
+	none, so the whole tree), print the ``GateResponse`` as
 	JSON to stdout, and exit ``0`` (continue) / ``2`` (block) — on a block the agent-facing
 	summary goes to stderr. With ``--nudge``, prints the Stop-hook nudge text instead of the JSON
 	verdict, self-limiting per :class:`GateArgs`. The process-isolated, machine-readable gate
@@ -1973,7 +2022,10 @@ def path_scoped_plan_text(node: TaskNode) -> str:
 def run_gate_cli(
 	args: GateArgs, base: Path, tasks: Mapping[str, TaskNode], config: Config | None
 ) -> int:
-	"""Resolve the check node, run the gate over the changed paths, emit the verdict."""
+	"""Resolve the check node, run the gate over the changed paths, emit the verdict. Read-only: a
+	nudge that may wake the agent first waits for its sibling ``Stop`` autofix to settle
+	(:func:`camas.core.hook_event.await_settled`), so its check reads the fixed files.
+	"""
 	try:
 		node = gate_source(tasks, config, args.task)
 		require_filled_axes(node)
@@ -1993,6 +2045,8 @@ def run_gate_cli(
 	if args.dry_run:
 		print(gate_dry_run_text(node, changed, args.under, camas_dir))
 		return 0
+	if args.nudge and should_nudge(event) and config is not None and config.gate_fix() is not None:
+		_ = await_settled(event)
 	outcome = asyncio.run(
 		run_gate(
 			node,
