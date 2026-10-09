@@ -544,19 +544,19 @@ async def _lines(stream: asyncio.StreamReader) -> AsyncIterator[bytes]:
 	"""Each line of ``stream``, newline included; a line longer than the stream's buffer limit
 	is read in pieces and arrives whole.
 	"""
-	head = b""
+	pieces: list[bytes] = []
 	while True:
 		try:
 			line = await stream.readuntil(b"\n")
 		except asyncio.LimitOverrunError as overrun:  # noqa: PERF203  # catching an overrun per read is the loop's purpose
-			head += await stream.read(overrun.consumed)
+			pieces.append(await stream.read(overrun.consumed))
 		except asyncio.IncompleteReadError as eof:
-			if head or eof.partial:
-				yield head + eof.partial
+			if pieces or eof.partial:
+				yield b"".join((*pieces, eof.partial))
 			return
 		else:
-			yield head + line
-			head = b""
+			yield b"".join((*pieces, line)) if pieces else line
+			pieces.clear()
 
 
 async def run_cmd(task: Task, leaf_index: int, ctx: RunContext) -> TaskResult:
@@ -626,7 +626,7 @@ async def run_pipe(stages: tuple[TaskNode, ...], ctx: RunContext) -> tuple[TaskR
 	pipeline holds one limiter slot as a unit; its stages share it, since they must all be live
 	at once or a full pipe deadlocks its writer. Each stage's completion dispatches as it
 	reaps, like a leaf's. The ``os.pipe()`` fd wiring is exercised on Windows by the wheels
-	suite's run of the pipe tests. Whatever fails — a cancel, a spawn error, a reader overflow,
+	suite's run of the pipe tests. Whatever fails — a cancel, a spawn error, a failing Effect,
 	a landed interrupt — the readers are cancelled and every child is killed and awaited before
 	the failure propagates, so no transport outlives the loop.
 	"""

@@ -694,7 +694,7 @@ def tools(task_names: tuple[str, ...], compat: Compat) -> Tools:
 				refactor fail loudly instead of silently reshaping the matrix. Pass task=<name>;
 				omit to use the project default. Pin axes with matrix_overrides (like camas_run),
 				e.g. {"PY": ["3.13"]} — a variants= key filters to the bundles binding it. Every
-                                emission is verified against the real run-set: each job must run exactly its own
+				emission is verified against the real run-set: each job must run exactly its own
 				cell's leaves, and the jobs together every leaf exactly once, so a fan-out with no
 				faithful projection (independent fan-outs in one tree, a plain leaf beside matrixed
 				siblings) is a tool error, not a run failure. Read-only; runs nothing.

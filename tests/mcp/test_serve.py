@@ -206,6 +206,19 @@ def test_list_tool_description_declares_github_default() -> None:
 	assert "null" in tool_list.description
 
 
+def test_no_tool_description_ships_indentation() -> None:
+	"""No tool description ships a tab or an indented line: mixed indentation silently defeats
+	the ``textwrap.dedent`` the descriptions rely on."""
+	tools = serve.tools(("a",), Compat(emit_structured=True))
+	descriptions = tuple(tool.description or "" for tool in tools)
+	assert all("\t" not in description for description in descriptions)
+	assert all(
+		not line.startswith(" ")
+		for description in descriptions
+		for line in description.splitlines()
+	)
+
+
 def test_list_call_text_lists_tasks_and_markers(tmp_path: Path) -> None:
 	ci = Sequential(PASS, name="ci")
 	session = _session(
