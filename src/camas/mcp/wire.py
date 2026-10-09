@@ -306,7 +306,9 @@ class RunRequest(BaseModel):
 		description="summary: pass/fail only; failures: + output of failed leaves; full: all output.",
 	)
 	jobs: int | None = Field(
-		default=None, ge=1, description="Max concurrent leaf subprocesses; null = unbounded."
+		default=None,
+		ge=1,
+		description="Max concurrently running leaves (a pipe counts as one); null = unbounded.",
 	)
 	matrix_overrides: dict[str, list[str]] = Field(
 		default_factory=dict,
@@ -373,7 +375,9 @@ class GateRequest(BaseModel):
 		"first is not budgeted.",
 	)
 	jobs: int | None = Field(
-		default=None, ge=1, description="Max concurrent leaf subprocesses; null = unbounded."
+		default=None,
+		ge=1,
+		description="Max concurrently running leaves (a pipe counts as one); null = unbounded.",
 	)
 
 
@@ -395,7 +399,9 @@ class FixRequest(BaseModel):
 		"registered agent fix node (Config.agent.fix).",
 	)
 	jobs: int | None = Field(
-		default=None, ge=1, description="Max concurrent leaf subprocesses; null = unbounded."
+		default=None,
+		ge=1,
+		description="Max concurrently running leaves (a pipe counts as one); null = unbounded.",
 	)
 
 

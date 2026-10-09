@@ -36,6 +36,23 @@ ECHO_UPPER: tuple[str, ...] = (
 	"-c",
 	"import sys; sys.stdout.write(sys.stdin.read().upper())",
 )
+DRAIN: tuple[str, ...] = ("python", "-c", "import sys; sys.stdin.read()")
+
+
+class EventLog:
+	"""An effect recording every event in dispatch order."""
+
+	def __init__(self) -> None:
+		self.events: list[TaskEvent] = []
+
+	async def setup(self, task: TaskNode) -> None:
+		return None
+
+	async def on_event(self, event: TaskEvent, states: Sequence[LeafState], ctx: None) -> None:
+		self.events.append(event)
+
+	async def teardown(self, ctxs: tuple[None, ...]) -> None:
+		pass
 
 
 def test_pipe_coerces_stage_strings_and_rejects_nested_groups() -> None:
@@ -601,26 +618,16 @@ def test_pipe_spawn_failure_never_starts_later_stages() -> None:
 	skip_subtree's leaves."""
 	from camas.v0.task_event import StartedEvent
 
-	events: list[TaskEvent] = []
-
-	class Recorder:
-		async def setup(self, task: TaskNode) -> None:
-			return None
-
-		async def on_event(self, event: TaskEvent, states: Sequence[LeafState], ctx: None) -> None:
-			events.append(event)
-
-		async def teardown(self, ctxs: tuple[None, ...]) -> None:
-			pass
+	log = EventLog()
 
 	pipe = Pipe(
 		Task(("python", "-c", "pass")),
 		Task("no-such-cmd-xyz"),
 		Task(("python", "-c", "pass")),
 	)
-	result = asyncio.run(run(pipe, jobs=1, effects=(Recorder(),)))
+	result = asyncio.run(run(pipe, jobs=1, effects=(log,)))
 	assert result.results[2].completion.returncode == 127
-	started = {e.leaf_index for e in events if isinstance(e, StartedEvent)}
+	started = {e.leaf_index for e in log.events if isinstance(e, StartedEvent)}
 	assert 2 not in started
 
 
@@ -1133,7 +1140,7 @@ async def test_a_grandchild_holding_a_stage_pipe_cannot_wedge_the_unwind(
 		run(
 			Pipe(
 				Task(("python", "-c", stage)),
-				Task(("python", "-c", "import sys; sys.stdin.read()")),
+				Task(DRAIN),
 			),
 			interactive=False,
 		)
@@ -1159,22 +1166,34 @@ async def test_a_grandchild_holding_a_stage_pipe_cannot_wedge_the_unwind(
 			await asyncio.sleep(0)
 
 
-async def test_jobs_bounds_pipes_like_leaves(tmp_path: Path) -> None:
-	"""Under ``jobs=1`` no two pipes overlap (#336): each head holds an exclusive lock file for
-	its lifetime, so an overlapping pipe fails to create it and fails the run."""
-	lock = str(tmp_path / "lock")
-	head = (
-		"python",
-		"-c",
-		"import os, sys, time; fd = os.open(sys.argv[1], os.O_CREAT | os.O_EXCL); "
-		"time.sleep(0.2); os.close(fd); os.remove(sys.argv[1])",
-		lock,
-	)
-	drain = ("python", "-c", "import sys; sys.stdin.read()")
+async def test_jobs_bounds_pipes_like_leaves() -> None:
+	"""Under ``jobs=1`` a pipe holds the one slot until every stage reaps (#336), so each pipe's
+	events form one contiguous block; overlapping pipes would interleave them."""
+	from camas.v0.task_event import CompletedEvent, StartedEvent
+
+	log = EventLog()
+
 	pipes = Parallel(
-		*(Pipe(Task(head, name=f"head{i}"), Task(drain, name=f"drain{i}")) for i in range(3))
+		*(
+			Pipe(Task(("python", "-c", "pass"), name=f"head{i}"), Task(DRAIN, name=f"drain{i}"))
+			for i in range(3)
+		)
 	)
-	assert (await run(pipes, jobs=1)).returncode == 0
+	assert (await run(pipes, jobs=1, effects=(log,))).returncode == 0
+	pipe_order = [
+		event.leaf_index // 2
+		for event in log.events
+		if isinstance(event, (StartedEvent, CompletedEvent))
+	]
+	assert pipe_order == sorted(pipe_order)
+
+
+async def test_a_pipe_runs_its_stages_together_in_its_one_slot() -> None:
+	"""The stages share their pipe's slot: under ``jobs=1`` a head writing far more than an OS
+	pipe buffer completes only because its drain runs alongside it."""
+	head = ("python", "-c", "import sys; sys.stdout.write('x' * (1 << 20))")
+	result = await asyncio.wait_for(run(Pipe(Task(head), Task(DRAIN)), jobs=1), 60)
+	assert result.returncode == 0
 
 
 def test_render_shows_a_pipe_with_the_pipe_separator() -> None:

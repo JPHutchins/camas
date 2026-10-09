@@ -61,7 +61,8 @@ if TYPE_CHECKING:
 
 
 Limiter: TypeAlias = "asyncio.Semaphore | nullcontext[None]"
-"""Throttles concurrent leaf subprocesses under ``--jobs``; a no-op when unbounded."""
+"""Throttles concurrent leaves under ``--jobs`` (a pipeline counts as one); a no-op when
+unbounded."""
 
 
 class Signalable(Protocol):
@@ -608,6 +609,11 @@ async def run_pipe(stages: tuple[TaskNode, ...], ctx: RunContext) -> tuple[TaskR
 	a landed interrupt — the readers are cancelled and every child is killed and awaited before
 	the failure propagates, so no transport outlives the loop.
 	"""
+	async with ctx.limiter:
+		return await _run_pipe_stages(stages, ctx)
+
+
+async def _run_pipe_stages(stages: tuple[TaskNode, ...], ctx: RunContext) -> tuple[TaskResult, ...]:
 	leaves: Final = cast("tuple[Task, ...]", stages)
 	procs: Final[dict[int, asyncio.subprocess.Process]] = {}
 	readers: Final[list[asyncio.Task[None]]] = []
@@ -848,8 +854,7 @@ async def execute(node: TaskNode, ctx: RunContext) -> tuple[TaskResult, ...]:
 				futures: Final = tuple(tg.create_task(execute(child, ctx)) for child in children)
 			return tuple(r for f in futures for r in f.result())
 		case Pipe(tasks=children):
-			async with ctx.limiter:
-				return await run_pipe(children, ctx)
+			return await run_pipe(children, ctx)
 		case Sequential(tasks=children):
 			seq_results: tuple[TaskResult, ...] = ()
 			blocker: TaskResult | None = None

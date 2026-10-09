@@ -647,7 +647,7 @@ def tools(task_names: tuple[str, ...], compat: Compat) -> Tools:
 				is injected with the files it covers; a command without ``{paths}`` always runs
 				unless its ``when=`` excludes the changed set.
 				A no-op (exit 0, no leaves) when no fix node is registered (``Config.agent.fix`` is
-				``None``). ``jobs`` controls max concurrent leaf subprocesses.
+				``None``). ``jobs`` caps concurrently running leaves (a pipe counts as one).
 			""").strip(),
 			input_schema=wire.fix_input_schema(task_names),
 			output_model=wire.RunResponse,

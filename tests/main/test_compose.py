@@ -446,9 +446,26 @@ def test_state_from_scope_keeps_every_config_field() -> None:
 		agent=Claude(fix=build, check=build, default=build),
 		leaf_color=False,
 	)
+	assert all(getattr(config, field) != getattr(Config(), field) for field in Config._fields)
+	assert config.agent is not None
+	assert all(getattr(config.agent, field) is not None for field in Claude._fields)
 	state = state_from_scope({"build": build, "_": config})
 	assert isinstance(state, LoadOk)
 	assert state.config == config
+
+
+def test_the_loaders_handle_every_task_valued_config_field() -> None:
+	"""``resolve_config``, ``name_scope_config`` and ``anonymous_config_field_warnings`` each list
+	the task-valued fields by hand; a new one fails here until all three handle it."""
+	from inspect import get_annotations
+
+	def task_valued(record: type) -> frozenset[str]:
+		return frozenset(
+			field for field, hint in get_annotations(record).items() if "TaskNode" in str(hint)
+		)
+
+	assert task_valued(Config) == {"default_task", "github_task"}
+	assert task_valued(Claude) == {"fix", "check", "default"}
 
 
 def test_state_from_scope_no_file_names_plain_bindings() -> None:
