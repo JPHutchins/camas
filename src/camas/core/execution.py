@@ -600,9 +600,9 @@ async def run_pipe(stages: tuple[TaskNode, ...], ctx: RunContext) -> tuple[TaskR
 	"""Run a Pipe's stages concurrently, each stage's stdout wired into the next's stdin — the
 	last stage's stdout is the pipeline's output, its stderr merged in like a leaf's. Every
 	stage runs to completion (a dying stage feeds EOF downstream), and each stage's own exit is
-	its leaf's result, so ``pipefail`` holds: any non-zero stage fails the run. Stages
-	deliberately bypass the leaf limiter — a pipeline is one unit whose stages must all be live
-	at once, or a full pipe deadlocks its writer. Each stage's completion dispatches as it
+	its leaf's result, so ``pipefail`` holds: any non-zero stage fails the run. The
+	pipeline holds one limiter slot as a unit; its stages share it, since they must all be live
+	at once or a full pipe deadlocks its writer. Each stage's completion dispatches as it
 	reaps, like a leaf's. The ``os.pipe()`` fd wiring is exercised on Windows by the wheels
 	suite's run of the pipe tests. Whatever fails — a cancel, a spawn error, a reader overflow,
 	a landed interrupt — the readers are cancelled and every child is killed and awaited before
@@ -848,7 +848,8 @@ async def execute(node: TaskNode, ctx: RunContext) -> tuple[TaskResult, ...]:
 				futures: Final = tuple(tg.create_task(execute(child, ctx)) for child in children)
 			return tuple(r for f in futures for r in f.result())
 		case Pipe(tasks=children):
-			return await run_pipe(children, ctx)
+			async with ctx.limiter:
+				return await run_pipe(children, ctx)
 		case Sequential(tasks=children):
 			seq_results: tuple[TaskResult, ...] = ()
 			blocker: TaskResult | None = None

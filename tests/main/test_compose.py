@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from camas import Parallel, Project, Task
+from camas import Claude, Config, Parallel, Project, Task
 from camas.main.compose import load_py_tasks_state, load_scope, state_from_scope
 from camas.main.state import LoadErr, LoadOk
 
@@ -431,6 +431,24 @@ def test_reserved_name_rejected(tmp_path: Path) -> None:
 	)
 	with pytest.raises(ValueError, match="reserved"):
 		load_scope(tasks_py)
+
+
+def test_state_from_scope_keeps_every_config_field() -> None:
+	"""The load rebuilds the Config to resolve its task references — every other field must
+	survive it, or a setting like ``leaf_color=False`` is silently reset to its default (#337)."""
+	build = Task("true", name="build")
+	config = Config(
+		default_task=build,
+		github_task=build,
+		default_effects=(),
+		default_github_effects=(),
+		camas_dir=".custom-camas",
+		agent=Claude(fix=build, check=build, default=build),
+		leaf_color=False,
+	)
+	state = state_from_scope({"build": build, "_": config})
+	assert isinstance(state, LoadOk)
+	assert state.config == config
 
 
 def test_state_from_scope_no_file_names_plain_bindings() -> None:

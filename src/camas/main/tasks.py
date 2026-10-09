@@ -16,7 +16,7 @@ else:  # pragma: no cover
 	import tomli as tomllib
 	from typing_extensions import assert_never
 
-from ..v0.config import Agent, Claude, Config
+from ..v0.config import Agent, Config
 from ..v0.effect import Effect
 from ..v0.task import Group, Parallel, Pipe, Sequential, Task, TaskNode, rebuilt, reject_refs
 from .expression import Ref, parse_task_value, resolve_refs
@@ -115,6 +115,7 @@ def anonymous_config_field_warnings(scope: Mapping[str, object]) -> tuple[str, .
 	()
 	>>> anonymous_config_field_warnings({"_": Config(default_task=Task("a"))})
 	()
+	>>> from camas import Claude
 	>>> anonymous_config_field_warnings({"_": Config(agent=Claude(fix=Parallel(Task("a"))))})[0].startswith("Config.agent.fix")
 	True
 	>>> anonymous_config_field_warnings({})
@@ -274,18 +275,15 @@ def name_scope_config(scope: Mapping[str, object]) -> Config | None:
 	def promote_agent(agent: Agent | None) -> Agent | None:
 		if agent is None:
 			return None
-		return Claude(
+		return agent._replace(
 			fix=promote_required(agent.fix),
 			check=promote_field(agent.check),
 			default=promote_field(agent.default),
 		)
 
-	return Config(
+	return config._replace(
 		default_task=promote_field(config.default_task),
 		github_task=promote_field(config.github_task),
-		default_effects=config.default_effects,
-		default_github_effects=config.default_github_effects,
-		camas_dir=config.camas_dir,
 		agent=promote_agent(config.agent),
 	)
 

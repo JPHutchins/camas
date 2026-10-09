@@ -1159,6 +1159,24 @@ async def test_a_grandchild_holding_a_stage_pipe_cannot_wedge_the_unwind(
 			await asyncio.sleep(0)
 
 
+async def test_jobs_bounds_pipes_like_leaves(tmp_path: Path) -> None:
+	"""Under ``jobs=1`` no two pipes overlap (#336): each head holds an exclusive lock file for
+	its lifetime, so an overlapping pipe fails to create it and fails the run."""
+	lock = str(tmp_path / "lock")
+	head = (
+		"python",
+		"-c",
+		"import os, sys, time; fd = os.open(sys.argv[1], os.O_CREAT | os.O_EXCL); "
+		"time.sleep(0.2); os.close(fd); os.remove(sys.argv[1])",
+		lock,
+	)
+	drain = ("python", "-c", "import sys; sys.stdin.read()")
+	pipes = Parallel(
+		*(Pipe(Task(head, name=f"head{i}"), Task(drain, name=f"drain{i}")) for i in range(3))
+	)
+	assert (await run(pipes, jobs=1)).returncode == 0
+
+
 def test_render_shows_a_pipe_with_the_pipe_separator() -> None:
 	from camas.core.render import GroupHeader, flatten_rows, render_tree_lines
 
