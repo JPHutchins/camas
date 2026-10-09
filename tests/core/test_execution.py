@@ -77,6 +77,26 @@ _NESTED_COLOR_PROBE = (
 the forced color breaks (a Rust ``assert_cmd`` test, here in python)."""
 
 
+@pytest.mark.parametrize(
+	("program", "line"),
+	[
+		("import sys; sys.stdout.buffer.write(b'x' * 200_000 + b'\\n')", b"x" * 200_000 + b"\n"),
+		("import sys; sys.stdout.write('y' * 200_000)", b"y" * 200_000),
+	],
+	ids=("newline", "no-newline"),
+)
+async def test_a_line_past_the_stream_limit_arrives_whole(program: str, line: bytes) -> None:
+	"""A line longer than asyncio's 64 KiB stream limit is the leaf's output, not a crash (#342),
+	with or without its trailing newline."""
+	from camas.v0.completion import Finished
+
+	result = await run(Task(("python", "-c", program)))
+	assert result.returncode == 0
+	completion = result.results[0].completion
+	assert isinstance(completion, Finished)
+	assert completion.output == (line,)
+
+
 async def test_leaf_color_false_leaves_the_color_decision_to_the_environment(
 	unforced_color: None,
 ) -> None:

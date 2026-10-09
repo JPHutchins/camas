@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from camas import Parallel, Project, Task
+from camas import Claude, Config, Parallel, Project, Task
 from camas.main.compose import load_py_tasks_state, load_scope, state_from_scope
 from camas.main.state import LoadErr, LoadOk
 
@@ -431,6 +431,52 @@ def test_reserved_name_rejected(tmp_path: Path) -> None:
 	)
 	with pytest.raises(ValueError, match="reserved"):
 		load_scope(tasks_py)
+
+
+def test_state_from_scope_keeps_every_config_field() -> None:
+	"""The load rebuilds the Config to resolve its task references — every other field must
+	survive it, or a setting like ``leaf_color=False`` is silently reset to its default (#337)."""
+	build = Task("true")
+	config = Config(
+		default_task=build,
+		github_task=build,
+		default_effects=(),
+		default_github_effects=(),
+		camas_dir=".custom-camas",
+		agent=Claude(fix=build, check=build, default=build),
+		leaf_color=False,
+	)
+	assert all(getattr(config, field) != getattr(Config(), field) for field in Config._fields)
+	assert config.agent is not None
+	assert all(getattr(config.agent, field) is not None for field in Claude._fields)
+	state = state_from_scope({"build": build, "_": config})
+	assert isinstance(state, LoadOk)
+	assert state.config is not None
+	assert (
+		state.config._replace(
+			default_task=config.default_task, github_task=config.github_task, agent=config.agent
+		)
+		== config
+	)
+
+
+def test_the_loaders_handle_every_task_valued_config_field() -> None:
+	"""``resolve_config``, ``name_scope_config`` and ``anonymous_config_field_warnings`` each list
+	the task-valued fields by hand; a new field whose annotation names a task type fails here
+	until all three handle it."""
+	from inspect import get_annotations
+
+	def task_valued(record: type) -> frozenset[str]:
+		return frozenset(
+			field
+			for field, hint in get_annotations(record).items()
+			if any(
+				kind in str(hint) for kind in ("Task", "Nodes", "Sequential", "Parallel", "Pipe")
+			)
+		)
+
+	assert task_valued(Config) == {"default_task", "github_task"}
+	assert task_valued(Claude) == {"fix", "check", "default"}
 
 
 def test_state_from_scope_no_file_names_plain_bindings() -> None:

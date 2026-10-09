@@ -17,7 +17,7 @@ if sys.version_info >= (3, 11):
 else:  # pragma: no cover
 	from typing_extensions import assert_never
 
-from ...v0.config import Claude, Config
+from ...v0.config import Config
 from ...v0.task import Group, Parallel, Pipe, ProjectRef, Sequential, Task, rebuilt
 from ..effects import running_under_agent
 from ..state import LoadErr, LoadOk
@@ -200,15 +200,12 @@ def _compose_scope(
 
 	def resolve_config(config: Config) -> Config:
 		agent_cfg = config.agent
-		return Config(
+		return config._replace(
 			default_task=resolve_field(config.default_task, Field.DEFAULT),
 			github_task=resolve_field(config.github_task, Field.GITHUB),
-			default_effects=config.default_effects,
-			default_github_effects=config.default_github_effects,
-			camas_dir=config.camas_dir,
 			agent=None
 			if agent_cfg is None
-			else Claude(
+			else agent_cfg._replace(
 				fix=resolve(agent_cfg.fix, Field.FIX),
 				check=resolve_field(agent_cfg.check, Field.CHECK),
 				default=resolve_field(agent_cfg.default, Field.RUN_DEFAULT),

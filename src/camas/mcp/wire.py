@@ -9,6 +9,8 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from ..core.jobs import JOBS_UNIT
+
 
 class Finished(BaseModel):
 	"""A leaf that ran to exit with a returncode."""
@@ -306,7 +308,9 @@ class RunRequest(BaseModel):
 		description="summary: pass/fail only; failures: + output of failed leaves; full: all output.",
 	)
 	jobs: int | None = Field(
-		default=None, ge=1, description="Max concurrent leaf subprocesses; null = unbounded."
+		default=None,
+		ge=1,
+		description=f"Max concurrently running leaves ({JOBS_UNIT}); null = unbounded.",
 	)
 	matrix_overrides: dict[str, list[str]] = Field(
 		default_factory=dict,
@@ -373,7 +377,9 @@ class GateRequest(BaseModel):
 		"first is not budgeted.",
 	)
 	jobs: int | None = Field(
-		default=None, ge=1, description="Max concurrent leaf subprocesses; null = unbounded."
+		default=None,
+		ge=1,
+		description=f"Max concurrently running leaves ({JOBS_UNIT}); null = unbounded.",
 	)
 
 
@@ -395,7 +401,9 @@ class FixRequest(BaseModel):
 		"registered agent fix node (Config.agent.fix).",
 	)
 	jobs: int | None = Field(
-		default=None, ge=1, description="Max concurrent leaf subprocesses; null = unbounded."
+		default=None,
+		ge=1,
+		description=f"Max concurrently running leaves ({JOBS_UNIT}); null = unbounded.",
 	)
 
 

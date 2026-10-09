@@ -54,14 +54,15 @@ from .traversal import flatten_leaves, subtree_leaf_indices
 from .unwind import unwind, unwind_failure
 
 if TYPE_CHECKING:
-	from collections.abc import Mapping, Sequence
+	from collections.abc import AsyncIterator, Mapping, Sequence
 
 	from ..v0.effect import Effect
 	from .effect import EventSink
 
 
 Limiter: TypeAlias = "asyncio.Semaphore | nullcontext[None]"
-"""Throttles concurrent leaf subprocesses under ``--jobs``; a no-op when unbounded."""
+"""Throttles concurrent leaves under ``--jobs`` (:data:`camas.core.jobs.JOBS_UNIT`); a no-op
+when unbounded."""
 
 
 class Signalable(Protocol):
@@ -539,6 +540,25 @@ def _completion(state: LeafState, rc: int, elapsed: float, output: Sequence[byte
 	)
 
 
+async def _lines(stream: asyncio.StreamReader) -> AsyncIterator[bytes]:
+	"""Each line of ``stream``, newline included; a line longer than the stream's buffer limit
+	is read in pieces and arrives whole.
+	"""
+	pieces: list[bytes] = []
+	while True:
+		try:
+			line = await stream.readuntil(b"\n")
+		except asyncio.LimitOverrunError as overrun:  # noqa: PERF203  # catching an overrun per read is the loop's purpose
+			pieces.append(await stream.read(overrun.consumed))
+		except asyncio.IncompleteReadError as eof:
+			if pieces or eof.partial:
+				yield b"".join((*pieces, eof.partial))
+			return
+		else:
+			yield b"".join((*pieces, line)) if pieces else line
+			pieces.clear()
+
+
 async def run_cmd(task: Task, leaf_index: int, ctx: RunContext) -> TaskResult:
 	"""Run one leaf as a subprocess, dispatching Started/Output/Completed events. Whatever
 	interrupts it — a cancel, a failing Effect — kills and reaps the child through
@@ -576,7 +596,9 @@ async def run_cmd(task: Task, leaf_index: int, ctx: RunContext) -> TaskResult:
 				return leaf_result(ctx, leaf_index, errored)
 			ctx.interrupts.register(ctx.states, leaf_index, proc)
 			if proc.stdout is not None:  # pragma: no branch
-				async for line in proc.stdout:
+				async for line in _lines(
+					proc.stdout
+				):  # pragma: no branch  # sysmon misses this loop's exit over an async generator; ctrace records it
 					output.append(line)
 					await ctx.dispatch(
 						leaf_index, OutputEvent(task, leaf_index, line, datetime.now())
@@ -600,14 +622,19 @@ async def run_pipe(stages: tuple[TaskNode, ...], ctx: RunContext) -> tuple[TaskR
 	"""Run a Pipe's stages concurrently, each stage's stdout wired into the next's stdin — the
 	last stage's stdout is the pipeline's output, its stderr merged in like a leaf's. Every
 	stage runs to completion (a dying stage feeds EOF downstream), and each stage's own exit is
-	its leaf's result, so ``pipefail`` holds: any non-zero stage fails the run. Stages
-	deliberately bypass the leaf limiter — a pipeline is one unit whose stages must all be live
-	at once, or a full pipe deadlocks its writer. Each stage's completion dispatches as it
+	its leaf's result, so ``pipefail`` holds: any non-zero stage fails the run. The
+	pipeline holds one limiter slot as a unit; its stages share it, since they must all be live
+	at once or a full pipe deadlocks its writer. Each stage's completion dispatches as it
 	reaps, like a leaf's. The ``os.pipe()`` fd wiring is exercised on Windows by the wheels
-	suite's run of the pipe tests. Whatever fails — a cancel, a spawn error, a reader overflow,
+	suite's run of the pipe tests. Whatever fails — a cancel, a spawn error, a failing Effect,
 	a landed interrupt — the readers are cancelled and every child is killed and awaited before
 	the failure propagates, so no transport outlives the loop.
 	"""
+	async with ctx.limiter:
+		return await _run_pipe_stages(stages, ctx)
+
+
+async def _run_pipe_stages(stages: tuple[TaskNode, ...], ctx: RunContext) -> tuple[TaskResult, ...]:
 	leaves: Final = cast("tuple[Task, ...]", stages)
 	procs: Final[dict[int, asyncio.subprocess.Process]] = {}
 	readers: Final[list[asyncio.Task[None]]] = []
@@ -624,7 +651,7 @@ async def run_pipe(stages: tuple[TaskNode, ...], ctx: RunContext) -> tuple[TaskR
 	results: list[TaskResult] = []
 
 	async def read_into(leaf_index: int, stream: asyncio.StreamReader) -> None:
-		async for line in stream:
+		async for line in _lines(stream):
 			outputs[leaf_index].append(line)
 			await ctx.dispatch(
 				leaf_index, OutputEvent(ctx.leaves[leaf_index], leaf_index, line, datetime.now())

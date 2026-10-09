@@ -18,6 +18,7 @@ else:  # pragma: no cover
 	from typing_extensions import assert_never
 
 from ..core.color import BOLD_CYAN
+from ..core.jobs import JOBS_UNIT
 from ..core.render import color_on
 from ..v0.config import Config
 from .check import describe_check_help
@@ -322,7 +323,7 @@ def build_parser(state: TasksState = EMPTY_STATE) -> argparse.ArgumentParser:
 		type=positive_jobs,
 		default=None,
 		metavar="N",
-		help="cap concurrently running leaf subprocesses at N (also: CAMAS_JOBS). "
+		help=f"cap concurrently running leaves at N (also: CAMAS_JOBS); {JOBS_UNIT}. "
 		"A throttle, not a speedup — the tree never runs wider than its own "
 		"fan-out, so --jobs can only slow a run down; reach for it only when a "
 		"wide matrix oversubscribes the machine (CPU/RAM/disk)",

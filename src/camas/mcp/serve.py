@@ -50,6 +50,7 @@ from ..core.hook_event import (
 	await_settled,
 	event_from_stdin,
 )
+from ..core.jobs import JOBS_UNIT
 from ..core.matrix import (
 	empty_variant_labels,
 	expand_matrix,
@@ -68,7 +69,7 @@ from ..main.format import (
 )
 from ..main.github_matrix import format_matrix_json
 from ..main.init import create_starter_tasks_py, starter_text
-from ..main.parser import parse_duration
+from ..main.parser import parse_duration, positive_jobs
 from ..main.pep723 import camas_requirement_from, version_specifier
 from ..main.state import EMPTY_STATE, LoadErr, LoadOk, TasksState
 from ..main.tasks import load_tasks
@@ -647,8 +648,9 @@ def tools(task_names: tuple[str, ...], compat: Compat) -> Tools:
 				is injected with the files it covers; a command without ``{paths}`` always runs
 				unless its ``when=`` excludes the changed set.
 				A no-op (exit 0, no leaves) when no fix node is registered (``Config.agent.fix`` is
-				``None``). ``jobs`` controls max concurrent leaf subprocesses.
-			""").strip(),
+				``None``).
+			""").strip()
+			+ f" ``jobs`` caps concurrently running leaves ({JOBS_UNIT}).",
 			input_schema=wire.fix_input_schema(task_names),
 			output_model=wire.RunResponse,
 			title="Run deterministic autofix",
@@ -692,7 +694,7 @@ def tools(task_names: tuple[str, ...], compat: Compat) -> Tools:
 				refactor fail loudly instead of silently reshaping the matrix. Pass task=<name>;
 				omit to use the project default. Pin axes with matrix_overrides (like camas_run),
 				e.g. {"PY": ["3.13"]} — a variants= key filters to the bundles binding it. Every
-                                emission is verified against the real run-set: each job must run exactly its own
+				emission is verified against the real run-set: each job must run exactly its own
 				cell's leaves, and the jobs together every leaf exactly once, so a fan-out with no
 				faithful projection (independent fan-outs in one tree, a plain leaf beside matrixed
 				siblings) is a tool error, not a run failure. Read-only; runs nothing.
@@ -1926,7 +1928,13 @@ def parse_gate_args(argv: list[str]) -> GateArgs:
 	parser.add_argument(
 		"--under", type=parse_duration, default=None, metavar="DURATION", help="wall-clock budget"
 	)
-	parser.add_argument("--jobs", type=int, default=None, metavar="N", help="max concurrent leaves")
+	parser.add_argument(
+		"--jobs",
+		type=positive_jobs,
+		default=None,
+		metavar="N",
+		help=f"cap concurrently running leaves at N; {JOBS_UNIT}",
+	)
 	parser.add_argument(
 		"--dry-run",
 		action="store_true",
