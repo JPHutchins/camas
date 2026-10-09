@@ -12,7 +12,7 @@ from contextlib import nullcontext
 from datetime import datetime
 from pathlib import Path
 from subprocess import DEVNULL
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -489,20 +489,14 @@ def test_resolve_program_refuses_a_batch_script_spelled_with_trailing_dots_or_sp
 		resolve_program((program, "a&whoami"), {})
 
 
-def test_resolve_program_reads_path_like_tokens_as_their_file_system_strings(
-	tmp_path: Path,
+@pytest.mark.parametrize("spelling", [f"{_SHIM}.cmd.", f"{_SHIM}.cmd ", f"{_SHIM}.cmd. ."])
+def test_resolve_program_resolves_a_trailing_dot_or_space_spelling_to_the_same_shim(
+	tmp_path: Path, spelling: str
 ) -> None:
-	"""``subprocess`` accepts path-like argv: a bare ``Path`` program resolves like its string, and
-	the refusal reads every token — no crash on a ``Path``."""
 	shim = _batch_shim(tmp_path)
-	program, *_ = resolve_program(
-		cast("tuple[str, ...]", (Path(_BATCH_NAME),)), {"PATH": str(tmp_path)}
-	)
+	program, *args = resolve_program((spelling, "build"), {"PATH": str(tmp_path)})
 	assert Path(program) == shim
-	plain = cast("tuple[str, ...]", (Path("tool"), Path("a&b")))
-	assert resolve_program(plain, {}) == plain
-	with pytest.raises(OSError, match=r"cmd\.exe metacharacter"):
-		resolve_program(cast("tuple[str, ...]", (Path("tools") / "build.cmd", "a&b")), {})
+	assert args == ["build"]
 
 
 @pytest.mark.parametrize("arg", ["a&b", "x|y", "<in", "50%", "^", 'say "hi"', "two\nlines"])

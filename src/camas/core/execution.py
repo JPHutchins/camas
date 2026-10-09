@@ -351,6 +351,16 @@ CMD_METACHARACTERS: Final = frozenset('&|<>^%"\r\n')
 """Characters ``cmd.exe`` re-parses in a batch script's command line rather than passing through."""
 
 
+def is_batch_program(name: str) -> bool:
+	"""Whether ``name`` names a ``.cmd``/``.bat`` script, however Windows spells it — trailing dots
+	and spaces included, which it strips from a file name.
+
+	>>> is_batch_program("npx.CMD"), is_batch_program("npx.cmd. "), is_batch_program("npx.exe")
+	(True, True, False)
+	"""
+	return name.rstrip(". ").lower().endswith(BATCH_SUFFIXES)
+
+
 def resolve_program(argv: tuple[str, ...], env: Mapping[str, str]) -> tuple[str, ...]:
 	"""``argv`` with a bare program name replaced by the absolute path of the ``.cmd``/``.bat`` shim
 	it names on ``env``'s ``PATH`` (its key matched case-insensitively); any other program, a name
@@ -363,29 +373,25 @@ def resolve_program(argv: tuple[str, ...], env: Mapping[str, str]) -> tuple[str,
 
 def _shim_on_path(argv: tuple[str, ...], env: Mapping[str, str]) -> tuple[str, ...] | None:
 	path: Final = next((value for key, value in env.items() if key.casefold() == "path"), None)
-	program: Final = os.fsdecode(argv[0]) if argv else ""
-	if not program or path is None or Path(program).name != program:
+	if not argv or path is None or Path(argv[0]).name != argv[0]:
 		return None
+	program: Final = argv[0].rstrip(". ") if is_batch_program(argv[0]) else argv[0]
 	found: Final = shutil.which(program, path=path)
-	if found is None or not found.lower().endswith(BATCH_SUFFIXES):
+	if found is None or not is_batch_program(found):
 		return None
 	return (str(Path(found).absolute()), *argv[1:])
 
 
 def refuse_cmd_reparse(argv: tuple[str, ...]) -> tuple[str, ...]:
-	"""``argv`` unchanged, unless it runs a ``.cmd``/``.bat`` script — however Windows spells it,
-	trailing dots and spaces included — and one of its tokens, the script's path included and a
-	path-like token read as its file-system string, holds a :data:`CMD_METACHARACTERS` character.
+	"""``argv`` unchanged, unless it runs a script :func:`is_batch_program` recognizes and one of its
+	tokens — the script's path included — holds a :data:`CMD_METACHARACTERS` character.
 
 	Raises:
 		OSError: naming that token, which ``cmd.exe`` would execute or expand instead of passing it
 			through.
 	"""
-	tokens: Final = tuple(map(os.fsdecode, argv))
-	batch: Final = bool(tokens) and tokens[0].rstrip(". ").lower().endswith(BATCH_SUFFIXES)
-	unsafe: Final = next(
-		(token for token in tokens if CMD_METACHARACTERS.intersection(token)), None
-	)
+	batch: Final = bool(argv) and is_batch_program(argv[0])
+	unsafe: Final = next((token for token in argv if CMD_METACHARACTERS.intersection(token)), None)
 	if batch and unsafe is not None:
 		raise OSError(
 			errno.EINVAL,
