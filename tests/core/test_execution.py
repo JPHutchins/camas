@@ -480,6 +480,25 @@ def test_resolve_program_leaves_a_program_that_is_not_a_batch_shim_to_process_cr
 	assert resolve_program(("camas-exe", "hi"), {"PATH": str(tmp_path)}) == ("camas-exe", "hi")
 
 
+@pytest.mark.parametrize("program", [f"{_SHIM}.cmd.", f"{_SHIM}.cmd ", f"{_SHIM}.BAT. ."])
+def test_resolve_program_refuses_a_batch_script_spelled_with_trailing_dots_or_spaces(
+	program: str,
+) -> None:
+	"""Windows strips trailing dots and spaces from a file name, so these run the same script."""
+	with pytest.raises(OSError, match=r"cmd\.exe metacharacter"):
+		resolve_program((program, "a&whoami"), {})
+
+
+@pytest.mark.parametrize("spelling", [f"{_SHIM}.cmd.", f"{_SHIM}.cmd ", f"{_SHIM}.cmd. ."])
+def test_resolve_program_resolves_a_trailing_dot_or_space_spelling_to_the_same_shim(
+	tmp_path: Path, spelling: str
+) -> None:
+	shim = _batch_shim(tmp_path)
+	program, *args = resolve_program((spelling, "build"), {"PATH": str(tmp_path)})
+	assert Path(program) == shim
+	assert args == ["build"]
+
+
 @pytest.mark.parametrize("arg", ["a&b", "x|y", "<in", "50%", "^", 'say "hi"', "two\nlines"])
 def test_resolve_program_refuses_an_argument_cmd_exe_would_reparse(
 	tmp_path: Path, arg: str
