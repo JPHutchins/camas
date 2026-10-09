@@ -54,15 +54,15 @@ from .traversal import flatten_leaves, subtree_leaf_indices
 from .unwind import unwind, unwind_failure
 
 if TYPE_CHECKING:
-	from collections.abc import Mapping, Sequence
+	from collections.abc import AsyncIterator, Mapping, Sequence
 
 	from ..v0.effect import Effect
 	from .effect import EventSink
 
 
 Limiter: TypeAlias = "asyncio.Semaphore | nullcontext[None]"
-"""Throttles concurrent leaves under ``--jobs`` (a pipeline counts as one); a no-op when
-unbounded."""
+"""Throttles concurrent leaves under ``--jobs`` (:data:`camas.core.jobs.JOBS_UNIT`); a no-op
+when unbounded."""
 
 
 class Signalable(Protocol):
@@ -540,6 +540,25 @@ def _completion(state: LeafState, rc: int, elapsed: float, output: Sequence[byte
 	)
 
 
+async def _lines(stream: asyncio.StreamReader) -> AsyncIterator[bytes]:
+	"""Each line of ``stream``, newline included; a line longer than the stream's buffer limit
+	is read in pieces and arrives whole.
+	"""
+	head = b""
+	while True:
+		try:
+			line = await stream.readuntil(b"\n")
+		except asyncio.LimitOverrunError as overrun:  # noqa: PERF203  # catching an overrun per read is the loop's purpose
+			head += await stream.read(overrun.consumed)
+		except asyncio.IncompleteReadError as eof:
+			if head or eof.partial:
+				yield head + eof.partial
+			return
+		else:
+			yield head + line
+			head = b""
+
+
 async def run_cmd(task: Task, leaf_index: int, ctx: RunContext) -> TaskResult:
 	"""Run one leaf as a subprocess, dispatching Started/Output/Completed events. Whatever
 	interrupts it — a cancel, a failing Effect — kills and reaps the child through
@@ -577,7 +596,9 @@ async def run_cmd(task: Task, leaf_index: int, ctx: RunContext) -> TaskResult:
 				return leaf_result(ctx, leaf_index, errored)
 			ctx.interrupts.register(ctx.states, leaf_index, proc)
 			if proc.stdout is not None:  # pragma: no branch
-				async for line in proc.stdout:
+				async for line in _lines(
+					proc.stdout
+				):  # pragma: no branch  # sysmon misses this loop's exit over an async generator; ctrace records it
 					output.append(line)
 					await ctx.dispatch(
 						leaf_index, OutputEvent(task, leaf_index, line, datetime.now())
@@ -630,7 +651,7 @@ async def _run_pipe_stages(stages: tuple[TaskNode, ...], ctx: RunContext) -> tup
 	results: list[TaskResult] = []
 
 	async def read_into(leaf_index: int, stream: asyncio.StreamReader) -> None:
-		async for line in stream:
+		async for line in _lines(stream):
 			outputs[leaf_index].append(line)
 			await ctx.dispatch(
 				leaf_index, OutputEvent(ctx.leaves[leaf_index], leaf_index, line, datetime.now())

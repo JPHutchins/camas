@@ -9,6 +9,8 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from ..core.jobs import JOBS_UNIT
+
 
 class Finished(BaseModel):
 	"""A leaf that ran to exit with a returncode."""
@@ -308,7 +310,7 @@ class RunRequest(BaseModel):
 	jobs: int | None = Field(
 		default=None,
 		ge=1,
-		description="Max concurrently running leaves (a pipe counts as one); null = unbounded.",
+		description=f"Max concurrently running leaves ({JOBS_UNIT}); null = unbounded.",
 	)
 	matrix_overrides: dict[str, list[str]] = Field(
 		default_factory=dict,
@@ -377,7 +379,7 @@ class GateRequest(BaseModel):
 	jobs: int | None = Field(
 		default=None,
 		ge=1,
-		description="Max concurrently running leaves (a pipe counts as one); null = unbounded.",
+		description=f"Max concurrently running leaves ({JOBS_UNIT}); null = unbounded.",
 	)
 
 
@@ -401,7 +403,7 @@ class FixRequest(BaseModel):
 	jobs: int | None = Field(
 		default=None,
 		ge=1,
-		description="Max concurrently running leaves (a pipe counts as one); null = unbounded.",
+		description=f"Max concurrently running leaves ({JOBS_UNIT}); null = unbounded.",
 	)
 
 
