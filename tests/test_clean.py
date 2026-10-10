@@ -150,7 +150,9 @@ def test_clean_fails_when_the_generator_dirties_the_tree(git_repo: Path) -> None
 	after = result.results[2].completion
 	assert isinstance(after, Finished)
 	assert after.returncode == 1
-	assert b"tracked.txt" in b"".join(after.output)
+	output = b"".join(after.output)
+	assert b"tracked.txt" in output
+	assert b"+drift" in output
 
 
 def test_clean_fails_fast_on_a_dirty_start(git_repo: Path) -> None:

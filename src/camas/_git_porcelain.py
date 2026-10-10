@@ -42,18 +42,36 @@ def _write_stdout(text: str) -> None:
 		buffer.write(text.encode("utf-8", "replace"))
 
 
+def _git(env: dict[str, str], *args: str) -> subprocess.CompletedProcess[str]:
+	return subprocess.run(
+		["git", *args],
+		capture_output=True,
+		text=True,
+		encoding="utf-8",
+		errors="replace",
+		check=False,
+		env=env,
+	)
+
+
+def _write_tracked_drift(env: dict[str, str]) -> None:
+	"""The tracked drift as a patch, after the status lines; the status alone decides the exit
+	code.
+	"""
+	try:
+		diff: Final = _git(env, "diff", "--no-ext-diff")
+	except OSError as exc:
+		_write_line(f"git diff could not run ({exc})")
+		return
+	if diff.stderr.strip():
+		_write_line(diff.stderr)
+	_write_stdout(diff.stdout)
+
+
 def main() -> int:
 	env: Final = {key: value for key, value in os.environ.items() if not _git_env_var(key)}
 	try:
-		run: Final = subprocess.run(
-			["git", "status", "--porcelain", "--untracked-files=normal"],
-			capture_output=True,
-			text=True,
-			encoding="utf-8",
-			errors="replace",
-			check=False,
-			env=env,
-		)
+		run: Final = _git(env, "status", "--porcelain", "--untracked-files=normal")
 	except OSError as exc:
 		_write_line(f"git is required on PATH ({exc})")
 		return 1
@@ -72,6 +90,7 @@ def main() -> int:
 		_write_line(run.stderr)
 	if run.stdout.strip():
 		_write_stdout(run.stdout)
+		_write_tracked_drift(env)
 		return 1
 	return 0
 

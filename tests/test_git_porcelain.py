@@ -24,11 +24,22 @@ def _git_result(returncode: int, stdout: str = "", stderr: str = "") -> SimpleNa
 	return SimpleNamespace(returncode=returncode, stdout=stdout, stderr=stderr)
 
 
-def _fake_git(result: SimpleNamespace) -> Callable[..., SimpleNamespace]:
-	"""A ``subprocess.run`` stand-in returning ``result`` for any invocation."""
+_NO_DIFF = SimpleNamespace(returncode=0, stdout="", stderr="")
+"""A ``git diff`` with nothing to show: the default answer of :func:`_fake_git`."""
 
-	def run(*args: object, **kwargs: object) -> SimpleNamespace:
-		return result
+
+def _fake_git(
+	result: SimpleNamespace, diff: SimpleNamespace | OSError = _NO_DIFF
+) -> Callable[..., SimpleNamespace]:
+	"""A ``subprocess.run`` stand-in answering ``git status`` with ``result`` and ``git diff``
+	with ``diff``, raising it when it is an ``OSError``."""
+
+	def run(argv: list[str], **kwargs: object) -> SimpleNamespace:
+		if argv[1] != "diff":
+			return result
+		if isinstance(diff, OSError):
+			raise diff
+		return diff
 
 	return run
 
@@ -73,6 +84,47 @@ def test_main_fails_and_prints_the_status_when_dirty(
 	)
 	assert main() == 1
 	assert capsys.readouterr().out == " M tracked.txt\n"
+
+
+def test_main_follows_the_status_with_the_tracked_diff_when_dirty(
+	monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	"""The status lines name the drifted files, untracked ones included; the patch after them
+	shows what changed in the tracked ones (#338)."""
+	patch = "diff --git a/tracked.txt b/tracked.txt\n+drift\n"
+	monkeypatch.setattr(
+		"camas._git_porcelain.subprocess.run",
+		_fake_git(
+			_git_result(0, stdout=" M tracked.txt\n?? new.txt\n"), _git_result(0, stdout=patch)
+		),
+	)
+	assert main() == 1
+	assert capsys.readouterr().out == " M tracked.txt\n?? new.txt\n" + patch
+
+
+@pytest.mark.parametrize(
+	("diff", "err"),
+	[
+		(FileNotFoundError("git"), "git diff could not run (git)\n"),
+		(_git_result(128, stderr="fatal: bad index\n"), "fatal: bad index\n"),
+	],
+	ids=("diff-cannot-start", "diff-errors"),
+)
+def test_a_failed_diff_keeps_the_status_verdict(
+	monkeypatch: pytest.MonkeyPatch,
+	capsys: pytest.CaptureFixture[str],
+	diff: SimpleNamespace | OSError,
+	err: str,
+) -> None:
+	"""The diff is a diagnostic: its failure is reported, never a pass and never a lost status."""
+	monkeypatch.setattr(
+		"camas._git_porcelain.subprocess.run",
+		_fake_git(_git_result(0, stdout=" M tracked.txt\n"), diff),
+	)
+	assert main() == 1
+	captured = capsys.readouterr()
+	assert captured.out == " M tracked.txt\n"
+	assert captured.err == err
 
 
 def test_main_fails_and_forwards_stderr_when_git_errors(
