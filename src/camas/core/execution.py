@@ -450,12 +450,12 @@ def unusable_cwd(cwd: Path | None) -> str | None:
 	return None
 
 
-class UnstartableCommandError(OSError):
+class UnstartableCommandError(Exception):
 	"""A leaf no spawn could start, carrying the message its Errored completion reports."""
 
 
 def command_argv(cmd: str | tuple[str, ...]) -> tuple[str, ...]:
-	r"""``cmd``'s argv for a spawn.
+	"""``cmd``'s argv for a spawn.
 
 	Raises:
 		UnstartableCommandError: for a command with no program, or one ``shlex`` cannot split.
@@ -470,10 +470,6 @@ def command_argv(cmd: str | tuple[str, ...]) -> tuple[str, ...]:
 	Traceback (most recent call last):
 	...
 	camas.core.execution.UnstartableCommandError: empty command
-	>>> command_argv(("echo", "a\x00b"))
-	Traceback (most recent call last):
-	...
-	camas.core.execution.UnstartableCommandError: malformed command: embedded null byte
 	"""
 	try:
 		argv: Final = resolve_cmd(cmd)
@@ -481,37 +477,13 @@ def command_argv(cmd: str | tuple[str, ...]) -> tuple[str, ...]:
 		raise UnstartableCommandError(f"malformed command: {str(exc).lower()}") from exc
 	if not argv or not argv[0]:
 		raise UnstartableCommandError("empty command")
-	if any("\x00" in token for token in argv):
-		raise UnstartableCommandError("malformed command: embedded null byte")
 	return argv
 
 
-def reject_nul_bytes(env: Mapping[str, str], cwd: Path | None) -> None:
-	r"""Guard a spawn's ``env`` and ``cwd`` as :func:`command_argv` guards its argv.
-
-	Raises:
-		UnstartableCommandError: for a NUL byte in an ``env`` key or value, or in ``cwd``.
-
-	>>> reject_nul_bytes({"A": "1"}, Path("src"))
-	>>> reject_nul_bytes({"A": "1\x00"}, None)
-	Traceback (most recent call last):
-	...
-	camas.core.execution.UnstartableCommandError: malformed env 'A': embedded null byte
-	>>> reject_nul_bytes({}, Path("a\x00b"))
-	Traceback (most recent call last):
-	...
-	camas.core.execution.UnstartableCommandError: malformed cwd: embedded null byte
-	"""
-	key: Final = next((k for k, v in env.items() if "\x00" in k or "\x00" in v), None)
-	if key is not None:
-		raise UnstartableCommandError(f"malformed env {key!r}: embedded null byte")
-	if cwd is not None and "\x00" in str(cwd):
-		raise UnstartableCommandError("malformed cwd: embedded null byte")
-
-
-def spawn_error_message(exc: OSError, program: str, cwd: Path | None) -> str:
+def spawn_error_message(exc: OSError | ValueError, program: str, cwd: Path | None) -> str:
 	"""The Errored message for a leaf whose spawn raised ``exc``: the canonical
-	'no such file or directory' for a missing executable, else the OS ``strerror``.
+	'no such file or directory' for a missing executable, else the OS ``strerror``, else the
+	rejected input's own reason.
 
 	Names the path the OS reported, else the leaf's ``cwd`` when that is what it could not have
 	run in, else the executable. Naming the executable for a leaf whose ``cwd`` is missing sends
@@ -539,7 +511,11 @@ def spawn_error_message(exc: OSError, program: str, cwd: Path | None) -> str:
 	'permission denied: ./script.sh'
 	>>> spawn_error_message(OSError(), "weird", None)
 	'could not start command: weird'
+	>>> spawn_error_message(ValueError("embedded null byte"), "echo", Path("gone"))
+	'could not start command: embedded null byte'
 	"""
+	if isinstance(exc, ValueError):
+		return f"could not start command: {exc}"
 	reason: Final = exc.strerror.lower() if exc.strerror else "could not start command"
 	target: Final = exc.filename or unusable_cwd(cwd) or program
 	if isinstance(exc, FileNotFoundError):
@@ -573,18 +549,18 @@ async def _spawn_stage(
 	"""Spawn ``task`` with the shared env inheritance.
 
 	Raises:
-		UnstartableCommandError: for a leaf no spawn could start, whatever stopped it.
+		UnstartableCommandError: from :func:`command_argv`, or from any ``OSError`` or
+			``ValueError`` the spawn raised.
 	"""
-	inherited = (
-		drop_case_variants(dict(task.env), dict(os.environ))
-		if sys.platform == "win32"
-		else dict(os.environ)
-	)
-	env: Final = subprocess_env({**inherited, **task.env}, color=leaf_color)
 	argv: Final = command_argv(task.cmd)
 	cwd: Final = spawn_cwd(base, task.cwd)
-	reject_nul_bytes(task.env, cwd)
 	try:
+		inherited = (
+			drop_case_variants(dict(task.env), dict(os.environ))
+			if sys.platform == "win32"
+			else dict(os.environ)
+		)
+		env: Final = subprocess_env({**inherited, **task.env}, color=leaf_color)
 		return await asyncio.create_subprocess_exec(
 			*(resolve_program(argv, env) if sys.platform == "win32" else argv),
 			stdin=stdin,
@@ -593,7 +569,7 @@ async def _spawn_stage(
 			env=env,
 			cwd=cwd,
 		)
-	except OSError as exc:
+	except (OSError, ValueError) as exc:
 		raise UnstartableCommandError(spawn_error_message(exc, argv[0], cwd)) from exc
 
 
