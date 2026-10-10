@@ -64,6 +64,20 @@ list that drifts; and model independent, read-only work as ``Parallel``
 (wall-clock ``max``, not ``sum``) — a ``&&`` chain in a previous runner
 was *sequencing*, not a dependency, so reach for ``Sequential`` only for
 real ordering (a mutating step, or one that consumes a prior's output).
+``Parallel`` buys nothing for leaves that each fill the CPU, wait on one
+build lock (concurrent ``cargo`` over one ``target/``), or batch inside
+one tool (``nix build .#a .#b``): keep those one leaf, and mutating leaves
+in sequence ahead of the read-only rest. See the README's "When Parallel
+doesn't help" section.
+
+``Clean(Task("make gen", mutates=True))`` gates committed generated
+code: a whole-tree clean check, the generator, then the check again,
+whose failure prints the drift's ``git diff`` and the changed files.
+``check=`` takes any task whose exit 0 means clean
+(``git diff --exit-code -- schema/`` scopes it), and ``before=False``
+drops the first check. The default check sees every write git doesn't
+ignore, so run gates in sequence ahead of any other mutating step, never
+under ``Parallel``. See the README's "Drift gate" section.
 
 ``Config`` is project configuration, discovered by type: bind
 ``_ = Config(default_task=...)`` and bare ``camas`` runs that task

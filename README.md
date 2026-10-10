@@ -281,7 +281,7 @@ Durations are `1s`, `500ms`, `2m`, `1h`, or a bare number of seconds. Only leave
 py = Task("ruff format {paths}", mutates=True, paths="src")
 web = Task("prettier --write {paths}", mutates=True, paths="web")
 # the group's paths="." is the default for both children (neither sets its own):
-autofix = Parallel(Task("ruff format {paths}"), Task("ruff check --fix {paths}"), paths=".")
+autofix = Sequential(Task("ruff check --fix {paths}", mutates=True), Task("ruff format {paths}", mutates=True), paths=".")
 _ = Config(agent=Claude(fix=Sequential(py, web, autofix)))
 ```
 
@@ -312,6 +312,52 @@ For the Claude Code plugin, you **register** the auto-fix node — whatever you 
 ```
 
 `camas mcp fix` runs the registered `Config.agent.fix` node (not a task named `fix` — that's just `camas fix`, your own task); it reads the changed files from `--paths` or a `PostToolBatch` event on stdin, and a `Stop` event names none, so the fix covers the whole tree. With no fix registered it is a clean no-op, so the hook is harmless without it. It is synchronous, so it holds the turn until it has run and can never race the agent's next edit. `camas mcp init --claude` also writes a second `Stop` hook, `camas mcp gate --under 5s --nudge` (`async: true, asyncRewake: true`) — a headless, time-boxed check that first waits for the sibling fix to mark the prompt settled (Claude Code runs a `Stop` event's hooks in parallel), stays silent when green, and otherwise wakes the main agent with a reminder to delegate to the camas-fixer ladder (see the `gate` skill), without ever blocking the turn. The nudge is self-limiting: at most one wake per prompt (it honors the Stop event's `stop_hook_active` and tracks the `prompt_id` it last nudged), and a configuration state — no check node registered, a `tasks.py` load error, a missing `camas[mcp]` extra — exits `0` silently instead of waking the agent over something a rewake cannot fix. The launcher runs in your project's environment — `camas mcp init --claude` resolves and pins it: to `tasks.py`'s PEP 723 declaration (`dependencies = ["camas>=X.Y"]`) when present, else to the running camas release version; re-run `camas mcp init --claude` after bumping either to keep it current.
+
+## Drift gate (`Clean`)
+
+`Clean` keeps committed generated code up to date: it runs the generator, then fails if the working tree changed.
+
+```python
+from camas import Clean, Task
+
+openapi = Clean(Task("make update-openapi", mutates=True))
+```
+
+`openapi` is a `Sequential` of three leaves: a check that the tree is clean, the generator, and the same check again. A dirty tree fails the first check and skips the generator. A failed second check prints the drift: the `git diff` of the changed tracked files, staged or not, then the `git status --porcelain` lines, untracked files included.
+
+- `check=` replaces the whole-tree default with any task or command string whose exit 0 means clean. `check="git diff --exit-code -- schema/"` scopes the gate to one directory, but `git diff` doesn't see untracked files, so a generator that adds files needs a check that does. A check can't carry `{paths}`.
+- `before=False` drops the first check. A tree that starts dirty then fails as drift.
+- The default check reads git's view of the whole tree, where ignored paths don't count, so nothing else may write while a gate runs. A formatter sequenced before a gate fails the gate's first check whenever it changes a file, and two gates under one `Parallel` see each other's writes. Run the gates first, in sequence:
+
+```python
+from camas import Clean, Sequential, Task
+
+generators = Sequential(
+  Clean(Task("go generate ./...", mutates=True)),
+  Clean(Task("make update-openapi", mutates=True)),
+)
+```
+
+## When `Parallel` doesn't help
+
+`Parallel` runs in the time of its slowest leaf only when the machine has room for every leaf at once. It pays for independent work, such as distinct tools or a long emulator or integration run overlapped with quick static checks, and across CI runners, each with its own cores and build directory. In these cases, keep the work in one leaf or in sequence:
+
+- **Leaves that each fill the CPU.** Multicore tools on one machine share the same cores, so `golangci-lint` beside another Go linter, or `cargo clippy` beside `cargo test` on a warm cache, gains little over running them in sequence. `--jobs N` caps a fan-out that oversubscribes the machine; it can't make one faster.
+- **Leaves behind one build lock.** Concurrent `cargo` commands over one `target/` wait on cargo's build-directory lock. Keep the batched invocation (`cargo hack`, `cargo-batch`, an `xtask`) as a single leaf.
+- **A tool with its own scheduler.** Three `nix build .#attr` leaves evaluate the flake three times; one `nix build .#a .#b .#c` evaluates it once and schedules the builds itself.
+- **Leaves that write the tree.** `mutates=True` orders leaves only under [`--under`](#time-budget---under). In a normal run, mutating leaves in one `Parallel` race each other and their read-only siblings, and a [`Clean`](#drift-gate-clean) gate fails on writes it didn't make. Run them first, in sequence:
+
+```python
+from camas import Parallel, Sequential, Task
+
+dev = Sequential(
+  Task("ruff format .", mutates=True),
+  Task("ruff check --fix .", mutates=True),
+  Parallel("mypy .", "pytest"),
+)
+```
+
+To fan out across machines, let camas split the outer axes (target, chip, toolchain version) over CI runners with [`--github-matrix`](#github-actions-matrix---github-matrix) and keep each tool's batched invocation inside one leaf.
 
 ## Monorepos
 

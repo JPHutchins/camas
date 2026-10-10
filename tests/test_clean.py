@@ -150,7 +150,34 @@ def test_clean_fails_when_the_generator_dirties_the_tree(git_repo: Path) -> None
 	after = result.results[2].completion
 	assert isinstance(after, Finished)
 	assert after.returncode == 1
-	assert b"tracked.txt" in b"".join(after.output)
+	output = b"".join(after.output)
+	assert b"tracked.txt" in output
+	assert b"+drift" in output
+
+
+@pytest.mark.parametrize(
+	"generator",
+	[
+		"open('tracked.txt', 'a').write('drift\\n')",
+		"import subprocess; open('tracked.txt', 'a').write('drift\\n'); "
+		"subprocess.run(['git', 'add', 'tracked.txt'], check=True)",
+	],
+	ids=("unstaged", "staged"),
+)
+async def test_the_drift_patch_survives_the_repositorys_git_config(
+	git_repo: Path, generator: str
+) -> None:
+	"""Configured color and a failing textconv filter leave the patch plain, whether or not the
+	generator stages its output (#338)."""
+	with (git_repo / ".git" / "config").open("a", encoding="utf-8") as config:
+		config.write('[color]\n\tui = always\n[diff "broken"]\n\ttextconv = false\n')
+	(git_repo / ".git" / "info").mkdir(exist_ok=True)
+	(git_repo / ".git" / "info" / "attributes").write_text("*.txt diff=broken\n", encoding="utf-8")
+	result = await run(Clean(Task(("python", "-c", generator), mutates=True)), base=git_repo)
+	after = result.results[2].completion
+	assert isinstance(after, Finished)
+	assert after.returncode == 1
+	assert b"+drift" in b"".join(after.output)
 
 
 def test_clean_fails_fast_on_a_dirty_start(git_repo: Path) -> None:
