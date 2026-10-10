@@ -450,8 +450,8 @@ def unusable_cwd(cwd: Path | None) -> str | None:
 	return None
 
 
-class UnstartableCommandError(OSError):
-	"""A command no spawn can start: no program, or a string ``shlex`` cannot split."""
+class UnstartableCommandError(Exception):
+	"""A leaf no spawn could start, carrying the message its Errored completion reports."""
 
 
 def command_argv(cmd: str | tuple[str, ...]) -> tuple[str, ...]:
@@ -465,26 +465,25 @@ def command_argv(cmd: str | tuple[str, ...]) -> tuple[str, ...]:
 	>>> command_argv('echo "unclosed')
 	Traceback (most recent call last):
 	...
-	camas.core.execution.UnstartableCommandError: [Errno 22] malformed command: no closing quotation
+	camas.core.execution.UnstartableCommandError: malformed command: no closing quotation
 	>>> command_argv(("",))
 	Traceback (most recent call last):
 	...
-	camas.core.execution.UnstartableCommandError: [Errno 22] empty command
+	camas.core.execution.UnstartableCommandError: empty command
 	"""
 	try:
 		argv: Final = resolve_cmd(cmd)
 	except ValueError as exc:
-		raise UnstartableCommandError(
-			errno.EINVAL, f"malformed command: {str(exc).lower()}"
-		) from exc
+		raise UnstartableCommandError(f"malformed command: {str(exc).lower()}") from exc
 	if not argv or not argv[0]:
-		raise UnstartableCommandError(errno.EINVAL, "empty command")
+		raise UnstartableCommandError("empty command")
 	return argv
 
 
-def spawn_error_message(exc: OSError, cmd: str | tuple[str, ...], cwd: Path | None) -> str:
+def spawn_error_message(exc: OSError | ValueError, program: str, cwd: Path | None) -> str:
 	"""The Errored message for a leaf whose spawn raised ``exc``: the canonical
-	'no such file or directory' for a missing executable, else the OS ``strerror``.
+	'no such file or directory' for a missing executable, else the OS ``strerror``, else the
+	rejected input's own reason.
 
 	Names the path the OS reported, else the leaf's ``cwd`` when that is what it could not have
 	run in, else the executable. Naming the executable for a leaf whose ``cwd`` is missing sends
@@ -493,10 +492,10 @@ def spawn_error_message(exc: OSError, cmd: str | tuple[str, ...], cwd: Path | No
 	from what camas passed rather than read out of the error.
 
 	>>> from pathlib import Path
-	>>> spawn_error_message(FileNotFoundError(2, "No such file or directory"), ("ghost",), None)
+	>>> spawn_error_message(FileNotFoundError(2, "No such file or directory"), "ghost", None)
 	'no such file or directory: ghost'
 	>>> spawn_error_message(
-	...     FileNotFoundError(2, "No such file or directory", "gone"), ("echo",), Path("gone")
+	...     FileNotFoundError(2, "No such file or directory", "gone"), "echo", Path("gone")
 	... )
 	'no such file or directory: gone'
 
@@ -504,26 +503,21 @@ def spawn_error_message(exc: OSError, cmd: str | tuple[str, ...], cwd: Path | No
 
 	>>> spawn_error_message(
 	...     FileNotFoundError(2, "No such file or directory", "named-by-os"),
-	...     ("ghost",),
+	...     "ghost",
 	...     Path("also-gone"),
 	... )
 	'no such file or directory: named-by-os'
-	>>> spawn_error_message(PermissionError(13, "Permission denied"), ("./script.sh",), None)
+	>>> spawn_error_message(PermissionError(13, "Permission denied"), "./script.sh", None)
 	'permission denied: ./script.sh'
-	>>> spawn_error_message(OSError(), ("weird",), None)
+	>>> spawn_error_message(OSError(), "weird", None)
 	'could not start command: weird'
-
-	An unstartable command names nothing, not even an unusable ``cwd`` it never reached:
-
-	>>> spawn_error_message(UnstartableCommandError(22, "empty command"), ("",), Path("gone"))
-	'empty command'
-	>>> spawn_error_message(UnstartableCommandError(22, "malformed command: no closing quotation"), '"', None)
-	'malformed command: no closing quotation'
+	>>> spawn_error_message(ValueError("embedded null byte"), "echo", Path("gone"))
+	'could not start command: embedded null byte'
 	"""
+	if isinstance(exc, ValueError):
+		return f"could not start command: {exc}"
 	reason: Final = exc.strerror.lower() if exc.strerror else "could not start command"
-	if isinstance(exc, UnstartableCommandError):
-		return reason
-	target: Final = exc.filename or unusable_cwd(cwd) or resolve_cmd(cmd)[0]
+	target: Final = exc.filename or unusable_cwd(cwd) or program
 	if isinstance(exc, FileNotFoundError):
 		return f"no such file or directory: {target}"
 	return f"{reason}: {target}"
@@ -552,22 +546,31 @@ async def _spawn_stage(
 	base: Path | None,
 	leaf_color: bool,
 ) -> asyncio.subprocess.Process:
-	"""Spawn ``task`` with the shared env inheritance."""
-	inherited = (
-		drop_case_variants(dict(task.env), dict(os.environ))
-		if sys.platform == "win32"
-		else dict(os.environ)
-	)
-	env: Final = subprocess_env({**inherited, **task.env}, color=leaf_color)
+	"""Spawn ``task`` with the shared env inheritance.
+
+	Raises:
+		UnstartableCommandError: from :func:`command_argv`, or from any ``OSError`` or
+			``ValueError`` the spawn raised.
+	"""
 	argv: Final = command_argv(task.cmd)
-	return await asyncio.create_subprocess_exec(
-		*(resolve_program(argv, env) if sys.platform == "win32" else argv),
-		stdin=stdin,
-		stdout=stdout,
-		stderr=stderr,
-		env=env,
-		cwd=spawn_cwd(base, task.cwd),
-	)
+	cwd: Final = spawn_cwd(base, task.cwd)
+	try:
+		inherited = (
+			drop_case_variants(dict(task.env), dict(os.environ))
+			if sys.platform == "win32"
+			else dict(os.environ)
+		)
+		env: Final = subprocess_env({**inherited, **task.env}, color=leaf_color)
+		return await asyncio.create_subprocess_exec(
+			*(resolve_program(argv, env) if sys.platform == "win32" else argv),
+			stdin=stdin,
+			stdout=stdout,
+			stderr=stderr,
+			env=env,
+			cwd=cwd,
+		)
+	except (OSError, ValueError) as exc:
+		raise UnstartableCommandError(spawn_error_message(exc, argv[0], cwd)) from exc
 
 
 def _completion(state: LeafState, rc: int, elapsed: float, output: Sequence[bytes]) -> Completion:
@@ -613,7 +616,6 @@ async def run_cmd(task: Task, leaf_index: int, ctx: RunContext) -> TaskResult:
 			return leaf_result(ctx, leaf_index, stopped)
 		start_pc: Final = time.perf_counter()
 		await ctx.dispatch(leaf_index, StartedEvent(task, leaf_index, datetime.now()))
-		cwd: Final = spawn_cwd(ctx.base, task.cwd)
 		proc: asyncio.subprocess.Process | None = None
 		output: Final[list[bytes]] = []
 		try:
@@ -626,8 +628,8 @@ async def run_cmd(task: Task, leaf_index: int, ctx: RunContext) -> TaskResult:
 					base=ctx.base,
 					leaf_color=ctx.leaf_color,
 				)
-			except OSError as exc:
-				errored: Final = Errored(NOT_FOUND_RC, spawn_error_message(exc, task.cmd, cwd))
+			except UnstartableCommandError as exc:
+				errored: Final = Errored(NOT_FOUND_RC, str(exc))
 				await ctx.dispatch(
 					leaf_index, CompletedEvent(task, leaf_index, errored, datetime.now())
 				)
@@ -740,7 +742,6 @@ async def _run_pipe_stages(stages: tuple[TaskNode, ...], ctx: RunContext) -> tup
 				continue
 			started_pc[leaf_index] = time.perf_counter()
 			await ctx.dispatch(leaf_index, StartedEvent(stage, leaf_index, datetime.now()))
-			cwd = spawn_cwd(ctx.base, stage.cwd)
 			is_last = pos == len(leaves) - 1
 			read_fd: int | None = None
 			stdout: int = -1
@@ -759,7 +760,7 @@ async def _run_pipe_stages(stages: tuple[TaskNode, ...], ctx: RunContext) -> tup
 					base=ctx.base,
 					leaf_color=ctx.leaf_color,
 				)
-			except OSError as exc:
+			except UnstartableCommandError as exc:
 				if read_fd is not None:
 					with suppress(OSError):
 						os.close(read_fd)
@@ -774,7 +775,7 @@ async def _run_pipe_stages(stages: tuple[TaskNode, ...], ctx: RunContext) -> tup
 				pending_write = -1
 				spawn_failure = (
 					NOT_FOUND_RC,
-					spawn_error_message(exc, stage.cmd, cwd),
+					str(exc),
 					leaf_index,
 					task_label(ctx.leaves[leaf_index]),
 				)

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import signal
 import sys
 import time
@@ -105,12 +106,64 @@ the forced color breaks (a Rust ``assert_cmd`` test, here in python)."""
 async def test_an_empty_command_is_an_errored_leaf_not_a_crash(node: TaskNode) -> None:
 	"""A command that resolves to no arguments fails its own leaf, whether it was written empty
 	or emptied by matrix substitution (#327)."""
-	from camas.v0.completion import Errored
-
 	result = await run(node, jobs=1)
 	assert result.returncode != 0
 	errored = [r.completion for r in result.results if isinstance(r.completion, Errored)]
 	assert [e.message for e in errored] == ["empty command"]
+
+
+_NUL: Final = r"could not start command: .*embedded null (byte|character).*"
+"""POSIX rejects a NUL as a byte, Windows as a character."""
+
+
+@pytest.mark.parametrize(
+	("node", "message"),
+	[
+		(Task("echo \x00hi"), _NUL),
+		(Task(("python", "-c", "pass", "a\x00b")), _NUL),
+		(Task(("pyth\x00on",)), _NUL),
+		(Task(("python", "-c", "pass"), env={"X": "a\x00b"}), _NUL),
+		(Task(("python", "-c", "pass"), env={"X\x00Y": "1"}), _NUL),
+		(Task(("python", "-c", "pass"), cwd="a\x00b"), _NUL),
+		(
+			Task(("python", "-c", "pass"), env={"FOO=BAR": "x"}),
+			"could not start command: illegal environment variable name",
+		),
+		(Task(("python", "-c", "pass"), cwd="\ud800"), ".+"),
+		(Task(("\ud800",)), ".+"),
+		(Pipe(Task(("python", "-c", "pass")), Task("echo \x00hi")), _NUL),
+		(
+			Pipe(
+				Task(("python", "-c", "pass")), Task("echo \x00hi"), Task(("python", "-c", "pass"))
+			),
+			_NUL,
+		),
+	],
+	ids=(
+		"nul-in-string-cmd",
+		"nul-in-argument",
+		"nul-in-program",
+		"nul-in-env-value",
+		"nul-in-env-key",
+		"nul-in-cwd",
+		"equals-in-env-key",
+		"surrogate-in-cwd",
+		"surrogate-in-program",
+		"last-pipe-stage",
+		"middle-pipe-stage",
+	),
+)
+async def test_an_input_no_spawn_accepts_is_an_errored_leaf_not_a_crash(
+	node: TaskNode, message: str
+) -> None:
+	"""A command, env, or cwd the OS or ``subprocess`` rejects fails its own leaf (#349). A lone
+	surrogate is rejected on POSIX and merely names a missing file on Windows; either way the
+	leaf errors."""
+	result = await run(node, jobs=1)
+	assert result.returncode != 0
+	errored = [r.completion for r in result.results if isinstance(r.completion, Errored)]
+	assert len(errored) == 1
+	assert re.fullmatch(message, errored[0].message)
 
 
 @pytest.mark.parametrize(
@@ -131,8 +184,6 @@ async def test_a_malformed_command_is_an_errored_leaf_not_a_crash(
 	node: TaskNode, message: str
 ) -> None:
 	"""A string command ``shlex`` cannot split fails its own leaf with the reason (#347)."""
-	from camas.v0.completion import Errored
-
 	result = await run(node, jobs=1)
 	assert result.returncode != 0
 	errored = [r.completion for r in result.results if isinstance(r.completion, Errored)]
@@ -458,9 +509,7 @@ def test_spawn_error_names_the_cwd_when_the_os_named_no_path(tmp_path: Path) -> 
 	happens to run from.
 	"""
 	missing = tmp_path / "gone"
-	message = spawn_error_message(
-		OSError(267, "The directory name is invalid"), ("python",), missing
-	)
+	message = spawn_error_message(OSError(267, "The directory name is invalid"), "python", missing)
 	assert message == f"the directory name is invalid: {missing}"
 
 
