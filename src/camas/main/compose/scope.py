@@ -18,7 +18,18 @@ else:  # pragma: no cover
 	from typing_extensions import assert_never
 
 from ...v0.config import Config
-from ...v0.task import Group, Parallel, Pipe, ProjectRef, Sequential, Task, rebuilt
+from ...v0.ref import Ref
+from ...v0.task import (
+	UNRESOLVED_REF_MESSAGE,
+	Group,
+	Parallel,
+	Pipe,
+	ProjectRef,
+	Sequential,
+	Task,
+	rebuilt,
+	reject_refs,
+)
 from ..effects import running_under_agent
 from ..state import LoadErr, LoadOk
 from ..tasks import (
@@ -188,10 +199,13 @@ def _compose_scope(
 			case Task():
 				return node
 			case Group() as group:
+				reject_refs(group)
 				children = tuple(resolve(child, field) for child in group.tasks)
 				if all(new is old for new, old in zip(children, group.tasks, strict=True)):
 					return group
 				return rebuilt(group, *children)
+			case Ref():  # pyright: ignore[reportUnnecessaryComparison]  # the Ref/TaskNode parse-time gap
+				raise ValueError(UNRESOLVED_REF_MESSAGE)
 			case _:
 				assert_never(node)
 

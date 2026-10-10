@@ -4,12 +4,17 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from camas import Claude, Config, Parallel, Project, Task
+from camas import Claude, Config, Parallel, Pipe, Project, Sequential, Task
 from camas.main.compose import load_py_tasks_state, load_scope, state_from_scope
 from camas.main.state import LoadErr, LoadOk
+from camas.v0.ref import Ref
+
+if TYPE_CHECKING:
+	from camas.v0.task import TaskNode
 
 
 def _write(path: Path, content: str) -> Path:
@@ -490,6 +495,28 @@ def test_state_from_scope_no_file_with_project_errors() -> None:
 	state = state_from_scope({"libs": Project("libs")})
 	assert isinstance(state, LoadErr)
 	assert "file-backed" in str(state.exception)
+
+
+UNRESOLVED_REF = cast("TaskNode", Ref("b"))
+
+
+@pytest.mark.parametrize(
+	("config", "message"),
+	[
+		(Config(default_task=Pipe(Task("a"), UNRESOLVED_REF)), "Pipe stages must be Tasks"),
+		(Config(github_task=Sequential(Task("a"), UNRESOLVED_REF)), "unresolved Ref"),
+		(Config(default_task=UNRESOLVED_REF), "unresolved Ref"),
+	],
+	ids=("in-a-pipe", "in-a-group", "bare"),
+)
+def test_a_ref_reachable_only_through_config_is_rejected_at_load(
+	config: Config, message: str
+) -> None:
+	"""A hand-written Ref the binding walk never sees, because it lives only in a Config field,
+	fails the load with the boundary's message instead of a resolver's ``assert_never`` (#316)."""
+	state = state_from_scope({"_": config})
+	assert isinstance(state, LoadErr)
+	assert message in str(state.exception)
 
 
 def test_state_from_scope_with_file_composes(tmp_path: Path) -> None:
