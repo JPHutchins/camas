@@ -83,10 +83,24 @@ the forced color breaks (a Rust ``assert_cmd`` test, here in python)."""
 		Task(""),
 		Task("  "),
 		Task(()),
+		Task(("",)),
+		Task('""'),
+		Task("", cwd="no-such-dir-camas-327"),
 		Parallel(Task("{CMD}"), matrix={"CMD": ("",)}),
+		Parallel(Task(("{CMD}",)), matrix={"CMD": ("",)}),
 		Pipe(Task(("python", "-c", "pass")), Task("")),
 	],
-	ids=("empty", "blank", "empty-argv", "emptied-by-matrix", "empty-pipe-stage"),
+	ids=(
+		"empty",
+		"blank",
+		"empty-argv",
+		"empty-program",
+		"quoted-empty",
+		"empty-with-a-missing-cwd",
+		"emptied-by-matrix",
+		"program-emptied-by-matrix",
+		"empty-pipe-stage",
+	),
 )
 async def test_an_empty_command_is_an_errored_leaf_not_a_crash(node: TaskNode) -> None:
 	"""A command that resolves to no arguments fails its own leaf, whether it was written empty

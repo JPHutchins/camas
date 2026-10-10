@@ -481,16 +481,20 @@ def spawn_error_message(exc: OSError, argv: Sequence[str], cwd: Path | None) -> 
 	>>> spawn_error_message(OSError(), ("weird",), None)
 	'could not start command: weird'
 
-	A command that resolves to no arguments names nothing:
+	A command with no program names nothing, not even an unusable ``cwd`` it never reached:
 
 	>>> spawn_error_message(OSError(22, "empty command"), (), None)
 	'empty command'
+	>>> spawn_error_message(OSError(22, "empty command"), ("",), Path("gone"))
+	'empty command'
 	"""
-	target: Final = exc.filename or unusable_cwd(cwd) or next(iter(argv), None)
+	reason: Final = exc.strerror.lower() if exc.strerror else "could not start command"
+	if not next(iter(argv), ""):
+		return reason
+	target: Final = exc.filename or unusable_cwd(cwd) or argv[0]
 	if isinstance(exc, FileNotFoundError):
 		return f"no such file or directory: {target}"
-	reason: Final = exc.strerror.lower() if exc.strerror else "could not start command"
-	return f"{reason}: {target}" if target else reason
+	return f"{reason}: {target}"
 
 
 def leaf_identity(ctx: RunContext, leaf_index: int) -> CacheKey | None:
@@ -529,7 +533,7 @@ async def _spawn_stage(
 	)
 	env: Final = subprocess_env({**inherited, **task.env}, color=leaf_color)
 	argv: Final = resolve_cmd(task.cmd)
-	if not argv:
+	if not argv or not argv[0]:
 		raise OSError(errno.EINVAL, "empty command")
 	return await asyncio.create_subprocess_exec(
 		*(resolve_program(argv, env) if sys.platform == "win32" else argv),

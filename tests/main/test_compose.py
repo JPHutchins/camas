@@ -503,9 +503,21 @@ UNRESOLVED_REF = cast("TaskNode", Ref("b"))
 @pytest.mark.parametrize(
 	("config", "message"),
 	[
-		(Config(default_task=Pipe(Task("a"), UNRESOLVED_REF)), "Pipe stages must be Tasks"),
-		(Config(github_task=Sequential(Task("a"), UNRESOLVED_REF)), "unresolved Ref"),
-		(Config(default_task=UNRESOLVED_REF), "unresolved Ref"),
+		(
+			Config(default_task=Pipe(Task("a"), UNRESOLVED_REF)),
+			"Pipe stages must be Tasks — a nested group would mean several commands sharing one "
+			"stream (in the Config's default task)",
+		),
+		(
+			Config(github_task=Sequential(Task("a"), UNRESOLVED_REF)),
+			"an unresolved Ref: task references must be resolved before a run (in the Config's "
+			"github task)",
+		),
+		(
+			Config(default_task=UNRESOLVED_REF),
+			"an unresolved Ref: task references must be resolved before a run (in the Config's "
+			"default task)",
+		),
 	],
 	ids=("in-a-pipe", "in-a-group", "bare"),
 )
@@ -516,7 +528,7 @@ def test_a_ref_reachable_only_through_config_is_rejected_at_load(
 	fails the load with the boundary's message instead of a resolver's ``assert_never`` (#316)."""
 	state = state_from_scope({"_": config})
 	assert isinstance(state, LoadErr)
-	assert message in str(state.exception)
+	assert str(state.exception) == message
 
 
 def test_state_from_scope_with_file_composes(tmp_path: Path) -> None:

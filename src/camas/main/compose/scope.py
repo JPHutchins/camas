@@ -28,7 +28,7 @@ from ...v0.task import (
 	Sequential,
 	Task,
 	rebuilt,
-	reject_refs,
+	ref_problem,
 )
 from ..effects import running_under_agent
 from ..state import LoadErr, LoadOk
@@ -97,6 +97,21 @@ def child_node(field: Field, config: Config, *, github: bool, agent: bool) -> Ta
 			return config.run_default() if agent else config.bare_task(github=github)
 		case _:
 			assert_never(field)
+
+
+def unresolved_ref(problem: str, field: Field) -> ValueError:
+	"""The load error for a Ref met while resolving ``field``, naming the Config field it sits in.
+
+	>>> str(unresolved_ref("an unresolved Ref", Field.GITHUB))
+	"an unresolved Ref (in the Config's github task)"
+	>>> str(unresolved_ref("an unresolved Ref", Field.CONTEXT))
+	'an unresolved Ref'
+	"""
+	return ValueError(
+		problem
+		if field is Field.CONTEXT
+		else f"{problem} (in the Config's {field_role(field)} task)"
+	)
 
 
 def field_role(field: Field) -> str:
@@ -199,13 +214,14 @@ def _compose_scope(
 			case Task():
 				return node
 			case Group() as group:
-				reject_refs(group)
+				if (problem := ref_problem(group)) is not None:
+					raise unresolved_ref(problem, field)
 				children = tuple(resolve(child, field) for child in group.tasks)
 				if all(new is old for new, old in zip(children, group.tasks, strict=True)):
 					return group
 				return rebuilt(group, *children)
 			case Ref():  # pyright: ignore[reportUnnecessaryComparison]  # the Ref/TaskNode parse-time gap
-				raise ValueError(UNRESOLVED_REF_MESSAGE)
+				raise unresolved_ref(UNRESOLVED_REF_MESSAGE, field)
 			case _:
 				assert_never(node)
 
