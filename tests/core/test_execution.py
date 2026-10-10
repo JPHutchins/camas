@@ -116,6 +116,39 @@ async def test_an_empty_command_is_an_errored_leaf_not_a_crash(node: TaskNode) -
 @pytest.mark.parametrize(
 	("node", "message"),
 	[
+		(Task("echo \x00hi"), "malformed command: embedded null byte"),
+		(Task(("python", "-c", "pass", "a\x00b")), "malformed command: embedded null byte"),
+		(Task(("pyth\x00on",)), "malformed command: embedded null byte"),
+		(
+			Task(("python", "-c", "pass"), env={"X": "a\x00b"}),
+			"malformed env 'X': embedded null byte",
+		),
+		(
+			Task(("python", "-c", "pass"), env={"X\x00Y": "1"}),
+			"malformed env 'X\\x00Y': embedded null byte",
+		),
+		(Task(("python", "-c", "pass"), cwd="a\x00b"), "malformed cwd: embedded null byte"),
+		(
+			Pipe(Task(("python", "-c", "pass")), Task("echo \x00hi")),
+			"malformed command: embedded null byte",
+		),
+	],
+	ids=("string-cmd", "argument", "program", "env-value", "env-key", "cwd", "pipe-stage"),
+)
+async def test_a_nul_byte_is_an_errored_leaf_not_a_crash(node: TaskNode, message: str) -> None:
+	"""No OS passes a NUL byte to a child process, so one anywhere the spawn hands the OS fails
+	its own leaf (#349)."""
+	from camas.v0.completion import Errored
+
+	result = await run(node, jobs=1)
+	assert result.returncode != 0
+	errored = [r.completion for r in result.results if isinstance(r.completion, Errored)]
+	assert [e.message for e in errored] == [message]
+
+
+@pytest.mark.parametrize(
+	("node", "message"),
+	[
 		(Task('"'), "malformed command: no closing quotation"),
 		(Task("echo 'quoted"), "malformed command: no closing quotation"),
 		(Task("echo \\"), "malformed command: no escaped character"),
@@ -458,9 +491,7 @@ def test_spawn_error_names_the_cwd_when_the_os_named_no_path(tmp_path: Path) -> 
 	happens to run from.
 	"""
 	missing = tmp_path / "gone"
-	message = spawn_error_message(
-		OSError(267, "The directory name is invalid"), ("python",), missing
-	)
+	message = spawn_error_message(OSError(267, "The directory name is invalid"), "python", missing)
 	assert message == f"the directory name is invalid: {missing}"
 
 

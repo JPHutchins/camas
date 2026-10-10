@@ -667,7 +667,9 @@ def test_pipe_spawn_failure_reports_a_finished_earlier_stage_as_stopped(
 	) -> asyncio.subprocess.Process:
 		if task.cmd == "no-such-cmd-xyz":
 			await asyncio.wait_for(wrote.wait(), timeout=10)
-			raise FileNotFoundError
+			raise execution_module.UnstartableCommandError(
+				"no such file or directory: no-such-cmd-xyz"
+			)
 		return await original_spawn(
 			task, stdin=stdin, stdout=stdout, stderr=stderr, base=base, leaf_color=leaf_color
 		)
