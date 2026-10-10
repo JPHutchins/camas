@@ -480,11 +480,20 @@ def spawn_error_message(exc: OSError, argv: Sequence[str], cwd: Path | None) -> 
 	'permission denied: ./script.sh'
 	>>> spawn_error_message(OSError(), ("weird",), None)
 	'could not start command: weird'
+
+	A command with no program names nothing, not even an unusable ``cwd`` it never reached:
+
+	>>> spawn_error_message(OSError(22, "empty command"), (), None)
+	'empty command'
+	>>> spawn_error_message(OSError(22, "empty command"), ("",), Path("gone"))
+	'empty command'
 	"""
+	reason: Final = exc.strerror.lower() if exc.strerror else "could not start command"
+	if not next(iter(argv), ""):
+		return reason
 	target: Final = exc.filename or unusable_cwd(cwd) or argv[0]
 	if isinstance(exc, FileNotFoundError):
 		return f"no such file or directory: {target}"
-	reason: Final = exc.strerror.lower() if exc.strerror else "could not start command"
 	return f"{reason}: {target}"
 
 
@@ -511,8 +520,11 @@ async def _spawn_stage(
 	base: Path | None,
 	leaf_color: bool,
 ) -> asyncio.subprocess.Process:
-	"""Spawn ``task`` with the shared env inheritance; ``OSError`` propagates for the caller to
-	classify (a missing executable or a failed exec).
+	"""Spawn ``task`` with the shared env inheritance.
+
+	Raises:
+		OSError: for the caller to classify: a missing executable, a failed exec, or a command
+			that resolves to no arguments.
 	"""
 	inherited = (
 		drop_case_variants(dict(task.env), dict(os.environ))
@@ -521,6 +533,8 @@ async def _spawn_stage(
 	)
 	env: Final = subprocess_env({**inherited, **task.env}, color=leaf_color)
 	argv: Final = resolve_cmd(task.cmd)
+	if not argv or not argv[0]:
+		raise OSError(errno.EINVAL, "empty command")
 	return await asyncio.create_subprocess_exec(
 		*(resolve_program(argv, env) if sys.platform == "win32" else argv),
 		stdin=stdin,

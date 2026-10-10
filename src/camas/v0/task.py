@@ -776,19 +776,26 @@ class Pipe(Group):
 TaskNode: TypeAlias = Task | Sequential | Parallel | Pipe
 
 
-UNRESOLVED_REF_MESSAGE: Final = (
-	"an unresolved Ref reached the engine — task references must be resolved before a run"
-)
+UNRESOLVED_REF_MESSAGE: Final = "an unresolved Ref: task references must be resolved before a run"
+
+
+def ref_problem(group: Group) -> str | None:
+	"""Why ``group`` cannot hold its :class:`~camas.v0.ref.Ref` child: the stage message inside
+	a pipe, the resolution message elsewhere; ``None`` when it holds none.
+	"""
+	if not any(isinstance(t, Ref) for t in group.tasks):
+		return None
+	return STAGE_MESSAGE if isinstance(group, Pipe) else UNRESOLVED_REF_MESSAGE
 
 
 def reject_refs(group: Group) -> None:
 	"""Reject a :class:`~camas.v0.ref.Ref` child of ``group``.
 
 	Raises:
-		ValueError: the stage message inside a pipe, the resolution message elsewhere.
+		ValueError: with :func:`ref_problem`'s message.
 	"""
-	if any(isinstance(t, Ref) for t in group.tasks):
-		raise ValueError(STAGE_MESSAGE if isinstance(group, Pipe) else UNRESOLVED_REF_MESSAGE)
+	if (problem := ref_problem(group)) is not None:
+		raise ValueError(problem)
 
 
 def _group_repr_parts(group: Group) -> tuple[str, ...]:

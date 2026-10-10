@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from camas import Parallel, Sequential, Task
+from camas import Parallel, Pipe, Sequential, Task
 from camas.core.execution import (
 	KILL_DEATH_RC,
 	SIGINT_DEATH_SIGNATURES,
@@ -75,6 +75,42 @@ _NESTED_COLOR_PROBE = (
 )
 """A leaf that spawns a command and captures its stdout — the shape whose plain-text assertion
 the forced color breaks (a Rust ``assert_cmd`` test, here in python)."""
+
+
+@pytest.mark.parametrize(
+	"node",
+	[
+		Task(""),
+		Task("  "),
+		Task(()),
+		Task(("",)),
+		Task('""'),
+		Task("", cwd="no-such-dir-camas-327"),
+		Parallel(Task("{CMD}"), matrix={"CMD": ("",)}),
+		Parallel(Task(("{CMD}",)), matrix={"CMD": ("",)}),
+		Pipe(Task(("python", "-c", "pass")), Task("")),
+	],
+	ids=(
+		"empty",
+		"blank",
+		"empty-argv",
+		"empty-program",
+		"quoted-empty",
+		"empty-with-a-missing-cwd",
+		"emptied-by-matrix",
+		"program-emptied-by-matrix",
+		"empty-pipe-stage",
+	),
+)
+async def test_an_empty_command_is_an_errored_leaf_not_a_crash(node: TaskNode) -> None:
+	"""A command that resolves to no arguments fails its own leaf, whether it was written empty
+	or emptied by matrix substitution (#327)."""
+	from camas.v0.completion import Errored
+
+	result = await run(node, jobs=1)
+	assert result.returncode != 0
+	errored = [r.completion for r in result.results if isinstance(r.completion, Errored)]
+	assert [e.message for e in errored] == ["empty command"]
 
 
 @pytest.mark.parametrize(

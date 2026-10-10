@@ -84,7 +84,7 @@ def test_a_ref_outside_a_pipe_dies_at_the_engine_boundary_with_the_resolution_me
 	from camas.core.matrix import expand_matrix
 	from camas.v0.ref import Ref
 
-	with pytest.raises(ValueError, match="unresolved Ref reached the engine"):
+	with pytest.raises(ValueError, match="unresolved Ref"):
 		expand_matrix(cast("TaskNode", Ref("b")))
 
 
