@@ -281,7 +281,7 @@ Durations are `1s`, `500ms`, `2m`, `1h`, or a bare number of seconds. Only leave
 py = Task("ruff format {paths}", mutates=True, paths="src")
 web = Task("prettier --write {paths}", mutates=True, paths="web")
 # the group's paths="." is the default for both children (neither sets its own):
-autofix = Parallel(Task("ruff format {paths}"), Task("ruff check --fix {paths}"), paths=".")
+autofix = Sequential(Task("ruff check --fix {paths}", mutates=True), Task("ruff format {paths}", mutates=True), paths=".")
 _ = Config(agent=Claude(fix=Sequential(py, web, autofix)))
 ```
 
@@ -323,11 +323,11 @@ from camas import Clean, Task
 openapi = Clean(Task("make update-openapi", mutates=True))
 ```
 
-`openapi` is a `Sequential` of three leaves: a check that the tree is clean, the generator, and the same check again. A dirty tree fails the first check and skips the generator. A failed second check prints the drift: the `git status --porcelain` lines, untracked files included, then the `git diff` of the tracked files.
+`openapi` is a `Sequential` of three leaves: a check that the tree is clean, the generator, and the same check again. A dirty tree fails the first check and skips the generator. A failed second check prints the drift: the `git diff` of the changed tracked files, staged or not, then the `git status --porcelain` lines, untracked files included.
 
 - `check=` replaces the whole-tree default with any task or command string whose exit 0 means clean. `check="git diff --exit-code -- schema/"` scopes the gate to one directory, but `git diff` doesn't see untracked files, so a generator that adds files needs a check that does. A check can't carry `{paths}`.
 - `before=False` drops the first check. A tree that starts dirty then fails as drift.
-- The default check reads the whole tree, so nothing else may write while a gate runs. A formatter sequenced before a gate fails the gate's first check whenever it changes a file, and two gates under one `Parallel` see each other's writes. Run the gates first, in sequence:
+- The default check reads git's view of the whole tree, where ignored paths don't count, so nothing else may write while a gate runs. A formatter sequenced before a gate fails the gate's first check whenever it changes a file, and two gates under one `Parallel` see each other's writes. Run the gates first, in sequence:
 
 ```python
 from camas import Clean, Sequential, Task
@@ -357,7 +357,7 @@ dev = Sequential(
 )
 ```
 
-To fan out across machines, let camas split the outer axes (OS, target, chip) over CI runners with [`--github-matrix`](#github-actions-matrix---github-matrix) and keep each tool's batched invocation inside one leaf.
+To fan out across machines, let camas split the outer axes (target, chip, toolchain version) over CI runners with [`--github-matrix`](#github-actions-matrix---github-matrix) and keep each tool's batched invocation inside one leaf.
 
 ## Monorepos
 

@@ -70,13 +70,14 @@ one tool (``nix build .#a .#b``): keep those one leaf, and mutating leaves
 in sequence ahead of the read-only rest. See the README's "When Parallel
 doesn't help" section.
 
-``Clean(Task("make gen", mutates=True))`` gates committed generated code:
-a whole-tree clean check, the generator, then the check again, whose
-failure prints the drifted files and their ``git diff``. ``check=`` takes
-any task whose exit 0 means clean (``git diff --exit-code -- schema/``
-scopes it), and ``before=False`` drops the first check. The default check
-sees every write, so run gates in sequence ahead of any other mutating
-step, never under ``Parallel``. See the README's "Drift gate" section.
+``Clean(Task("make gen", mutates=True))`` gates committed generated
+code: a whole-tree clean check, the generator, then the check again,
+whose failure prints the drift's ``git diff`` and the changed files.
+``check=`` takes any task whose exit 0 means clean
+(``git diff --exit-code -- schema/`` scopes it), and ``before=False``
+drops the first check. The default check sees every write git doesn't
+ignore, so run gates in sequence ahead of any other mutating step, never
+under ``Parallel``. See the README's "Drift gate" section.
 
 ``Config`` is project configuration, discovered by type: bind
 ``_ = Config(default_task=...)`` and bare ``camas`` runs that task

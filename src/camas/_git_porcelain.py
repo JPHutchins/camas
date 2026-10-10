@@ -42,6 +42,9 @@ def _write_stdout(text: str) -> None:
 		buffer.write(text.encode("utf-8", "replace"))
 
 
+_PLAIN_PATCH: Final = ("--no-color", "--no-ext-diff", "--no-textconv")
+
+
 def _git(env: dict[str, str], *args: str) -> subprocess.CompletedProcess[str]:
 	return subprocess.run(
 		["git", *args],
@@ -54,18 +57,46 @@ def _git(env: dict[str, str], *args: str) -> subprocess.CompletedProcess[str]:
 	)
 
 
-def _write_tracked_drift(env: dict[str, str]) -> None:
-	"""The tracked drift as a patch, after the status lines; the status alone decides the exit
-	code.
+def _report(proc: subprocess.CompletedProcess[str], what: str) -> None:
+	"""``proc``'s stderr, or the exit that left none."""
+	if proc.stderr.strip():
+		_write_line(proc.stderr)
+	elif proc.returncode != 0:
+		code: Final = proc.returncode
+		_write_line(
+			f"{what} killed by signal {-code}"
+			if code < 0 and not env_case_insensitive()
+			else f"{what} exited with code {code}"
+		)
+
+
+def _patch_flags(status: str) -> tuple[tuple[str, ...], ...]:
+	r"""The ``git diff`` flags whose patches show the drift ``status`` lists: the index's, then
+	the working tree's. Untracked files have none.
+
+	>>> _patch_flags(" M a.txt\n?? b.txt\n")
+	((),)
+	>>> _patch_flags("M  a.txt\nMM b.txt\n")
+	(('--cached',), ())
+	>>> _patch_flags("?? new.txt\n")
+	()
 	"""
+	tracked: Final = tuple(line for line in status.splitlines() if not line.startswith("??"))
+	return tuple(
+		flags
+		for flags, column in ((("--cached",), 0), ((), 1))
+		if any(line[column] != " " for line in tracked)
+	)
+
+
+def _write_patch(env: dict[str, str], *flags: str) -> None:
 	try:
-		diff: Final = _git(env, "diff", "--no-ext-diff")
+		diff: Final = _git(env, "diff", *flags, *_PLAIN_PATCH)
 	except OSError as exc:
 		_write_line(f"git diff could not run ({exc})")
 		return
-	if diff.stderr.strip():
-		_write_line(diff.stderr)
 	_write_stdout(diff.stdout)
+	_report(diff, "git diff")
 
 
 def main() -> int:
@@ -75,22 +106,13 @@ def main() -> int:
 	except OSError as exc:
 		_write_line(f"git is required on PATH ({exc})")
 		return 1
+	_report(run, "git status")
 	if run.returncode != 0:
-		if run.stderr.strip():
-			_write_line(run.stderr)
-		else:
-			code: Final = run.returncode
-			_write_line(
-				f"git status killed by signal {-code}"
-				if code < 0 and not env_case_insensitive()
-				else f"git status exited with code {code}"
-			)
 		return 1
-	if run.stderr.strip():
-		_write_line(run.stderr)
 	if run.stdout.strip():
+		for flags in _patch_flags(run.stdout):
+			_write_patch(env, *flags)
 		_write_stdout(run.stdout)
-		_write_tracked_drift(env)
 		return 1
 	return 0
 
