@@ -187,8 +187,13 @@ def camas_task_arg(cmd: str | tuple[str, ...]) -> str | None:
 	True
 	>>> camas_task_arg(("camas", "check"))
 	'check'
+	>>> camas_task_arg('camas "lint') is None   # unsplittable: the run reports it, not this heuristic
+	True
 	"""
-	tokens: Final = resolve_cmd(cmd)
+	try:
+		tokens: Final = resolve_cmd(cmd)
+	except ValueError:
+		return None
 	for i, token in enumerate(tokens):
 		if PurePath(token).stem != "camas" or not _invoked_at(tokens, i):
 			continue

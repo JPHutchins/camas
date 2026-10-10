@@ -114,6 +114,32 @@ async def test_an_empty_command_is_an_errored_leaf_not_a_crash(node: TaskNode) -
 
 
 @pytest.mark.parametrize(
+	("node", "message"),
+	[
+		(Task('"'), "malformed command: no closing quotation"),
+		(Task("echo 'quoted"), "malformed command: no closing quotation"),
+		(Task("echo \\"), "malformed command: no escaped character"),
+		(Task('"', cwd="no-such-dir-camas-347"), "malformed command: no closing quotation"),
+		(
+			Pipe(Task(("python", "-c", "pass")), Task("echo 'quoted")),
+			"malformed command: no closing quotation",
+		),
+	],
+	ids=("lone-quote", "unclosed-quote", "trailing-escape", "with-a-missing-cwd", "pipe-stage"),
+)
+async def test_a_malformed_command_is_an_errored_leaf_not_a_crash(
+	node: TaskNode, message: str
+) -> None:
+	"""A string command ``shlex`` cannot split fails its own leaf with the reason (#347)."""
+	from camas.v0.completion import Errored
+
+	result = await run(node, jobs=1)
+	assert result.returncode != 0
+	errored = [r.completion for r in result.results if isinstance(r.completion, Errored)]
+	assert [e.message for e in errored] == [message]
+
+
+@pytest.mark.parametrize(
 	("program", "line"),
 	[
 		("import sys; sys.stdout.buffer.write(b'x' * 200_000 + b'\\n')", b"x" * 200_000 + b"\n"),
