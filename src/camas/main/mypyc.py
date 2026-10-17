@@ -1,14 +1,5 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
-"""AST-based fallback for class signature inspection under mypyc compilation.
-
-mypyc compiles modules to ``.so`` and erases function ``__annotations__`` /
-mangles class-level ones, so ``inspect`` and ``typing.get_type_hints`` lose
-type information. ``mypycify`` ships the original ``.py`` next to the
-compiled artifact, and these helpers parse it directly to recover the
-signatures the help formatter needs.
-"""
-
 from __future__ import annotations
 
 import ast
@@ -22,15 +13,6 @@ MISSING: Final = object()
 
 
 def signature_fields_from_source(cls: Any) -> list[tuple[str, Any, Any, Any]] | None:
-	"""AST-parse the ``.py`` source defining ``cls`` and return the same shape
-	as ``effects.signature_fields``. Returns ``None`` when the source isn't reachable.
-
-	mypyc preserves the original ``.py`` next to the compiled ``.so``; we
-	locate it via the module's ``__file__`` directory plus the class's
-	module name. Annotations and defaults are evaluated in the module's
-	namespace so type references resolve to real classes (enabling the
-	signature renderer's recursion into nested types).
-	"""
 	import inspect
 	import sys as _sys
 
@@ -85,10 +67,6 @@ def signature_fields_from_source(cls: Any) -> list[tuple[str, Any, Any, Any]] | 
 
 
 def resolve_in_namespace(node: ast.expr, ns: Mapping[str, Any]) -> Any:
-	"""Evaluate an AST expression in ``ns`` (the source module's globals).
-	Falls back to the unparsed string when evaluation fails — typically a
-	forward reference to a name not yet bound when the source is read.
-	"""
 	src = ast.unparse(node)
 	try:
 		return eval(src, dict(ns))  # evaluating our own annotations

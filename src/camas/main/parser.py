@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""argparse construction: help is generated from the loaded tasks and effects."""
-
 from __future__ import annotations
 
 import argparse
@@ -48,10 +46,7 @@ if TYPE_CHECKING:
 
 
 def effects_help(config: Config, *, github: bool, agent: bool = False) -> str:
-	"""``--effects`` help: names the environment's resolved default, and the other
-	environment's default when it differs (``Termtree`` locally vs. ``Status``
-	under GitHub Actions, unless the :class:`Config` overrides them).
-
+	"""
 	>>> effects_help(Config(), github=False)
 	"tuple of Effect instances; pass with no value to list available Effects (default: (Termtree(),); (Status(output_mode='github'),) under GITHUB_ACTIONS=true)"
 	>>> effects_help(Config(), github=True)
@@ -68,10 +63,7 @@ def effects_help(config: Config, *, github: bool, agent: bool = False) -> str:
 
 
 def positional_help(config: Config, *, github: bool, color: bool = False) -> str:
-	"""Positional help: names the task a bare ``camas`` runs, when one is configured.
-	A named task is rendered in bold cyan (matching ``--list``); an anonymous one
-	falls back to its one-line summary.
-
+	"""
 	>>> from camas import Task
 	>>> positional_help(Config(default_task=Task("echo hi", name="greet")), github=False)
 	"name of a defined task, a camas expression, or 'mcp' (trailing '-- ARGS' append to a Task's command); with no argument, runs greet"
@@ -91,11 +83,6 @@ def positional_help(config: Config, *, github: bool, color: bool = False) -> str
 
 
 def positive_jobs(raw: str) -> int:
-	"""Validate ``--jobs`` as an argparse ``type``: a positive integer.
-
-	Raises:
-		ArgumentTypeError: when ``raw`` is not an integer ``>= 1``.
-	"""
 	try:
 		n = int(raw)
 	except ValueError:
@@ -109,10 +96,7 @@ _DURATION: Final = re.compile(r"\s*(\d+(?:\.\d+)?)\s*(ms|s|m|h)?\s*")
 
 
 def parse_duration(raw: str) -> float:
-	"""Validate ``--under`` as an argparse ``type``: a positive duration in seconds.
-
-	Accepts a bare number (seconds) or a ``ms``/``s``/``m``/``h`` suffix.
-
+	"""
 	Raises:
 		ArgumentTypeError: when ``raw`` is not a positive duration.
 
@@ -145,12 +129,6 @@ def parse_duration(raw: str) -> float:
 
 
 def resolve_jobs(cli_jobs: int | None) -> int | None:
-	"""Effective ``--jobs`` cap: the CLI flag wins, else ``CAMAS_JOBS``, else
-	``None`` (unbounded).
-
-	Raises:
-		ValueError: when ``CAMAS_JOBS`` is set but not a positive integer.
-	"""
 	if cli_jobs is not None:
 		return cli_jobs
 	raw = os.environ.get("CAMAS_JOBS")
@@ -166,12 +144,6 @@ def resolve_jobs(cli_jobs: int | None) -> int | None:
 
 
 class CamasArgumentParser(argparse.ArgumentParser):
-	"""``ArgumentParser`` whose ``--help`` appends the discovered tasks listing
-	(or load-error hint), the Effects listing, and the Try hint after argparse's
-	standard output. ``state`` is populated by ``build_parser`` so the override
-	has access without nesting.
-	"""
-
 	state: TasksState
 
 	def format_help(self) -> str:
@@ -218,11 +190,7 @@ class CamasArgumentParser(argparse.ArgumentParser):
 
 
 def build_parser(state: TasksState = EMPTY_STATE) -> argparse.ArgumentParser:
-	"""Build the CLI argument parser.
-
-	When ``state`` is :class:`LoadOk` with tasks, known task names appear in the
-	positional metavar so the usage line reads like a list of subcommands.
-
+	"""
 	>>> from camas import Task
 	>>> from camas.main.state import LoadOk
 	>>> parser = build_parser()
@@ -374,21 +342,10 @@ RESERVED_FLAGS: Final = frozenset(
 
 
 RESERVED_DESTS: Final = frozenset(f.replace("-", "_") for f in RESERVED_FLAGS) | {"expression"}
-"""The ``dest`` argparse derives for each built-in flag (``-`` folded to ``_``), plus the
-positional ``expression``. A matrix axis whose normalized name collides with one of these is
-skipped when synthesizing ``--AXIS`` overrides — an axis named ``github_matrix`` would otherwise
-overwrite ``args.github_matrix``, and one named ``dry_run`` would shadow ``--dry-run``."""
 
 
 def normalize_github_matrix(argv: Sequence[str]) -> list[str]:
-	"""``argv`` with a bare ``--github-matrix`` spelled ``--github-matrix=auto`` whenever what
-	follows it is not a shape name.
-
-	``--github-matrix``'s optional value would otherwise swallow the next token, so
-	``camas --github-matrix check`` — the flag written before the task — would read ``check`` as a
-	shape and reject it. Pinning the value keeps the task where the user put it; a task named
-	after a shape has to be written before the flag.
-
+	"""
 	>>> normalize_github_matrix(["--github-matrix", "check"])
 	['--github-matrix=auto', 'check']
 	>>> normalize_github_matrix(["--github-matrix", "tasks"])
@@ -411,10 +368,7 @@ def normalize_github_matrix(argv: Sequence[str]) -> list[str]:
 
 
 def is_reserved_axis(name: str) -> bool:
-	"""Whether matrix axis ``name`` normalizes to a built-in flag's dest — such an axis gets no
-	``--AXIS`` override (it would collide), so dispatch and per-task help both skip it; it stays
-	reachable via ``--matrix NAME=...``.
-
+	"""
 	>>> is_reserved_axis("PY"), is_reserved_axis("dry_run"), is_reserved_axis("dry-run")
 	(False, True, True)
 	"""
@@ -422,5 +376,4 @@ def is_reserved_axis(name: str) -> bool:
 
 
 def expression_metavar(tasks: Mapping[str, TaskNode] | None) -> str:
-	"""Positional metavar: prepends ``task`` when tasks exist; ``mcp`` is always reserved."""
 	return "task | expression | mcp" if tasks else "expression | mcp"

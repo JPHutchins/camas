@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""Load a ``tasks.py`` scope, resolving its ``Project`` references into a composed task tree."""
-
 from __future__ import annotations
 
 from .errors import ProjectLoadError

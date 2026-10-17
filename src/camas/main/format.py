@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""Plain-text formatting for task listings, summaries, and load-error hints."""
-
 from __future__ import annotations
 
 import re
@@ -37,9 +35,6 @@ def is_named_ref(node: TaskNode, names: frozenset[str]) -> bool:
 
 
 def par_child_summary(node: TaskNode, names: frozenset[str]) -> str:
-	"""Render a Parallel child, parenthesising an anonymous Sequential because
-	``,`` binds looser than ``|``.
-	"""
 	rendered = task_summary(node, names, is_root=False)
 	if (
 		isinstance(node, (Sequential, Pipe))
@@ -51,10 +46,7 @@ def par_child_summary(node: TaskNode, names: frozenset[str]) -> str:
 
 
 def task_summary(node: TaskNode, names: frozenset[str], is_root: bool = True) -> str:
-	"""One-line representation of a task tree using ``,`` for Sequential and
-	``|`` for Parallel. Children whose name appears in ``names`` render as a
-	bare reference. Precedence: ``|`` binds tighter than ``,``.
-
+	"""
 	>>> task_summary(Task("echo hi"), frozenset())
 	'echo hi'
 	>>> task_summary(Task(("python", "-c", "pass")), frozenset())
@@ -83,9 +75,7 @@ def task_summary(node: TaskNode, names: frozenset[str], is_root: bool = True) ->
 
 
 def format_axis(name: str, values: tuple[str, ...]) -> str:
-	"""Render a matrix axis for the listing annotation (``PY=3.13``, ``PY×6 (lo..hi)``, or
-	``version=required`` for an unfilled required axis — an empty value tuple).
-
+	"""
 	>>> format_axis("PY", ("3.10", "3.11", "3.12", "3.13", "3.14", "3.15"))
 	'PY×6 (3.10..3.15)'
 	>>> format_axis("version", ())
@@ -99,9 +89,7 @@ def format_axis(name: str, values: tuple[str, ...]) -> str:
 
 
 def format_variants(variants: tuple[dict[str, str], ...]) -> str:
-	"""Render a ``variants`` declaration for the listing annotation: how many coupled bundles and
-	which keys each binds — never a cross product, so the axes are named, not multiplied.
-
+	"""
 	>>> format_variants(({"backend": "thumbv7", "target": "eabi"}, {"backend": "esp", "target": "elf"}))
 	'variants×2 (backend, target)'
 	>>> format_variants(())
@@ -113,12 +101,7 @@ def format_variants(variants: tuple[dict[str, str], ...]) -> str:
 
 
 def format_fanout(node: TaskNode) -> str:
-	"""A task's listing annotation: its ``matrix`` axes then its ``variants``, or ``""`` for a
-	node that declares neither.
-
-	The ``matrix:`` prefix appears only when a matrix axis does: a ``variants`` token labels itself,
-	and calling a coupled fan-out a matrix is the conflation ``variants=`` exists to avoid.
-
+	"""
 	>>> from camas import Parallel, Task
 	>>> format_fanout(Task("hi"))
 	''
@@ -139,11 +122,7 @@ def format_fanout(node: TaskNode) -> str:
 
 
 def format_required_axes_error(names: tuple[str, ...]) -> str:
-	"""The stderr line for matrix axes left unfilled at run time — an empty-value axis
-	(``matrix={"version": ()}``) is a required input, so a run supplies it with ``--AXIS VALUE``
-	(``--matrix AXIS=VALUE`` for a reserved axis like ``version``) rather than silently expanding
-	to zero leaves.
-
+	"""
 	>>> format_required_axes_error(("PY",))
 	"matrix axis 'PY' is required but unset — provide it with --PY VALUE"
 	>>> format_required_axes_error(("version",))
@@ -165,10 +144,7 @@ def format_required_axes_error(names: tuple[str, ...]) -> str:
 
 
 def format_empty_variants_error(labels: tuple[str, ...]) -> str:
-	"""The error line for a node whose ``variants=()`` leaves it nothing to run — the coupled
-	counterpart of an unfilled required axis (:func:`format_required_axes_error`), and just as
-	silent if unreported. No axis name to fill, so there is no ``--AXIS`` hint to give.
-
+	"""
 	>>> format_empty_variants_error(("qemu",))
 	"variants=() on 'qemu' declares no variant — that branch would expand to nothing"
 	>>> format_empty_variants_error(("a", "b"))
@@ -181,16 +157,13 @@ def format_empty_variants_error(labels: tuple[str, ...]) -> str:
 
 
 def colorize_summary(body: str, color: bool) -> str:
-	"""Grey out the structural ``,`` and ``|`` operators in a task summary."""
 	if not color:
 		return body
 	return body.replace(", ", f"{GREY},{RESET} ").replace(" | ", f" {GREY}|{RESET} ")
 
 
 def format_load_error_hint(source: Path, exception: Exception) -> str:
-	"""One-line hint shown in place of the task listing when ``tasks.py`` fails
-	to evaluate — points the user at ``camas --check`` for the full diagnostic.
-
+	"""
 	>>> "camas --check" in format_load_error_hint(Path("/x/tasks.py"), RuntimeError("boom"))
 	True
 	"""
@@ -202,10 +175,7 @@ def format_load_error_hint(source: Path, exception: Exception) -> str:
 
 
 def format_version_skew_hint(running: str, spec: str) -> str:
-	"""Hint shown when the running MCP server's camas version does not satisfy
-	``tasks.py``'s pin — points the caller at reconnecting, and at the
-	``uv run tasks.py`` fallback that resolves the pin fresh per invocation.
-
+	"""
 	>>> "reconnect the MCP server" in format_version_skew_hint("0.1.21", "==0.1.22")
 	True
 	>>> "uv run tasks.py" in format_version_skew_hint("0.1.21", "==0.1.22")
@@ -220,10 +190,7 @@ def format_version_skew_hint(running: str, spec: str) -> str:
 
 
 def format_scope_warnings(tasks: Mapping[str, TaskNode]) -> str:
-	"""Render every :func:`camas.core.scope.scope_warnings` message across the raw trees in
-	``tasks``, deduplicated (a node shared by two names warns once) and one per line —
-	empty when there is nothing to report.
-
+	"""
 	>>> format_scope_warnings({"cargo": Task("cargo build", name="cargo", paths=".")})
 	"task 'cargo' sets paths= but its command has no {paths} token, so it is never narrowed or pruned; add {paths} to the command, or use when= to gate it on the changed set"
 	>>> format_scope_warnings({"cargo": Task("cargo build", name="cargo")})
@@ -239,11 +206,6 @@ def format_task_summary_listing(
 	default_task_name: str | None = None,
 	camas_dir: Path | None = None,
 ) -> str:
-	"""Build the ``Available tasks from <source>`` listing as a string.
-
-	``default_task_name`` marks the task a bare ``camas`` runs with ``(default)``;
-	``camas_dir`` is the project's resolved camas directory, read for timing estimates.
-	"""
 	if not tasks:
 		if source is not None:
 			return f"No tasks defined in {source}."
@@ -279,8 +241,7 @@ def format_task_summary_listing(
 
 
 def timing_note(estimate: Estimate, color: bool) -> str:
-	"""A task's estimated-duration annotation, ``~Ns`` composed from observed leaf times.
-
+	"""
 	>>> from camas.core.timings import Estimate
 	>>> timing_note(Estimate(32.0, 3, "test", 31.9), color=False)
 	'~32.00s'
@@ -308,7 +269,6 @@ def print_task_summary_listing(
 def print_task_trees(
 	tasks: Mapping[str, TaskNode], source: Path | None, camas_dir: Path | None = None
 ) -> None:
-	"""Print every defined task's tree with commands expanded — verbose ``--tree`` output."""
 	if not tasks:
 		print_task_summary_listing(tasks, source)
 		return
@@ -325,8 +285,7 @@ def print_task_trees(
 
 
 def format_matrix_axes_help(axes: Mapping[str, tuple[str, ...]], color: bool) -> str:
-	"""Render the ``Matrix axes:`` block for per-task ``--help``.
-
+	"""
 	>>> "Matrix axes" in format_matrix_axes_help({"PY": ("3.13", "3.14")}, color=False)
 	True
 	>>> "--PY" in format_matrix_axes_help({"PY": ("3.13",)}, color=False)
@@ -344,9 +303,6 @@ def format_matrix_axes_help(axes: Mapping[str, tuple[str, ...]], color: bool) ->
 
 
 def print_task_help(name: str, task: TaskNode) -> None:
-	"""Print subcommand help for a single task: its expanded tree and any
-	matrix axes the user can override from the CLI.
-	"""
 	from .parser import is_reserved_axis
 
 	axes = overridable_axes(task)
@@ -367,7 +323,6 @@ def print_task_help(name: str, task: TaskNode) -> None:
 
 
 def format_annotation(annotation: Any, color: bool) -> str:
-	"""Render a type annotation for help output, stripping module qualifiers."""
 	if annotation is Any:
 		text = "Any"
 	elif isinstance(annotation, type):
@@ -378,7 +333,6 @@ def format_annotation(annotation: Any, color: bool) -> str:
 
 
 def format_default(default: Any, color: bool) -> str:
-	"""Render a constructor default value compactly."""
 	if default is MISSING:
 		return ""
 	rendered = repr(default) if isinstance(default, str) else str(default)
@@ -386,9 +340,6 @@ def format_default(default: Any, color: bool) -> str:
 
 
 def format_signature(cls: Any, indent: str, color: bool) -> list[str]:
-	"""Render ``cls(field: Type = default, …)`` plus nested signatures of any
-	camas.effect classes appearing in the field annotations.
-	"""
 	import inspect
 
 	fields = signature_fields(cls)
@@ -426,12 +377,6 @@ def format_available_effects(
 	scope_effects: Mapping[str, type[Effect[Any]]] = {},
 	default_effect_names: frozenset[str] = frozenset(),
 ) -> str:
-	"""Render each discovered Effect with its full constructor signature and
-	the signatures of every parameter type it transitively references.
-
-	``scope_effects`` adds user-defined Effect classes to the listing;
-	``default_effect_names`` marks the environment's default effect(s) with ``(default)``.
-	"""
 	_, effects = available_effects(scope_effects)
 	if not effects:
 		return ""
@@ -450,7 +395,6 @@ def format_available_effects(
 
 
 def format_try_hint(color: bool) -> str:
-	"""Three-line table teaching ``( )`` (Sequential), ``{ }`` (Parallel), and ``--effects``."""
 	rows = (
 		('camas \'("echo Hello", "echo world!")\'', "( ) → Sequential"),
 		('camas \'{"echo Hello", "echo world!"}\'', "{ } → Parallel"),
@@ -468,7 +412,6 @@ def format_try_hint(color: bool) -> str:
 
 
 def format_reference(color: bool) -> str:
-	"""``Reference:`` block — local source path, remote examples, PyPI."""
 	# Source is the package's install path — a local directory openable without a
 	# network round-trip; examples ship only on GitHub, not in the wheel.
 	entries = (

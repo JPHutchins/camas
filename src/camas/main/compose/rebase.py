@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""Re-anchor a task node's ``cwd``/``paths``/``when`` into a referencing directory's frame."""
-
 from __future__ import annotations
 
 import sys
@@ -21,11 +19,7 @@ if TYPE_CHECKING:
 
 
 def qualify(name: str | None, namespace: str) -> str | None:
-	"""A task or group ``name`` prefixed with its Project ``namespace`` segment, dotted — the
-	composed leaf's display identity, so ``libs``'s ``build`` reads as ``libs.build`` in every
-	effect. An empty ``namespace``, or a node with no name (``None`` or ``""``), passes through
-	unchanged — a nameless node has nothing to qualify, so prefixing would only dangle the dot.
-
+	"""
 	>>> qualify("build", "libs")
 	'libs.build'
 	>>> qualify("search.lint", "libs")
@@ -43,8 +37,7 @@ def qualify(name: str | None, namespace: str) -> str | None:
 
 
 def rebase_cwd(cwd: Path | None, rel: PurePosixPath, *, is_root: bool) -> Path | None:
-	"""``cwd`` re-anchored into the referencing directory's frame at ``rel``.
-
+	"""
 	>>> rebase_cwd(None, PurePosixPath("services/api"), is_root=True) == Path("services/api")
 	True
 	>>> rebase_cwd(None, PurePosixPath("services/api"), is_root=False) is None
@@ -65,8 +58,7 @@ def rebase_cwd(cwd: Path | None, rel: PurePosixPath, *, is_root: bool) -> Path |
 
 
 def rebase_str_prefix(value: str, rel: PurePosixPath) -> str:
-	"""A prefix string re-anchored under ``rel``.
-
+	"""
 	>>> rebase_str_prefix(".", PurePosixPath("services/api"))
 	'services/api'
 	>>> rebase_str_prefix("src", PurePosixPath("services/api"))
@@ -76,8 +68,7 @@ def rebase_str_prefix(value: str, rel: PurePosixPath) -> str:
 
 
 def _strip_rel(path: str, rel: PurePosixPath) -> str | None:
-	"""``path`` with the ``rel`` prefix removed, or ``None`` when it doesn't lie under ``rel``.
-
+	"""
 	>>> _strip_rel("services/api/src/a.py", PurePosixPath("services/api"))
 	'src/a.py'
 	>>> _strip_rel("services/other/x", PurePosixPath("services/api")) is None
@@ -91,8 +82,7 @@ def _strip_rel(path: str, rel: PurePosixPath) -> str | None:
 
 
 def rebase_paths(paths: str | PathScope | None, rel: PurePosixPath) -> str | PathScope | None:
-	"""``paths`` re-anchored under ``rel``.
-
+	"""
 	>>> rebase_paths(None, PurePosixPath("api")) is None
 	True
 	>>> rebase_paths(".", PurePosixPath("api"))
@@ -112,8 +102,7 @@ def rebase_paths(paths: str | PathScope | None, rel: PurePosixPath) -> str | Pat
 
 
 def wrap_pathscope(inner: PathScope, rel: PurePosixPath) -> PathScope:
-	"""``inner`` wrapped to operate in the referencing directory's frame.
-
+	"""
 	>>> scoped = wrap_pathscope(lambda c: c or (".",), PurePosixPath("api"))
 	>>> scoped(())
 	('api',)
@@ -133,8 +122,7 @@ def wrap_pathscope(inner: PathScope, rel: PurePosixPath) -> PathScope:
 def rebase_when(
 	when: str | tuple[str, ...] | WhenPredicate | None, rel: PurePosixPath
 ) -> str | tuple[str, ...] | WhenPredicate | None:
-	"""``when`` re-anchored under ``rel``.
-
+	"""
 	>>> rebase_when(None, PurePosixPath("api")) is None
 	True
 	>>> rebase_when("src", PurePosixPath("api"))
@@ -159,8 +147,7 @@ def rebase_when(
 
 
 def wrap_when(inner: WhenPredicate, rel: PurePosixPath) -> WhenPredicate:
-	"""``inner`` wrapped to receive only the changed entries under ``rel``, stripped of it.
-
+	"""
 	>>> wrapped = wrap_when(lambda c: "x" in c, PurePosixPath("api"))
 	>>> wrapped(("api/x", "other/y"))
 	True
@@ -176,10 +163,7 @@ def wrap_when(inner: WhenPredicate, rel: PurePosixPath) -> WhenPredicate:
 
 
 def rebase_tree(node: TaskNode, rel: PurePosixPath, namespace: str, *, is_root: bool) -> TaskNode:
-	"""``node`` rebuilt with its ``cwd``/``paths``/``when`` re-anchored under ``rel`` and every
-	node's ``name`` prefixed with the Project ``namespace`` segment (:func:`qualify`); descendants
-	rebase with ``is_root=False`` so only the tree's own top node inherits an unset ``cwd``.
-
+	"""
 	>>> rebase_tree(
 	...     Task("ruff {paths}", paths="."), PurePosixPath("services/api"), "api", is_root=True
 	... ) == Task("ruff {paths}", cwd=Path("services/api"), paths="services/api")

@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""Parse the camas requirement from a PEP 723 inline-script-metadata block in a ``tasks.py``."""
-
 from __future__ import annotations
 
 import re
@@ -22,18 +20,10 @@ _CAMAS_REQ_RE: Final = re.compile(
 	r"(?:\[(?P<extras>[^\]]*)\])?"
 	r"(?P<spec>(?:~=|==|!=|<=|>=|<|>|===).*)?$"
 )
-"""A PEP 508 requirement string whose distribution name is exactly ``camas``.
-
-The regex anchors on ``camas`` (case-insensitive), then optional ``[extras]``,
-then an optional PEP 440 version specifier. It rejects names like ``camas-foo``
-or ``my-camas``: those would leave trailing chars that fail to match the
-version-op guard or ``$``.
-"""
 
 
 def parse_camas_requirement(source: str) -> str | None:
-	"""The camas PEP 508 requirement string from a PEP 723 ``# /// script`` block in ``source``, or None.
-
+	"""
 	>>> parse_camas_requirement('''# /// script
 	... # dependencies = ["camas>=0.1.8"]
 	... # ///''')
@@ -93,7 +83,6 @@ def parse_camas_requirement(source: str) -> str | None:
 
 
 def camas_requirement_from(path: Path) -> str | None:
-	"""Read ``path``, return its camas requirement (or None)."""
 	try:
 		source = path.read_text(encoding="utf-8")
 	except OSError:
@@ -102,8 +91,7 @@ def camas_requirement_from(path: Path) -> str | None:
 
 
 def with_mcp_extra(req: str) -> str:
-	"""``req`` with ``mcp`` ensured in its extras.
-
+	"""
 	>>> with_mcp_extra('camas>=0.1.8')
 	'camas[mcp]>=0.1.8'
 
@@ -120,7 +108,7 @@ def with_mcp_extra(req: str) -> str:
 	'camas[check,test,mcp]>=0.1'
 
 	Raises:
-	    ValueError: Not a camas requirement.
+		ValueError: not a camas requirement.
 	"""
 	m = _CAMAS_REQ_RE.match(req)
 	if m is None:
@@ -136,8 +124,7 @@ def with_mcp_extra(req: str) -> str:
 
 
 def version_specifier(req: str) -> str | None:
-	"""The trailing PEP 440 specifier from ``req``, or None if unpinned.
-
+	"""
 	>>> version_specifier('camas[mcp]>=0.1.8')
 	'>=0.1.8'
 
@@ -150,7 +137,7 @@ def version_specifier(req: str) -> str | None:
 	True
 
 	Raises:
-	    ValueError: Not a camas requirement.
+		ValueError: not a camas requirement.
 	"""
 	m = _CAMAS_REQ_RE.match(req)
 	if m is None:
