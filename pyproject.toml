@@ -177,11 +177,18 @@ ignore = [
 "ISC001",
 "ISC002",
 "E501",    # the formatter owns line length; the rest is unbreakable doctest output
+"D100",    # the public surface is its re-exports, not every unprefixed name
+"D101",    # the public surface is its re-exports, not every unprefixed name
 "D102",    # effect methods implement the documented Effect protocol contract
 "D103",    # code should document itself; a needed comment is a symptom
+"D104",    # the public surface is its re-exports, not every unprefixed name
 "D105",    # magic method contracts are defined by the data model, not prose
+"D106",    # the public surface is its re-exports, not every unprefixed name
 "D107",    # __init__ is documented by its class
-"D205",    # summaries here are flowing paragraphs, not one-liners
+"D205",    # a doctest-only docstring has no summary line
+"D212",    # a doctest-only docstring opens with its quotes alone on the first line
+"D402",    # a doctest-only docstring's first line is a call
+"D415",    # a doctest-only docstring's first line is a call
 "D417",    # params belong to the type system, not prose (see DOC201/DOC402 above)
 "PLC0415", # imports are scoped as narrowly as possible, by design
 "PLR0911", # complexity thresholds reward fragmentation over clarity
