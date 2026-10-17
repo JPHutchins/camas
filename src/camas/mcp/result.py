@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""Build MCP wire responses from camas's run results and load state."""
-
 from __future__ import annotations
 
 import shlex
@@ -66,7 +64,6 @@ Verbosity = Literal["summary", "failures", "full"]
 def to_run_response(
 	node: TaskNode, result: RunResult, *, verbosity: Verbosity = "failures", tail: int = 50
 ) -> wire.RunResponse:
-	"""Assemble the wire ``RunResponse`` from a finished run and its pre-expansion task tree."""
 	leaves = tuple(info.task for info in flatten_leaves(expand_matrix(node)))
 	reports = tuple(
 		report(task, tr, verbosity=verbosity, tail=tail)
@@ -88,14 +85,6 @@ def to_run_response(
 
 
 def to_plan_response(node: TaskNode) -> wire.RunResponse:
-	"""A ``RunResponse`` for a dry run: every resolved leaf marked ``planned`` (would run,
-	none executed) — the plan a real ``camas_run`` of the same node executes.
-
-	Lets ``camas_run dry_run=true`` satisfy the advertised ``outputSchema`` — the structured
-	counterpart of the rendered plan. ``planned`` is distinct from ``skipped`` (a leaf a real
-	run pruned), so an all-``planned`` preview reads as "these leaves would run", not as a
-	green "nothing to do".
-	"""
 	leaves = tuple(
 		wire.LeafReport(
 			name=info.task.name if info.task.name is not None else command_of(info.task),
@@ -123,11 +112,6 @@ def to_github_matrix_response(
 	tasks: Mapping[str, TaskNode] = NO_TASKS,
 	shape: ShapeName = "auto",
 ) -> wire.GithubMatrixResponse:
-	"""The wire ``GithubMatrixResponse`` for ``node`` — its fan-out in the shape GHA consumes,
-	with the shape that was emitted and how to consume it, or the ``ValueError``
-	:func:`camas.main.github_matrix.resolve_emission` raises for a fan-out with no faithful
-	projection (the handler surfaces it as a tool error).
-	"""
 	emission = resolve_emission(node, tasks, shape)
 	return wire.GithubMatrixResponse(
 		task=name,
@@ -138,7 +122,6 @@ def to_github_matrix_response(
 
 
 def emitted_shape(emission: Emission) -> Literal["axes", "variants", "tasks"]:
-	"""Which projection ``emission`` is — the ``shape`` an agent should pin in the workflow."""
 	match emission:
 		case Axes():
 			return "axes"
@@ -151,7 +134,6 @@ def emitted_shape(emission: Emission) -> Literal["axes", "variants", "tasks"]:
 
 
 def job_command(emission: Emission) -> str:
-	"""The ``run:`` line a job consuming ``emission`` uses — a template, not a task camas runs."""
 	match emission:
 		case Axes(axes=axes):
 			pins = " ".join(f"--{a} ${{{{ matrix.{a} }}}}" for a in axes)
@@ -166,7 +148,6 @@ def job_command(emission: Emission) -> str:
 
 
 def to_check_response(state: TasksState) -> wire.CheckResponse:
-	"""Validate a freshly-resolved tasks source: did it evaluate, and does it type-check."""
 	match state:
 		case LoadErr(source=source, exception=exception):
 			trace = format_minimal_trace(exception, source)
@@ -200,7 +181,6 @@ def to_check_response(state: TasksState) -> wire.CheckResponse:
 def typecheck_response(
 	source: Path, task_count: int, warnings: tuple[str, ...] = ()
 ) -> wire.CheckResponse:
-	"""Run the type checker against a loaded ``.py`` tasks source and map its outcome."""
 	result = run_typecheck(source)
 	match result:
 		case CheckerOk(name=name):
@@ -233,21 +213,15 @@ def typecheck_response(
 
 
 class Decoded(NamedTuple):
-	"""Decoded leaf output: ANSI-free lines and whether they are a tail excerpt."""
-
 	lines: list[str]
 	truncated: bool
 
 
 def command_of(task: Task) -> str:
-	"""The task's command as one shell-readable string."""
 	return task.cmd if isinstance(task.cmd, str) else shlex.join(task.cmd)
 
 
 def decode(output: Sequence[bytes], tail: int | None) -> Decoded:
-	"""Decode merged stdout/stderr to ANSI-free lines, tail-truncated to ``tail`` (``None`` keeps
-	all lines — for a structured payload that must pass verbatim).
-	"""
 	lines = [strip_ansi(b.decode("utf-8", errors="replace")).rstrip("\n") for b in output]
 	if tail is not None and len(lines) > tail:
 		return Decoded(lines[-tail:], truncated=True)
@@ -284,10 +258,6 @@ def report(task: Task, result: TaskResult, *, verbosity: Verbosity, tail: int) -
 
 
 def over_limit_pointer(kind: OutputKind, limit: int, report_path: Path | None) -> str:
-	"""The payload substituted when a structured payload exceeds ``limit`` — a truncated
-	structured document is invalid, so the agent is pointed at the full file instead of
-	receiving a corrupt excerpt.
-	"""
 	if report_path is not None:
 		return (
 			f"{kind} payload exceeds the {limit}-character limit — a truncated structured "
@@ -304,16 +274,6 @@ def over_limit_pointer(kind: OutputKind, limit: int, report_path: Path | None) -
 def to_agent_envelope(
 	task: Task, result: TaskResult, *, tail: int = 50, report_path: Path | None = None
 ) -> wire.AgentEnvelope:
-	"""``result``'s AgentEnvelope: stdout tail-capped for ``raw``, verbatim for a structured
-	``kind`` — read from ``report_path`` (path mode) only when the tool ran to its own exit
-	(``Finished``) and the file holds a payload, else from stdout/message, so a tool killed
-	(``Stopped``) or that never started (``Errored``) still delivers its captured diagnostics
-	rather than a partial or empty report. A payload over its ``agent_format.limit`` — any
-	structured ``kind``, or a ``raw`` report file (stdout ``raw`` is already tail-capped) — is
-	replaced with :func:`over_limit_pointer` rather than dumped or tailed, since a truncated
-	structured document is invalid; the pointer names the report file only when the payload came
-	from it.
-	"""
 	comp = result.completion
 	fmt = task.agent_format
 	kind = fmt.kind if fmt is not None else "raw"
@@ -359,11 +319,6 @@ def to_agent_envelope(
 def agent_envelopes(
 	node: TaskNode, result: RunResult, report_paths: tuple[Path | None, ...] = ()
 ) -> tuple[wire.AgentEnvelope, ...]:
-	"""The failing leaves of a finished run as AgentJSON envelopes, in DFS order. A ``Skipped``
-	leaf never ran, so it is not a failure to surface — only its blocker is. ``report_paths``
-	(DFS-aligned with ``node``'s leaves, from :func:`camas.core.gate.with_agent_format`) supplies
-	each path-mode leaf's report file; omit it for a node with no path-mode leaf.
-	"""
 	leaves = tuple(info.task for info in flatten_leaves(expand_matrix(node)))
 	paths = report_paths or (None,) * len(leaves)
 	return tuple(
@@ -374,9 +329,6 @@ def agent_envelopes(
 
 
 def has_failing_leaf_without_agent_format(node: TaskNode, result: RunResult) -> bool:
-	"""True when a non-skipped failing leaf's task has no ``agent_format`` — its output is
-	unstructured raw text rather than a tagged, machine-readable diagnostic.
-	"""
 	leaves = tuple(info.task for info in flatten_leaves(expand_matrix(node)))
 	return any(
 		task.agent_format is None

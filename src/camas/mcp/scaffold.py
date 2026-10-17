@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""The ``camas mcp init`` command: write this project's ``.mcp.json`` entry for the camas server."""
-
 from __future__ import annotations
 
 import json
@@ -44,8 +42,6 @@ _RELEASE_VERSION_RE: Final = re.compile(r"\d+(?:\.\d+)*")
 
 
 class HookCommand(BaseModel):
-	"""A single hook command entry in ``.claude/settings.json``, with extra fields preserved."""
-
 	model_config = ConfigDict(extra="allow")
 
 	type: Literal["command"]
@@ -53,8 +49,6 @@ class HookCommand(BaseModel):
 
 
 class HookGroup(BaseModel):
-	"""A group of hooks that fire on the same event, with an optional matcher."""
-
 	model_config = ConfigDict(extra="allow")
 
 	hooks: list[HookCommand]
@@ -62,23 +56,17 @@ class HookGroup(BaseModel):
 
 
 class SettingsFile(BaseModel):
-	"""A ``.claude/settings.json`` file — validated, with extra fields preserved."""
-
 	model_config = ConfigDict(extra="allow")
 
 	hooks: dict[str, list[HookGroup]] = Field(default_factory=dict)
 
 
 def tasks_py_path() -> Path | None:
-	"""The nearest ``tasks.py`` up from cwd, or ``None`` if none found."""
 	cwd = Path.cwd()
 	return next((d / "tasks.py" for d in (cwd, *cwd.parents) if (d / "tasks.py").is_file()), None)
 
 
 def pep723_tasks_py_in_cwd() -> Path | None:
-	"""``Path.cwd() / "tasks.py"`` if it exists and has a PEP 723 header with a ``camas``
-	dependency, otherwise ``None``.
-	"""
 	tasks_py = Path.cwd() / "tasks.py"
 	if not tasks_py.is_file():
 		return None
@@ -90,7 +78,6 @@ def pep723_tasks_py_in_cwd() -> Path | None:
 
 
 def resolve_pin() -> str | None:
-	"""The camas MCP requirement with extras for pinning, resolved from the project's ``tasks.py``."""
 	tasks_py = tasks_py_path()
 	if tasks_py is None:
 		return None
@@ -103,18 +90,10 @@ def resolve_pin() -> str | None:
 
 
 PRINT_WIDTH: Final = 80
-"""Prettier's default ``printWidth`` — the column past which an inline array breaks."""
 
 
 def dumps_prettier(value: object, *, level: int = 0, col: int = 0) -> str:
-	"""Serialize ``value`` to 2-space JSON a default Prettier leaves unchanged, so a generated
-	``.mcp.json`` / ``.claude/settings.json`` survives a ``treefmt`` / ``prettier --check`` on the
-	same "adopt camas, then run your formatter" path. Objects always break onto their own lines; a
-	scalar-only array stays inline while it fits Prettier's print width — measured from ``col``, the
-	column its first character sits at — and breaks one element per line otherwise; an array holding
-	any object or array always breaks. ``json.dumps(..., indent=2)`` differs only by expanding every
-	array, which is what fails the check.
-
+	"""
 	>>> print(dumps_prettier({"command": "uvx", "args": ["camas[mcp]==0.1.27", "mcp"]}))
 	{
 	  "command": "uvx",
@@ -156,7 +135,6 @@ def dumps_prettier(value: object, *, level: int = 0, col: int = 0) -> str:
 
 
 def write_mcp_json(argv: list[str], *, launcher: Launcher | None = None) -> int:
-	"""Merge a camas ``stdio`` server into ``./.mcp.json``; return 0, or 2 if it is malformed."""
 	mcp_json_path: Final = Path.cwd() / MCP_JSON_PATH
 	existing = parse_json_object(mcp_json_path) if mcp_json_path.exists() else {}
 	if existing is None:
@@ -199,9 +177,7 @@ def write_mcp_json(argv: list[str], *, launcher: Launcher | None = None) -> int:
 
 
 def installed_version_spec(installed: str) -> str:
-	"""The ``uvx`` fallback spec pinned to the running camas ``installed`` version when it is a
-	clean release, else the unpinned extra (a dev/local build isn't published on PyPI to pin).
-
+	"""
 	>>> installed_version_spec("0.1.18")
 	'camas[mcp]==0.1.18'
 
@@ -212,16 +188,10 @@ def installed_version_spec(installed: str) -> str:
 
 
 def uvx_spec(pin: str | None) -> str:
-	"""The ``uvx`` launch spec: ``pin`` (a PEP 723-derived requirement) verbatim when given, else
-	the running camas version pinned when it's a clean release, else the unpinned extra.
-	"""
 	return pin if pin is not None else installed_version_spec(version("camas"))
 
 
 def uv_command(tail: list[str]) -> tuple[Launcher, list[str]] | None:
-	"""The ``uv`` launch command: the lockfile project path, else PEP 723 ``tasks.py``, else
-	``None`` when neither applies.
-	"""
 	if uv_project_root() is not None:
 		return "uv", ["run", "camas", *tail]
 	tasks_py = pep723_tasks_py_in_cwd()
@@ -233,15 +203,6 @@ def uv_command(tail: list[str]) -> tuple[Launcher, list[str]] | None:
 def launch_command(
 	*, pin: str | None = None, launcher: Launcher | None = None
 ) -> tuple[Launcher, list[str]] | None:
-	"""The most portable launch command for camas, or None if none is portable enough to commit.
-
-	``launcher`` forces a specific strategy instead of the auto-probe (``uv`` errors unless a
-	uv.lock project or PEP 723 ``tasks.py`` applies; ``camas`` errors unless it's on PATH).
-
-	The auto-probe takes a ``camas`` belonging to the project's own environment over ``uvx``: a uvx
-	server is isolated from the venv or devShell that holds the project's tools, so no task it runs
-	can see them, while ``uv run`` is already inside the project it locks and keeps its priority.
-	"""
 	tail = ["mcp"]
 	if launcher == "uv":
 		return uv_command(tail) if shutil.which("uv") is not None else None
@@ -264,7 +225,6 @@ def launch_command(
 
 
 def no_launcher_error(target: str, launcher: Launcher | None) -> str:
-	"""The actionable stderr line for when no launcher can be resolved to write ``target``."""
 	if launcher == "uv":
 		return (
 			f"error: cannot write {target} — --launcher uv requires uv on PATH and either a "
@@ -288,16 +248,11 @@ def no_launcher_error(target: str, launcher: Launcher | None) -> str:
 
 
 def uv_project_root() -> Path | None:
-	"""The nearest directory (cwd or an ancestor) holding a ``uv.lock``."""
 	cwd = Path.cwd()
 	return next((d for d in (cwd, *cwd.parents) if (d / "uv.lock").is_file()), None)
 
 
 def camas_note(environment: LocalEnvironment | None) -> str:
-	"""What a committed bare ``camas`` command gets a teammate, given the ``environment`` that
-	command resolves into here — which is what a teammate has to reproduce for the tasks it runs to
-	find the same tools.
-	"""
 	match environment:
 		case "venv":
 			return (
@@ -317,12 +272,6 @@ def camas_note(environment: LocalEnvironment | None) -> str:
 
 
 def portability_note(command: Launcher) -> str:
-	"""How portable the chosen launch command is, for the committed ``.mcp.json``.
-
-	The ``camas`` case reads the environment back rather than being handed the one the auto-probe
-	chose for, so a forced ``--launcher camas`` is described the same way: what a teammate needs to
-	know is what a bare ``camas`` resolves to, not how it came to be written.
-	"""
 	match command:
 		case "uv":
 			return (
@@ -338,11 +287,6 @@ def portability_note(command: Launcher) -> str:
 
 
 def parse_json_object(path: Path) -> dict[str, Any] | None:
-	"""Parse an existing JSON file as a JSON object; ``None`` if unreadable or not one.
-
-	``ValueError`` subsumes ``json.JSONDecodeError`` and the ``UnicodeDecodeError`` an invalid-
-	UTF-8 file raises, so both corrupt-file cases fall back cleanly.
-	"""
 	try:
 		loaded: object = json.loads(path.read_text(encoding="utf-8"))
 	except (OSError, ValueError):
@@ -351,7 +295,6 @@ def parse_json_object(path: Path) -> dict[str, Any] | None:
 
 
 def launch_command_str(*, pin: str | None = None, launcher: Launcher | None = None) -> str | None:
-	"""The most portable launch command as a single shell string, or ``None``."""
 	pair = launch_command(pin=pin, launcher=launcher)
 	if pair is None:
 		return None
@@ -360,7 +303,6 @@ def launch_command_str(*, pin: str | None = None, launcher: Launcher | None = No
 
 
 def _object_list(value: object) -> list[dict[str, Any]]:
-	"""The value as a list of JSON objects, or ``[]`` if it is not a list."""
 	return cast("list[dict[str, Any]]", value) if isinstance(value, list) else []
 
 
@@ -368,25 +310,16 @@ _CAMAS_HOOK_RE: Final = re.compile(r"\bmcp (?:fix|gate)\b")
 
 
 def _is_camas_hook(command: str) -> bool:
-	"""True when ``command`` is a camas hook invocation — the camas-invented ``mcp fix`` autofix
-	or ``mcp gate`` check/nudge subcommand, word-bounded so any launcher form matches (``camas``,
-	``uv run tasks.py`` for PEP 723, ``uvx camas[mcp]``) while ``mcp gateway``/``mcp fixture`` do
-	not.
-	"""
 	return _CAMAS_HOOK_RE.search(command) is not None
 
 
 def _kept_hooks(group: dict[str, Any]) -> list[dict[str, Any]]:
-	"""The group's hooks minus any camas hook."""
 	return [
 		h for h in _object_list(group.get("hooks")) if not _is_camas_hook(cast("str", h["command"]))
 	]
 
 
 def _swept_event(groups: object) -> list[dict[str, Any]]:
-	"""One event's hook groups with camas's own hooks removed and any group they emptied
-	dropped.
-	"""
 	return [
 		{**g, "hooks": remaining} for g in _object_list(groups) if (remaining := _kept_hooks(g))
 	]
@@ -395,11 +328,6 @@ def _swept_event(groups: object) -> list[dict[str, Any]]:
 def _with_camas_hooks(
 	raw: dict[str, Any], groups_by_event: Mapping[str, list[dict[str, Any]]]
 ) -> dict[str, Any]:
-	"""``raw`` with every camas hook removed from every event — dropping any group or event it
-	empties, so a stale hook from an older camas (e.g. under ``FileChanged``) or a different event
-	is swept out — and ``groups_by_event`` appended under their target events. Every other key
-	keeps its position, no defaults injected.
-	"""
 	hooks = raw.get("hooks")
 	hooks_dict: dict[str, Any] = cast("dict[str, Any]", hooks) if isinstance(hooks, dict) else {}
 	swept: dict[str, Any] = {
@@ -420,27 +348,9 @@ def _with_camas_hooks(
 
 
 STOP_NUDGE_UNDER: Final = "5s"
-"""The wall-clock budget the async Stop-hook nudge time-boxes its check to — a headless,
-turn-settle check must stay fast; a slower project simply reports more untimed/over-budget
-leaves rather than delaying the nudge."""
 
 
 def write_hooks(argv: list[str], *, quiet: bool = False, launcher: Launcher | None = None) -> int:
-	"""Write the two camas ``Stop`` hooks into ``.claude/settings.json``: the synchronous autofix,
-	which holds the turn until the registered fix node has run, and an async check that waits for
-	that fix (:func:`camas.core.hook_event.await_settled`) and then nudges the main agent to launch
-	the fixer ladder when the workspace is not green.
-
-	The fix hook trails ``|| exit 0`` so a best-effort, zero-token autofix can never block the
-	turn: a launcher/env/config failure degrades to a no-op instead of a hard stop, the same
-	fail-safe the Stop gate already applies. ``exit 0`` over ``true`` for portability — it holds
-	across the shells Claude Code runs hooks in (``sh``/Git Bash, and PowerShell, which has no
-	``true``); the failure's stderr still reaches the ``--debug`` log. The nudge hook keeps its
-	exit code — it is the signal that surfaces a residual.
-
-	``quiet`` suppresses the success message — set when called from ``write_claude``, which
-	emits its own consolidated summary so the user sees one reload line, not two.
-	"""
 	settings_path = Path.cwd() / SETTINGS_PATH
 	try:
 		raw: object = json.loads(settings_path.read_text(encoding="utf-8"))
@@ -497,7 +407,6 @@ AGENT_TEMPLATES: Final = (
 	("claude_agent_lint_sonnet.md", "camas-lint-fixer-sonnet.md"),
 	("claude_agent_test_fixer.md", "camas-test-fixer.md"),
 )
-"""The tiered camas-fixer agent templates, ``(source in src/camas/main/, dest in .claude/agents/)``."""
 
 
 CLAUDE_TARGETS: Final = (
@@ -505,11 +414,9 @@ CLAUDE_TARGETS: Final = (
 	*((AGENT_DIR / dest).as_posix() for _, dest in AGENT_TEMPLATES),
 	SKILL_PATH.as_posix(),
 )
-"""Every file ``--claude`` writes under ``.claude/``, repo-relative, for the gitignore check."""
 
 
 def write_agent_skill_templates() -> None:
-	"""Write camas's Claude Code agent and skill templates into ``.claude/``; idempotent."""
 	cwd = Path.cwd()
 	agent_dir = cwd / AGENT_DIR
 	skill_path = cwd / SKILL_PATH
@@ -526,10 +433,6 @@ def write_agent_skill_templates() -> None:
 
 
 def write_claude(argv: list[str], *, launcher: Launcher | None = None) -> int:
-	"""Write ``.mcp.json``, the Stop hooks, and the tiered camas-fixer/gate templates.
-
-	Returns 0 on success, 2 on launcher-resolution or validation failure.
-	"""
 	rc = write_mcp_json(argv, launcher=launcher)
 	if rc != 0:
 		return rc
