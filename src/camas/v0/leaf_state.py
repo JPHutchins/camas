@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""Per-leaf states: ``Waiting`` → ``Running`` → ``Completed``."""
+"""Where each leaf is in its run."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 
 class Waiting(NamedTuple):
-	"""Leaf state: task has not started yet.
+	"""A leaf not yet started.
 
 	>>> from camas.v0 import Task
 	>>> Waiting(Task("echo hi"))
@@ -26,7 +26,7 @@ class Waiting(NamedTuple):
 
 
 class Running(NamedTuple):
-	"""Leaf state: task is currently executing.
+	"""A running leaf.
 
 	>>> from datetime import datetime
 	>>> from camas.v0 import Task
@@ -40,7 +40,7 @@ class Running(NamedTuple):
 
 
 class Interrupting(NamedTuple):
-	"""Leaf state: a signal was forwarded; the task has not exited yet.
+	"""A signalled leaf that has not exited yet.
 
 	>>> from datetime import datetime
 	>>> from camas.v0 import Task
@@ -52,15 +52,11 @@ class Interrupting(NamedTuple):
 	start_time: datetime
 	last_line: bytes
 	presses: int
-	"""Ctrl-C presses this leaf has absorbed: 1/2 forwarded SIGINT, 3+ force-killed."""
+	"""Ctrl-C presses this leaf has absorbed."""
 
 
 class Completed(NamedTuple):
-	"""Leaf state: task is done — ran to exit, was skipped, was stopped by a signal, or
-	errored before it could even start.
-
-	The `completion` payload is a sum type: pattern-match on `Finished(...)`,
-	`Skipped(...)`, `Stopped(...)`, or `Errored(...)` to distinguish the cases.
+	"""A leaf that is done.
 
 	>>> from camas.v0 import Task
 	>>> from camas.v0.completion import Finished, Skipped

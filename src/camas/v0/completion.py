@@ -1,9 +1,7 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""Completion outcomes: a finished task ran to exit; a skipped task never ran; an
-errored task's command could not even be started.
-"""
+"""How a leaf's run ended."""
 
 from __future__ import annotations
 
@@ -14,14 +12,12 @@ if TYPE_CHECKING:
 
 
 INTERRUPT_RC: Final = 130
-"""Exit code for a signal-interrupted run (128 + SIGINT)."""
 
 NOT_FOUND_RC: Final = 127
-"""Exit code for a leaf whose command executable does not exist (shell 'command not found')."""
 
 
 class Finished(NamedTuple):
-	"""Completion outcome: task ran to exit with a returncode.
+	"""A leaf that ran to exit.
 
 	>>> Finished(0, 1.234, (b"all clean",))
 	Finished(returncode=0, elapsed=1.234, output=(b'all clean',))
@@ -33,12 +29,7 @@ class Finished(NamedTuple):
 
 
 class Skipped(NamedTuple):
-	"""Completion outcome: task was skipped due to a prior Sequential failure.
-
-	Carries the returncode of the task that caused the skip — an Either-like
-	propagation so callers that need an rc (e.g. the overall run's exit code)
-	can read it uniformly across completion variants — and ``blocked_by``, the
-	label of that task, so consumers can point at the real failure, not the skip.
+	"""A leaf skipped after an earlier failure.
 
 	>>> Skipped(1)
 	Skipped(returncode=1, blocked_by=None)
@@ -47,12 +38,13 @@ class Skipped(NamedTuple):
 	"""
 
 	returncode: int
+	"""The failed leaf's return code."""
 	blocked_by: str | None = None
-	"""Label of the leaf whose non-zero exit short-circuited this one; ``None`` when not derivable."""
+	"""The failed leaf's label, when known."""
 
 
 class Stopped(NamedTuple):
-	"""Completion outcome: the runner forwarded the task a signal while it ran.
+	"""A leaf the runner signalled while it ran.
 
 	>>> Stopped(130, 0.5, (b"caught SIGINT",))
 	Stopped(returncode=130, elapsed=0.5, output=(b'caught SIGINT',))
@@ -64,7 +56,7 @@ class Stopped(NamedTuple):
 
 
 class Errored(NamedTuple):
-	"""Completion outcome: the leaf's command could not be spawned — it never started.
+	"""A leaf whose command could not start.
 
 	>>> Errored(127, "no such file or directory: does-not-exist")
 	Errored(returncode=127, message='no such file or directory: does-not-exist')

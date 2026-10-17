@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""Event sum type emitted by execution: started, output, completed."""
+"""The events a run emits."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 
 class StartedEvent(NamedTuple):
-	"""Event: a task has started execution.
+	"""A leaf started.
 
 	>>> from datetime import datetime
 	>>> from camas.v0 import Task
@@ -29,7 +29,7 @@ class StartedEvent(NamedTuple):
 
 
 class OutputEvent(NamedTuple):
-	"""Event: a task produced an output line.
+	"""A leaf printed a line.
 
 	>>> from datetime import datetime
 	>>> from camas.v0 import Task
@@ -44,7 +44,7 @@ class OutputEvent(NamedTuple):
 
 
 class CompletedEvent(NamedTuple):
-	"""Event: a task finished execution (either ran or was skipped).
+	"""A leaf completed.
 
 	>>> from datetime import datetime
 	>>> from camas.v0 import Task
