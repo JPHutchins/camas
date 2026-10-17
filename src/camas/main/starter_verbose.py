@@ -272,7 +272,7 @@ class Announce(Effect[None]):
 # (relative to this file) as a single task node, mounted under the binding's name (camas libs,
 # camas libs.search.lint, ...). A reference composes the child's *matching* Config field: the
 # same libs in default_task grabs the child's default_task, in agent.fix its fix node, and so
-# on. See the README's Monorepos section for the full picture.
+# on.
 #
 # The CLI (and [tool.camas.tasks] in pyproject.toml, camas's TOML authoring surface) also
 # accepts typed expressions that reference this file's own bindings by bare name — e.g.

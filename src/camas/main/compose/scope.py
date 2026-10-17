@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""Compose a loaded scope's ``Project`` references into its task tree."""
-
 from __future__ import annotations
 
 import os
@@ -51,13 +49,6 @@ if TYPE_CHECKING:
 
 
 class Field(Enum):
-	"""The parent-``Config`` slot a composed ``Project`` reference is assigned to. A reference
-	grabs the child's *same* field (:func:`child_node`), so ``fix=Parallel(libs, api)`` composes
-	each child's ``fix`` — not whatever a bare ``camas`` happens to run there. ``CONTEXT`` is the
-	odd one out: a binding name (``libs = Project(...)``) runs what a bare ``camas`` runs in that
-	directory for the current invocation's context.
-	"""
-
 	DEFAULT = auto()
 	GITHUB = auto()
 	FIX = auto()
@@ -67,9 +58,7 @@ class Field(Enum):
 
 
 def child_node(field: Field, config: Config, *, github: bool, agent: bool) -> TaskNode | None:
-	"""The node the child's ``config`` contributes to a parent ``field``: its matching accessor,
-	or, for a binding (``CONTEXT``), the node a bare ``camas`` runs there in this context.
-
+	"""
 	>>> both = Config(default_task=Task("d"), github_task=Task("g"))
 	>>> child_node(Field.DEFAULT, both, github=True, agent=True)
 	Task(cmd='d', name=None, env={}, cwd=None)
@@ -100,8 +89,7 @@ def child_node(field: Field, config: Config, *, github: bool, agent: bool) -> Ta
 
 
 def unresolved_ref(problem: str, field: Field) -> ValueError:
-	"""The load error for a Ref met while resolving ``field``, naming the Config field it sits in.
-
+	"""
 	>>> str(unresolved_ref("an unresolved Ref", Field.GITHUB))
 	"an unresolved Ref (in the Config's github task)"
 	>>> str(unresolved_ref("an unresolved Ref", Field.CONTEXT))
@@ -115,8 +103,7 @@ def unresolved_ref(problem: str, field: Field) -> ValueError:
 
 
 def field_role(field: Field) -> str:
-	"""The role named in the load error a child raises when its ``field`` accessor yields nothing.
-
+	"""
 	>>> field_role(Field.FIX)
 	'fix'
 	>>> field_role(Field.CONTEXT)
@@ -146,10 +133,6 @@ def _compose_scope(
 	*,
 	seen: frozenset[Path],
 ) -> LoadOk:
-	"""``scope``'s bindings with every ``Project`` resolved and merged: a ``Config`` field grabs
-	each child's same field (its :class:`Field`), a binding name runs the child's context default,
-	and a child's tasks mount under that name dotted.
-	"""
 	github: Final = os.environ.get("GITHUB_ACTIONS") == "true"
 	agent: Final = running_under_agent()
 	binding_namespaces: Final = {
@@ -159,9 +142,6 @@ def _compose_scope(
 	node_cache: dict[tuple[int, Field], TaskNode] = {}
 
 	def namespace_of(marker: ProjectRef) -> str:
-		"""The display prefix for ``marker``'s composed tasks: its binding name, or, for an inline
-		``Project(...)``, the referenced directory's basename.
-		"""
 		return binding_namespaces.get(id(marker)) or PurePosixPath(marker.path).name
 
 	def child_view(marker: ProjectRef) -> tuple[PurePosixPath, LoadOk]:
@@ -278,7 +258,6 @@ def _compose_scope(
 
 
 def load_scope(path: Path, *, seen: frozenset[Path] = frozenset()) -> LoadOk:
-	"""``path`` executed and its ``Project`` references resolved (:func:`_compose_scope`)."""
 	return _compose_scope(
 		runpy.run_path(str(path)),
 		path,
@@ -288,11 +267,6 @@ def load_scope(path: Path, *, seen: frozenset[Path] = frozenset()) -> LoadOk:
 
 
 def load_py_tasks_state(path: Path) -> TasksState:
-	"""``path`` loaded (:func:`load_scope`) as a :class:`~camas.main.state.TasksState`, any failure
-	captured as a :class:`~camas.main.state.LoadErr` attributed to the file that raised — this
-	file, or, via :class:`~camas.main.compose.errors.ProjectLoadError`, the child ``Project`` that
-	failed.
-	"""
 	try:
 		return load_scope(path)
 	except ProjectLoadError as e:
@@ -302,10 +276,6 @@ def load_py_tasks_state(path: Path) -> TasksState:
 
 
 def state_from_scope(scope: Mapping[str, object]) -> TasksState:
-	"""A ``run_cli(globals())`` (PEP 723) scope loaded as a
-	:class:`~camas.main.state.TasksState`, its ``Project`` references resolved when ``__file__``
-	locates it on disk.
-	"""
 	source_obj = scope.get("__file__")
 	source = Path(source_obj) if isinstance(source_obj, (str, Path)) else None
 	try:

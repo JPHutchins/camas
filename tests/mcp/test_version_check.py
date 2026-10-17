@@ -105,16 +105,16 @@ def test_version_satisfies_unrecognized_skips() -> None:
 	"""Unrecognized specifiers (``~=``, compound) return ``True`` (skip) to avoid false positives."""
 	from camas.mcp.serve import version_satisfies
 
-	assert version_satisfies("0.1.8", "~=0.1") is True  # unrecognized — skip
-	assert version_satisfies("0.1.8", ">=0.1,<0.2") is True  # compound — skip (prefix checks >=)
+	assert version_satisfies("0.1.8", "~=0.1") is True
+	assert version_satisfies("0.1.8", ">=0.1,<0.2") is True
 
 
 def test_version_satisfies_unparseable_skips() -> None:
 	"""A version string that fails to parse returns ``True`` (skip)."""
 	from camas.mcp.serve import version_satisfies
 
-	assert version_satisfies("0.1.8", "==not.a.version") is True  # can't parse pinned
-	assert version_satisfies("not.a.version", "==0.1.8") is True  # can't parse running — skip
+	assert version_satisfies("0.1.8", "==not.a.version") is True
+	assert version_satisfies("not.a.version", "==0.1.8") is True
 
 
 def test_check_version_pin_no_source() -> None:

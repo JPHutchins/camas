@@ -63,7 +63,6 @@ def test_user_effect_runs_end_to_end() -> None:
 def test_user_effect_mixed_with_builtin() -> None:
 	r = _camas("check", "--effects=(Tail(), Summary())")
 	assert r.returncode == 0, r.stderr
-	# Tail's per-task output appears alongside Summary's final tree.
 	assert "fast: fast 0" in r.stdout, r.stdout
 	assert "done: done" in r.stdout, r.stdout
 	assert "PASS" in r.stdout, r.stdout
@@ -94,11 +93,9 @@ def test_filelog_writes_per_matrix_binding(tmp_path: Path) -> None:
 	assert r.returncode == 0, r.stderr
 	logs = tmp_path / "logs"
 	files = sorted(p.name for p in logs.iterdir())
-	# Two leaves (one per binding); each filename encodes the binding.
 	assert len(files) == 2, files
 	assert any("STAGE=compile" in name for name in files), files
 	assert any("STAGE=link" in name for name in files), files
-	# Content is the substituted leaf output.
 	contents = "\n".join((logs / f).read_text() for f in files)
 	assert "built compile" in contents
 	assert "built link" in contents

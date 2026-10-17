@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""Load task definitions from ``[tool.camas.tasks]`` or a ``tasks.py`` scope."""
-
 from __future__ import annotations
 
 import sys
@@ -36,8 +34,7 @@ def dig(data: Any, key: str) -> Any:
 
 
 def assign_key_name(node: TaskNode | Ref, key: str) -> TaskNode | Ref:
-	"""Set the TOML key as the node's name unless the expression already named it.
-
+	"""
 	>>> assign_key_name(Task("x"), "foo")
 	Task(cmd='x', name='foo', env={}, cwd=None)
 	>>> assign_key_name(Task("x", name="explicit"), "foo")
@@ -75,11 +72,7 @@ def assign_key_name(node: TaskNode | Ref, key: str) -> TaskNode | Ref:
 
 
 def redundant_name_warnings(scope: Mapping[str, object]) -> tuple[str, ...]:
-	"""Advisory warnings for a top-level binding that passes ``name=`` equal to its own variable
-	name: the binding name already *is* the task name (:func:`assign_key_name`), so the ``name=``
-	is redundant. Read from the raw scope, where an explicit ``name=`` is still distinguishable
-	from the one :func:`assign_key_name` would supply.
-
+	"""
 	>>> redundant_name_warnings({"fix": Sequential(Task("a"), name="fix")})[0].startswith("task 'fix'")
 	True
 	>>> redundant_name_warnings({"fix": Sequential(Task("a"))})
@@ -98,14 +91,7 @@ def redundant_name_warnings(scope: Mapping[str, object]) -> tuple[str, ...]:
 
 
 def anonymous_config_field_warnings(scope: Mapping[str, object]) -> tuple[str, ...]:
-	"""Advisory warnings for a ``Config`` task field bound to an anonymous inline composite: a
-	``Sequential``/``Parallel`` that has no ``name=`` and is not a top-level binding either.
-	``task_name`` then has nothing to report, so ``camas_list`` shows that default as ``null`` —
-	reading as *no task declared* when one is — leaving it unrunnable by ``camas_run`` / the
-	pre-push hook. Bind the node (or pass ``name=``); a bound or named composite is fine — a
-	binding is excluded by identity, so ``Config`` fields still resolve correctly across a
-	monorepo where ``Project`` composition drops the wrapper's name.
-
+	"""
 	>>> anonymous_config_field_warnings({"_": Config(github_task=Parallel(Task("a")))})[0].startswith("Config.github_task")
 	True
 	>>> ci = Parallel(Task("a"))
@@ -157,11 +143,9 @@ RESERVED_TASK_NAMES: Final = frozenset({"mcp"})
 
 
 def reject_reserved_names(tasks: Mapping[str, object]) -> None:
-	"""Reject task names that collide with a reserved ``camas`` subcommand.
-
+	"""
 	Raises:
-		ValueError: when a task is named after a reserved keyword (``mcp``); the CLI
-			intercepts those before task dispatch and would otherwise shadow them.
+		ValueError: when a task is named after a reserved keyword.
 
 	>>> reject_reserved_names({"build": None, "test": None}) is None
 	True
@@ -173,12 +157,6 @@ def reject_reserved_names(tasks: Mapping[str, object]) -> None:
 
 
 def load_tasks(path: Path) -> LoadOk:
-	"""Read [tool.camas.tasks] from a pyproject.toml and resolve all refs.
-
-	Raises:
-		ValueError: when the table or a task value has the wrong type, a task fails
-			to parse or resolve, or a task uses a reserved name.
-	"""
 	parsed: dict[str, Any] = tomllib.loads(path.read_text())
 	raw: Any = dig(dig(dig(parsed, "tool"), "camas"), "tasks")
 	if not is_str_dict(raw):
@@ -200,11 +178,6 @@ def load_tasks(path: Path) -> LoadOk:
 
 
 def name_scope_bindings(scope: Mapping[str, object]) -> dict[str, TaskNode]:
-	"""Collect public ``Task``/``Sequential``/``Parallel`` bindings from a module's
-	globals and propagate each top-level binding's name (by id) into nested
-	references — ``Parallel(mypy)`` where ``mypy`` is itself a top-level binding
-	inherits ``mypy``'s name, matching ``[tool.camas.tasks]`` naming.
-	"""
 	bindings: Final = {
 		name: val
 		for name, val in scope.items()
@@ -227,12 +200,6 @@ def name_scope_bindings(scope: Mapping[str, object]) -> dict[str, TaskNode]:
 
 
 def name_scope_effects(scope: Mapping[str, object]) -> dict[str, type[Effect[Any]]]:
-	"""Public Effect classes from a tasks-file scope.
-
-	Skips ``Effect`` itself, names starting with ``_``, and anything whose
-	``__module__`` already starts with ``camas.effect`` (already covered by
-	:func:`camas.main.effects.discover_effects`).
-	"""
 	return {
 		name: val
 		for name, val in scope.items()
@@ -245,12 +212,6 @@ def name_scope_effects(scope: Mapping[str, object]) -> dict[str, type[Effect[Any
 
 
 def name_scope_config(scope: Mapping[str, object]) -> Config | None:
-	"""The scope's :class:`Config`, found by ``isinstance`` under any binding name,
-	its task fields resolved to their promoted bindings.
-
-	Raises:
-		ValueError: when more than one ``Config`` is bound in the scope.
-	"""
 	configs: Final = [(name, val) for name, val in scope.items() if isinstance(val, Config)]
 	if not configs:
 		return None
@@ -289,7 +250,6 @@ def name_scope_config(scope: Mapping[str, object]) -> Config | None:
 
 
 def load_tasks_from_py(path: Path) -> LoadOk:
-	"""``path`` loaded with its ``Project`` references resolved (:func:`camas.main.compose.load_scope`)."""
 	from .compose import load_scope
 
 	return load_scope(path)

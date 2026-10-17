@@ -112,7 +112,6 @@ def test_group_fields_track_every_group_constructor_kwarg() -> None:
 		assert keywords == GROUP_FIELDS, cls
 		positional = tuple((p.name, p.kind) for p in params if p.kind is not p.KEYWORD_ONLY)
 		assert positional == (("tasks", inspect.Parameter.VAR_POSITIONAL),), cls
-	# Pipe adds one keyword of its own ahead of the shared fields.
 	pipe_params = tuple(inspect.signature(Pipe).parameters.values())
 	pipe_keywords = tuple(p.name for p in pipe_params if p.kind is p.KEYWORD_ONLY)
 	assert pipe_keywords == ("agent_only", *GROUP_FIELDS)

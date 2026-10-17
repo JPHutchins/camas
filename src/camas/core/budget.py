@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""Time-budgeted scheduling: select the leaves of a task that fit a wall-clock budget."""
-
 from __future__ import annotations
 
 import sys
@@ -31,24 +29,16 @@ if TYPE_CHECKING:
 
 
 class Fits(NamedTuple):
-	"""A leaf whose estimate is within budget — selected to run."""
-
 	task: Task
 	estimated_s: float
 
 
 class OverBudget(NamedTuple):
-	"""A leaf whose estimate exceeds the budget — excluded."""
-
 	task: Task
 	estimated_s: float
 
 
 class Untimed(NamedTuple):
-	"""A leaf with no recorded estimate — run anyway (and thereby measured), since skipping it
-	would keep it forever unmeasured.
-	"""
-
 	task: Task
 
 
@@ -56,30 +46,20 @@ Disposition: TypeAlias = Fits | OverBudget | Untimed
 
 
 class BudgetPlan(NamedTuple):
-	"""A budget's partition of a task's leaves, with the runnable schedule of those that fit."""
-
 	budget_s: float
 	node: TaskNode | None
 	fits: tuple[Fits, ...]
 	over_budget: tuple[OverBudget, ...]
 	untimed: tuple[Untimed, ...]
 	running_over_budget: tuple[OverBudget, ...]
-	"""Over-budget leaves that run anyway — a pipe kept whole so an untimed sibling gets its
-	first measurement. Counted in ``node``, not in ``over_budget``.
-	"""
 	runnable: tuple[Task, ...]
-	"""The schedule's leaves in DFS order — what the plan actually runs; the dispositions are
-	a census, not a runnable set.
-	"""
 	pipe_cut: tuple[Task, ...]
-	"""The fitting stages the plan's own mid-pipe cut dropped."""
 
 
 def classify(
 	task: Task, budget_s: float, timings: Mapping[CacheKey, TaskTiming], scope: int = 0
 ) -> Disposition:
-	"""A leaf's disposition under ``budget_s``, read from its observed estimate at ``scope``.
-
+	"""
 	>>> from camas.core.timings import CacheKey, TaskTiming
 	>>> classify(Task("a"), 1.0, {CacheKey("a", 0): TaskTiming(0.5, 1)})
 	Fits(task=Task(cmd='a', name=None, env={}, cwd=None), estimated_s=0.5)
@@ -102,10 +82,6 @@ def classify(
 
 
 class _Planned(NamedTuple):
-	"""A subtree's planning result: the kept node, its dispositions in DFS order, whether any
-	kept leaf mutates, and the stages its pipe cuts dropped.
-	"""
-
 	node: TaskNode | None
 	dispositions: Iterable[Disposition]
 	has_mutating: bool
@@ -115,19 +91,6 @@ class _Planned(NamedTuple):
 def plan_under(
 	node: TaskNode, budget_s: float, timings: Mapping[CacheKey, TaskTiming], scope: int = 0
 ) -> BudgetPlan:
-	"""Partition ``node``'s expanded leaves by ``budget_s``, preserving the tree's structure:
-	a ``Sequential``'s ordering survives, and across a ``Parallel``'s siblings the mutating
-	subtrees are serialized ahead of the pure read-only ones, which keep their concurrency
-	(#306). A mutating subtree is kept whole, so a nested mixed shape loses cross-subtree
-	parallelism rather than ordering. A repeated leaf keeps every occurrence: each is
-	classified against the budget individually, so a serialized repeat can consume its slot
-	twice and record one sample per occurrence. Only leaves measured to exceed the budget
-	are excluded — except a pipe kept whole for its untimed siblings, which runs its
-	over-budget stages too (``running_over_budget``);
-	untimed leaves are run (and thereby measured), since a budget that skipped them would
-	keep them forever unmeasured. ``scope`` selects which observations count as
-	measurements of this run — see :func:`camas.core.timings.estimate`.
-	"""
 	planned = _plan_under(expand_matrix(node), budget_s, timings, scope)
 	dispositions: Final = tuple(planned.dispositions)
 	runnable: Final = (
@@ -157,7 +120,6 @@ def plan_under(
 
 
 def _empty_plan_message(plan: BudgetPlan) -> str:
-	"""Why ``plan.node`` is ``None``."""
 	return (
 		"All leaves exceed the budget — nothing to run."
 		if not plan.fits
@@ -171,37 +133,21 @@ _BUDGET_DROPPED_MESSAGE: Final = (
 
 
 class CensusLeaf(NamedTuple):
-	"""A planned leaf the run will not execute, with the estimate it had when it fits."""
-
 	task: Task
 	estimated_s: float | None
 
 
 class BudgetSummary(NamedTuple):
-	"""A plan's census as a surface reports it: the plan's own schedule, the final post-drop
-	tree when the keying is given, or the empty census of a run nothing executes.
-	"""
-
 	budget_s: float
 	runnable: tuple[Task, ...]
 	unmeasured: tuple[Untimed, ...]
 	running_anyway: tuple[OverBudget, ...]
 	excluded: tuple[OverBudget, ...]
 	dropped: tuple[CensusLeaf, ...]
-	"""The planned leaves a pipe cut removed — the plan's own cut, the scoping's mid-pipe cut,
-	or the post-plan drop's re-cut."""
 	not_covered: tuple[CensusLeaf, ...]
-	"""The planned leaves the changed paths pruned themselves — scope-pruned fits and untimed
-	leaves, which otherwise vanish from the census."""
 
 
 def summarize(plan: BudgetPlan, keying: Observed | None = None) -> BudgetSummary:
-	"""The census a surface reports — from ``plan`` alone, or narrowed to the tree the run
-	actually executes when the final (post-drop) keying is given; a keying whose tree is
-	``None`` yields the empty census (nothing runs, every excluded disposition carries over).
-	A planned leaf that will not run is ``dropped`` when a recorded pipe cut removed it and
-	``not_covered`` otherwise — its own paths missed the change set.
-	"""
 	if keying is None:
 		runnable = plan.runnable
 		unmeasured = plan.untimed
@@ -241,15 +187,11 @@ def summarize(plan: BudgetPlan, keying: Observed | None = None) -> BudgetSummary
 
 
 class BudgetRun(NamedTuple):
-	"""A budget that leaves something to run: the final keying and its census."""
-
 	keying: Observed
 	summary: BudgetSummary
 
 
 class NothingToRun(NamedTuple):
-	"""A budget that runs nothing: the census, and why."""
-
 	summary: BudgetSummary
 	cause: str
 
@@ -260,7 +202,6 @@ BudgetOutcome: TypeAlias = BudgetRun | NothingToRun
 def resolve_budget(
 	plan: BudgetPlan, camas_dir: Path | None, changed: Sequence[str]
 ) -> BudgetOutcome:
-	"""``plan`` scoped to ``changed``, its keep-whole pipes re-validated."""
 	if plan.node is None:
 		return NothingToRun(summarize(plan), _empty_plan_message(plan))
 	keying: Final = observed(camas_dir, plan.node, changed)
@@ -273,10 +214,6 @@ def resolve_budget(
 
 
 class BudgetCensus(NamedTuple):
-	"""The display facts of a budget census — the one shape :func:`summary_lines` renders,
-	projected from a :class:`BudgetSummary` or from a wire report.
-	"""
-
 	budget_s: float
 	running: int
 	unmeasured: tuple[str, ...]
@@ -287,7 +224,6 @@ class BudgetCensus(NamedTuple):
 
 
 def census_of(summary: BudgetSummary) -> BudgetCensus:
-	"""The display projection of a census — labels instead of dispositions."""
 	return BudgetCensus(
 		budget_s=summary.budget_s,
 		running=len(summary.runnable),
@@ -302,7 +238,6 @@ def census_of(summary: BudgetSummary) -> BudgetCensus:
 
 
 def outcome_lines(outcome: BudgetOutcome) -> tuple[str, ...]:
-	"""The census lines of ``outcome``, then why nothing runs when nothing does."""
 	match outcome:
 		case BudgetRun(summary=summary):
 			return summary_lines(census_of(summary))
@@ -313,7 +248,6 @@ def outcome_lines(outcome: BudgetOutcome) -> tuple[str, ...]:
 
 
 def summary_lines(census: BudgetCensus) -> tuple[str, ...]:
-	"""The one budget formatter: the headline plus a line per non-empty disposition."""
 	lines = [
 		f"Time budget {census.budget_s:.2f}s — running {census.running} leaf(s) "
 		f"({len(census.unmeasured)} unmeasured), excluded {len(census.excluded)} over budget."
@@ -340,7 +274,6 @@ def summary_lines(census: BudgetCensus) -> tuple[str, ...]:
 
 
 def _note(leaf: tuple[str, float | None]) -> str:
-	"""A display leaf's label with its estimate when it has one."""
 	name, estimated_s = leaf
 	return f"{name} ~{estimated_s:.2f}s" if estimated_s is not None else name
 
@@ -350,13 +283,6 @@ def drop_unjustified_running(
 	plan: BudgetPlan,
 	pairs: Iterable[tuple[Task, Task]] = (),
 ) -> Pruned:
-	"""``node`` after scope pruning: a running-over-budget stage whose untimed sibling did not
-	survive scoping has lost its justification — drop it with the cut semantics of
-	:func:`camas.core.scope.prune_pipes`. ``pairs`` is the scoping's original-to-scoped
-	pairing, so a rebuilt stage still matches the plan disposition it came from, and the
-	stages a cut drops come back as their originals; a stage missing from the pairs is
-	dropped — the guard fails closed rather than letting an unjustified stage run.
-	"""
 	if not plan.running_over_budget:
 		return Pruned(node, ())
 	original_of: Final = pairs_index(pairs)
@@ -380,9 +306,6 @@ def drop_unjustified_running(
 def _plan_under(
 	node: TaskNode, budget_s: float, timings: Mapping[CacheKey, TaskTiming], scope: int
 ) -> _Planned:
-	"""The recursive pass: classify leaves, keep ``Sequential`` order, and reorder ``Parallel``
-	siblings mutating-first.
-	"""
 	match node:
 		case Task():
 			disposition: Final = classify(node, budget_s, timings, scope)
@@ -404,11 +327,10 @@ def _plan_under(
 				id(d.task) for d in dispositions if isinstance(d, OverBudget)
 			)
 			has_untimed = any(isinstance(d, Untimed) for d in dispositions)
-			# A mid-pipe cut would rewire the pipeline (the survivor before the cut feeding the
-			# one after it) — a suffix-only cut keeps the surviving prefix, and an untimed
-			# sibling keeps the pipe whole for the first run that measures it.
 			pruned = prune_pipes(
-				node, lambda t: None if id(t) in over_budget_ids else t, lambda _: has_untimed
+				node,
+				keep_stage=lambda t: None if id(t) in over_budget_ids else t,
+				keep_whole_pipe=lambda _: has_untimed,
 			)
 			return _Planned(
 				pruned.node,
@@ -449,19 +371,14 @@ def _plan_under(
 
 
 def _collect(planned: tuple[_Planned, ...]) -> Iterable[Disposition]:
-	"""The planned children's dispositions, in DFS order."""
 	return chain.from_iterable(child.dispositions for child in planned)
 
 
 def _collect_cuts(planned: tuple[_Planned, ...]) -> Iterable[Task]:
-	"""The stages the planned children's pipe cuts dropped, in DFS order."""
 	return chain.from_iterable(child.pipe_cut for child in planned)
 
 
 def _fields_of(node: Group) -> dict[str, Any]:
-	""":func:`rebuilt`'s GROUP_FIELDS carry, for a manufactured wrapper of a different kind
-	than ``node``.
-	"""
 	return {field: getattr(node, field) for field in GROUP_FIELDS}
 
 
@@ -470,9 +387,6 @@ def _collapse(node: Sequential) -> Sequential: ...
 @overload
 def _collapse(node: Parallel) -> Parallel: ...
 def _collapse(node: Sequential | Parallel) -> Sequential | Parallel:
-	"""A fieldless single-child wrapper whose child is the same kind is dropped, matching the
-	``|``/``+`` flattening; a wrapper carrying annotations keeps them.
-	"""
 	children: Final = node.tasks
 	if len(children) != 1 or not fieldless(node):
 		return node

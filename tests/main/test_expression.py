@@ -197,7 +197,6 @@ def test_eval_node_threads_every_public_constructor_kwarg() -> None:
 	"""Drift guard: a new public kwarg on Task/Sequential/Parallel fails here until
 	it's both wired through ``eval_node`` and given a sentinel below — so a silently
 	dropped kwarg (the #25 bug) can't reappear unnoticed."""
-	# fragment + (attribute, expected value) for each constructor kwarg.
 	samples = {
 		"name": ("name='n'", "name", "n"),
 		"env": ("env={'K': 'v'}", "env", {"K": "v"}),
@@ -219,12 +218,10 @@ def test_eval_node_threads_every_public_constructor_kwarg() -> None:
 		(Group, "Parallel(Task('a'), ", "tasks"),
 	):
 		for kw in set(inspect.signature(cls).parameters) - {variadic}:
-			frag, attr, expected = samples[kw]  # KeyError flags an unsampled new kwarg
+			assert kw in samples, f"unsampled new kwarg: {kw}"
+			frag, attr, expected = samples[kw]
 			node = parse_expression(prefix + frag + ")")
 			assert getattr(node, attr) == expected, (cls.__name__, kw)
-
-
-# Parser-side fluent syntax: strings inside literals and the README one-liner.
 
 
 def test_eval_node_rejects_unknown_agent_format_kind() -> None:

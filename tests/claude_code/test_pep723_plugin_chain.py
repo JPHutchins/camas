@@ -38,12 +38,7 @@ _ENV = {**os.environ, "UV_PYTHON": "3.12", "UV_PYTHON_DOWNLOADS": "never"}
 _HEADLESS = bool(os.environ.get("CAMAS_CC_PEP723_HEADLESS"))
 _ENABLED = bool(os.environ.get("CAMAS_CC_E2E")) and shutil.which("claude") is not None
 
-# A non-Python repo's tasks.py is a PEP 723 inline-script block pinning camas[mcp]; the ``[mcp]``
-# extra is required because the ``mcp`` subcommand imports pydantic (a camas[mcp] dep), and
-# ``run_cli(globals())`` is the script entry ``dea221e`` routed to ``mcp``. The ``tool.uv.sources``
-# path pin resolves camas from THIS checkout, so the suite exercises the code under test — a bare
-# ``camas[mcp]`` resolves the released camas from PyPI, which cannot validate unreleased changes.
-_TASKS = (
+_PEP723_TASKS_PINNING_CAMAS_MCP_TO_THIS_CHECKOUT = (
 	"# /// script\n"
 	'# requires-python = ">=3.10"\n'
 	'# dependencies = ["camas[mcp]"]\n'
@@ -58,7 +53,9 @@ _TASKS = (
 
 
 def _write_tasks_py(tmp_path: Path) -> None:
-	(tmp_path / "tasks.py").write_text(_TASKS.format(repo=_REPO_ROOT.as_posix()))
+	(tmp_path / "tasks.py").write_text(
+		_PEP723_TASKS_PINNING_CAMAS_MCP_TO_THIS_CHECKOUT.format(repo=_REPO_ROOT.as_posix())
+	)
 
 
 _INIT_FILES = (

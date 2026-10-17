@@ -1,12 +1,6 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""The CTRF report model (msgspec Structs) and the camas-leaf → CTRF-test mapping.
-
-Imported lazily by :mod:`camas.effect.ctrf` so the effect stays discoverable
-without the ``camas[ctrf]`` extra installed.
-"""
-
 from __future__ import annotations
 
 import sys
@@ -38,15 +32,11 @@ CtrfStatus = Literal["passed", "failed", "skipped", "pending", "other"]
 
 
 class Tool(msgspec.Struct, omit_defaults=True):
-	"""The CTRF ``tool`` that produced the report."""
-
 	name: str
 	version: str | None = None
 
 
 class Summary(msgspec.Struct):
-	"""The CTRF run ``summary``."""
-
 	tests: int
 	passed: int
 	failed: int
@@ -58,8 +48,6 @@ class Summary(msgspec.Struct):
 
 
 class LeafExtra(msgspec.Struct, omit_defaults=True, rename="camel"):
-	"""camas-specific fields carried on a test's ``extra``."""
-
 	command: str
 	mutates: bool
 	exit_code: int | None = None
@@ -67,8 +55,6 @@ class LeafExtra(msgspec.Struct, omit_defaults=True, rename="camel"):
 
 
 class Test(msgspec.Struct, omit_defaults=True, rename="camel"):
-	"""A CTRF test — one camas leaf."""
-
 	name: str
 	status: CtrfStatus
 	duration: int
@@ -78,16 +64,12 @@ class Test(msgspec.Struct, omit_defaults=True, rename="camel"):
 
 
 class Results(msgspec.Struct):
-	"""The CTRF ``results`` object."""
-
 	tool: Tool
 	summary: Summary
 	tests: list[Test]
 
 
 class Report(msgspec.Struct, omit_defaults=True, rename="camel"):
-	"""The top-level CTRF report document."""
-
 	schema_url: str = msgspec.field(name="$schema")
 	report_format: Literal["CTRF"]
 	spec_version: str
@@ -96,8 +78,7 @@ class Report(msgspec.Struct, omit_defaults=True, rename="camel"):
 
 
 def cmd_str(task: Task) -> str:
-	"""``task.cmd`` as one string, joining the tuple form with spaces.
-
+	"""
 	>>> from camas import Task
 	>>> cmd_str(Task("ruff check ."))
 	'ruff check .'
@@ -108,8 +89,7 @@ def cmd_str(task: Task) -> str:
 
 
 def status_of(completion: Completion) -> CtrfStatus:
-	"""Map a camas Completion to a CTRF status.
-
+	"""
 	>>> from camas.v0.completion import Errored, Finished, Skipped, Stopped
 	>>> status_of(Finished(0, 0.1, ())), status_of(Finished(1, 0.1, ()))
 	('passed', 'failed')
@@ -132,8 +112,7 @@ def status_of(completion: Completion) -> CtrfStatus:
 
 
 def duration_ms(completion: Completion) -> int:
-	"""A completion's elapsed time in whole milliseconds; 0 for a skip or an error.
-
+	"""
 	>>> from camas.v0.completion import Errored, Finished, Skipped, Stopped
 	>>> duration_ms(Finished(0, 1.5, ())), duration_ms(Stopped(130, 0.5, ())), duration_ms(Skipped(1))
 	(1500, 500, 0)
@@ -150,8 +129,7 @@ def duration_ms(completion: Completion) -> int:
 
 
 def output_lines(completion: Completion, tail: int) -> list[str]:
-	r"""The last ``tail`` bytes of a completion's output as ANSI-stripped lines.
-
+	r"""
 	>>> from camas.v0.completion import Errored, Finished, Skipped, Stopped
 	>>> output_lines(Finished(0, 0.1, (b"a\n", b"b\n")), 8192)
 	['a', 'b']
@@ -184,7 +162,6 @@ def output_lines(completion: Completion, tail: int) -> list[str]:
 
 
 def status_of_state(state: LeafState) -> CtrfStatus:
-	"""The CTRF status for a leaf's final state."""
 	match state:
 		case Completed(completion=c):
 			return status_of(c)
@@ -195,7 +172,6 @@ def status_of_state(state: LeafState) -> CtrfStatus:
 
 
 def test_of(state: LeafState, tail: int) -> Test:
-	"""A CTRF test for one leaf's final state."""
 	match state:
 		case Completed(task=task, completion=c):
 			return Test(
@@ -223,7 +199,6 @@ def test_of(state: LeafState, tail: int) -> Test:
 
 
 def summarize(states: Sequence[LeafState], start_ms: int, stop_ms: int) -> Summary:
-	"""The CTRF ``summary`` for the run."""
 	statuses = [status_of_state(s) for s in states]
 	return Summary(
 		tests=len(statuses),
@@ -240,7 +215,6 @@ def summarize(states: Sequence[LeafState], start_ms: int, stop_ms: int) -> Summa
 def build(
 	states: Sequence[LeafState], start_ms: int, stop_ms: int, tail: int, camas_version: str
 ) -> Report:
-	"""The CTRF report for a run."""
 	return Report(
 		schema_url=SCHEMA_URL,
 		report_format="CTRF",
@@ -257,7 +231,6 @@ def build(
 def encode_run(
 	states: Sequence[LeafState], start_ms: int, stop_ms: int, tail: int, camas_version: str
 ) -> bytes:
-	"""Build and encode the CTRF report as indented JSON bytes."""
 	return msgspec.json.format(
 		msgspec.json.encode(build(states, start_ms, stop_ms, tail, camas_version)), indent=2
 	)

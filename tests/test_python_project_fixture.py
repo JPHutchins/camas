@@ -81,9 +81,7 @@ def test_quick_fluent_with_bare_strings() -> None:
 	expressions."""
 	r = _camas("--dry-run", "quick")
 	assert r.returncode == 0
-	# Outer tuple → Sequential header (" →"), inner set → Parallel header (" ∥")
 	assert "quick →" in r.stdout, r.stdout
-	# Both leaves rendered:
 	assert "ruff check ." in r.stdout
 	assert "mypy src tests" in r.stdout
 	assert "pytest" in r.stdout

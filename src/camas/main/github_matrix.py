@@ -1,59 +1,6 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""``--github-matrix``: emit a task's fan-out as GitHub Actions ``strategy.matrix`` JSON.
-
-Three shapes, one per way a ``tasks.py`` fans out — picked automatically, or pinned with
-``--github-matrix=SHAPE`` so a refactor that would change the emitted *shape* fails the
-``discover`` job instead of handing the workflow a differently-shaped object:
-
-``axes``
-	A ``matrix=`` cross product as object-of-arrays — GHA's own matrix form::
-
-	    {"PY": ["3.10", "3.11"], "PROFILE": ["debug", "release"]}
-
-``variants``
-	A coupled ``variants=`` fan-out, fully enumerated as GHA ``include:`` entries::
-
-	    {"include": [{"backend": "thumbv7", "target": "thumbv7m-none-eabi"}, …]}
-
-	No base axis is emitted beside ``include``: an ``include`` entry merges into every base
-	combination rather than multiplying it, so a base axis would silently change the job set.
-
-``tasks``
-	One job per child of a ``Parallel`` — the common CI shape with no version matrix at all::
-
-	    {"task": ["build", "lint", "test"]}
-
-	Values are the children's *binding* names, the same names ``camas <task>`` dispatches on,
-	so every emitted value resolves to a real task — a ``Project()`` child included, which emits
-	its own binding (``web``) when that binding runs what the parent composed, else the mounted
-	binding of the node it did compose (``web.build``).
-
-Consume the whole object as the matrix::
-
-    matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
-
-or, for ``axes`` and ``tasks``, one array at a time, composed with the YAML-side axes a shell
-command can't set from inside a job (a runner's ``os``)::
-
-    matrix:
-      os: [ubuntu-latest, macos-latest]
-      PY: ${{ fromJSON(needs.discover.outputs.matrix).PY }}
-
-Whatever the shape, the emitted object is checked against the task's real run-set
-(:func:`unfaithful`): each emitted job must select exactly its own cell's leaves, and the jobs
-together must run every leaf exactly once. A fan-out with no faithful projection — independent
-fan-outs in one tree, heterogeneous nested matrices, a plain leaf beside matrixed siblings — is
-rejected rather than silently widened or narrowed. CLI overrides (``--PY 3.13``) flow through
-the same ``override_matrix`` pipeline the runner uses, so the emitted JSON reflects exactly what
-the run would have executed.
-
-Output is TTY-aware: indented for interactive preview, compact one-line for pipes — so
-``camas matrix --github-matrix`` reads cleanly in a shell *and*
-``$(camas matrix --github-matrix)`` works directly with ``$GITHUB_OUTPUT``.
-"""
-
 from __future__ import annotations
 
 import functools
@@ -90,51 +37,30 @@ if TYPE_CHECKING:
 
 
 ShapeName: TypeAlias = Literal["auto", "axes", "variants", "tasks"]
-"""``--github-matrix=SHAPE``: the projection to emit, or ``auto`` to derive it from the tree."""
 
 SHAPE_NAMES: Final = ("auto", "axes", "variants", "tasks")
-"""Every ``--github-matrix`` shape, for argparse choices and help text."""
 
 JOB_AXIS: Final = "task"
-"""The axis name the ``tasks`` shape emits, consumed as ``${{ matrix.task }}``."""
 
 NO_TASKS: Final[Mapping[str, TaskNode]] = MappingProxyType({})
-"""Read-only stand-in for "no task mapping given" — the shapes that don't resolve bindings pass
-nothing. Immutable (as :data:`camas.v0.task._EMPTY_ENV` is) so a shared default can't be mutated
-into cross-call state.
-"""
 
 JOB_STATE_FIELDS: Final = ("matrix", "variants", "env", "cwd", "paths", "when")
-"""Every ``Group`` field a per-child ``camas <child>`` job would *not* inherit, so the ``tasks``
-shape refuses to emit past one that is set. ``name``/``help`` are display-only and don't count; a
-new ``Group`` field has to be classified one way or the other, which a drift test enforces.
-"""
 
 
 class Fanout(NamedTuple):
-	"""A subtree's declared fan-out: the distinct cells it runs — each a binding of axis and
-	variant keys to one value — plus the labels of any leaves that run under no cell at all.
-	"""
-
 	cells: tuple[dict[str, str], ...]
 	uncovered: tuple[str, ...]
 
 
 class Axes(NamedTuple):
-	"""The cross-product projection: one array per axis."""
-
 	axes: dict[str, list[str]]
 
 
 class Variants(NamedTuple):
-	"""The enumerated projection: one GHA ``include:`` entry per cell, with no base axes."""
-
 	cells: tuple[dict[str, str], ...]
 
 
 class Jobs(NamedTuple):
-	"""The per-child projection: one job per child, named as ``camas`` dispatches it."""
-
 	names: tuple[str, ...]
 
 
@@ -144,10 +70,7 @@ Emission: TypeAlias = Axes | Variants | Jobs
 def merge_cells(
 	left: tuple[dict[str, str], ...], right: tuple[dict[str, str], ...]
 ) -> tuple[dict[str, str], ...]:
-	"""``left`` and ``right`` as one run of distinct cells, in first-seen order — deduplicated
-	*within* each side too, so a node whose own bindings collapse onto one cell (an axis shadowed
-	by an outer one of the same name) doesn't leave a repeat behind.
-
+	"""
 	>>> merge_cells(({"PY": "3.13"},), ({"PY": "3.13"}, {"PY": "3.14"}))
 	({'PY': '3.13'}, {'PY': '3.14'})
 	>>> merge_cells((), ({"PY": "3.13"}, {"PY": "3.13"}))
@@ -159,11 +82,7 @@ def merge_cells(
 def bound_cells(
 	bindings: tuple[tuple[tuple[str, str], ...], ...], inner: tuple[dict[str, str], ...]
 ) -> tuple[dict[str, str], ...]:
-	"""Each of a node's own ``bindings`` crossed with the cells its children declare — the
-	binding's keys first, and winning a name collision, matching
-	:func:`camas.core.matrix.matrix_axes`' outermost-wins merge. A node whose children declare no
-	cells of their own contributes one cell per binding.
-
+	"""
 	>>> bound_cells(((("PY", "3.13"),),), ({"PROFILE": "debug"},))
 	({'PY': '3.13', 'PROFILE': 'debug'},)
 	>>> bound_cells(((("PY", "3.13"),), (("PY", "3.14"),)), ())
@@ -180,8 +99,7 @@ def bound_cells(
 
 
 def merge_fanouts(left: Fanout, right: Fanout) -> Fanout:
-	"""Two subtrees' fan-outs as one: their cells deduplicated, their uncovered leaves appended.
-
+	"""
 	>>> merge_fanouts(Fanout(({"PY": "3.13"},), ()), Fanout(({"PY": "3.13"},), ("lint",)))
 	Fanout(cells=({'PY': '3.13'},), uncovered=('lint',))
 	"""
@@ -189,9 +107,7 @@ def merge_fanouts(left: Fanout, right: Fanout) -> Fanout:
 
 
 def declared_cells(task: TaskNode) -> Fanout:
-	"""``task``'s fan-out as the cells it declares — never inferred from a leaf's ``env``, so a
-	user ``env=`` key that happens to share an axis name cannot masquerade as a matrix value.
-
+	"""
 	>>> from camas import Parallel, Sequential, Task
 	>>> declared_cells(Parallel(Task("t"), matrix={"PY": ("3.12", "3.13")})).cells
 	({'PY': '3.12'}, {'PY': '3.13'})
@@ -223,9 +139,7 @@ def declared_cells(task: TaskNode) -> Fanout:
 
 
 def is_cross_product(cells: tuple[dict[str, str], ...], axes: tuple[str, ...]) -> bool:
-	"""Whether ``cells`` is exactly the cartesian product of each axis's distinct values —
-	i.e. representable as object-of-arrays without adding or dropping a single job.
-
+	"""
 	>>> is_cross_product(({'PY': '3.12'}, {'PY': '3.13'}), ('PY',))
 	True
 	>>> is_cross_product(
@@ -247,17 +161,10 @@ def is_cross_product(cells: tuple[dict[str, str], ...], axes: tuple[str, ...]) -
 
 
 def leaf_counts(node: TaskNode) -> Counter[Task]:
-	"""How many times ``node``'s expansion runs each distinct leaf."""
 	return Counter(info.task for info in flatten_leaves(expand_matrix(node)))
 
 
 def unfaithful(task: TaskNode, selected: tuple[TaskNode, ...]) -> str | None:
-	"""Why the jobs ``selected`` are not a faithful fan-out of ``task`` — or ``None`` when they
-	are: every leaf ``task`` runs is run by exactly one job, and no job runs anything else.
-
-	``selected`` is what ``camas`` would run in each emitted job, so this compares the emitted
-	job graph against the run-set rather than trusting the projection that produced it.
-	"""
 	full: Final = leaf_counts(task)
 	emitted: Final = sum(map(leaf_counts, selected), Counter[Task]())
 	if emitted == full:
@@ -280,13 +187,6 @@ def unfaithful(task: TaskNode, selected: tuple[TaskNode, ...]) -> str | None:
 
 
 def cell_selection(task: TaskNode, cells: tuple[dict[str, str], ...]) -> tuple[TaskNode, ...]:
-	"""What ``camas <task>`` runs in each emitted job: ``task`` with that cell pinned — the same
-	``override_matrix`` a ``camas <task> --AXIS VALUE`` job command goes through.
-
-	Raises:
-		ValueError: when a cell isn't selectable on its own — pinning it leaves another node with
-			no variant, so no job could run just that cell.
-	"""
 	try:
 		return tuple(override_matrix(task, {k: (v,) for k, v in cell.items()}) for cell in cells)
 	except ValueError as e:
@@ -297,24 +197,12 @@ def cell_selection(task: TaskNode, cells: tuple[dict[str, str], ...]) -> tuple[T
 
 
 def reject_unfaithful(task: TaskNode, selected: tuple[TaskNode, ...], cause: str) -> None:
-	"""Raise when ``selected`` doesn't reproduce ``task``'s run-set, appending ``cause`` — the
-	shapes this fan-out could have taken instead.
-
-	Raises:
-		ValueError: naming the leaf that would run too often, or not at all.
-	"""
 	diagnosis: Final = unfaithful(task, selected)
 	if diagnosis is not None:
 		raise ValueError(f"matrix is not a faithful fan-out: {diagnosis} — {cause}")
 
 
 def reject_uncovered(fanout: Fanout) -> None:
-	"""Raise when a leaf runs under no cell — a plain leaf beside matrixed siblings, which no
-	GHA matrix can represent (it would run in every job, or in none).
-
-	Raises:
-		ValueError: naming each uncovered leaf.
-	"""
 	if fanout.uncovered:
 		raise ValueError(
 			f"matrix does not cover every leaf ({', '.join(fanout.uncovered)}): a leaf that runs "
@@ -324,12 +212,6 @@ def reject_uncovered(fanout: Fanout) -> None:
 
 
 def reject_unsatisfiable(task: TaskNode) -> None:
-	"""Raise when a declaration leaves nothing to expand: an axis with no values (a required
-	input) or an empty ``variants``.
-
-	Raises:
-		ValueError: naming the axis or the node.
-	"""
 	required: Final = unfilled_required_axes(task)
 	if required:
 		raise ValueError(f"matrix axis {required[0]!r} has no values")
@@ -339,12 +221,6 @@ def reject_unsatisfiable(task: TaskNode) -> None:
 
 
 def axes_emission(task: TaskNode) -> Axes:
-	"""``task``'s ``matrix`` cross product as object-of-arrays.
-
-	Raises:
-		ValueError: when ``task`` declares no axes, an axis has no values, a leaf runs under no
-			axis, or the run-set is not a clean cross product.
-	"""
 	axes_map: Final = matrix_axes(task)
 	if not axes_map:
 		raise ValueError(
@@ -383,12 +259,6 @@ def axes_emission(task: TaskNode) -> Axes:
 
 
 def variants_emission(task: TaskNode) -> Variants:
-	"""``task``'s fan-out enumerated as GHA ``include:`` entries.
-
-	Raises:
-		ValueError: when ``task`` declares no fan-out at all, a declaration is unsatisfiable, a
-			leaf runs under no cell, or the enumerated cells don't reproduce the run-set.
-	"""
 	reject_unsatisfiable(task)
 	fanout: Final = declared_cells(task)
 	if not fanout.cells:
@@ -407,10 +277,7 @@ def variants_emission(task: TaskNode) -> Variants:
 
 
 def dispatch_name(node: TaskNode, tasks: Mapping[str, TaskNode]) -> str | None:
-	"""The name ``camas`` dispatches ``node`` by — the binding it is bound to, matched by
-	identity first so a value-equal twin can't claim another's name — or ``None`` when ``node``
-	is not a task in its own right.
-
+	"""
 	>>> from camas import Parallel, Task
 	>>> lint = Task("ruff check .")
 	>>> dispatch_name(lint, {"lint": lint, "ci": Parallel(lint)})
@@ -428,12 +295,6 @@ def dispatch_name(node: TaskNode, tasks: Mapping[str, TaskNode]) -> str | None:
 
 
 def jobs_emission(task: TaskNode, tasks: Mapping[str, TaskNode]) -> Jobs:
-	"""``task``'s children as one job each, dispatched by binding name.
-
-	Raises:
-		ValueError: when ``task`` is a leaf, a one-stage ``Pipe``, or a ``Sequential``, when it declares a fan-out or
-			state a per-child job would not inherit, or when a child is not a dispatchable task.
-	"""
 	match task:
 		case Task():
 			raise ValueError(
@@ -494,9 +355,7 @@ def jobs_emission(task: TaskNode, tasks: Mapping[str, TaskNode]) -> Jobs:
 
 
 def auto_shape(task: TaskNode) -> ShapeName:
-	"""The shape ``task``'s own declarations call for: ``variants`` when it declares any coupled
-	bundle, ``axes`` when it declares a cross product, else ``tasks``.
-
+	"""
 	>>> from camas import Parallel, Task
 	>>> auto_shape(Parallel(Task("t"), matrix={"PY": ("3.13",)}))
 	'axes'
@@ -515,9 +374,6 @@ def auto_shape(task: TaskNode) -> ShapeName:
 def resolve_emission(
 	task: TaskNode, tasks: Mapping[str, TaskNode], shape: ShapeName = "auto"
 ) -> Emission:
-	"""``task``'s fan-out projected into the ``shape`` GHA consumes, verified against the run-set;
-	the projection raises ``ValueError`` when the fan-out has none.
-	"""
 	match shape:
 		case "auto":
 			return resolve_emission(task, tasks, auto_shape(task))
@@ -532,8 +388,7 @@ def resolve_emission(
 
 
 def to_json_object(emission: Emission) -> dict[str, Any]:
-	"""``emission`` as the JSON object ``strategy.matrix`` consumes.
-
+	"""
 	>>> to_json_object(Axes({"PY": ["3.13"]}))
 	{'PY': ['3.13']}
 	>>> to_json_object(Variants(({"b": "x"},)))
@@ -555,12 +410,7 @@ def to_json_object(emission: Emission) -> dict[str, Any]:
 def to_matrix_object(
 	task: TaskNode, tasks: Mapping[str, TaskNode] = NO_TASKS, shape: ShapeName = "auto"
 ) -> dict[str, Any]:
-	"""Project ``task``'s fan-out into the object ``strategy.matrix`` consumes.
-
-	``tasks`` is the project's task mapping, which the ``tasks`` shape resolves child bindings
-	against; the ``axes`` and ``variants`` shapes don't need it. A fan-out with no faithful
-	projection raises ``ValueError`` (see :func:`resolve_emission`).
-
+	"""
 	>>> from camas import Parallel, Task
 	>>> to_matrix_object(Parallel(Task("test"), matrix={"PY": ("3.12", "3.13")}))
 	{'PY': ['3.12', '3.13']}
@@ -598,12 +448,7 @@ def to_matrix_object(
 
 
 def format_matrix_json(matrix: Mapping[str, Any], *, pretty: bool) -> str:
-	"""Serialize the matrix object to JSON.
-
-	Compact (no spaces, single line) when ``pretty`` is False — the canonical shape for
-	``echo "matrix=$(...)" >> $GITHUB_OUTPUT``. Indented two spaces when ``pretty`` is True —
-	readable preview for interactive use.
-
+	"""
 	>>> format_matrix_json({"PY": ["3.12", "3.13"]}, pretty=False)
 	'{"PY":["3.12","3.13"]}'
 	>>> print(format_matrix_json({"PY": ["3.12"]}, pretty=True))
@@ -625,8 +470,7 @@ def emit(
 	*,
 	pretty: bool,
 ) -> str:
-	"""Compose :func:`to_matrix_object` and :func:`format_matrix_json`.
-
+	"""
 	>>> from camas import Parallel, Task
 	>>> emit(Parallel(Task("t"), matrix={"PY": ("3.12",)}), pretty=False)
 	'{"PY":["3.12"]}'

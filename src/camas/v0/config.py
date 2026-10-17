@@ -16,52 +16,37 @@ if TYPE_CHECKING:
 
 
 DEFAULT_CAMAS_DIR: Final = ".camas"
-"""The default project subdirectory for camas's run logs and timing cache."""
 
 
 class Claude(NamedTuple):
-	"""The Claude Code agent integration: the explicitly declared fix, check, and default nodes."""
+	"""The Claude Code agent integration."""
 
 	fix: TaskNode
-	"""The deterministic, behavior-preserving autofix node ``camas_gate`` settles before it checks,
-	and the ``Stop`` hook runs at every turn end (scoped, zero tokens). Declared, not derived from ``mutates`` — a mutating leaf may be codegen or a
-	compiler, which is not a fixer.
-	"""
+	"""The deterministic, behavior-preserving autofix node."""
 	check: TaskNode | None = None
-	"""The node the gate checks; ``None`` defers to the default (or github) task, scoped by
-	``--paths`` and time-boxed by ``--under``.
-	"""
+	"""The node the gate checks; ``None`` defers to the project's bare task."""
 	default: TaskNode | None = None
-	"""The task a no-task ``camas_run`` runs; ``None`` defers to the check node, then the
-	github or default task.
-	"""
+	"""The task a no-task ``camas_run`` runs; ``None`` defers to the check node, then the GitHub task, then the default task."""
 
 
 Agent: TypeAlias = Claude
-"""The agent integration backend — a union as backends land (e.g. an ``InternalModel`` CI backend)."""
 
 
 class Config(NamedTuple):
-	"""Project configuration, bound under any name (conventionally ``_``) at
-	module scope in ``tasks.py``.
-	"""
+	"""Project configuration for a ``tasks.py``."""
 
 	default_task: TaskNode | None = None
 	github_task: TaskNode | None = None
+	"""The bare task under GitHub Actions; ``None`` defers to ``default_task``."""
 	default_effects: tuple[Effect[Any], ...] | None = None
-	"""``None`` defers to the engine's default; ``()`` is an explicit no-effects."""
+	"""``None`` keeps the engine's default; ``()`` runs none."""
 	default_github_effects: tuple[Effect[Any], ...] | None = None
-	"""``None`` defers to the engine's default; ``()`` is an explicit no-effects."""
+	"""``None`` keeps the engine's default; ``()`` runs none."""
 	camas_dir: str = DEFAULT_CAMAS_DIR
-	"""Project subdirectory for run logs and the timing cache; delete it to opt out."""
+	"""Subdirectory for run logs and timings."""
 	agent: Agent | None = None
-	"""The agent integration (the gate's fix and check nodes); ``None`` when unconfigured."""
 	leaf_color: bool = True
-	"""Whether camas forces color on in leaf subprocesses, so a tool that would drop color into
-	camas's pipe still colors for the tree and for CI logs that render ANSI. Set ``False`` when a
-	leaf's output is data rather than display — a test asserting on a tool's plain text, a parsed
-	report — since the forcing env is inherited by the leaf's own children too. A single leaf opts
-	out with ``env={"NO_COLOR": "1"}``, which wins either way."""
+	"""Whether camas forces color on in leaf subprocesses."""
 
 	def camas_path(self, base: Path) -> Path:
 		"""The resolved camas directory under ``base``."""
@@ -74,27 +59,23 @@ class Config(NamedTuple):
 		return self.default_task
 
 	def effects(self, *, github: bool) -> tuple[Effect[Any], ...] | None:
-		"""The configured default effects for the environment, or ``None`` to defer
-		to the engine's built-in default.
-		"""
+		"""The configured default effects for the environment."""
 		if github:
 			return self.default_github_effects
 		return self.default_effects
 
 	def gate_check(self, *, github: bool) -> TaskNode | None:
-		"""The node the gate checks: the agent's explicit ``check`` override, else the bare task."""
+		"""The node the gate checks."""
 		if self.agent is not None and self.agent.check is not None:
 			return self.agent.check
 		return self.bare_task(github=github)
 
 	def gate_fix(self) -> TaskNode | None:
-		"""The declared deterministic autofix node, or ``None`` when no agent is configured."""
+		"""The declared autofix node."""
 		return self.agent.fix if self.agent is not None else None
 
 	def run_default(self) -> TaskNode | None:
-		"""The task a no-task ``camas_run`` runs: the agent's ``default``, else the check node,
-		then the github or default task.
-		"""
+		"""The task a no-task ``camas_run`` runs."""
 		if self.agent is not None and self.agent.default is not None:
 			return self.agent.default
 		return self.gate_check(github=True)

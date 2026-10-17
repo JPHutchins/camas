@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""Dispatch ``camas mcp`` subcommands: ``init`` scaffolds ``.mcp.json``; otherwise serve."""
-
 from __future__ import annotations
 
 import os
@@ -42,11 +40,6 @@ Options:
 
 
 def parse_launcher(argv: list[str]) -> Launcher | None:
-	"""The ``--launcher`` value from ``camas mcp init`` arguments, or ``None`` when absent.
-
-	Raises:
-		ValueError: the flag has no value, or names an unknown launcher.
-	"""
 	import argparse
 
 	from .scaffold import LAUNCHERS
@@ -64,11 +57,7 @@ def parse_launcher(argv: list[str]) -> Launcher | None:
 def import_failure_diagnostic(
 	exception: ImportError, executable: str, pythonpath: str | None
 ) -> str:
-	"""The actionable stderr diagnostic for a broken ``camas[mcp]`` dependency import — names the
-	failing module, the interpreter that failed to import it, and, when ``PYTHONPATH`` is set,
-	that a leaked ``PYTHONPATH`` (e.g. from a nix ``mkShell``) can shadow the server's own
-	dependencies.
-
+	"""
 	>>> "pydantic_core" in import_failure_diagnostic(
 	...     ModuleNotFoundError("No module named 'pydantic_core'", name="pydantic_core"),
 	...     "/usr/bin/python3",
@@ -95,9 +84,6 @@ def import_failure_diagnostic(
 
 
 def report_import_failure(e: ImportError, *, feature_hint: str) -> NoReturn:
-	"""Print the right diagnostic for a ``.serve`` import failure and exit 2: the terse
-	``feature_hint`` for the plain missing-``mcp``-extra case, else the full diagnostic.
-	"""
 	if isinstance(e, ModuleNotFoundError) and e.name == "mcp":
 		print(feature_hint, file=sys.stderr)
 	else:
@@ -109,7 +95,6 @@ def report_import_failure(e: ImportError, *, feature_hint: str) -> NoReturn:
 
 
 def main(argv: list[str]) -> None:
-	"""Route ``camas mcp [-h|init|--rich|--plain]``; ``init`` and an unexpected argument exit with a code."""
 	if "-h" in argv or "--help" in argv:
 		print(HELP)
 		return

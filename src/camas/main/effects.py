@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""Discover Effect classes and evaluate the ``--effects`` mini-language."""
-
 from __future__ import annotations
 
 import ast
@@ -25,17 +23,6 @@ if TYPE_CHECKING:
 
 @functools.cache
 def discover_effects() -> tuple[Mapping[str, Any], tuple[tuple[str, Any], ...]]:
-	"""Walk every public binding in ``camas.effect.*`` and return
-	``(constructors, effects)``.
-
-	``constructors`` is every concrete class transitively referenced through
-	Effect constructor signatures — what the ``--effects`` mini-language is
-	allowed to call. ``effects`` is the (name, class) pairs that satisfy the
-	``Effect`` protocol.
-
-	Imports are scoped so ``camas <task>`` doesn't pay for the inspection
-	unless something asks for the listing. Result is cached.
-	"""
 	import importlib
 	import inspect
 	import pkgutil
@@ -67,7 +54,6 @@ def discover_effects() -> tuple[Mapping[str, Any], tuple[tuple[str, Any], ...]]:
 
 
 def reachable_classes(cls: Any, seen: set[Any] | None = None) -> set[Any]:
-	"""Collect every class transitively reachable through ``cls``'s init signature."""
 	seen = seen if seen is not None else set()
 	if cls in seen:
 		return seen
@@ -82,7 +68,6 @@ def reachable_classes(cls: Any, seen: set[Any] | None = None) -> set[Any]:
 
 
 def flatten_annotation(annotation: Any) -> Any:
-	"""Yield every leaf type from a possibly-generic/union annotation."""
 	from typing import get_args
 
 	args = get_args(annotation)
@@ -94,18 +79,6 @@ def flatten_annotation(annotation: Any) -> Any:
 
 
 def signature_fields(cls: Any) -> list[tuple[str, Any, Any, Any]]:
-	"""Return ``[(name, kind, annotation, default), ...]`` for ``cls``'s constructor.
-
-	Handles NamedTuple, dataclass, and ordinary classes uniformly. ``kind`` is
-	``inspect.Parameter.kind`` so callers can render ``*args``/``**kwargs``.
-	``default`` is ``MISSING`` when the parameter is required.
-
-	Falls back to AST-parsing the module's ``.py`` source when ``inspect``
-	yields no annotations — the case under mypyc compilation, which erases
-	function ``__annotations__`` and mangles class-level ones. The ``.py``
-	is shipped alongside the ``.so`` by ``mypycify``, so the fallback works
-	on installed wheels.
-	"""
 	import dataclasses
 	import inspect
 	from typing import get_type_hints
@@ -141,9 +114,6 @@ def signature_fields(cls: Any) -> list[tuple[str, Any, Any, Any]]:
 			for f in dataclasses.fields(cls)
 			if f.init
 		]
-	# ``eval_str=True`` resolves PEP 563 string annotations
-	# (``from __future__ import annotations``); fall back to the raw signature
-	# when names can't be resolved (e.g. TYPE_CHECKING-only forward refs).
 	try:
 		sig = inspect.signature(cls, eval_str=True)
 	except (ValueError, TypeError, NameError):
@@ -171,13 +141,6 @@ def signature_fields(cls: Any) -> list[tuple[str, Any, Any, Any]]:
 def available_effects(
 	scope_effects: Mapping[str, type[Effect[Any]]] = {},
 ) -> tuple[Mapping[str, Any], tuple[tuple[str, Any], ...]]:
-	"""Built-in effects merged with ``scope_effects`` (user effects from a
-	tasks-file scope).
-
-	The returned shape mirrors :func:`discover_effects` so callers can use
-	either uniformly: ``constructors`` is what ``--effects`` may reference by
-	name, ``effects`` is the listing.
-	"""
 	builtin_constructors, builtin_effects = discover_effects()
 	if not scope_effects:
 		return builtin_constructors, builtin_effects
@@ -190,11 +153,7 @@ def available_effects(
 def parse_effects(
 	expr: str, scope_effects: Mapping[str, type[Effect[Any]]] = {}
 ) -> tuple[Effect[Any], ...]:
-	"""Parse a ``--effects`` expression into a tuple of Effect instances.
-
-	``scope_effects`` (user-defined Effect classes, e.g. from a ``tasks.py`` scope)
-	is merged with the built-in registry.
-
+	"""
 	Raises:
 		ValueError: on syntax errors, non-tuple expressions, unknown names,
 			or elements that are not Effect instances.
@@ -217,13 +176,6 @@ def parse_effects(
 
 
 def eval_value(node: ast.expr, constructors: Mapping[str, Any]) -> Any:
-	"""Evaluate a node in the --effects mini-language. Returns Any since the
-	concrete type depends on the AST shape; ``expect_effect`` validates at the
-	tuple level.
-
-	Raises:
-		ValueError: on syntax outside the mini-language.
-	"""
 	match node:
 		case ast.Constant(value=val):
 			return val
@@ -251,12 +203,6 @@ def expect_effect(value: Any) -> Effect[Any]:
 
 
 def running_under_agent() -> bool:
-	"""Whether camas is driven by an AI coding agent rather than a human at a terminal.
-
-	Detected from ``CLAUDECODE`` (set by Claude Code) or an explicit ``CAMAS_AGENT``
-	override. Agents default to the line-oriented ``Status`` renderer instead of the
-	live ``Termtree``, whose cursor-redraw frames bloat captured output.
-	"""
 	import os
 
 	return os.environ.get("CLAUDECODE") == "1" or bool(os.environ.get("CAMAS_AGENT"))
@@ -269,16 +215,6 @@ def resolve_default_effects(
 	agent: bool = False,
 	base: Path | None = None,
 ) -> tuple[Effect[Any], ...]:
-	"""The effects a bare run uses: the :class:`Config` override, else the environment default.
-
-	The renderer is ``Status(output_mode="github")`` under GitHub Actions, the line-oriented
-	``Status`` for an agent, else the live ``Termtree``. A project whose camas directory exists
-	also gets a ``Timings`` to record per-leaf durations.
-
-	The returned ``Timings`` is deliberately unkeyed — scope and identities are only knowable where
-	a run is set up, so the run site keys it once with :func:`keyed_to_run`. A resolver that keyed
-	here would hand the run a half-keyed effect it must re-key anyway.
-	"""
 	configured = config.effects(github=github)
 	if configured is not None:
 		return configured
@@ -297,9 +233,6 @@ def resolve_default_effects(
 
 
 def default_effect_names(config: Config, *, github: bool, agent: bool = False) -> frozenset[str]:
-	"""Class names of the effects a bare run uses in this environment — used to mark
-	the ``(default)`` entry in the Available Effects listing.
-	"""
 	return frozenset(
 		type(e).__name__ for e in resolve_default_effects(config, github=github, agent=agent)
 	)
@@ -314,25 +247,12 @@ def resolve_effects(
 	scope_effects: Mapping[str, type[Effect[Any]]] = {},
 	base: Path | None = None,
 ) -> tuple[Effect[Any], ...]:
-	"""The effects for a run: the parsed ``--effects`` expression (propagating its
-	``ValueError`` on a malformed expression), or the environment default when
-	``--effects`` was omitted (``expr is None``).
-	"""
 	if expr is None:
 		return resolve_default_effects(config, github=github, agent=agent, base=base)
 	return parse_effects(expr, scope_effects)
 
 
 def keyed_to_run(effects: tuple[Effect[Any], ...], observed: Observed) -> tuple[Effect[Any], ...]:
-	"""``effects`` with every ``Timings`` keyed to ``observed``. Scope and identities both come off
-	the one bundle that also feeds ``run(identities=...)``, so a caller cannot key the effect one
-	way and the run another. A ``Timings`` spelled out in a ``Config`` or in ``--effects`` cannot
-	carry either — so without this it would record a path-scoped run as a whole-tree observation,
-	which is the mis-estimation #224 is about.
-
-	``effects`` itself is returned when it holds no ``Timings``, so a caller's own tuple survives
-	identically rather than being rebuilt for nothing.
-	"""
 	from ..effect.timings import Timings
 
 	if not any(isinstance(e, Timings) for e in effects):
@@ -344,9 +264,7 @@ def keyed_to_run(effects: tuple[Effect[Any], ...], observed: Observed) -> tuple[
 
 
 def format_effect_call(effect: Effect[Any]) -> str:
-	"""Render an Effect instance as a ``--effects`` mini-language call, showing
-	only the constructor arguments whose values differ from their defaults.
-
+	"""
 	>>> from camas.effect.status import Status
 	>>> from camas.effect.termtree import Termtree
 	>>> format_effect_call(Termtree())
@@ -364,9 +282,7 @@ def format_effect_call(effect: Effect[Any]) -> str:
 
 
 def format_effects_expr(effects: tuple[Effect[Any], ...]) -> str:
-	"""Render an effects tuple as a ``--effects`` mini-language expression — the
-	inverse of :func:`parse_effects` for the common case.
-
+	"""
 	>>> from camas.effect.status import Status
 	>>> from camas.effect.termtree import Termtree
 	>>> format_effects_expr(())

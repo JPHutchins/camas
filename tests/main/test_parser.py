@@ -81,10 +81,7 @@ def test_build_parser_format_help_no_tasks_no_effects(monkeypatch: pytest.Monkey
 	def empty_discover() -> tuple[Mapping[str, Any], tuple[tuple[str, Any], ...]]:
 		return {}, ()
 
-	# Patch ``discover_effects`` (the ``functools.cache``-wrapped Python
-	# callable) rather than ``available_effects`` so the patch survives
-	# under mypyc compilation, where compiled-to-compiled calls bypass
-	# the module dict.
+	# patch discover_effects, not available_effects: mypyc compiled-to-compiled calls bypass the module dict
 	monkeypatch.setattr(effects_mod, "discover_effects", empty_discover)
 	parser = build_parser()
 	out = parser.format_help()

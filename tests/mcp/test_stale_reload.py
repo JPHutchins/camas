@@ -37,6 +37,8 @@ if TYPE_CHECKING:
 
 
 PASS = Task(("python", "-c", "pass"), name="pass")
+_JUST_PAST_FIRST_PROBE_FIRE_S = 1.05
+_PAST_FIRST_PROBE_THAT_SAW_UNCHANGED_PACKAGE_S = 1.6
 
 
 async def _slow_call(
@@ -98,7 +100,7 @@ async def test_reverted_package_keeps_the_server_up(
 		(pkg / "a.py").write_text("y = 2\n")
 		assert not (await client.call_tool("camas_list", {})).isError
 		(pkg / "a.py").write_text("x = 1\n")
-		await wait_until(lambda: walks >= 2)  # the fire-time walk completed before the assert
+		await wait_until(lambda: walks >= 2)
 	assert reload_exits == []
 
 
@@ -139,9 +141,7 @@ async def test_probe_skips_the_walk_while_a_call_is_in_flight(
 		calls = {asyncio.create_task(client.call_tool("camas_list", {})) for _ in range(2)}
 		done, (last,) = await asyncio.wait(calls, return_when=asyncio.FIRST_COMPLETED)
 		assert not done.pop().result().isError
-		await asyncio.sleep(
-			serve.RELOAD_EXIT_DELAY * 2
-		)  # one loop's timers: the armed probe fires first
+		await asyncio.sleep(serve.RELOAD_EXIT_DELAY * 2)
 		assert walks == 1
 		release_last.set()
 		assert not (await last).isError
@@ -200,7 +200,7 @@ async def test_call_arriving_during_the_probe_walk_survives(
 		await asyncio.sleep(0.4)
 		second = asyncio.create_task(client.call_tool("camas_list", {}))
 		assert not (await first).isError
-		await asyncio.sleep(0.3)  # the walk returned; the slow call is still in flight
+		await asyncio.sleep(0.3)
 		assert reload_exits == []
 		assert not (await second).isError
 		await wait_until(lambda: bool(reload_exits))
@@ -236,7 +236,7 @@ async def test_call_completing_during_the_probe_walk_keeps_its_flush_window(
 	monkeypatch.setattr(serve, "exit_for_reload", record_exit)
 	async with create_connected_server_and_client_session(serve.build_server(session)) as client:
 		assert not (await client.call_tool("camas_list", {})).isError
-		await asyncio.sleep(1.05)  # the first call's probe fired at 1.0; its walk runs
+		await asyncio.sleep(_JUST_PAST_FIRST_PROBE_FIRE_S)
 		second = asyncio.create_task(client.call_tool("camas_list", {}))
 		assert not (await second).isError
 		call_end = loop.time()
@@ -281,7 +281,7 @@ async def test_exit_arms_at_call_end_not_call_entry(
 	monkeypatch.setattr(serve, "exit_for_reload", record_exit)
 	async with create_connected_server_and_client_session(serve.build_server(session)) as client:
 		assert not (await client.call_tool("camas_list", {})).isError
-		await asyncio.sleep(1.6)  # the first probe (1.5-2.0) saw an unchanged package
+		await asyncio.sleep(_PAST_FIRST_PROBE_THAT_SAW_UNCHANGED_PACKAGE_S)
 		second = asyncio.create_task(client.call_tool("camas_list", {}))
 		assert not (await second).isError
 		call_end = loop.time()
@@ -510,13 +510,9 @@ def test_live_server_answers_then_dies_when_the_package_changes(tmp_path: Path) 
 	exits so the client sees EOF — the two contract halves the in-memory transport cannot
 	exercise (its exit is faked and it has no ``to_thread`` writer hop)."""
 	(tmp_path / "tasks.py").write_text("from camas import Task\nlint = Task('echo hi')\n")
-	# The server boots through a bootstrap that points camas.__file__ at a scratch directory this
-	# test owns, so the staleness probe lands there — the package itself imports normally (the
-	# mypyc layouts that broke the private-copy approach are untouched) and no shared tree is
-	# ever written.
 	scratch = tmp_path / "scratch"
 	scratch.mkdir()
-	bootstrap = (
+	bootstrap_pointing_camas_file_at_owned_scratch_dir = (
 		"import camas, pathlib, sys; "
 		"scratch = pathlib.Path(sys.argv[1]); "
 		"(scratch / '__init__.py').write_text(''); "
@@ -524,7 +520,13 @@ def test_live_server_answers_then_dies_when_the_package_changes(tmp_path: Path) 
 		"from camas.mcp.serve import serve_stdio; serve_stdio(sys.argv[2:])"
 	)
 	server = subprocess.Popen(
-		[sys.executable, "-c", bootstrap, str(scratch), "--plain"],
+		[
+			sys.executable,
+			"-c",
+			bootstrap_pointing_camas_file_at_owned_scratch_dir,
+			str(scratch),
+			"--plain",
+		],
 		cwd=tmp_path,
 		stdin=subprocess.PIPE,
 		stdout=subprocess.PIPE,
@@ -534,7 +536,6 @@ def test_live_server_answers_then_dies_when_the_package_changes(tmp_path: Path) 
 	)
 	assert server.stdin is not None
 	assert server.stdout is not None
-	# Drain stderr continuously so a chatty server cannot deadlock itself on a full pipe.
 	assert server.stderr is not None
 	stderr_chunks: list[bytes] = []
 	stderr_fd = server.stderr.fileno()
@@ -556,13 +557,7 @@ def test_live_server_answers_then_dies_when_the_package_changes(tmp_path: Path) 
 			_send_rpc(server, call_id)
 			_read_rpc(server, call_id, stderr_chunks)
 		probe = scratch / "_stale_probe.py"
-		# Call 3's finally cancels the pending call-2 probe and arms a fresh one, so the exit
-		# runs only after call 3 is answered; sending call 3 before the file exists additionally
-		# keeps an early fire (parent stalled between send and write) probing an unchanged
-		# package. Call 3's read is the first whose flush can race the exit, so it is guarded
-		# like call 4's; a stall long enough for the exit to fire before a call's answer skips
-		# that call's answer check — the wait and returncode assert below still verify the exit
-		# contract.
+		# send call 3 before the probe file exists so an early fire still sees an unchanged package
 		_send_rpc(server, 3)
 		probe.write_text("")
 		try:

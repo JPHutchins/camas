@@ -102,16 +102,16 @@ def derived_exclusion(optional: frozenset[str]) -> frozenset[str]:
 
 
 def effect_excluded_members(node: ast.AST) -> tuple[str, ...]:
-	"""The members of the ``_effect_excluded`` set literal at a single AST node."""
+	"""The members of the ``_importers_of_optional_dependencies`` set literal at a single AST node."""
 	match node:
-		case ast.Assign(targets=[ast.Name(id="_effect_excluded")], value=value):
+		case ast.Assign(targets=[ast.Name(id="_importers_of_optional_dependencies")], value=value):
 			return tuple(ast.literal_eval(value))
 		case _:
 			return ()
 
 
 def literal_exclusion(source: str) -> frozenset[str]:
-	"""The ``_effect_excluded`` set literal declared in setup.py source."""
+	"""The ``_importers_of_optional_dependencies`` set literal declared in setup.py source."""
 	return frozenset(
 		member for node in ast.walk(ast.parse(source)) for member in effect_excluded_members(node)
 	)
@@ -123,7 +123,7 @@ def test_effect_exclusion_matches_derived_set() -> None:
 	derived = derived_exclusion(optional)
 	literal = literal_exclusion((ROOT / "setup.py").read_text(encoding="utf-8"))
 	assert derived == literal, (
-		"setup.py _effect_excluded has drifted from the imports; "
+		"setup.py _importers_of_optional_dependencies has drifted from the imports; "
 		f"symmetric difference = {sorted(derived ^ literal)} "
 		f"(derived = {sorted(derived)}, literal = {sorted(literal)})"
 	)

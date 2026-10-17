@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""Build the MCP ``ListResponse`` catalog from a project's discovered tasks."""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -27,12 +25,6 @@ def to_list_response(
 	*,
 	expand: bool = False,
 ) -> wire.ListResponse:
-	"""Assemble the ``camas_list`` catalog — one ``TaskInfo`` per task, sorted by
-	name, with the default and CI-default names taken from ``config`` and each task's
-	observed duration drawn from ``timings`` — the whole-tree observation, which is what running
-	the task by name costs. ``expand`` matrix-expands each command preview; otherwise it stays the
-	unexpanded template.
-	"""
 	default = task_name(config.default_task) if config is not None else None
 	github_default = task_name(config.github_task) if config is not None else None
 	run_default = task_name(config.run_default()) if config is not None else None
@@ -67,7 +59,6 @@ def task_info(
 	est: Estimate | None,
 	expand: bool,
 ) -> wire.TaskInfo:
-	"""One ``TaskInfo``: help, a fully-typed command expression, matrix axes, and any estimate."""
 	info = wire.TaskInfo(
 		name=name,
 		help=node.help,

@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
-"""The v0 generation of the public API — import from ``camas.v0`` and its submodules to pin it."""
+"""The v0 generation of the public API."""
 
 import typing
 
@@ -24,16 +24,6 @@ if typing.TYPE_CHECKING:
 
 
 def __getattr__(name: str) -> typing.Any:
-	"""Lazily expose ``run_cli`` without importing ``camas.main`` / ``camas.core`` at
-	import time, keeping the version namespace free of the engine it is consumed by.
-
-	Returns ``Any`` (the PEP 562 convention): ``run_cli`` is typed precisely via the
-	``TYPE_CHECKING`` import above, while ``object`` would mistype real module
-	attributes (e.g. ``__file__``) for checkers that route them through ``__getattr__``.
-
-	Raises:
-		AttributeError: for any name other than ``run_cli``.
-	"""
 	if name == "run_cli":
 		from ..main.dispatch import run_cli
 
