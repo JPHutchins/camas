@@ -41,7 +41,7 @@ WhenPredicate: TypeAlias = "Callable[[tuple[str, ...]], bool]"
 
 
 Nodes: TypeAlias = "TaskNode | str | Sequence[TaskNode]"
-"""One node or a sequence of nodes; a ``str`` is a ``Task``."""
+"""One node or a sequence of nodes; a lone ``str`` is a ``Task``."""
 
 
 def _prefix(value: str | Path) -> str:
@@ -76,7 +76,7 @@ def _coerce_when(
 
 
 def by_suffix(suffixes: tuple[str, ...], default: tuple[str, ...] = (".",)) -> PathScope:
-	"""A ``PathScope`` keeping the changed files that end in one of ``suffixes``.
+	"""A ``PathScope`` for files ending in one of ``suffixes``.
 
 	>>> f = by_suffix((".c", ".h"), default=("src", "include"))
 	>>> f(())
@@ -135,7 +135,7 @@ def _glob_to_regex(pattern: str) -> re.Pattern[str]:
 
 
 def by_glob(patterns: tuple[str, ...], default: tuple[str, ...] = (".",)) -> PathScope:
-	"""A ``PathScope`` keeping the changed files that match one of the shell-glob ``patterns``.
+	"""A ``PathScope`` for files matching one of the shell-glob ``patterns``.
 
 	>>> f = by_glob(("homeassistant/**/*.py", "homeassistant/**/*.pyi"), default=("homeassistant",))
 	>>> f(())
@@ -208,10 +208,10 @@ class AgentFormat(NamedTuple):
 	"""
 
 	args: str
-	"""Appended to the command on agent runs; a literal ``{report}`` names the file the gate reads."""
+	"""Appended to the command on gate runs; a literal ``{report}`` names the file the gate reads."""
 	kind: OutputKind
 	limit: int = 8_000
-	"""Characters of structured payload the gate inlines before pointing at the full output."""
+	"""Characters of a structured payload or report file the gate inlines before pointing at the full output."""
 
 
 _EMPTY_ENV: Mapping[str, str] = MappingProxyType({})
@@ -263,7 +263,7 @@ class Task:
 	paths: str | PathScope | None
 	"""The scope a ``{paths}`` command narrows to on a scoped run."""
 	when: str | tuple[str, ...] | WhenPredicate | None
-	"""Paths whose change keeps the leaf in a scoped run; unset, a leaf with a ``cwd`` gates on it."""
+	"""Which changes keep the leaf in a scoped run; unset, a leaf with a relative ``cwd`` gates on it."""
 	agent_format: AgentFormat | None
 
 	def __init__(
@@ -601,7 +601,7 @@ class Pipe(Group):
 	) -> None:
 		"""
 		Raises:
-			ValueError: when there is no stage, a stage is not a ``Task``, or a stage repeats.
+			ValueError: when there is no stage, a stage is a group, or a stage repeats.
 		"""
 		Group.__init__(
 			self,
@@ -645,7 +645,7 @@ class Pipe(Group):
 		return _composed(Sequential, self, other)
 
 	def __gt__(self, other: Nodes) -> Pipe:
-		"""Append stages; a right-side ``Pipe`` with fields contributes only its ``.tasks``.
+		"""Append stages; a plain right-side ``Pipe`` adds its stages, one with fields or ``agent_only`` raises.
 
 		>>> (Pipe("a") > "b").tasks == (Task("a"), Task("b"))
 		True
@@ -832,7 +832,7 @@ def Clean(  # noqa: N802  # constructor-style factory, like Task/Parallel
 	before: bool = True,
 	name: str | None = None,
 ) -> Sequential:
-	"""A drift gate: fail when running ``mutator`` changes the working tree.
+	"""A drift gate around ``mutator``: fail when the working tree is not clean.
 
 	>>> [t.name for t in Clean(Task("make gen", mutates=True)).tasks]
 	['make gen-before', None, 'make gen-after']

@@ -26,7 +26,7 @@ class Claude(NamedTuple):
 	check: TaskNode | None = None
 	"""The node the gate checks; ``None`` defers to the project's bare task."""
 	default: TaskNode | None = None
-	"""The task a no-task ``camas_run`` runs; ``None`` defers to the check node."""
+	"""The task a no-task ``camas_run`` runs; ``None`` defers to the check node, then the GitHub task, then the default task."""
 
 
 Agent: TypeAlias = Claude
@@ -43,7 +43,7 @@ class Config(NamedTuple):
 	default_github_effects: tuple[Effect[Any], ...] | None = None
 	"""``None`` keeps the engine's default; ``()`` runs none."""
 	camas_dir: str = DEFAULT_CAMAS_DIR
-	"""Subdirectory for run logs and timings; delete it to opt out."""
+	"""Subdirectory for run logs and timings."""
 	agent: Agent | None = None
 	leaf_color: bool = True
 	"""Whether camas forces color on in leaf subprocesses."""

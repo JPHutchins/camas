@@ -44,7 +44,7 @@ class Skipped(NamedTuple):
 
 
 class Stopped(NamedTuple):
-	"""A leaf the runner signalled while it ran.
+	"""A leaf an interrupt stopped.
 
 	>>> Stopped(130, 0.5, (b"caught SIGINT",))
 	Stopped(returncode=130, elapsed=0.5, output=(b'caught SIGINT',))
