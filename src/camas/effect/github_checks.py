@@ -1,27 +1,6 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""Effect: submits per-leaf check-run results to the GitHub Checks API.
-
-Requires the 'github_checks' optional dependency::
-
-	camas[github_checks]
-
-Defaults read GitHub Actions env vars (``GITHUB_TOKEN``, ``GITHUB_REPOSITORY``,
-``GITHUB_SHA``) so the typical CI invocation is just::
-
-	--effects='(GitHubChecks(),)'
-
-In ``pull_request`` events ``GITHUB_SHA`` points at the **merge commit**, not
-the PR's head — checks attached to it don't render in the PR Checks panel.
-Pass the head SHA explicitly::
-
-	GitHubChecks(sha="${{ github.event.pull_request.head.sha || github.sha }}")
-
-HTTP is fired-and-forgotten in ``on_event`` (``asyncio.create_task``) and
-awaited only in ``teardown``, so the run isn't slowed by network latency.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -58,8 +37,7 @@ NAME_LIMIT: Final = 100
 
 
 class ResolvedConfig(NamedTuple):
-	"""Post-env-fallback config: every required field is a non-empty string.
-
+	"""
 	>>> ResolvedConfig("t", "o", "r", "s", "", 8192, False).owner
 	'o'
 	"""
@@ -74,8 +52,7 @@ class ResolvedConfig(NamedTuple):
 
 
 class PatchPayload(NamedTuple):
-	"""Data captured at CompletedEvent for the background PATCH call.
-
+	"""
 	>>> PatchPayload("success", ("ok", "`cmd`", ""), "2026-01-01T00:00:00Z").conclusion
 	'success'
 	"""
@@ -86,26 +63,18 @@ class PatchPayload(NamedTuple):
 
 
 class Pending(NamedTuple):
-	"""No POST task spawned yet — StartedEvent not processed for this leaf.
-
+	"""
 	>>> Pending()
 	Pending()
 	"""
 
 
 class Active(NamedTuple):
-	"""POST task pending in background; accumulating output tail."""
-
 	post_task: asyncio.Task[int]
 	tail: bytes
 
 
 class Closed(NamedTuple):
-	"""All HTTP for this leaf is scheduled (awaited in teardown).
-
-	``task`` is ``None`` when the leaf was Skipped before any Started fired.
-	"""
-
 	task: asyncio.Task[None] | None
 
 
@@ -113,19 +82,12 @@ LeafCtx: TypeAlias = Pending | Active | Closed
 
 
 class EffectState(NamedTuple):
-	"""Effect-instance state populated by setup(); shared across leaves."""
-
 	http: httpx.AsyncClient
 	cfg: ResolvedConfig
 	errors: tuple[type[BaseException], ...]
 
 
 def require_httpx() -> ModuleType:
-	"""Import httpx lazily; raise with the install hint when the extra is missing.
-
-	Raises:
-		RuntimeError: when the ``camas[github_checks]`` extra is not installed.
-	"""
 	try:
 		import httpx
 	except ImportError as e:
@@ -141,11 +103,7 @@ def resolve_config(
 	tail_bytes: int,
 	fail_on_api_error: bool,
 ) -> ResolvedConfig:
-	"""Resolve the identity arguments + env vars into a fully-specified ResolvedConfig.
-
-	``token`` / ``repository`` / ``sha`` fall back to ``GITHUB_TOKEN`` /
-	``GITHUB_REPOSITORY`` / ``GITHUB_SHA`` when ``None``; the rest pass through.
-
+	"""
 	Raises:
 		RuntimeError: when token, repository, or sha is unset, or repository
 			is not ``owner/repo``.
@@ -185,7 +143,6 @@ def resolve_config(
 
 
 def auth_headers(cfg: ResolvedConfig) -> dict[str, str]:
-	"""GitHub API auth + version headers shared by every request."""
 	return {
 		"Authorization": f"Bearer {cfg.token}",
 		"Accept": "application/vnd.github+json",
@@ -196,8 +153,7 @@ def auth_headers(cfg: ResolvedConfig) -> dict[str, str]:
 
 
 def build_name(prefix: str, task: Task) -> str:
-	"""Compose check-run name; truncate to ``NAME_LIMIT`` with right-side ellipsis.
-
+	"""
 	>>> from camas import Task
 	>>> build_name("ubuntu/", Task("ruff check .", name="lint"))
 	'ubuntu/lint'
@@ -209,8 +165,7 @@ def build_name(prefix: str, task: Task) -> str:
 
 
 def conclusion_for(completion: Completion) -> str:
-	"""Map a camas Completion to a GitHub check-run conclusion string.
-
+	"""
 	>>> conclusion_for(Finished(0, 0.1, ()))
 	'success'
 	>>> conclusion_for(Finished(1, 0.1, ()))
@@ -236,8 +191,7 @@ def conclusion_for(completion: Completion) -> str:
 
 
 def tail_bytes(buf: bytes, limit: int) -> bytes:
-	"""Return the last ``limit`` bytes of ``buf``; empty for non-positive ``limit``.
-
+	"""
 	>>> tail_bytes(b"abcdef", 3)
 	b'def'
 	>>> tail_bytes(b"abc", 10)
@@ -254,14 +208,6 @@ _FENCE_OVERHEAD: Final = len("```\n\n```")
 
 
 def render_body(task: Task, tail: bytes, completion: Completion | None) -> tuple[str, str, str]:
-	r"""Return ``(title, summary, text)`` for the check-run output object.
-
-	ANSI escape sequences are stripped from ``tail`` — GitHub renders the
-	output text as plain text in a fenced code block, so escapes would
-	otherwise appear as literal ``\x1b[...m`` noise. ``text`` is clamped to
-	``OUTPUT_TEXT_LIMIT`` characters so an over-eager ``tail_bytes`` setting
-	can't exceed GitHub's 65535-char ``output.text`` cap.
-	"""
 	cmd_str = task.cmd if isinstance(task.cmd, str) else " ".join(task.cmd)
 	decoded = strip_ansi(tail.decode("utf-8", errors="replace")) if tail else ""
 	if len(decoded) > OUTPUT_TEXT_LIMIT - _FENCE_OVERHEAD:
@@ -284,12 +230,10 @@ def render_body(task: Task, tail: bytes, completion: Completion | None) -> tuple
 
 
 def now_iso() -> str:
-	"""Current UTC time as ISO-8601 (the format GitHub's Checks API expects)."""
 	return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def log_http_error(msg: str, exc: BaseException) -> None:
-	"""Single stderr-print path so tests can capture it."""
 	print(f"{msg}: {exc}", file=sys.stderr)
 
 
@@ -300,12 +244,6 @@ async def post_check_run(
 	external_id: str,
 	started_at: str,
 ) -> int:
-	"""POST /repos/{owner}/{repo}/check-runs — returns the new check_run_id.
-
-	``external_id`` is a stable identifier per leaf (derived from name_prefix +
-	task_label) — lets integrators correlate check_runs back to camas leaves
-	via the API even when names collide.
-	"""
 	response = await http.post(
 		f"https://{GH_API_HOST}/repos/{cfg.owner}/{cfg.repo}/check-runs",
 		json={
@@ -326,7 +264,6 @@ async def patch_check_run(
 	check_id: int,
 	payload: PatchPayload,
 ) -> None:
-	"""PATCH /repos/{owner}/{repo}/check-runs/{id}."""
 	title, summary, text = payload.output
 	response = await http.patch(
 		f"https://{GH_API_HOST}/repos/{cfg.owner}/{cfg.repo}/check-runs/{check_id}",
@@ -347,7 +284,6 @@ async def post_then_patch(
 	payload: PatchPayload,
 	errors: tuple[type[BaseException], ...],
 ) -> None:
-	"""Await POST, then send PATCH. Logs errors; re-raises iff fail_on_api_error."""
 	try:
 		check_id = await post_task
 	except errors as e:
@@ -369,10 +305,6 @@ async def post_then_cancel(
 	post_task: asyncio.Task[int],
 	errors: tuple[type[BaseException], ...],
 ) -> None:
-	"""Teardown path for Active leaves whose event stream was truncated:
-	wait for POST, then PATCH ``conclusion="cancelled"`` so the check
-	doesn't linger ``in_progress`` in the GH UI.
-	"""
 	await post_then_patch(
 		http,
 		cfg,
@@ -387,12 +319,6 @@ async def post_then_cancel(
 
 
 def started_to_active(state: EffectState, task: Task) -> Active:
-	"""Pure: build the next ctx for a StartedEvent on a Pending leaf.
-
-	Creates the POST task; the returned Active holds the task handle, so the
-	ctx itself is what keeps the task referenced (the runtime stores ctxs in
-	ctx_grid for the duration of the run).
-	"""
 	name = build_name(state.cfg.name_prefix, task)
 	return Active(
 		post_task=asyncio.create_task(
@@ -403,18 +329,12 @@ def started_to_active(state: EffectState, task: Task) -> Active:
 
 
 def external_id_for(cfg: ResolvedConfig, task: Task) -> str:
-	"""Stable per-leaf identifier — same leaf on the same prefix yields the same id."""
 	return f"camas:{cfg.name_prefix}{task_label(task)}"
 
 
 def completed_to_closed(
 	state: EffectState, task: Task, completion: Completion, prior: Active
 ) -> Closed:
-	"""Pure: build the next ctx for a CompletedEvent on an Active leaf.
-
-	Spawns the wrap task that awaits the prior POST and PATCHes the result.
-	The wrap task is stored in the returned Closed.
-	"""
 	return Closed(
 		task=asyncio.create_task(
 			post_then_patch(
@@ -435,11 +355,6 @@ def completed_to_closed(
 def pipelines_from_ctxs(
 	state: EffectState, ctxs: tuple[LeafCtx, ...]
 ) -> tuple[asyncio.Task[None], ...]:
-	"""Pure: unfold every leaf ctx into its terminal pipeline task.
-
-	``Closed`` yields its existing pipeline; ``Active`` spawns a cancel pipeline
-	awaiting its POST; ``Pending`` / ``Closed(task=None)`` contribute nothing.
-	"""
 	return tuple(extracted for ctx in ctxs if (extracted := pipeline_of(state, ctx)) is not None)
 
 
@@ -458,11 +373,7 @@ def pipeline_of(state: EffectState, ctx: LeafCtx) -> asyncio.Task[None] | None:
 
 
 class GitHubChecks:
-	"""Submits per-leaf check-run results to the GitHub Checks API.
-
-	See module docstring for env-var defaults, the PR head-SHA caveat, and the
-	required ``checks: write`` workflow permission.
-	"""
+	"""Per-leaf check runs on the GitHub Checks API."""
 
 	def __init__(
 		self,

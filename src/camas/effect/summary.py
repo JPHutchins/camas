@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""Effect: silent during the run, then one final tree render at teardown."""
-
 import shutil
 import sys
 import time
@@ -31,7 +29,7 @@ from .termtree import (
 
 
 class Auto(NamedTuple):
-	"""Detect terminal width from the environment (``shutil.get_terminal_size``).
+	"""Terminal width detected from the environment.
 
 	>>> Auto()
 	Auto()
@@ -39,7 +37,7 @@ class Auto(NamedTuple):
 
 
 class Fixed(NamedTuple):
-	"""Fixed terminal width in columns, overriding environment detection.
+	"""A fixed terminal width.
 
 	>>> Fixed(200)
 	Fixed(columns=200)
@@ -53,20 +51,10 @@ TermWidth: TypeAlias = Auto | Fixed
 
 @dataclass
 class SummaryState:
-	"""Mutable slot holding the latest states view for the Summary effect."""
-
 	states: Sequence[LeafState]
 
 
 class SummaryContext(NamedTuple):
-	"""Immutable context threaded through the summary Effect's lifecycle.
-
-	``wall_start`` is the wall-clock setup time (for human-facing timestamps if
-	ever surfaced); ``wall_start_mono`` is the corresponding monotonic reading
-	(``time.perf_counter()``) used to compute the displayed elapsed total so
-	the summary line is immune to NTP/DST steps mid-run.
-	"""
-
 	rows: tuple[DisplayRow, ...]
 	term_width: int
 	display_width: int
@@ -76,12 +64,7 @@ class SummaryContext(NamedTuple):
 
 
 class Summary:
-	"""Post-run Effect: renders the final tree once at teardown. No animation.
-
-	Intended for CI and other non-interactive terminals where the live
-	cursor-repositioning used by ``Termtree`` either doesn't render or
-	produces garbage. End-state output matches ``Termtree``'s final frame.
-	"""
+	"""The final task tree, rendered once after the run."""
 
 	def __init__(self, term_width: TermWidth = Auto(), show_passing: bool = False) -> None:
 		self._term_width: Final = term_width
