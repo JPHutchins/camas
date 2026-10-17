@@ -340,21 +340,17 @@ def test_dispatch_arg_hyphenated_name() -> None:
 
 
 def test_dispatch_arg_hyphen_folds_to_underscore_binding() -> None:
-	# `camas test-all` reaches the underscore-named tasks.py binding `test_all`.
 	tasks = {"test_all": Task("pytest")}
 	assert dispatch_arg("test-all", tasks) == Task("pytest")
 
 
 def test_dispatch_arg_hyphenated_unknown_errors(capsys: pytest.CaptureFixture[str]) -> None:
-	# A hyphenated name with no verbatim or underscore-folded match is a friendly
-	# "no task named" error, not the cryptic ``unsupported syntax: BinOp(...)``.
 	with pytest.raises(SystemExit, match="2"):
 		dispatch_arg("test-all", {"lint": Task("ruff .")})
 	assert "no task named 'test-all'" in capsys.readouterr().err
 
 
 def test_dispatch_arg_unknown_suggests_closest(capsys: pytest.CaptureFixture[str]) -> None:
-	# #193: lead the "no task named" error with the nearest known task name.
 	with pytest.raises(SystemExit, match="2"):
 		dispatch_arg("libs-fix", {"libs.fix": Task("x"), "libs.build": Task("y")})
 	assert "did you mean 'libs.fix'?" in capsys.readouterr().err
@@ -404,14 +400,12 @@ def test_parse_expression_top_level_set_coerces_to_parallel() -> None:
 
 
 def test_parse_expression_nested_tuple_coerces_to_sequential() -> None:
-	# Inside Parallel, a tuple literal becomes a nested Sequential.
 	assert parse_expression('Parallel((Task("a"), Task("b")))') == Parallel(
 		Sequential(Task("a"), Task("b"))
 	)
 
 
 def test_parse_expression_nested_set_coerces_to_parallel() -> None:
-	# Inside Sequential, a set literal becomes a nested Parallel.
 	result = parse_expression('Sequential({Task("a"), Task("b")})')
 	assert isinstance(result, Sequential)
 	assert len(result.tasks) == 1

@@ -96,7 +96,6 @@ def test_available_effects_merges_scope_into_builtins() -> None:
 	assert "AliasedSummary" in constructors
 	assert constructors["AliasedSummary"] is Summary
 	assert ("AliasedSummary", Summary) in effects
-	# Built-ins remain present.
 	assert "Summary" in constructors
 	assert any(name == "Summary" for name, _ in effects)
 

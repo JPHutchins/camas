@@ -199,8 +199,8 @@ def test_render_frame_clamps_to_height_and_keeps_summary() -> None:
 	body = frame.text.split("\n")
 	assert frame.visible == 10
 	assert len(body) == 10
-	assert "more" in frame.text  # elision marker
-	assert "result" in body[-1]  # summary survives the clamp
+	assert "more" in frame.text, "elision marker missing"
+	assert "result" in body[-1], "summary did not survive the clamp"
 
 
 def test_render_frame_does_not_clamp_when_it_fits() -> None:
@@ -222,7 +222,7 @@ def test_render_frame_repositions_with_previous_height() -> None:
 	first = render_frame(
 		rows, states, term_width=80, term_height=24, now=TS, wall_elapsed=0.0, prev_visible=0
 	)
-	assert not first.text.startswith("\x1b[")  # no reposition on the first frame
+	assert not first.text.startswith("\x1b["), "first frame must not reposition"
 	repaint = render_frame(
 		rows,
 		states,
@@ -262,7 +262,7 @@ def test_render_frame_final_emits_full_tree_unclamped() -> None:
 		prev_visible=10,
 		final=True,
 	)
-	assert frame.visible == len(rows) + 1  # all rows, not clamped to 10
+	assert frame.visible == len(rows) + 1, "final frame must show all rows, not clamp to 10"
 	assert "more" not in frame.text
 
 
@@ -371,7 +371,6 @@ def test_termtree_frame_tick_keeps_spinner_alive_between_events() -> None:
 	async def run_effect() -> bool:
 		effect = Termtree(frame_interval_ms=20)
 		ctx = await effect.setup(task)
-		# Idle for long enough that several ticks fire while nothing is happening.
 		await asyncio.sleep(0.08)
 		ctx = await effect.on_event(
 			CompletedEvent(task, 0, Finished(0, 0.08, (b"done\n",)), TS),

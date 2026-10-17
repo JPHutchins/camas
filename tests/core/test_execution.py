@@ -399,8 +399,7 @@ def test_parallel_concurrency() -> None:
 	start = time.perf_counter()
 	asyncio.run(run(task))
 	elapsed = time.perf_counter() - start
-	# Concurrent: ~1.0s + spawn overhead. Sequential would be ≥3.0s.
-	assert elapsed < 2.5
+	assert elapsed < 2.5, f"sequential dispatch would take at least 3.0s, took {elapsed}"
 
 
 def test_jobs_cap_serializes_parallel() -> None:
@@ -410,8 +409,7 @@ def test_jobs_cap_serializes_parallel() -> None:
 	start = time.perf_counter()
 	asyncio.run(run(task, jobs=1))
 	elapsed = time.perf_counter() - start
-	# jobs=1 serializes the three 0.3s sleeps (~0.9s+); unbounded would be ~0.3s.
-	assert elapsed >= 0.8
+	assert elapsed >= 0.8, f"unbounded dispatch would take about 0.3s, took {elapsed}"
 
 
 def test_jobs_cap_preserves_results() -> None:

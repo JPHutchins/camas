@@ -500,7 +500,6 @@ def test_drop_unjustified_running_drops_an_all_dropped_group() -> None:
 		1.0,
 		{CacheKey("a", 0): TaskTiming(9.0, 5), CacheKey("b", 0): TaskTiming(9.0, 5)},
 	)
-	# plan_under works on expand_matrix's clones — take the stages from the plan's own tree.
 	assert isinstance(plan.node, Parallel)
 	pipe_a, pipe_b = plan.node.tasks
 	assert isinstance(pipe_a, Pipe)
@@ -829,8 +828,7 @@ def test_pipe_interrupt_unwind_reports_an_unowned_finished_stage_finished(
 		if task.cmd == ("python", "-c", "pass"):
 			a_proc.append(proc)
 		if task.cmd == ("python", "-c", "import time; time.sleep(60)"):
-			# Wait for stage a's observed reap before the interrupt lands, so its natural
-			# exit code — not the unwind's kill — is the one observed.
+			# let stage a's natural exit be observed before the interrupt, not the unwind's kill
 			deadline = time.monotonic() + 5
 			while a_proc and a_proc[0].returncode is None:
 				if (
@@ -1162,8 +1160,7 @@ async def test_a_grandchild_holding_a_stage_pipe_cannot_wedge_the_unwind(
 			with suppress(ProcessLookupError):
 				os.kill(int(pid_file.read_text()), signal.SIGTERM)
 		if forked:  # pragma: no branch — empty only when the run never spawned
-			# The stage's transport closes only once the dead grandchild's end of the pipe
-			# EOFs; let it, or the transport is collected after the loop closes.
+			# await the transport closing, or it is collected after the loop closes
 			stage_stderr = forked[0].stderr
 			assert stage_stderr is not None
 			await wait_until(lambda: stage_stderr.closed, 10)

@@ -77,10 +77,6 @@ def ignore() -> None:
 
 def leaker() -> None:
 	signal.signal(signal.SIGINT, signal.SIG_IGN)
-	# A detached grandchild inherits our stdout (the pipe camas reads). It outlives
-	# our SIGKILL and keeps the write end open, so camas's read never EOFs and the
-	# run hangs after the 3rd press — the 4th press cancels it. The grandchild
-	# self-reaps in ~60s.
 	subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
 	while True:
 		heartbeat("leaker (leaks a child holding stdout open)")
