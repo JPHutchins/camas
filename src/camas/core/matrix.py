@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""Matrix expansion: bind axis values, specialize subtrees, and apply CLI overrides."""
-
 from __future__ import annotations
 
 import functools
@@ -38,8 +36,7 @@ if TYPE_CHECKING:
 
 
 def resolve_cmd(cmd: str | tuple[str, ...]) -> tuple[str, ...]:
-	"""Resolve a command to a tuple of argv tokens, splitting shell strings with shlex.
-
+	"""
 	>>> resolve_cmd(("echo", "hi"))
 	('echo', 'hi')
 	>>> resolve_cmd("echo hi")
@@ -55,8 +52,7 @@ def resolve_cmd(cmd: str | tuple[str, ...]) -> tuple[str, ...]:
 
 
 def substitute_in_str(text: str, binding: MatrixBinding) -> str:
-	"""Replace {name} placeholders in a string with binding values.
-
+	"""
 	>>> substitute_in_str("test --python {PY}", (VarBinding("PY", "3.14"),))
 	'test --python 3.14'
 	"""
@@ -68,8 +64,7 @@ def substitute_in_str(text: str, binding: MatrixBinding) -> str:
 
 
 def substitute_in_tuple(parts: tuple[str, ...], binding: MatrixBinding) -> tuple[str, ...]:
-	"""Replace {name} placeholders in each element of a tuple.
-
+	"""
 	>>> substitute_in_tuple(("test", "--python", "{PY}"), (VarBinding("PY", "3.14"),))
 	('test', '--python', '3.14')
 	"""
@@ -97,9 +92,7 @@ def substitute_paths(
 def substitute_when(
 	when: str | tuple[str, ...] | WhenPredicate | None, binding: MatrixBinding
 ) -> str | tuple[str, ...] | WhenPredicate | None:
-	"""Substitute matrix bindings into a ``when`` predicate: a prefix string or tuple of
-	prefixes is templated like any other field; a callable passes through unchanged.
-
+	"""
 	>>> substitute_when("pkg-{PY}", (VarBinding("PY", "3.14"),))
 	'pkg-3.14'
 	>>> substitute_when(("pkg-{PY}", "other"), (VarBinding("PY", "3.14"),))
@@ -120,8 +113,7 @@ def substitute_when(
 
 
 def specialize_task(task: Task, binding: MatrixBinding, suffix: str) -> Task:
-	"""Specialize a leaf Task with concrete variable values from a matrix binding.
-
+	"""
 	>>> specialize_task(Task("test {PY}"), (VarBinding("PY", "3.14"),), "[PY=3.14]")
 	Task(cmd='test 3.14', name='test 3.14 [PY=3.14]', env={'PY': '3.14'}, cwd=None)
 	>>> specialize_task(Task("go", env={"VENV": ".venv-{PY}"}), (VarBinding("PY", "3.14"),), "[PY=3.14]").env
@@ -150,13 +142,7 @@ def specialize_task(task: Task, binding: MatrixBinding, suffix: str) -> Task:
 
 
 def specialize_node(task: TaskNode, binding: MatrixBinding, suffix: str) -> TaskNode:
-	"""Recursively specialize an entire task tree with concrete variable values.
-
-	Runs on a subtree :func:`expand_matrix` has already expanded, where no node carries a ``matrix``
-	or ``variants`` any more — so in this pipeline the rebuilt groups carry none. (An unexpanded
-	tree is out of contract; :func:`rebuilt` carries its matrix and variants verbatim,
-	un-substituted, rather than silently dropping them.)
-
+	"""
 	>>> specialize_node(Task("test {X}"), (VarBinding("X", "1"),), "[X=1]")
 	Task(cmd='test 1', name='test 1 [X=1]', env={'X': '1'}, cwd=None)
 	"""
@@ -179,11 +165,7 @@ def specialize_node(task: TaskNode, binding: MatrixBinding, suffix: str) -> Task
 
 
 def matrix_axes(task: TaskNode) -> dict[str, tuple[str, ...]]:
-	"""Walk a task tree and collect every matrix axis with its values.
-
-	On a name collision the outermost matrix (closest to the root) wins — the value
-	``--list`` shows and the one overrides target.
-
+	"""
 	>>> matrix_axes(Task("hi"))
 	{}
 	>>> matrix_axes(Sequential(Parallel(Task("t"), matrix={"OS": ("a", "b")}), matrix={"PY": ("3.12",)}))
@@ -207,10 +189,7 @@ def matrix_axes(task: TaskNode) -> dict[str, tuple[str, ...]]:
 
 
 def variant_axes(task: TaskNode) -> dict[str, tuple[str, ...]]:
-	"""Walk a task tree and collect every ``variants`` key with the distinct values it binds,
-	in first-seen order. On a name collision the outermost declaration wins, as in
-	:func:`matrix_axes`.
-
+	"""
 	>>> variant_axes(Task("hi"))
 	{}
 	>>> variant_axes(Parallel(Task("t"), variants=({"b": "x", "t": "1"}, {"b": "y", "t": "1"})))
@@ -238,10 +217,7 @@ def variant_axes(task: TaskNode) -> dict[str, tuple[str, ...]]:
 
 
 def declared_variants(task: TaskNode) -> tuple[dict[str, str], ...] | None:
-	"""The outermost ``variants`` declaration in ``task``'s tree, or ``None`` when it declares
-	none — the coupled bundles a catalog shows beside the axes, so a list of axis values is not
-	mistaken for a cross product.
-
+	"""
 	>>> declared_variants(Task("hi")) is None
 	True
 	>>> declared_variants(Sequential(Parallel(Task("t"), variants=({"b": "x"},))))
@@ -266,9 +242,7 @@ def declared_variants(task: TaskNode) -> tuple[dict[str, str], ...] | None:
 
 
 def overridable_axes(task: TaskNode) -> dict[str, tuple[str, ...]]:
-	"""Every axis a CLI override can target: the ``matrix`` axes — whose values an override
-	*replaces* — then the ``variants`` keys, which an override *filters* to the bundles binding it.
-
+	"""
 	>>> overridable_axes(Parallel(Task("t"), matrix={"P": ("d",)}, variants=({"b": "x"},)))
 	{'P': ('d',), 'b': ('x',)}
 	"""
@@ -277,12 +251,7 @@ def overridable_axes(task: TaskNode) -> dict[str, tuple[str, ...]]:
 
 
 def empty_variant_labels(task: TaskNode) -> tuple[str, ...]:
-	"""The label of every node in ``task``'s tree declaring ``variants=()``, in first-seen order.
-
-	Zero variants is the coupled counterpart of an empty matrix axis: the node expands to no
-	leaves, so that branch silently does nothing — realistically reached by a variant tuple built
-	from a comprehension that filtered everything out.
-
+	"""
 	>>> empty_variant_labels(Task("hi"))
 	()
 	>>> empty_variant_labels(Parallel(Task("t"), variants=(), name="qemu"))
@@ -305,14 +274,7 @@ def empty_variant_labels(task: TaskNode) -> tuple[str, ...]:
 
 
 def unfilled_required_axes(task: TaskNode) -> tuple[str, ...]:
-	"""Every matrix axis declared with no values anywhere in ``task``'s tree, in first-seen order.
-
-	An empty-value axis (``matrix={"version": ()}``) is a required input: its cartesian product is
-	empty, so the node it sits on expands to zero leaves and that branch silently does nothing.
-	Every node's own matrix is inspected — unlike :func:`matrix_axes`, whose outermost-wins merge
-	would mask an inner empty axis behind an outer filled one of the same name — so callers can
-	reject a run before it expands to nothing.
-
+	"""
 	>>> unfilled_required_axes(Task("hi"))
 	()
 	>>> unfilled_required_axes(Parallel(Task("t"), matrix={"version": ()}))
@@ -338,14 +300,7 @@ def unfilled_required_axes(task: TaskNode) -> tuple[str, ...]:
 
 
 def override_matrix(task: TaskNode, overrides: Mapping[str, tuple[str, ...]]) -> TaskNode:
-	"""Replace each ``matrix[k]`` with ``overrides[k]``, and keep only the ``variants`` binding
-	one of ``overrides[k]``, wherever the key appears.
-
-	Strict on keys (every override must match an axis in the tree), permissive on
-	values for a ``matrix`` axis (any tuple is accepted) — a ``variants`` key instead selects
-	among the declared bundles, since replacing one key of a coupled bundle would fabricate a
-	combination the project never declared.
-
+	"""
 	Raises:
 		ValueError: if an override key matches no axis in the tree, or if it leaves a node with
 			no variant.
@@ -377,8 +332,7 @@ def override_matrix(task: TaskNode, overrides: Mapping[str, tuple[str, ...]]) ->
 def _no_variant_message(
 	variants: tuple[dict[str, str], ...], overrides: Mapping[str, tuple[str, ...]]
 ) -> str:
-	"""The error for an override that filters a node's variants down to nothing.
-
+	"""
 	>>> _no_variant_message(({"b": "x"}, {"b": "y"}), {"b": ("z",)})
 	'no variant matches b=z; the declared variants bind b: x, y'
 	"""
@@ -421,8 +375,7 @@ def apply_overrides(task: TaskNode, overrides: Mapping[str, tuple[str, ...]]) ->
 
 
 def matrix_bindings(matrix: dict[str, tuple[str, ...]]) -> tuple[MatrixBinding, ...]:
-	"""Generate all cartesian-product bindings from a matrix definition.
-
+	"""
 	>>> matrix_bindings({"PY": ("3.12", "3.13")})
 	((VarBinding(name='PY', value='3.12'),), (VarBinding(name='PY', value='3.13'),))
 	"""
@@ -434,8 +387,7 @@ def matrix_bindings(matrix: dict[str, tuple[str, ...]]) -> tuple[MatrixBinding, 
 
 
 def variant_bindings(variants: tuple[dict[str, str], ...]) -> tuple[MatrixBinding, ...]:
-	"""Each coupled variant bundle as one binding.
-
+	"""
 	>>> variant_bindings(({"backend": "thumbv7", "target": "thumbv7m-none-eabi"},))
 	((VarBinding(name='backend', value='thumbv7'), VarBinding(name='target', value='thumbv7m-none-eabi')),)
 	"""
@@ -445,12 +397,7 @@ def variant_bindings(variants: tuple[dict[str, str], ...]) -> tuple[MatrixBindin
 def node_bindings(
 	matrix: dict[str, tuple[str, ...]] | None, variants: tuple[dict[str, str], ...] | None
 ) -> tuple[MatrixBinding, ...]:
-	"""Every binding a node fans out over: its ``matrix`` cross product × its ``variants``.
-
-	An absent declaration is the identity — one empty binding — while a declared-but-empty one
-	(``matrix={"PY": ()}``, ``variants=()``) yields no bindings at all, so the node expands to
-	nothing; the required-axis and empty-variant checks reject that before a run.
-
+	"""
 	>>> node_bindings({"PY": ("3.13",)}, None) == matrix_bindings({"PY": ("3.13",)})
 	True
 	>>> node_bindings(None, ({"b": "x"}, {"b": "y"}))
@@ -466,7 +413,6 @@ def node_bindings(
 
 
 def binding_suffix(binding: MatrixBinding) -> str:
-	"""Format a matrix binding as a bracketed ``[name=value, ...]`` suffix."""
 	return "[" + ", ".join(f"{vb.name}={vb.value}" for vb in binding) + "]"
 
 
@@ -479,13 +425,7 @@ def expand_sequential_matrix(
 	help: str | None,
 	constructor: Callable[..., TaskNode] = Sequential,
 ) -> Parallel:
-	"""Expand an ordered group's matrix into a Parallel of cloned groups of ``constructor``'s
-	kind — a :class:`Sequential` by default, a :class:`Pipe` for a piped matrix.
-
-	Each per-binding clone carries the binding-scope env (container env with
-	matrix values substituted, plus the binding itself) so the display can show
-	it once at the group header instead of on every leaf.
-
+	"""
 	>>> bindings = node_bindings({"X": ("1", "2")}, None)
 	>>> result = expand_sequential_matrix((Task("build"), Task("test")), bindings, "ci", {}, None, None)
 	>>> len(result.tasks)
@@ -522,12 +462,7 @@ def expand_parallel_matrix(
 	container_cwd: Path | None,
 	help: str | None,
 ) -> Parallel:
-	"""Expand a Parallel's matrix into a flat Parallel of all binding × child products.
-
-	The shared ``container_env`` is kept on the outer Parallel only when it has the
-	same value across every binding; per-binding pieces land on the individual
-	specialized leaves via ``specialize_node``.
-
+	"""
 	>>> bindings = node_bindings({"PY": ("3.12", "3.13")}, None)
 	>>> result = expand_parallel_matrix((Task("test"),), bindings, None, {}, None, None)
 	>>> len(result.tasks)
@@ -547,10 +482,7 @@ def expand_parallel_matrix(
 
 
 def _when_from_cwd(cwd: Path | None) -> str | None:
-	"""The ``when`` prefix a leaf falls back to when it sets none: a relative ``cwd`` as its own
-	POSIX prefix, so a task rooted in a subdir runs only when that subdir changed. An absolute
-	``cwd`` — which could never match the repo-relative changed set — has no fallback.
-
+	"""
 	>>> _when_from_cwd(Path("code-gen"))
 	'code-gen'
 	>>> _when_from_cwd(None) is None
@@ -566,16 +498,7 @@ def expand_matrix(
 	ancestor_paths: str | PathScope | None = None,
 	ancestor_when: str | tuple[str, ...] | WhenPredicate | None = None,
 ) -> TaskNode:
-	"""Recursively expand all matrix parameters and propagate container env/cwd/paths/when into
-	leaves.
-
-	Execution and scoping read the accumulated values from leaves. A group rebuilt without a
-	matrix retains its own env/cwd/paths/when for display; a matrix expansion's synthesized
-	wrapper nodes carry env/cwd only — paths and when live on the specialized leaves. A child's
-	own ``cwd``/``paths``/``when`` takes precedence over an ancestor's. A leaf that ends up with a
-	relative ``cwd`` but no ``when`` falls back to gating on its ``cwd`` directory
-	(:func:`_when_from_cwd`); set ``when="."`` to opt back into always-run.
-
+	"""
 	>>> expand_matrix(Task("echo hi"))
 	Task(cmd='echo hi', name=None, env={}, cwd=None)
 	>>> result = expand_matrix(Parallel(Task("test"), matrix={"X": ("1", "2")}))

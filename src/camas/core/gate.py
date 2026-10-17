@@ -1,11 +1,6 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""The SA-delegation gate: scope the check node to the changed paths, run the checks, and
-classify the residual ``green`` vs ``needs_reasoning``; ``camas_gate`` first settles the
-registered fix node over the same paths (:func:`settle`).
-"""
-
 from __future__ import annotations
 
 import dataclasses
@@ -44,39 +39,21 @@ ResidualClass: TypeAlias = Literal["green", "needs_reasoning"]
 Decision: TypeAlias = Literal["continue", "block"]
 
 REPORT_TOKEN: Final = "{report}"
-"""The literal in :attr:`camas.v0.task.AgentFormat.args` that switches a leaf to path mode."""
 
 REPORT_DIR_PREFIX: Final = "camas-report-"
-"""Prefix on this machine's path-mode report directories, one per gate run — swept by
-:func:`prune_stale_report_dirs` once older than its max age.
-"""
 
 
 class GateOutcome(NamedTuple):
-	"""A gate run's verdict and the check run that produced it."""
-
 	residual_class: ResidualClass
 	node: TaskNode | None
-	"""The check node that ran and its result, paired — both set when a run happened (whether
-	``green`` or ``needs_reasoning``), both ``None`` when nothing ran. Diagnostics derive from
-	them only on ``needs_reasoning``.
-	"""
 	result: RunResult | None
 	budget: BudgetSummary | None
-	"""The post-drop budget census — the honest counts on the nothing-ran branches too, so the
-	wire report never advertises leaves the gate did not run. ``None`` when no budget was asked.
-	"""
 	nothing_ran: str | None = None
-	"""Why nothing ran, when nothing did — the cause line the agent-facing text prints."""
 	report_paths: tuple[Path | None, ...] = ()
-	"""Each leaf's path-mode report file, DFS order aligned with ``node``'s leaves — set for a
-	leaf whose ``agent_format.args`` used :data:`REPORT_TOKEN`, ``None`` for every other leaf.
-	"""
 
 
 def decision_of(residual_class: ResidualClass) -> Decision:
-	"""The routing for a residual class: a surviving residual blocks, else continue.
-
+	"""
 	>>> decision_of("green"), decision_of("needs_reasoning")
 	('continue', 'block')
 	"""
@@ -90,17 +67,11 @@ def decision_of(residual_class: ResidualClass) -> Decision:
 
 
 class FormattedNode(NamedTuple):
-	"""The result of :func:`with_agent_format`: the command-rewritten node, and each leaf's
-	path-mode report file (``None`` for a leaf that isn't in path mode), DFS order aligned with
-	the node's leaves.
-	"""
-
 	node: TaskNode
 	report_paths: tuple[Path | None, ...]
 
 
 def _allocate_report_path(report_dir: Path) -> Path:
-	"""A fresh, empty file under ``report_dir`` for one path-mode leaf to write its report to."""
 	fd, raw_path = tempfile.mkstemp(dir=report_dir, suffix=".report")
 	os.close(fd)
 	return Path(raw_path)
@@ -109,11 +80,6 @@ def _allocate_report_path(report_dir: Path) -> Path:
 def _append_args(
 	cmd: str | tuple[str, ...], args: str, report_path: Path | None
 ) -> str | tuple[str, ...]:
-	"""Append ``args`` to ``cmd`` with :data:`REPORT_TOKEN` substituted — shell-quoted into a
-	string command, per-token after splitting the template into a tuple command — so the
-	substituted path never re-parses through POSIX ``shlex`` (a Windows path would lose its
-	backslashes), mirroring ``{paths}`` injection (:func:`camas.core.scope._inject`).
-	"""
 	match cmd:
 		case str():
 			substituted = (
@@ -137,13 +103,7 @@ def _append_args(
 
 
 def with_agent_format(node: TaskNode, report_dir: Path) -> FormattedNode:
-	"""Append each leaf's ``agent_format.args`` to its command — the agent-only structured-output
-	variant the gate runs; a human run never applies this, so ``cmd`` is otherwise untouched.
-
-	A leaf whose ``args`` contains :data:`REPORT_TOKEN` is in path mode: the token is replaced
-	with a fresh file allocated under ``report_dir``, and that leaf's slot in ``report_paths``
-	carries the allocated path — the gate reads it for the payload once the leaf has run.
-
+	"""
 	>>> from camas.v0.task import AgentFormat
 	>>> import tempfile
 	>>> tmp = Path(tempfile.mkdtemp())
@@ -178,12 +138,7 @@ def with_agent_format(node: TaskNode, report_dir: Path) -> FormattedNode:
 
 
 def strip_agent_only_pipes(node: TaskNode) -> TaskNode:
-	"""The human-run shape of ``node``: an ``agent_only`` Pipe collapses to a single-stage Pipe
-	holding its first stage — the group's fields ride along, since env/cwd/matrix/paths/when
-	still apply to the human's run of that stage — while an agent keeps the full pipeline, the
-	same runner split as ``agent_format``'s args, which the gate appends on the agent path.
-	Consults no runner identity; the caller decides which path it is on.
-
+	"""
 	>>> strip_agent_only_pipes(Pipe("cargo clippy", "clippy-sarif", agent_only=True)).tasks[0].cmd
 	'cargo clippy'
 	>>> strip_agent_only_pipes(Pipe("a", "b")).tasks[0].cmd
@@ -216,10 +171,7 @@ def _has_agent_only(node: TaskNode) -> bool:
 
 
 def uses_path_mode(node: TaskNode) -> bool:
-	"""Whether any leaf in ``node`` puts :data:`REPORT_TOKEN` in its ``agent_format.args`` —
-	gates the report-directory allocation in :func:`run_gate` so a tree with no path-mode leaf
-	never touches disk for one.
-
+	"""
 	>>> from camas.v0.task import AgentFormat
 	>>> uses_path_mode(Task("pytest", agent_format=AgentFormat("--junitxml {report}", "junit")))
 	True
@@ -236,9 +188,6 @@ def uses_path_mode(node: TaskNode) -> bool:
 
 
 def _rmtree_if_stale(path: Path, cutoff: float) -> None:
-	"""Remove ``path`` when it's a directory older than ``cutoff``; best-effort, silent on
-	races with a concurrent gate run or the OS reclaiming the temp dir first.
-	"""
 	try:
 		if path.is_dir() and path.stat().st_mtime < cutoff:
 			shutil.rmtree(path, ignore_errors=True)
@@ -247,10 +196,6 @@ def _rmtree_if_stale(path: Path, cutoff: float) -> None:
 
 
 def prune_stale_report_dirs(max_age_s: float = STALE_TEMP_MAX_AGE_S) -> None:
-	"""Best-effort sweep of this machine's path-mode report directories from prior gate runs
-	older than ``max_age_s`` — bounds their growth in the system temp dir without disturbing the
-	current run's, which an agent may still need to inspect after an over-limit payload.
-	"""
 	base = Path(tempfile.gettempdir())
 	cutoff = time.time() - max_age_s
 	for stale in base.glob(f"{REPORT_DIR_PREFIX}*"):
@@ -266,10 +211,6 @@ async def settle(
 	base: Path | None = None,
 	leaf_color: bool = True,
 ) -> RunResult | None:
-	"""Run the ``fix`` node (``Config.agent.fix``) scoped to ``changed`` and record its timings — the
-	deterministic autofix ``camas_gate`` runs before its checks; ``None`` when there is no
-	fix node or no fix leaf covers ``changed``.
-	"""
 	if fix is None:
 		return None
 	keying: Final = observed(camas_dir, expand_matrix(fix), changed)
@@ -297,25 +238,6 @@ async def run_gate(
 	timings: Mapping[CacheKey, TaskTiming] | None = None,
 	leaf_color: bool = True,
 ) -> GateOutcome:
-	"""Run the check ``node`` over the ``changed`` paths and classify the residual.
-
-	The check node is expanded, time-boxed (``under``), scoped to ``changed``, and run; the gate
-	never mutates (the check node's leaves are non-mutating by convention). Untimed leaves are
-	run (and thereby measured); only leaves measured to exceed ``under`` are skipped — except a
-	pipe kept whole for its untimed siblings, which runs its over-budget stages too and counts
-	their failures against ``green``. ``green`` means the checks passed — or the change touched
-	nothing the checks cover, or every leaf was measured too slow for ``under``;
-	``needs_reasoning`` means a check still fails. Budgeting precedes scoping, but budgets
-	against observations taken at this
-	change's own scope (:func:`camas.core.timings.scope_of`) — a whole-tree record is not an
-	estimate of a two-file gate, and using it as one excluded the heavy-but-scopable checks from
-	exactly the small changes they are cheap on.
-
-	A path-mode leaf's report file is allocated under a fresh, machine-temp ``camas-report-*``
-	directory for this call — left on disk (not cleaned up here) so an over-limit payload's
-	pointer stays valid after the call returns; :func:`prune_stale_report_dirs` bounds their
-	accumulation.
-	"""
 	expanded = expand_matrix(node)
 	final_keying: Observed
 	summary: BudgetSummary | None

@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""Async tree execution: leaves run as subprocesses, events fan out to Effects."""
-
 from __future__ import annotations
 
 import asyncio
@@ -61,13 +59,9 @@ if TYPE_CHECKING:
 
 
 Limiter: TypeAlias = "asyncio.Semaphore | nullcontext[None]"
-"""Throttles concurrent leaves under ``--jobs`` (:data:`camas.core.jobs.JOBS_UNIT`); a no-op
-when unbounded."""
 
 
 class Signalable(Protocol):
-	"""The subset of ``asyncio.subprocess.Process`` the interrupt path drives."""
-
 	@property
 	def returncode(self) -> int | None: ...
 
@@ -77,30 +71,14 @@ class Signalable(Protocol):
 
 @dataclass
 class Interrupts:
-	"""Mutable Ctrl-C coordinator threaded through a run, in the style of ``dispatch``."""
-
 	procs: dict[int, Signalable]
-	"""Live leaf subprocesses by leaf index; populated/popped by ``run_cmd``."""
 	count: int = 0
 	main_task: asyncio.Task[tuple[TaskResult, ...]] | None = None
 
 	def landed(self) -> bool:
-		"""Whether any Ctrl-C has arrived — askable again after an await, where the signal
-		handler may have run.
-		"""
 		return self.count > 0
 
 	def register(self, states: list[LeafState], leaf_index: int, proc: Signalable) -> None:
-		"""Store a live leaf proc; a landed interrupt that missed its registration — the
-		spawn-window Ctrl-C — replays the missed presses now. A child reaped in that window
-		owns the Interrupting mark only when its returncode is SIGINT's death signature
-		(:func:`died_of_sigint`); any other reaped child exited on its own and keeps its own
-		attribution. A natural death reaped but not yet delivered by the watcher's callback
-		still reads ``None`` and is marked — that sub-window cannot be told from a group kill.
-		On Windows SIGINT is not a sendable signal, so the replayed presses 1-2 are
-		suppressed no-ops; the kill press delivers a real kill. The mark lands either way —
-		the interrupted spawn reads Stopped.
-		"""
 		self.procs[leaf_index] = proc
 		if not self.landed():
 			return
@@ -115,8 +93,6 @@ class Interrupts:
 
 
 class RunContext(NamedTuple):
-	"""Run-invariant context threaded through the ``execute`` recursion."""
-
 	dispatch: EventSink
 	leaves: tuple[Task, ...]
 	index_map: dict[int, int]
@@ -124,34 +100,15 @@ class RunContext(NamedTuple):
 	interrupts: Interrupts
 	states: list[LeafState]
 	base: Path | None
-	"""The frame a leaf's ``cwd`` is spawned relative to (:func:`spawn_cwd`); ``None`` when the
-	tasks source has no on-disk location to anchor to (a scope run without a ``__file__``),
-	leaving a relative ``cwd`` to resolve against the process working directory."""
 	child_stdin: int | None
-	"""Why a served run denies leaves the parent's stdin instead of inheriting it: under the MCP
-	stdio server that stdin is a pipe the transport's reader thread holds open, and on Windows an
-	inherited copy stalls the Proactor loop's read of the leaf's *own* stdout, so EOF never
-	arrives and the run hangs (#253). A leaf is a batch command with no terminal to want, so
-	``DEVNULL`` also turns a stray stdin read into immediate EOF rather than a block."""
 	leaf_color: bool
-	"""``Config.leaf_color``: whether camas forces color on in the leaf environment
-	(:func:`subprocess_env`)."""
 	identities: tuple[CacheKey, ...] | None
-	"""Per-leaf cache keys, parallel to ``leaves``, computed before any command rewrite; ``None``
-	when the run was threaded without them."""
 
 
 if sys.platform != "win32":
 	import termios
 
 	def suppress_ctrl_c_echo() -> list[Any] | None:
-		"""Clear ``ECHOCTL`` on the controlling tty for the run; return prior attrs to restore.
-
-		A tty echoes the interrupt char as ``^C`` at the cursor when Ctrl-C is pressed;
-		on some terminals (notably the WSL pty under Windows Terminal) that echo carries
-		a newline, which slides the live tree's repaint anchor down and strands rows.
-		Returns ``None`` (a no-op) off a tty (piped / captured).
-		"""
 		try:
 			fd = sys.stdin.fileno()
 			saved = termios.tcgetattr(fd)
@@ -163,26 +120,18 @@ if sys.platform != "win32":
 		return saved
 
 	def restore_tty(saved: list[Any] | None) -> None:
-		"""Restore tty attributes captured by :func:`suppress_ctrl_c_echo`."""
 		if saved is not None:
 			termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, saved)
 
 else:  # pragma: no cover
 
 	def suppress_ctrl_c_echo() -> list[Any] | None:
-		"""Ctrl-C echo suppression is POSIX-only; a no-op on Windows."""
 		return None
 
-	def restore_tty(saved: list[Any] | None) -> None:
-		"""No tty state to restore on Windows."""
+	def restore_tty(saved: list[Any] | None) -> None: ...
 
 
 def signal_press(proc: Signalable, presses: int) -> None:
-	"""One escalation step — SIGINT, or kill once the kill press has been reached — best
-	effort: a gone transport's raise (or Windows rejecting SIGINT) is suppressed here, the
-	one place the delivery policy owns it. ``presses`` is the 1-based press number this step
-	delivers — SIGINT below ``KILL_PRESSES``, kill from it on.
-	"""
 	with suppress(OSError, ValueError):
 		if presses >= KILL_PRESSES:
 			proc.kill()
@@ -191,25 +140,16 @@ def signal_press(proc: Signalable, presses: int) -> None:
 
 
 WINDOWS_CTRL_C_EXIT: Final = 0xC000013A
-"""STATUS_CONTROL_C_EXIT — the Windows console's death signature for the same group kill the
-POSIX signatures name."""
 
 KILL_DEATH_RC: Final = -9 if sys.platform != "win32" else 1
-"""The returncode a child killed by the kill press reports — SIGKILL's negative signal on
-POSIX, TerminateProcess's exit code on Windows."""
 
 SIGINT_DEATH_SIGNATURES: Final = (
 	(WINDOWS_CTRL_C_EXIT,) if sys.platform == "win32" else (-signal.SIGINT, INTERRUPT_RC)
 )
-"""The platform's SIGINT death signatures — the reaped-child returncodes a landed interrupt
-honestly owns."""
 
 
 def unwound_rc(unreaped: frozenset[int], leaf_index: int, returncode: int | None) -> int:
-	"""The returncode a stage reports after an unwind — :data:`KILL_DEATH_RC`, the killed
-	child's own code, when the unwind could not reap it in time, so a wedge never reads as
-	success.
-
+	"""
 	>>> unwound_rc(frozenset({1}), 1, None) == KILL_DEATH_RC
 	True
 	>>> unwound_rc(frozenset(), 0, 3)
@@ -219,29 +159,14 @@ def unwound_rc(unreaped: frozenset[int], leaf_index: int, returncode: int | None
 
 
 def died_of_sigint(returncode: int | None) -> bool:
-	"""Whether a reaped child's returncode is one of :data:`SIGINT_DEATH_SIGNATURES` — the
-	negative signal and the 128 + signal KeyboardInterrupt teardown exit on POSIX, the console
-	kill code on Windows — the only reaped children a landed interrupt honestly owns. A child
-	that exits 130 on its own is indistinguishable from that teardown and reads Stopped in the
-	same window.
-	"""
 	return returncode in SIGINT_DEATH_SIGNATURES
 
 
 def owns_mark(returncode: int | None) -> bool:
-	"""Whether a proc's returncode allows the Interrupting mark — live (``None``), or reaped
-	with SIGINT's death signature (:func:`died_of_sigint`).
-	"""
 	return returncode is None or died_of_sigint(returncode)
 
 
 def step_interrupt(interrupts: Interrupts, states: list[LeafState]) -> None:
-	"""Advance escalation one Ctrl-C press: forward SIGINT, again, kill, then cancel the run.
-	A child reaped without SIGINT's death signature exited on its own and keeps its own
-	attribution; one reaped with it owns the mark without signals — the press's group kill.
-	A reaped-but-undelivered natural death reads ``None`` at the probe and is marked too —
-	the sub-window the two cannot be told apart.
-	"""
 	interrupts.count += 1
 	if interrupts.count > KILL_PRESSES:
 		if interrupts.main_task is not None:  # pragma: no branch
@@ -261,20 +186,6 @@ async def await_run(
 	interrupts: Interrupts,
 	states: list[LeafState],
 ) -> tuple[TaskResult, ...] | None:
-	"""Await the run task; a 4th Ctrl-C cancels it, returning ``None`` for the caller to
-	rebuild the results from the states. A cancellation of the awaiting task
-	itself — a client dropping a served run — kills the tracked leaves, cancels the run, and
-	re-raises; the count having passed ``KILL_PRESSES`` is what tells the two apart (3.11+
-	cancels the awaited task when the waiter is cancelled, so ``main_task.cancelled()`` is
-	true in both cases). A ``KeyboardInterrupt`` caught here is a host outside
-	``asyncio.run`` — whose own handler owns Ctrl-C on 3.11+ — interrupting the coroutine
-	directly; it kills the tracked leaves, marks them like the other sites do, and awaits the
-	run's unwind before returning.
-
-	Raises:
-		asyncio.CancelledError: when the awaiting task is cancelled before the 4th press —
-			the client's cancellation, re-raised, not the press's.
-	"""
 	try:
 		return await main_task
 	except asyncio.CancelledError:
@@ -299,20 +210,10 @@ async def await_run(
 
 
 FORCED_COLOR: Final = {"FORCE_COLOR": "1", "CLICOLOR_FORCE": "1"}
-"""What camas adds so a piped tool still colors, and — by its keys — what it takes back out when
-the environment says no."""
 
 
 def subprocess_env(merged: dict[str, str], *, color: bool = True) -> dict[str, str]:
-	"""Leaf-subprocess env: defaults merged underneath ``merged``. Color is forced by default —
-	camas pipes the leaf, so a tool that probes for a terminal would otherwise drop the color the
-	tree and an ANSI-rendering CI log both want. ``color=False`` (``Config(leaf_color=False)``)
-	leaves that decision to the environment instead, for a leaf whose output something parses or
-	asserts on: the forcing env is inherited by the leaf's own children, so it reaches a nested
-	command whose stdout the leaf itself captured. ``NO_COLOR`` wins over both — when non-empty,
-	the reading no-color.org specifies and :func:`camas.core.render.color_on` already applies to
-	camas's own output.
-
+	"""
 	>>> subprocess_env({})
 	{'FORCE_COLOR': '1', 'CLICOLOR_FORCE': '1', 'PYTHONUNBUFFERED': '1'}
 	>>> subprocess_env({}, color=False)
@@ -333,10 +234,7 @@ def subprocess_env(merged: dict[str, str], *, color: bool = True) -> dict[str, s
 
 
 def drop_case_variants(overlay: dict[str, str], inherited: dict[str, str]) -> dict[str, str]:
-	"""``inherited`` minus entries whose names collide case-insensitively with an ``overlay`` key —
-	on a case-insensitive env block, a differently-cased pre-existing entry would shadow the
-	overlay in the child.
-
+	"""
 	>>> drop_case_variants({"MYPYPATH": "new"}, {"Mypypath": "old", "OTHER": "kept"})
 	{'OTHER': 'kept'}
 	"""
@@ -345,17 +243,12 @@ def drop_case_variants(overlay: dict[str, str], inherited: dict[str, str]) -> di
 
 
 BATCH_SUFFIXES: Final = (".bat", ".cmd")
-"""The scripts Windows runs through ``cmd.exe`` — found by :func:`resolve_program`, never by
-process creation's own search."""
 
 CMD_METACHARACTERS: Final = frozenset('&|<>^%"\r\n')
-"""Characters ``cmd.exe`` re-parses in a batch script's command line rather than passing through."""
 
 
 def is_batch_program(name: str) -> bool:
-	"""Whether ``name`` names a ``.cmd``/``.bat`` script, however Windows spells it — trailing dots
-	and spaces included, which it strips from a file name.
-
+	"""
 	>>> is_batch_program("npx.CMD"), is_batch_program("npx.cmd. "), is_batch_program("npx.exe")
 	(True, True, False)
 	"""
@@ -363,12 +256,6 @@ def is_batch_program(name: str) -> bool:
 
 
 def resolve_program(argv: tuple[str, ...], env: Mapping[str, str]) -> tuple[str, ...]:
-	"""``argv`` with a bare program name replaced by the absolute path of the ``.cmd``/``.bat`` shim
-	it names on ``env``'s ``PATH`` (its key matched case-insensitively); any other program, a name
-	with a directory, an ``env`` without ``PATH``, or a miss passes through for process creation's
-	own search. Whatever runs a batch script, substituted or written, passes
-	:func:`refuse_cmd_reparse`.
-	"""
 	return refuse_cmd_reparse(_shim_on_path(argv, env) or argv)
 
 
@@ -384,13 +271,6 @@ def _shim_on_path(argv: tuple[str, ...], env: Mapping[str, str]) -> tuple[str, .
 
 
 def refuse_cmd_reparse(argv: tuple[str, ...]) -> tuple[str, ...]:
-	"""``argv`` unchanged, unless it runs a script :func:`is_batch_program` recognizes and one of its
-	tokens — the script's path included — holds a :data:`CMD_METACHARACTERS` character.
-
-	Raises:
-		OSError: naming that token, which ``cmd.exe`` would execute or expand instead of passing it
-			through.
-	"""
 	batch: Final = bool(argv) and is_batch_program(argv[0])
 	unsafe: Final = next((token for token in argv if CMD_METACHARACTERS.intersection(token)), None)
 	if batch and unsafe is not None:
@@ -404,9 +284,7 @@ def refuse_cmd_reparse(argv: tuple[str, ...]) -> tuple[str, ...]:
 
 
 def spawn_cwd(base: Path | None, cwd: Path | None) -> Path | None:
-	"""A leaf's spawn-time cwd: ``cwd`` is authored relative to ``base``; an absolute ``cwd``,
-	an unset ``cwd``, or an unset ``base`` each pass through unresolved.
-
+	"""
 	>>> from pathlib import Path
 	>>> spawn_cwd(None, None) is None
 	True
@@ -430,12 +308,7 @@ def spawn_cwd(base: Path | None, cwd: Path | None) -> Path | None:
 
 
 def unusable_cwd(cwd: Path | None) -> str | None:
-	"""``cwd`` when a leaf could not have been spawned in it, else ``None`` — asked only after a
-	spawn has already failed, to attribute a failure the OS declined to attribute itself.
-
-	Answers about the real filesystem, so these ask it about this module's own file and directory —
-	which exist, and are what they are, wherever the suite runs from.
-
+	"""
 	>>> from pathlib import Path
 	>>> unusable_cwd(None) is None
 	True
@@ -450,13 +323,11 @@ def unusable_cwd(cwd: Path | None) -> str | None:
 	return None
 
 
-class UnstartableCommandError(Exception):
-	"""A leaf no spawn could start, carrying the message its Errored completion reports."""
+class UnstartableCommandError(Exception): ...
 
 
 def command_argv(cmd: str | tuple[str, ...]) -> tuple[str, ...]:
-	"""``cmd``'s argv for a spawn.
-
+	"""
 	Raises:
 		UnstartableCommandError: for a command with no program, or one ``shlex`` cannot split.
 
@@ -481,16 +352,7 @@ def command_argv(cmd: str | tuple[str, ...]) -> tuple[str, ...]:
 
 
 def spawn_error_message(exc: OSError | ValueError, program: str, cwd: Path | None) -> str:
-	"""The Errored message for a leaf whose spawn raised ``exc``: the canonical
-	'no such file or directory' for a missing executable, else the OS ``strerror``, else the
-	rejected input's own reason.
-
-	Names the path the OS reported, else the leaf's ``cwd`` when that is what it could not have
-	run in, else the executable. Naming the executable for a leaf whose ``cwd`` is missing sends
-	the reader after a file that is present and fine — and Windows reports exactly that case as
-	'The directory name is invalid' with no path attached, so the ``cwd`` has to be filled in
-	from what camas passed rather than read out of the error.
-
+	"""
 	>>> from pathlib import Path
 	>>> spawn_error_message(FileNotFoundError(2, "No such file or directory"), "ghost", None)
 	'no such file or directory: ghost'
@@ -498,8 +360,6 @@ def spawn_error_message(exc: OSError | ValueError, program: str, cwd: Path | Non
 	...     FileNotFoundError(2, "No such file or directory", "gone"), "echo", Path("gone")
 	... )
 	'no such file or directory: gone'
-
-	The OS wins over both when all three differ:
 
 	>>> spawn_error_message(
 	...     FileNotFoundError(2, "No such file or directory", "named-by-os"),
@@ -524,14 +384,10 @@ def spawn_error_message(exc: OSError | ValueError, program: str, cwd: Path | Non
 
 
 def leaf_identity(ctx: RunContext, leaf_index: int) -> CacheKey | None:
-	"""The carried cache key for ``leaf_index``, when the run was threaded with identities."""
 	return ctx.identities[leaf_index] if ctx.identities is not None else None
 
 
 def leaf_result(ctx: RunContext, leaf_index: int, completion: Completion) -> TaskResult:
-	"""The TaskResult a leaf's completion produces — the one construction every completion
-	path shares.
-	"""
 	return TaskResult(
 		task_label(ctx.leaves[leaf_index]), completion, leaf_identity(ctx, leaf_index)
 	)
@@ -546,12 +402,6 @@ async def _spawn_stage(
 	base: Path | None,
 	leaf_color: bool,
 ) -> asyncio.subprocess.Process:
-	"""Spawn ``task`` with the shared env inheritance.
-
-	Raises:
-		UnstartableCommandError: from :func:`command_argv`, or from any ``OSError`` or
-			``ValueError`` the spawn raised.
-	"""
 	argv: Final = command_argv(task.cmd)
 	cwd: Final = spawn_cwd(base, task.cwd)
 	try:
@@ -574,7 +424,6 @@ async def _spawn_stage(
 
 
 def _completion(state: LeafState, rc: int, elapsed: float, output: Sequence[bytes]) -> Completion:
-	"""The one interrupt-attribution rule for every path that reaps a leaf."""
 	return (
 		Stopped(rc, elapsed, tuple(output))
 		if isinstance(state, Interrupting)
@@ -583,9 +432,6 @@ def _completion(state: LeafState, rc: int, elapsed: float, output: Sequence[byte
 
 
 async def _lines(stream: asyncio.StreamReader) -> AsyncIterator[bytes]:
-	"""Each line of ``stream``, newline included; a line longer than the stream's buffer limit
-	is read in pieces and arrives whole.
-	"""
 	pieces: list[bytes] = []
 	while True:
 		try:
@@ -602,11 +448,6 @@ async def _lines(stream: asyncio.StreamReader) -> AsyncIterator[bytes]:
 
 
 async def run_cmd(task: Task, leaf_index: int, ctx: RunContext) -> TaskResult:
-	"""Run one leaf as a subprocess, dispatching Started/Output/Completed events. Whatever
-	interrupts it — a cancel, a failing Effect — kills and reaps the child through
-	:func:`camas.core.unwind.unwind` before it propagates, so no child or transport outlives
-	the run.
-	"""
 	async with ctx.limiter:
 		if ctx.interrupts.count:
 			stopped: Final = Stopped(INTERRUPT_RC, 0.0, ())
@@ -659,17 +500,6 @@ async def run_cmd(task: Task, leaf_index: int, ctx: RunContext) -> TaskResult:
 
 
 async def run_pipe(stages: tuple[TaskNode, ...], ctx: RunContext) -> tuple[TaskResult, ...]:
-	"""Run a Pipe's stages concurrently, each stage's stdout wired into the next's stdin — the
-	last stage's stdout is the pipeline's output, its stderr merged in like a leaf's. Every
-	stage runs to completion (a dying stage feeds EOF downstream), and each stage's own exit is
-	its leaf's result, so ``pipefail`` holds: any non-zero stage fails the run. The
-	pipeline holds one limiter slot as a unit; its stages share it, since they must all be live
-	at once or a full pipe deadlocks its writer. Each stage's completion dispatches as it
-	reaps, like a leaf's. The ``os.pipe()`` fd wiring is exercised on Windows by the wheels
-	suite's run of the pipe tests. Whatever fails — a cancel, a spawn error, a failing Effect,
-	a landed interrupt — the readers are cancelled and every child is killed and awaited before
-	the failure propagates, so no transport outlives the loop.
-	"""
 	async with ctx.limiter:
 		return await _run_pipe_stages(stages, ctx)
 
@@ -698,11 +528,6 @@ async def _run_pipe_stages(stages: tuple[TaskNode, ...], ctx: RunContext) -> tup
 			)
 
 	def detach(leaked_read: int | None) -> tuple[asyncio.Future[None], ...]:
-		"""Ready the stages for an unwind: close a leaked pipe end, cancel the waiters so none
-		dispatches a completion mid-unwind, and drop the interrupt registrations — the readers
-		and waiters the unwind then drains. The readers keep their buffered tail: the waiters
-		await them through a shield, so cancelling a waiter cannot cut a reader short.
-		"""
 		if leaked_read is not None and leaked_read != ctx.child_stdin:
 			with suppress(OSError):
 				os.close(leaked_read)
@@ -715,10 +540,6 @@ async def _run_pipe_stages(stages: tuple[TaskNode, ...], ctx: RunContext) -> tup
 	async def wait_and_complete(
 		stage: Task, leaf_index: int, proc: asyncio.subprocess.Process
 	) -> None:
-		"""Dispatch the stage's completion as soon as it reaps — after its own readers drained,
-		so the completion's output never misses the tail — the per-leaf streaming every other
-		execution path has.
-		"""
 		await proc.wait()
 		for reader in stage_readers[leaf_index]:
 			await asyncio.shield(reader)
@@ -895,7 +716,6 @@ async def _run_pipe_stages(stages: tuple[TaskNode, ...], ctx: RunContext) -> tup
 
 
 async def skip_subtree(child: TaskNode, skip: Skipped, ctx: RunContext) -> tuple[TaskResult, ...]:
-	"""Dispatch a Skipped completion for every leaf in a subtree, in DFS order."""
 	results: tuple[TaskResult, ...] = ()
 	for idx in subtree_leaf_indices(child, ctx.index_map):
 		await ctx.dispatch(idx, CompletedEvent(ctx.leaves[idx], idx, skip, datetime.now()))
@@ -904,7 +724,6 @@ async def skip_subtree(child: TaskNode, skip: Skipped, ctx: RunContext) -> tuple
 
 
 async def execute(node: TaskNode, ctx: RunContext) -> tuple[TaskResult, ...]:
-	"""Walk a task subtree, returning one TaskResult per leaf in DFS order."""
 	match node:
 		case Task():
 			return (await run_cmd(node, ctx.index_map[id(node)], ctx),)
@@ -937,15 +756,6 @@ async def execute(node: TaskNode, ctx: RunContext) -> tuple[TaskResult, ...]:
 
 
 async def recovered_results(ctx: RunContext, states: list[LeafState]) -> tuple[TaskResult, ...]:
-	"""Rebuild the leaf results after the 4th press cancelled the task tree, which can no
-	longer return them. A ``Completed`` leaf keeps its carried completion; a leaf the cancel
-	caught mid-flight — still ``Waiting`` on the limiter, ``Running``, or ``Interrupting`` —
-	reads ``Stopped`` and dispatches the ``CompletedEvent`` its cancelled ``run_cmd`` never
-	will. An ``Interrupting`` leaf's returncode is the press-derived death code (SIGINT below
-	the kill press, the kill's code from it on); a ``Running`` or ``Waiting`` leaf reads
-	``INTERRUPT_RC`` like the pre-spawn catch does. Mid-flight output is unrecoverable — the
-	cancelled ``run_cmd`` owned the buffer, so the rebuilt completion carries none.
-	"""
 	results: list[TaskResult] = []
 	for leaf_index, state in enumerate(states):
 		match state:
@@ -986,13 +796,10 @@ async def run(
 	leaf_color: bool = True,
 	identities: tuple[CacheKey, ...] | None = None,
 ) -> RunResult:
-	"""Execute a task tree, dispatching events to every effect.
-
+	"""
 	Raises:
-		ValueError: when ``jobs`` is provided and less than 1, or when ``identities``
-			is provided and is not a tuple of per-leaf cache keys parallel to the run's leaves.
-		BaseExceptionGroup: every error raised by Effects during setup,
-			on_event, or teardown, collected per phase.
+		ValueError: on a non-positive ``jobs`` or mismatched ``identities``.
+		BaseExceptionGroup: errors raised by Effects.
 
 	>>> import asyncio
 	>>> asyncio.run(run(Task(("python", "-c", "pass")), jobs=1)).returncode

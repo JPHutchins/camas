@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""Depth-first tree walks and leaf-index bookkeeping."""
-
 from __future__ import annotations
 
 import sys
@@ -25,7 +23,6 @@ def iter_leaves(
 	depth: int,
 	is_last_chain: tuple[ChainLink, ...],
 ) -> Iterator[LeafInfo]:
-	"""Walk a task tree depth-first, yielding LeafInfo for each leaf."""
 	match node:
 		case Task():
 			yield LeafInfo(node, depth, is_last_chain)
@@ -40,12 +37,10 @@ def iter_leaves(
 
 
 def flatten_leaves(task: TaskNode) -> tuple[LeafInfo, ...]:
-	"""Flatten a task tree into a tuple of LeafInfo in depth-first order."""
 	return tuple(iter_leaves(task, depth=0, is_last_chain=()))
 
 
 def subtree_leaf_indices(task: TaskNode, index_map: dict[int, int]) -> tuple[int, ...]:
-	"""Collect all leaf indices within a subtree, in depth-first order."""
 	match task:
 		case Task():
 			return (index_map[id(task)],)
