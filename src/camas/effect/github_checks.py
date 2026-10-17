@@ -1,6 +1,17 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
+"""The ``GitHubChecks`` effect: one GitHub check run per leaf.
+
+It needs the ``camas[github_checks]`` extra and the workflow permission ``checks: write``.
+``token``, ``repository``, and ``sha`` default to ``GITHUB_TOKEN``, ``GITHUB_REPOSITORY``, and
+``GITHUB_SHA``, so in CI it is just ``--effects='(GitHubChecks(),)'``. On ``pull_request``
+events ``GITHUB_SHA`` is the merge commit, whose checks the PR Checks panel doesn't show; pass
+the head commit::
+
+    GitHubChecks(sha="${{ github.event.pull_request.head.sha || github.sha }}")
+"""
+
 from __future__ import annotations
 
 import asyncio

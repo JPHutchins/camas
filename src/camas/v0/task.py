@@ -33,7 +33,8 @@ if TYPE_CHECKING:
 
 
 PathScope: TypeAlias = "Callable[[tuple[str, ...]], tuple[str, ...]]"
-"""The changed paths to the arguments injected at ``{paths}``; ``()`` in is a full run."""
+"""Maps the changed paths to the arguments at ``{paths}``; called with ``()`` on a full run,
+and returning ``()`` on a scoped run skips the leaf."""
 
 
 WhenPredicate: TypeAlias = "Callable[[tuple[str, ...]], bool]"

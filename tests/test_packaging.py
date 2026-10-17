@@ -101,7 +101,7 @@ def derived_exclusion(optional: frozenset[str]) -> frozenset[str]:
 	return frozenset(path.name for path in public_effect_files() if combined_roots(path) & optional)
 
 
-def effect_excluded_members(node: ast.AST) -> tuple[str, ...]:
+def importers_of_optional_dependencies_members(node: ast.AST) -> tuple[str, ...]:
 	"""The members of the ``_importers_of_optional_dependencies`` set literal at a single AST node."""
 	match node:
 		case ast.Assign(targets=[ast.Name(id="_importers_of_optional_dependencies")], value=value):
@@ -113,7 +113,9 @@ def effect_excluded_members(node: ast.AST) -> tuple[str, ...]:
 def literal_exclusion(source: str) -> frozenset[str]:
 	"""The ``_importers_of_optional_dependencies`` set literal declared in setup.py source."""
 	return frozenset(
-		member for node in ast.walk(ast.parse(source)) for member in effect_excluded_members(node)
+		member
+		for node in ast.walk(ast.parse(source))
+		for member in importers_of_optional_dependencies_members(node)
 	)
 
 
