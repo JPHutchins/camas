@@ -29,7 +29,7 @@ class Finished(NamedTuple):
 
 
 class Skipped(NamedTuple):
-	"""A leaf skipped after an earlier failure.
+	"""A leaf skipped because of an earlier leaf's outcome.
 
 	>>> Skipped(1)
 	Skipped(returncode=1, blocked_by=None)
@@ -38,13 +38,13 @@ class Skipped(NamedTuple):
 	"""
 
 	returncode: int
-	"""The failed leaf's return code."""
+	"""The blocking leaf's return code."""
 	blocked_by: str | None = None
-	"""The failed leaf's label, when known."""
+	"""The blocking leaf's label, when known."""
 
 
 class Stopped(NamedTuple):
-	"""A leaf an interrupt stopped.
+	"""A leaf the runner stopped.
 
 	>>> Stopped(130, 0.5, (b"caught SIGINT",))
 	Stopped(returncode=130, elapsed=0.5, output=(b'caught SIGINT',))

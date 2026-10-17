@@ -13,12 +13,14 @@ if use_mypyc:
 	from mypyc.build import mypycify
 
 	_init_templates_read_as_text = {"starter.py", "starter_verbose.py"}
-	_named_tuples_with_exception_fields = {"check.py", "state.py"}
+	_named_tuples_with_exception_fields = {"state.py"}
+	_outlived_its_exception_named_tuple = {"check.py"}
 	_package_init_with_eager_imports = {"__init__.py"}
 	_importers_of_optional_dependencies = {"github_checks.py", "ctrf.py"}
 	_main_excluded = (
 		_init_templates_read_as_text
 		| _named_tuples_with_exception_fields
+		| _outlived_its_exception_named_tuple
 		| _package_init_with_eager_imports
 	)
 	ext_modules = mypycify(

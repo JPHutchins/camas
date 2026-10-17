@@ -212,7 +212,7 @@ class AgentFormat(NamedTuple):
 	"""Appended to the command on gate runs; a literal ``{report}`` names the file the gate reads."""
 	kind: OutputKind
 	limit: int = 8_000
-	"""Characters of a structured payload or report file the gate inlines before pointing at the full output."""
+	"""Characters of a structured payload or report file the gate inlines."""
 
 
 _EMPTY_ENV: Mapping[str, str] = MappingProxyType({})
@@ -258,13 +258,13 @@ class Task:
 	env: Mapping[str, str]
 	cwd: Path | None
 	help: str | None
-	"""Shown by ``--list`` and ``--help`` in place of the command."""
+	"""A one-line description camas shows for the task."""
 	mutates: bool
-	"""The leaf writes the workspace; ``--under`` orders it ahead of read-only leaves."""
+	"""The leaf writes the workspace."""
 	paths: str | PathScope | None
 	"""The scope a ``{paths}`` command narrows to on a scoped run."""
 	when: str | tuple[str, ...] | WhenPredicate | None
-	"""Which changes keep the leaf in a scoped run; unset, a leaf with a relative ``cwd`` gates on it."""
+	"""Which changes keep the leaf in a scoped run."""
 	agent_format: AgentFormat | None
 
 	def __init__(
@@ -373,16 +373,16 @@ class Group:
 	tasks: tuple[TaskNode, ...]
 	name: str | None
 	matrix: dict[str, tuple[str, ...]] | None
-	"""A cross product: one copy of the group per combination of axis values."""
+	"""Axis values the group expands over, as a cross product."""
 	variants: tuple[dict[str, str], ...] | None
-	"""Coupled bundles of values, run as listed rather than crossed."""
+	"""Coupled bundles of axis values, not crossed with each other."""
 	env: dict[str, str]
 	cwd: Path | None
 	help: str | None
 	paths: str | PathScope | None
-	"""The default ``{paths}`` scope for descendant leaves that set none."""
+	"""A default ``{paths}`` scope for the group's leaves."""
 	when: str | tuple[str, ...] | WhenPredicate | None
-	"""The default ``when`` for descendant leaves that set none."""
+	"""A default ``when`` for the group's leaves."""
 
 	def __init__(
 		self,
