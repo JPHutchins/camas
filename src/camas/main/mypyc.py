@@ -52,9 +52,9 @@ def signature_fields_from_source(cls: Any) -> list[tuple[str, Any, Any, Any]] | 
 	)
 	if init_node is None:
 		return None
-	args = init_node.args.args[1:]  # drop ``self``
+	args_after_self = init_node.args.args[1:]
 	defaults = init_node.args.defaults
-	required = len(args) - len(defaults)
+	required = len(args_after_self) - len(defaults)
 	return [
 		(
 			arg.arg,
@@ -62,13 +62,13 @@ def signature_fields_from_source(cls: Any) -> list[tuple[str, Any, Any, Any]] | 
 			resolve_in_namespace(arg.annotation, ns) if arg.annotation else Any,
 			MISSING if i < required else resolve_in_namespace(defaults[i - required], ns),
 		)
-		for i, arg in enumerate(args)
+		for i, arg in enumerate(args_after_self)
 	]
 
 
 def resolve_in_namespace(node: ast.expr, ns: Mapping[str, Any]) -> Any:
 	src = ast.unparse(node)
 	try:
-		return eval(src, dict(ns))  # evaluating our own annotations
+		return eval(src, dict(ns))
 	except Exception:
 		return src

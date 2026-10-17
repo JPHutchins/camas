@@ -603,7 +603,6 @@ class Pipe(Group):
 		Raises:
 			ValueError: when there is no stage, a stage is not a ``Task``, or a stage repeats.
 		"""
-		# Explicit base call — zero-arg super() breaks under mypyc's compiled subclasses.
 		Group.__init__(
 			self,
 			*tasks,

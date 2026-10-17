@@ -266,23 +266,17 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 
 	parser: Final = build_parser(state)
 
-	# ``--init`` scaffolds precisely when there is no valid tasks.py, so it runs identically in
-	# either state, ahead of the match. ``parse_known_args`` tolerates the per-task matrix axis
-	# flags a normal run passes (added inside the LoadOk arm); on the ``--init`` path there are no
-	# such flags, so it re-parses strictly first, surfacing an unknown-flag typo before scaffolding.
-	init_args: Final = parser.parse_known_args(head)[0]
-	if init_args.init:
-		strict = parser.parse_args(head)
-		sys.exit(write_starter_tasks_py(Path.cwd(), verbose=strict.verbose))
-	if init_args.verbose:
+	lenient_args: Final = parser.parse_known_args(head)[0]
+	if lenient_args.init:
+		strict_args = parser.parse_args(head)
+		sys.exit(write_starter_tasks_py(Path.cwd(), verbose=strict_args.verbose))
+	if lenient_args.verbose:
 		print(
 			"warning: --verbose only applies to --init; ignoring it for this run", file=sys.stderr
 		)
 
 	match state:
 		case LoadErr() as err:
-			# No per-task matrix axes to augment; parse strictly so typos in
-			# flags surface instead of being silently consumed.
 			args = parser.parse_args(head)
 			if args.list or args.tree:
 				print(format_load_error_hint(err.source, err.exception))
@@ -417,9 +411,6 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 					print(f"error: {e}", file=sys.stderr)
 					sys.exit(2)
 
-			# A human run collapses agent_only Pipes to their first stage — the agent gets the
-			# full pipeline, the human the stage's plain output. Everything after this point
-			# (matrix emission, budgeting, dry-run, the run itself) is the human shape.
 			if not in_agent:
 				resolved = strip_agent_only_pipes(resolved)
 
@@ -466,8 +457,6 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 				sys.exit(2)
 
 			if requested_but_unusable(cli_requested, cli_changed):
-				# Checked ahead of both branches below, since --under exits before the scoping one is
-				# reached.
 				print(coverage_message(cli_requested))
 				sys.exit(0)
 
@@ -495,8 +484,6 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 			cli_observed: Final = timings.observed(camas_dir, cli_expanded, cli_changed)
 			effects = keyed_to_run(effects, cli_observed)
 
-			# Without a budget there is nothing to order against, so scope up front; with no paths
-			# named, that is every leaf at its full-run default.
 			if cli_observed.node is None:
 				print(coverage_message(cli_changed))
 				sys.exit(0)

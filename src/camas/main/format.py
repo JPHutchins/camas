@@ -412,8 +412,6 @@ def format_try_hint(color: bool) -> str:
 
 
 def format_reference(color: bool) -> str:
-	# Source is the package's install path — a local directory openable without a
-	# network round-trip; examples ship only on GitHub, not in the wheel.
 	entries = (
 		("Source (docs live here)", str(Path(__file__).parent.parent)),
 		("Examples", "https://github.com/JPHutchins/camas/tree/main/examples"),

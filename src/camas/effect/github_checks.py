@@ -445,8 +445,6 @@ class GitHubChecks:
 			for r in await asyncio.gather(*pipelines, return_exceptions=True)
 			if isinstance(r, BaseException)
 		)
-		# HTTP/OS errors were already logged by post_then_patch; any other exception
-		# type is a bug (KeyError, AttributeError, etc.) — log so it isn't silent.
 		for err in errors:
 			if not isinstance(err, state.errors):
 				log_http_error("github_checks: unexpected error in pipeline", err)

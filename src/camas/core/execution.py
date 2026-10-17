@@ -44,7 +44,7 @@ from .matrix import expand_matrix, resolve_cmd
 from .scope import with_default_paths
 from .task import task_label
 from .timings import (
-	CacheKey,  # runtime name get_type_hints resolves; TYPE_CHECKING-only would NameError
+	CacheKey,
 	raise_identities_mismatch,
 	reject_non_tuple_identities,
 )
@@ -643,36 +643,34 @@ async def _run_pipe_stages(stages: tuple[TaskNode, ...], ctx: RunContext) -> tup
 				),
 			)
 			results.append(leaf_result(ctx, leaf_index, spawned_completion))
-		# stages from here on never launched: spawn-failure semantics when one failed,
-		# else a landed interrupt
 		if spawn_failure is not None:
 			rc, message, failed_index, failed_name = spawn_failure
-			for remaining_stage in leaves[len(procs) :]:
-				remaining_index = ctx.index_map[id(remaining_stage)]
-				remaining_completion: Completion = (
+			for unlaunched_stage in leaves[len(procs) :]:
+				unlaunched_index = ctx.index_map[id(unlaunched_stage)]
+				unlaunched_completion: Completion = (
 					Errored(rc, message)
-					if remaining_index == failed_index
+					if unlaunched_index == failed_index
 					else Skipped(rc, failed_name)
 				)
 				await ctx.dispatch(
-					remaining_index,
+					unlaunched_index,
 					CompletedEvent(
-						remaining_stage,
-						remaining_index,
-						remaining_completion,
+						unlaunched_stage,
+						unlaunched_index,
+						unlaunched_completion,
 						datetime.now(),
 					),
 				)
-				results.append(leaf_result(ctx, remaining_index, remaining_completion))
+				results.append(leaf_result(ctx, unlaunched_index, unlaunched_completion))
 			return tuple(results)
 		stopped = Stopped(INTERRUPT_RC, 0.0, ())
-		for remaining_stage in leaves[len(procs) :]:
-			remaining_index = ctx.index_map[id(remaining_stage)]
+		for unlaunched_stage in leaves[len(procs) :]:
+			unlaunched_index = ctx.index_map[id(unlaunched_stage)]
 			await ctx.dispatch(
-				remaining_index,
-				CompletedEvent(remaining_stage, remaining_index, stopped, datetime.now()),
+				unlaunched_index,
+				CompletedEvent(unlaunched_stage, unlaunched_index, stopped, datetime.now()),
 			)
-			results.append(leaf_result(ctx, remaining_index, stopped))
+			results.append(leaf_result(ctx, unlaunched_index, stopped))
 		return tuple(results)
 
 	if spawn_failure is not None:

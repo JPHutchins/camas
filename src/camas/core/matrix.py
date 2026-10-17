@@ -597,9 +597,6 @@ def expand_matrix(
 				par_expanded, node_bindings(matrix, variants), task.name, env, cwd, task.help
 			)
 		case Ref():  # pyright: ignore[reportUnnecessaryComparison]  # the Ref/TaskNode parse-time gap
-			# A Ref that reached the engine was never resolved — the expression surface resolves
-			# and re-validates, so a hand-written one dies here. A Ref inside a pipe raises the
-			# stage message from the pipe arm above; anywhere else, the resolution message.
 			raise ValueError(UNRESOLVED_REF_MESSAGE)
 		case _:
 			assert_never(task)

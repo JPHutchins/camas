@@ -25,15 +25,17 @@ if TYPE_CHECKING:
 	from pathlib import Path
 
 
+_CSI: Final = r"\[[0-?]*[ -/]*[@-~]"
+_OSC_ENDING_IN_BEL: Final = r"\][^\x07]*\x07"
+_OSC_ENDING_IN_ST: Final = r"\][^\x1b]*\x1b\\"
+_ISO_2022_CHARSET_DESIGNATION: Final = r"[()*+][\x20-\x7e]"
+_TWO_CHARACTER_FE_AFTER_OSC: Final = r"[@-Z\\-_]"
+_CONTROL_CHARACTERS_BUT_TAB_AND_NEWLINE: Final = r"[\x00-\x08\x0b-\x1f\x7f]"
+
 ANSI_ESCAPE: Final = re.compile(
-	r"\x1b(?:"
-	r"\[[0-?]*[ -/]*[@-~]"  # CSI sequences (colors, cursor movement, etc.)
-	r"|\][^\x07]*\x07"  # OSC terminated by BEL (hyperlinks, window title)
-	r"|\][^\x1b]*\x1b\\"  # OSC terminated by ST
-	r"|[()*+][\x20-\x7e]"  # ISO-2022 character-set designation (e.g. ESC(B = G0 ASCII)
-	r"|[@-Z\\-_]"  # two-character Fe sequences (after OSC: ] is in range)
-	r")"
-	r"|[\x00-\x08\x0b-\x1f\x7f]"  # ASCII control chars except \t (\x09) and \n (\x0a)
+	rf"\x1b(?:{_CSI}|{_OSC_ENDING_IN_BEL}|{_OSC_ENDING_IN_ST}"
+	rf"|{_ISO_2022_CHARSET_DESIGNATION}|{_TWO_CHARACTER_FE_AFTER_OSC})"
+	rf"|{_CONTROL_CHARACTERS_BUT_TAB_AND_NEWLINE}"
 )
 
 

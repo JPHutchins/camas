@@ -512,8 +512,6 @@ class Termtree:
 
 
 def draw(ctx: TermtreeContext, *, final: bool = False) -> None:
-	# Write bytes directly: the box-drawing chars can't encode to cp1252 (Windows
-	# default in non-TTY contexts like captured subprocesses / piped CI logs).
 	size: Final = shutil.get_terminal_size()
 	frame: Final = render_frame(
 		ctx.rows,

@@ -327,11 +327,10 @@ def _plan_under(
 				id(d.task) for d in dispositions if isinstance(d, OverBudget)
 			)
 			has_untimed = any(isinstance(d, Untimed) for d in dispositions)
-			# A mid-pipe cut would rewire the pipeline (the survivor before the cut feeding the
-			# one after it) — a suffix-only cut keeps the surviving prefix, and an untimed
-			# sibling keeps the pipe whole for the first run that measures it.
 			pruned = prune_pipes(
-				node, lambda t: None if id(t) in over_budget_ids else t, lambda _: has_untimed
+				node,
+				keep_stage=lambda t: None if id(t) in over_budget_ids else t,
+				keep_whole_pipe=lambda _: has_untimed,
 			)
 			return _Planned(
 				pruned.node,

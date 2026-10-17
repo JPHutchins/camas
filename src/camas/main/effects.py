@@ -114,9 +114,6 @@ def signature_fields(cls: Any) -> list[tuple[str, Any, Any, Any]]:
 			for f in dataclasses.fields(cls)
 			if f.init
 		]
-	# ``eval_str=True`` resolves PEP 563 string annotations
-	# (``from __future__ import annotations``); fall back to the raw signature
-	# when names can't be resolved (e.g. TYPE_CHECKING-only forward refs).
 	try:
 		sig = inspect.signature(cls, eval_str=True)
 	except (ValueError, TypeError, NameError):

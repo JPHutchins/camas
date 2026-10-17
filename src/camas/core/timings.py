@@ -153,9 +153,6 @@ def record_observed(camas_dir: Path | None, leaves: Sequence[tuple[CacheKey, flo
 	if camas_dir is None:
 		return
 	with suppress(OSError, ValueError):
-		# Inside the suppress, not before it: ``is_dir`` raises ``PermissionError`` when a parent
-		# loses search permission, and this runs in a ``Stop`` hook where an exception is the one
-		# outcome that must not happen.
 		if camas_dir.is_dir():
 			record(camas_dir, leaves)
 

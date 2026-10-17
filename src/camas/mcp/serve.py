@@ -231,8 +231,8 @@ def version_satisfies(running: str, specifier: str) -> bool:
 			try:
 				return _op(op, _parse(running), _parse(pinned))
 			except ValueError:
-				return True  # can't parse — skip
-	return True  # unrecognized specifier — skip
+				return True
+	return True
 
 
 def _parse(version: str) -> tuple[int, ...]:
@@ -309,9 +309,7 @@ def build_server(session: Session) -> Server[object]:
 
 	def retrieve_probe_exception(task: asyncio.Task[None]) -> None:
 		if not task.cancelled():
-			exception = (
-				task.exception()
-			)  # retrieve a dead probe's failure — no unretrieved log, even idle
+			exception = task.exception()
 			if (
 				exception is not None
 			):  # pragma: no cover  # the suppressed surfaces cover the tested paths
@@ -822,8 +820,6 @@ async def run_budget(
 	changed = to_changed(req.paths, base_for(session))
 	if requested_but_unusable(req.paths, changed):
 		return nothing_covered_result(session, req.paths)
-	# Budget before scoping, as the gate does: an estimate is keyed by the label a leaf carries
-	# before its {paths} are injected, so budgeting the scoped tree looks up a label nothing records.
 	plan = plan_under(
 		expand_matrix(source),
 		budget_s,
@@ -1401,8 +1397,6 @@ async def fix_for(
 		)
 	except ValueError as e:
 		return error_result(str(e))
-	# The node to run and how to observe it are bound together, since neither is meaningful without
-	# the other: nothing to run means nothing to record, and a prepared bundle always has a node.
 	prepared: timings.Observed | None = None
 	blocked = unsatisfiable_message(fix_node) if fix_node is not None else None
 	if fix_node is not None and blocked is None:
@@ -1743,9 +1737,6 @@ def run_gate_cli(
 	requested = args.paths or (event.changed or ())
 	changed = to_changed(requested, base)
 	if requested_but_unusable(requested, changed):
-		# Green either way, nudge or not: nothing the checks cover changed, so there is nothing to
-		# block the turn on — and running the whole tree over an edit outside the repo is what
-		# scoping was asked to prevent.
 		print(coverage_message(requested))
 		return 0
 	camas_dir = (config if config is not None else Config()).camas_path(base)

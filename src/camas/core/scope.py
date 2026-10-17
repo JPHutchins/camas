@@ -260,19 +260,17 @@ class Scoped(NamedTuple):
 
 
 def scoped_walk(node: TaskNode, changed: tuple[str, ...]) -> Scoped:
-	originals: dict[int, tuple[Task, Task]] = {}
+	original_and_clone_by_clone_id: dict[int, tuple[Task, Task]] = {}
 
 	def resolve_stage(task: Task) -> Task | None:
 		scoped = _resolve_leaf(task, changed)
 		if scoped is not None:
-			# The scoped clone rides in the value so a pipe cut dropping its mapped tuple cannot
-			# free it and let a later clone recycle the id this entry keys on.
-			originals[id(scoped)] = (task, scoped)
+			original_and_clone_by_clone_id[id(scoped)] = (task, scoped)
 		return scoped
 
 	pruned = prune_pipes(node, resolve_stage)
 	pairs = (
-		tuple(originals[id(info.task)] for info in flatten_leaves(pruned.node))
+		tuple(original_and_clone_by_clone_id[id(info.task)] for info in flatten_leaves(pruned.node))
 		if pruned.node is not None
 		else ()
 	)

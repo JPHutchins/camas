@@ -148,7 +148,7 @@ def camas_task_arg(cmd: str | tuple[str, ...]) -> str | None:
 	'libs.build'
 	>>> camas_task_arg("nix develop -c camas test-all")
 	'test-all'
-	>>> camas_task_arg("uvx camas==0.1.28 lint") is None   # a pinned uvx spec is not the camas binary
+	>>> camas_task_arg("uvx camas==0.1.28 lint") is None
 	True
 	>>> camas_task_arg("uvx camas lint"), camas_task_arg("uv run --frozen camas lint")
 	('lint', 'lint')
@@ -160,7 +160,7 @@ def camas_task_arg(cmd: str | tuple[str, ...]) -> str | None:
 	True
 	>>> camas_task_arg(("camas", "check"))
 	'check'
-	>>> camas_task_arg('camas "lint') is None   # unsplittable: the run reports it, not this heuristic
+	>>> camas_task_arg('camas "lint') is None
 	True
 	"""
 	try:
