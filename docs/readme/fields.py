@@ -4,11 +4,18 @@
 from __future__ import annotations
 
 import ast
-import inspect
 from typing import NamedTuple
 
-from .markdown import code
-from .source import Module, Unresolved, constants, resolve, segment
+from .markdown import code, details
+from .source import (
+	Module,
+	Unresolved,
+	class_definitions,
+	constants,
+	resolve,
+	segment,
+	string_constant,
+)
 
 
 class Attribute(NamedTuple):
@@ -36,13 +43,17 @@ def fields_section(dotted: str) -> tuple[str, ...] | Unresolved:
 	target = resolve(dotted)
 	if isinstance(target, Unresolved):
 		return target
-	classes = {
-		node.name: node for node in target.module.tree.body if isinstance(node, ast.ClassDef)
-	}
-	if target.name not in classes:
+	defined = class_definitions(target.module)
+	if target.name not in defined:
 		return Unresolved(f"no class {target.name!r} in {target.module.path.as_posix()}")
-	fields = class_fields(classes[target.name], classes, target.module)
-	return (*table(fields), *details(target.name, fields))
+	fields = class_fields(defined[target.name], defined, target.module)
+	return (
+		*table(fields),
+		*details(
+			f"<code>{target.name}</code> fields",
+			tuple((label(field), field.doc) for field in fields if field.doc),
+		),
+	)
 
 
 def table(fields: tuple[Field, ...]) -> tuple[str, ...]:
@@ -54,25 +65,6 @@ def row(field: Field) -> str:
 	shown = accepts if field.accepts == field.stored else f"{accepts} → {code(field.stored)}"
 	default = "" if field.variadic else "required" if field.default is None else code(field.default)
 	return f"| `{label(field)}` | {shown} | {default} |"
-
-
-def details(name: str, fields: tuple[Field, ...]) -> tuple[str, ...]:
-	documented = tuple((field, field.doc) for field in fields if field.doc)
-	if not documented:
-		return ()
-	return (
-		"",
-		f"<details><summary><code>{name}</code> fields</summary>",
-		"",
-		*(line for field, doc in documented for line in bullet(label(field), doc)),
-		"",
-		"</details>",
-	)
-
-
-def bullet(name: str, doc: str) -> tuple[str, ...]:
-	first, *rest = inspect.cleandoc(doc).splitlines()
-	return (f"- `{name}`: {first}", *(f"  {line}" if line else "" for line in rest))
 
 
 def label(field: Field) -> str:
@@ -131,11 +123,7 @@ def attribute_docs(cls: ast.ClassDef, source: str) -> dict[str, Attribute]:
 		statement.target.id: Attribute(
 			segment(source, statement.annotation),
 			segment(source, statement.value) if statement.value is not None else None,
-			following.value.value
-			if isinstance(following, ast.Expr)
-			and isinstance(following.value, ast.Constant)
-			and isinstance(following.value.value, str)
-			else None,
+			string_constant(following),
 		)
 		for statement, following in zip(cls.body, (*cls.body[1:], None), strict=True)
 		if isinstance(statement, ast.AnnAssign)

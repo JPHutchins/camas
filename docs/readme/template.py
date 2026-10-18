@@ -6,6 +6,8 @@ from __future__ import annotations
 import re
 from typing import Final, NamedTuple
 
+from .alias import alias_section
+from .callables import function_section, protocol_section
 from .fields import fields_section
 from .source import Unresolved
 
@@ -46,5 +48,11 @@ def generate(directive: str) -> tuple[str, ...] | Unresolved:
 	match directive.split():
 		case ["fields", dotted]:
 			return fields_section(dotted)
+		case ["function", dotted]:
+			return function_section(dotted)
+		case ["protocol", dotted]:
+			return protocol_section(dotted)
+		case ["alias", dotted]:
+			return alias_section(dotted)
 		case _:
 			return Unresolved(f"unknown directive {directive!r}")

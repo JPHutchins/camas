@@ -56,3 +56,17 @@ def constants(module: Module) -> dict[str, str]:
 
 def segment(source: str, node: ast.AST) -> str:
 	return ast.get_source_segment(source, node) or ""
+
+
+def string_constant(statement: ast.stmt | None) -> str | None:
+	if (
+		isinstance(statement, ast.Expr)
+		and isinstance(statement.value, ast.Constant)
+		and isinstance(statement.value.value, str)
+	):
+		return statement.value.value
+	return None
+
+
+def class_definitions(module: Module) -> dict[str, ast.ClassDef]:
+	return {node.name: node for node in module.tree.body if isinstance(node, ast.ClassDef)}
