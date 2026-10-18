@@ -12,34 +12,24 @@ use_mypyc = os.environ.get("CAMAS_USE_MYPYC") == "1" and not is_editable
 if use_mypyc:
 	from mypyc.build import mypycify
 
-	# core/ stays interpreted: Effect's @runtime_checkable Protocol and Group's
-	# @dataclass-generated __eq__ don't survive compilation.
-	# github_checks.py stays interpreted: its optional httpx dep isn't available in
-	# the isolated build env, so mypy/mypyc compilation can't resolve it. ctrf.py
-	# stays interpreted for the same reason via the msgspec-backed _ctrf_model it
-	# lazy-imports; _ctrf_model itself is already skipped by the [!_] glob below.
-	# check.py and state.py stay interpreted: mypyc's NamedTuple codegen rejects
-	# the built-in ``Exception`` as a field type (KeyError: 'Exception' at import).
-	# starter.py and starter_verbose.py stay interpreted: they are the --init
-	# templates, shipped as plain source and read back as text by init.py.
-	# compose/ is a package, so the non-recursive main/*.py glob below never reaches it:
-	# it defines ProjectLoadError, caught across compiled call boundaries (mypyc miscompiles
-	# a native exception class used in ``except``), and its work is runpy + filesystem
-	# resolution of Project references (children run interpreted through runpy regardless),
-	# so compilation would buy nothing.
-	# __init__.py stays interpreted: a compiled package __init__ runs its body in
-	# create_module, before the import machinery sets __path__, so its eager
-	# ``from .entrypoint import …`` chain reaches the interpreted ``.check``
-	# sibling while camas.main is not yet a package (mypy >= 1.20).
-	_main_excluded = {"__init__.py", "check.py", "state.py", "starter.py", "starter_verbose.py"}
-	_effect_excluded = {"github_checks.py", "ctrf.py"}
+	_init_templates_read_as_text = {"starter.py", "starter_verbose.py"}
+	_named_tuples_with_exception_fields = {"state.py"}
+	_outlived_its_exception_named_tuple = {"check.py"}
+	_package_init_with_eager_imports = {"__init__.py"}
+	_importers_of_optional_dependencies = {"github_checks.py", "ctrf.py"}
+	_main_excluded = (
+		_init_templates_read_as_text
+		| _named_tuples_with_exception_fields
+		| _outlived_its_exception_named_tuple
+		| _package_init_with_eager_imports
+	)
 	ext_modules = mypycify(
 		[
 			*(str(p) for p in Path("src/camas/main").glob("*.py") if p.name not in _main_excluded),
 			*(
 				str(p)
 				for p in Path("src/camas/effect").glob("[!_]*.py")
-				if p.name not in _effect_excluded
+				if p.name not in _importers_of_optional_dependencies
 			),
 		],
 		opt_level="3",

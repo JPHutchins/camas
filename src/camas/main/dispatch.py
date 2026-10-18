@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""CLI dispatch: resolve the tasks source, parse argv, then run or print."""
-
 from __future__ import annotations
 
 import argparse
@@ -70,13 +68,6 @@ if TYPE_CHECKING:
 
 
 def dispatch_arg(arg: str, tasks: Mapping[str, TaskNode]) -> TaskNode:
-	"""Interpret a CLI arg: task name ⇒ lookup, else inline expression.
-
-	The name is matched verbatim first (so a hyphenated ``[tool.camas.tasks]``
-	key resolves directly), then with hyphens folded to underscores — so the
-	``tasks.py`` binding ``test_all`` is reachable as the conventional
-	``camas test-all``, which would otherwise parse as a subtraction.
-	"""
 	for candidate in (arg, arg.replace("-", "_")):
 		if candidate in tasks:
 			return tasks[candidate]
@@ -103,13 +94,6 @@ def run_under(
 	base: Path | None = None,
 	leaf_color: bool = True,
 ) -> int:
-	"""Plan and run the leaves of ``source`` that fit ``budget_s``; return the exit code.
-
-	``source`` is the *unscoped* tree and the scoping to ``changed`` happens after the budget, which
-	is the order the gate uses and the only one that works: an estimate is keyed by the label a leaf
-	carries before its ``{paths}`` are injected, so budgeting an already-scoped tree looks up a label
-	nothing ever records, and a nameless ``{paths}`` leaf stays unmeasured however often it runs.
-	"""
 	if passthrough:
 		print("error: -- passthrough args cannot be combined with --under", file=sys.stderr)
 		return 2
@@ -151,23 +135,12 @@ def run_under(
 
 
 def finish_run(result: RunResult) -> int:
-	"""Print the interrupt banner for a Ctrl-C'd run and return the run's exit code."""
 	if result.interrupt_count:
 		print_interrupt_banner(result.interrupt_count)
 	return result.returncode
 
 
 def fix_cli(argv: list[str]) -> int:
-	"""``camas mcp fix [--paths P]…``: run the project's *registered* agent fix node
-	(``Config.agent.fix`` — whatever the user named it), scoped to the changed paths — taken from
-	``--paths`` or, failing that, a ``Stop`` or ``PostToolBatch`` event piped on stdin (the Claude
-	Code ``Stop`` autofix hook, or a hand-wired one). In the ``camas mcp`` namespace so it never
-	collides with a user's own ``camas <task>``. Always exits ``0`` — it runs the fix node for its
-	mutations, not as a pass/fail check; an unregistered fix node is simply a no-op. A ``Stop``
-	event's prompt is marked settling before the fix and settled once it returns, whatever it found
-	to do, releasing the async nudge waiting on it (:func:`camas.core.hook_event.await_settled`);
-	``--dry-run`` marks nothing.
-	"""
 	parser = argparse.ArgumentParser(
 		prog="camas mcp fix", description="Run the registered agent fix node."
 	)
@@ -195,7 +168,6 @@ def fix_cli(argv: list[str]) -> int:
 
 
 def _fix(paths: tuple[str, ...], stdin: tuple[str, ...] | None, *, dry_run: bool) -> int:
-	""":func:`fix_cli` past its argument and event parsing."""
 	state, _ = resolve_tasks_source([])
 	if not isinstance(state, LoadOk) or state.config is None:
 		return 0
@@ -240,7 +212,6 @@ def _fix(paths: tuple[str, ...], stdin: tuple[str, ...] | None, *, dry_run: bool
 
 
 def print_interrupt_banner(count: int) -> None:
-	"""Print the white CLI exit line for a Ctrl-C'd run."""
 	from ..core.color import RESET, WHITE
 	from ..core.render import color_on
 
@@ -249,9 +220,6 @@ def print_interrupt_banner(count: int) -> None:
 
 
 def mcp_cli_hint() -> str:
-	"""The one-line stderr banner nudging an agent from the CLI onto the MCP tools; the
-	agent detection and opt-out that gate it live in :func:`dispatch`.
-	"""
 	return (
 		"camas: prefer the camas MCP tools (camas_run / camas_gate / camas_list / camas_check / "
 		"camas_docs) over this CLI — they return structured JSON, not a terminal stream meant for "
@@ -260,29 +228,12 @@ def mcp_cli_hint() -> str:
 
 
 def reconfigure_stdio_utf8() -> None:
-	"""UTF-8 with ``errors="replace"`` on stdout/stderr so Windows consoles and
-	pipes (ANSI code page by default before Python 3.15) can carry the
-	box-drawing tree output and ``×`` matrix annotations.
-	"""
 	for stream in (sys.stdout, sys.stderr):
 		cast("io.TextIOWrapper", stream).reconfigure(encoding="utf-8", errors="replace")
 
 
 def run_cli(scope: Mapping[str, object]) -> None:
-	"""Intercept the ``mcp`` subcommand (routing to :mod:`camas.mcp.cli`), then
-	dispatch CLI args against ``scope`` loaded as a :class:`~.state.TasksState`
-	(:func:`state_from_scope` — ``scope``'s own bindings with its ``Project``
-	references resolved, citing ``scope['__file__']`` as the source for
-	per-task help and ``--check``).
-
-	The standalone entry point for a PEP 723 ``tasks.py`` run via ``python tasks.py``
-	or ``uv run --script tasks.py`` — hand it the module globals::
-
-	    if __name__ == "__main__":
-	        from camas import run_cli
-
-	        run_cli(globals())
-	"""
+	"""Run the camas CLI against a ``tasks.py``'s ``globals()``, for ``uv run tasks.py``."""
 	reconfigure_stdio_utf8()
 	argv = sys.argv[1:]
 	if argv and argv[0] == "mcp":
@@ -292,22 +243,12 @@ def run_cli(scope: Mapping[str, object]) -> None:
 
 
 def exit_for_load_err(err: LoadErr) -> None:
-	"""Print a minimal trace + opportunistic typecheck for ``err`` and exit ``1``."""
 	from .check import report_eval_error
 
 	sys.exit(report_eval_error(err.source, err.exception))
 
 
 def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
-	"""Parse ``argv`` (defaulting to sys.argv) against ``state`` and run the dispatched task.
-
-	Dispatch is structured around the state sum type:
-
-	* :class:`LoadOk` — task-running path. ``camas`` with no expression runs the
-	  :class:`Config`'s task for the environment, else prints help and exits ``2``.
-	* :class:`LoadErr` — meta actions (``--list`` / ``--tree`` / ``--effects`` /
-	  ``--init``) still work; everything else delegates to :func:`exit_for_load_err`.
-	"""
 	split: Final = split_passthrough(sys.argv[1:] if argv is None else argv)
 	head: Final = normalize_github_matrix(split.head)
 	tasks: Mapping[str, TaskNode] = state.tasks if isinstance(state, LoadOk) else {}
@@ -325,23 +266,17 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 
 	parser: Final = build_parser(state)
 
-	# ``--init`` scaffolds precisely when there is no valid tasks.py, so it runs identically in
-	# either state, ahead of the match. ``parse_known_args`` tolerates the per-task matrix axis
-	# flags a normal run passes (added inside the LoadOk arm); on the ``--init`` path there are no
-	# such flags, so it re-parses strictly first, surfacing an unknown-flag typo before scaffolding.
-	init_args: Final = parser.parse_known_args(head)[0]
-	if init_args.init:
-		strict = parser.parse_args(head)
-		sys.exit(write_starter_tasks_py(Path.cwd(), verbose=strict.verbose))
-	if init_args.verbose:
+	lenient_args: Final = parser.parse_known_args(head)[0]
+	if lenient_args.init:
+		strict_args = parser.parse_args(head)
+		sys.exit(write_starter_tasks_py(Path.cwd(), verbose=strict_args.verbose))
+	if lenient_args.verbose:
 		print(
 			"warning: --verbose only applies to --init; ignoring it for this run", file=sys.stderr
 		)
 
 	match state:
 		case LoadErr() as err:
-			# No per-task matrix axes to augment; parse strictly so typos in
-			# flags surface instead of being silently consumed.
 			args = parser.parse_args(head)
 			if args.list or args.tree:
 				print(format_load_error_hint(err.source, err.exception))
@@ -476,9 +411,6 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 					print(f"error: {e}", file=sys.stderr)
 					sys.exit(2)
 
-			# A human run collapses agent_only Pipes to their first stage — the agent gets the
-			# full pipeline, the human the stage's plain output. Everything after this point
-			# (matrix emission, budgeting, dry-run, the run itself) is the human shape.
 			if not in_agent:
 				resolved = strip_agent_only_pipes(resolved)
 
@@ -525,8 +457,6 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 				sys.exit(2)
 
 			if requested_but_unusable(cli_requested, cli_changed):
-				# Checked ahead of both branches below, since --under exits before the scoping one is
-				# reached.
 				print(coverage_message(cli_requested))
 				sys.exit(0)
 
@@ -554,8 +484,6 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 			cli_observed: Final = timings.observed(camas_dir, cli_expanded, cli_changed)
 			effects = keyed_to_run(effects, cli_observed)
 
-			# Without a budget there is nothing to order against, so scope up front; with no paths
-			# named, that is every leaf at its full-run default.
 			if cli_observed.node is None:
 				print(coverage_message(cli_changed))
 				sys.exit(0)
@@ -598,19 +526,10 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 
 
 def _load_py(path: Path) -> TasksState:
-	"""Evaluate ``path`` and return a :class:`LoadOk` / :class:`LoadErr`."""
 	return load_py_tasks_state(path)
 
 
 def resolve_tasks_source(argv: list[str]) -> tuple[TasksState, list[str]]:
-	"""Locate the tasks source and return ``(state, remaining_argv)``.
-
-	If ``argv[0]`` ends in ``.py`` it is consumed as an explicit file path.
-	Otherwise walks upward from cwd: ``tasks.py`` wins over ``pyproject.toml``
-	at the same level; a ``pyproject.toml`` without ``[tool.camas.tasks]`` keeps
-	the walk going. A ``tasks.py`` whose evaluation raises returns
-	:class:`LoadErr` so meta operations (``--help``, ``--list``) still work.
-	"""
 	if argv and argv[0].endswith(".py"):
 		path = Path(argv[0])
 		if not path.is_file():

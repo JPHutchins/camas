@@ -22,8 +22,7 @@ if TYPE_CHECKING:
 	import pytest
 
 
-def _tasks_py(marker: str) -> str:
-	# A read-only check that fails while `marker` is present in sample.py — the gate's check node.
+def _tasks_py_whose_check_fails_while_marker_is_present(marker: str) -> str:
 	return (
 		"from camas import Config, Task\n\ncheck = Task(\n"
 		f'\t("python", "-c", "import pathlib, sys; sys.exit(\'{marker}\' in pathlib.Path(\'sample.py\').read_text())"),\n'
@@ -37,7 +36,7 @@ def _text(result: types.CallToolResult) -> str:
 
 
 def _session(tmp_path: Path, marker: str) -> Session:
-	(tmp_path / "tasks.py").write_text(_tasks_py(marker))
+	(tmp_path / "tasks.py").write_text(_tasks_py_whose_check_fails_while_marker_is_present(marker))
 	return Session(load_tasks_from_py(tmp_path / "tasks.py"), tmp_path, Compat())
 
 

@@ -14,14 +14,10 @@ from .core.platform import env_case_insensitive
 
 
 def _git_env_var(key: str) -> bool:
-	"""Whether ``key`` names a GIT_* variable under this platform's env case rules."""
 	return key.upper().startswith("GIT_") if env_case_insensitive() else key.startswith("GIT_")
 
 
 def _write_line(text: str) -> None:
-	"""``text`` to stderr as UTF-8 bytes — the renderer's codec — newline-terminated, via
-	``stderr.buffer`` or the text stream when it has none.
-	"""
 	line = text if text.endswith("\n") else text + "\n"
 	buffer = getattr(sys.stderr, "buffer", None)
 	if buffer is None:
@@ -31,9 +27,6 @@ def _write_line(text: str) -> None:
 
 
 def _write_stdout(text: str) -> None:
-	"""``text`` to stdout as UTF-8 bytes — the renderer's codec — via ``stdout.buffer``, or
-	sanitized through the text stream's own codec when it has no buffer.
-	"""
 	buffer = getattr(sys.stdout, "buffer", None)
 	if buffer is None:
 		codec: Final = getattr(sys.stdout, "encoding", None) or "utf-8"
@@ -58,7 +51,6 @@ def _git(env: dict[str, str], *args: str) -> subprocess.CompletedProcess[str]:
 
 
 def _report(proc: subprocess.CompletedProcess[str], what: str) -> None:
-	"""``proc``'s stderr, or the exit that left none."""
 	if proc.stderr.strip():
 		_write_line(proc.stderr)
 	elif proc.returncode != 0:
@@ -71,9 +63,7 @@ def _report(proc: subprocess.CompletedProcess[str], what: str) -> None:
 
 
 def _patch_flags(status: str) -> tuple[tuple[str, ...], ...]:
-	r"""The ``git diff`` flags whose patches show the drift ``status`` lists: the index's, then
-	the working tree's. Untracked files have none.
-
+	r"""
 	>>> _patch_flags(" M a.txt\n?? b.txt\n")
 	((),)
 	>>> _patch_flags("M  a.txt\nMM b.txt\n")

@@ -314,12 +314,7 @@ def test_format_available_effects_empty(monkeypatch: pytest.MonkeyPatch) -> None
 	def empty_discover() -> tuple[Mapping[str, Any], tuple[tuple[str, Any], ...]]:
 		return {}, ()
 
-	# Patch ``discover_effects`` at its definition site rather than
-	# ``format.available_effects``: under mypyc the compiled
-	# ``format_available_effects`` calls ``available_effects`` directly
-	# (no module-dict lookup), so patching it has no effect; but
-	# ``discover_effects`` is wrapped by ``functools.cache`` so the
-	# Python-level callable IS reached via attribute lookup.
+	# patch discover_effects, not available_effects: mypyc compiled-to-compiled calls bypass the module dict
 	monkeypatch.setattr(effects_mod, "discover_effects", empty_discover)
 	assert format_available_effects() == ""
 

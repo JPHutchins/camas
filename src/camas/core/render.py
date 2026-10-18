@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""ANSI primitives and tree-layout rendering shared by the display Effects."""
-
 from __future__ import annotations
 
 import os
@@ -27,21 +25,22 @@ if TYPE_CHECKING:
 	from pathlib import Path
 
 
+_CSI: Final = r"\[[0-?]*[ -/]*[@-~]"
+_OSC_ENDING_IN_BEL: Final = r"\][^\x07]*\x07"
+_OSC_ENDING_IN_ST: Final = r"\][^\x1b]*\x1b\\"
+_ISO_2022_CHARSET_DESIGNATION: Final = r"[()*+][\x20-\x7e]"
+_TWO_CHARACTER_FE_AFTER_OSC: Final = r"[@-Z\\-_]"
+_CONTROL_CHARACTERS_BUT_TAB_AND_NEWLINE: Final = r"[\x00-\x08\x0b-\x1f\x7f]"
+
 ANSI_ESCAPE: Final = re.compile(
-	r"\x1b(?:"
-	r"\[[0-?]*[ -/]*[@-~]"  # CSI sequences (colors, cursor movement, etc.)
-	r"|\][^\x07]*\x07"  # OSC terminated by BEL (hyperlinks, window title)
-	r"|\][^\x1b]*\x1b\\"  # OSC terminated by ST
-	r"|[()*+][\x20-\x7e]"  # ISO-2022 character-set designation (e.g. ESC(B = G0 ASCII)
-	r"|[@-Z\\-_]"  # two-character Fe sequences (after OSC: ] is in range)
-	r")"
-	r"|[\x00-\x08\x0b-\x1f\x7f]"  # ASCII control chars except \t (\x09) and \n (\x0a)
+	rf"\x1b(?:{_CSI}|{_OSC_ENDING_IN_BEL}|{_OSC_ENDING_IN_ST}"
+	rf"|{_ISO_2022_CHARSET_DESIGNATION}|{_TWO_CHARACTER_FE_AFTER_OSC})"
+	rf"|{_CONTROL_CHARACTERS_BUT_TAB_AND_NEWLINE}"
 )
 
 
 def strip_ansi(text: str) -> str:
-	r"""Strip ANSI escapes and ASCII control chars; tab and newline are kept.
-
+	r"""
 	>>> strip_ansi("\x1b[32mgreen\x1b[0m\ttext\r")
 	'green\ttext'
 	"""
@@ -49,16 +48,11 @@ def strip_ansi(text: str) -> str:
 
 
 def char_cols(ch: str) -> int:
-	"""Terminal columns one character occupies: 2 for East-Asian wide/fullwidth, else 1."""
 	return 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
 
 
 def visual_width(text: str) -> int:
-	r"""Terminal columns ``text`` occupies — wide glyphs (CJK, most emoji) count as 2, not 1.
-
-	``len`` counts code points; a row sized by ``len`` that contains wide glyphs renders
-	wider than computed and wraps, desyncing the live repaint's cursor math (issue #64).
-
+	r"""
 	>>> visual_width("abc")
 	3
 	>>> visual_width("你好")
@@ -68,10 +62,7 @@ def visual_width(text: str) -> int:
 
 
 def take_cols(text: str, cols: int, *, from_end: bool = False) -> str:
-	"""The longest prefix (or suffix, ``from_end``) of ``text`` fitting ``cols`` columns.
-
-	Never splits a wide glyph, so the result's :func:`visual_width` is ``<= cols``.
-
+	"""
 	>>> take_cols("hello", 3)
 	'hel'
 	>>> take_cols("hello", 3, from_end=True)
@@ -92,18 +83,15 @@ def take_cols(text: str, cols: int, *, from_end: bool = False) -> str:
 
 
 def color_on() -> bool:
-	"""True when stdout is a TTY and ``NO_COLOR`` is unset."""
 	return sys.stdout.isatty() and not os.environ.get("NO_COLOR")
 
 
 def colored(text: str, code: str, on: bool) -> str:
-	"""Wrap ``text`` in ANSI ``code``...``RESET`` when ``on`` and text is non-empty."""
 	return f"{code}{text}{RESET}" if on and text else text
 
 
 class GroupHeader(NamedTuple):
-	"""Display row for a Sequential or Parallel group header.
-
+	"""
 	>>> GroupHeader("ci", 0, ())
 	GroupHeader(label='ci', depth=0, is_last_chain=())
 	"""
@@ -122,8 +110,7 @@ PIPE_SUFFIX: Final = " |"
 
 
 def group_display_name(tasks: tuple[TaskNode, ...], separator: str) -> str:
-	"""Derive a display label for a group by joining children's names.
-
+	"""
 	>>> group_display_name((Task("a"), Task("b")), " | ")
 	'a | b'
 	>>> group_display_name((Task("build"), Task("test")), " → ")
@@ -146,8 +133,7 @@ def group_display_name(tasks: tuple[TaskNode, ...], separator: str) -> str:
 
 
 def render_tree_prefix(depth: int, is_last_chain: tuple[ChainLink, ...]) -> str:
-	"""Reconstitute the ASCII tree prefix from structural position data.
-
+	"""
 	>>> render_tree_prefix(0, ())
 	''
 	>>> render_tree_prefix(1, (ChainLink(True, False),))
@@ -184,7 +170,6 @@ def iter_rows(
 	depth: int = 0,
 	is_last_chain: tuple[ChainLink, ...] = (),
 ) -> Iterator[DisplayRow]:
-	"""Walk a task tree depth-first, yielding one DisplayRow per node (groups + leaves)."""
 	match node:
 		case Task():
 			yield LeafInfo(node, depth, is_last_chain)
@@ -214,7 +199,6 @@ def iter_rows(
 
 
 def flatten_rows(task: TaskNode) -> tuple[DisplayRow, ...]:
-	"""Flatten a task tree into display rows (GroupHeaders + LeafInfos) in DFS order."""
 	return tuple(iter_rows(task))
 
 
@@ -229,11 +213,6 @@ def walk_with_context(
 	ancestor_env: Mapping[str, str] = {},
 	ancestor_cwd: Path | None = None,
 ) -> Iterator[tuple[DisplayRow, dict[str, str], Path | None]]:
-	"""Walk the expanded tree yielding ``(row, env_introduced_here, cwd_introduced_here)``.
-
-	Env entries and cwd are each reported only at the node that introduces or
-	changes them, so they render exactly once in the tree.
-	"""
 	match node:
 		case Task(env=env, cwd=cwd):
 			yield (
@@ -292,11 +271,7 @@ def leaf_label(task: Task, show_cmd: bool, color: bool) -> str:
 
 
 def render_tree_lines(task: TaskNode, show_cmd: bool = False, color: bool = False) -> list[str]:
-	"""Build the tree-display lines (group headers + leaves) for an expanded task tree.
-
-	Pure: returns a list of strings without printing. :func:`print_tree` is the
-	printing wrapper.
-
+	"""
 	>>> render_tree_lines(Task("echo hi"))
 	['echo hi']
 	>>> render_tree_lines(Task("echo hi", name="greet"), show_cmd=True)
@@ -325,8 +300,7 @@ def render_tree_lines(task: TaskNode, show_cmd: bool = False, color: bool = Fals
 
 
 def print_tree(task: TaskNode, show_cmd: bool = False) -> None:
-	"""Print the task tree structure to stdout without executing.
-
+	"""
 	>>> print_tree(Task("echo hi"))
 	echo hi
 	>>> print_tree(Task("echo hi", name="greet"), show_cmd=True)

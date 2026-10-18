@@ -1,10 +1,7 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""Effect: write a run as a CTRF (https://ctrf.io) JSON test report at teardown.
-
-Requires the ``camas[ctrf]`` optional dependency.
-"""
+"""The ``Ctrf`` effect: a CTRF (https://ctrf.io) JSON test report; it needs the ``camas[ctrf]`` extra."""
 
 from __future__ import annotations
 
@@ -29,11 +26,6 @@ if TYPE_CHECKING:
 
 
 def require_model() -> ModuleType:
-	"""Import the msgspec-backed CTRF model lazily, with the install hint when the extra is missing.
-
-	Raises:
-		RuntimeError: when the ``camas[ctrf]`` extra is not installed.
-	"""
 	try:
 		from . import _ctrf_model
 	except ImportError as e:
@@ -42,12 +34,10 @@ def require_model() -> ModuleType:
 
 
 def now_ms() -> int:
-	"""Current UTC time as integer epoch milliseconds."""
 	return int(datetime.now(timezone.utc).timestamp() * 1000)
 
 
 def emit_report(path: str | None, data: bytes) -> None:
-	"""Write the report to ``path``, or to stdout when ``path`` is ``None``."""
 	payload = data + b"\n"
 	if path is None:
 		sys.stdout.buffer.write(payload)
@@ -58,23 +48,16 @@ def emit_report(path: str | None, data: bytes) -> None:
 
 @dataclass
 class ReportState:
-	"""Mutable slot holding the latest states view for the Ctrf effect."""
-
 	states: Sequence[LeafState]
 
 
 class ReportContext(NamedTuple):
-	"""Immutable context for the Ctrf effect: the run's start time and the states slot."""
-
 	start_ms: int
 	state: ReportState
 
 
 class Ctrf:
-	"""Write a CTRF JSON test report at teardown.
-
-	See the module docstring for the ``camas[ctrf]`` requirement.
-	"""
+	"""A CTRF JSON test report."""
 
 	def __init__(self, path: str | None = None, tail_bytes: int = 8192) -> None:
 		self._path: Final = path

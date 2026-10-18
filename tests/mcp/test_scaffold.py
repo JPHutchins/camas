@@ -1073,23 +1073,18 @@ def test_write_claude_writes_all_generated_files(
 	monkeypatch.chdir(tmp_path)
 	monkeypatch.setattr("shutil.which", which("camas"))
 	assert write_claude([]) == 0
-	# .mcp.json
 	assert (tmp_path / ".mcp.json").exists()
 	mcp = json.loads((tmp_path / ".mcp.json").read_text())
 	assert mcp["mcpServers"]["camas"]["command"] == "camas"
-	# .claude/settings.json
 	assert (tmp_path / ".claude" / "settings.json").exists()
 	settings = json.loads((tmp_path / ".claude" / "settings.json").read_text())
 	assert list(settings["hooks"]) == ["Stop"]
-	# tiered agents
 	for filename in _TIERED_AGENT_FILES:
 		agent = (tmp_path / ".claude" / "agents" / filename).read_text()
 		assert "mcp__camas__camas_gate" in agent
 		assert "camas_fix" not in agent
-	# skill
 	skill = (tmp_path / ".claude" / "skills" / "gate" / "SKILL.md").read_text()
 	assert "name: gate" in skill
-	# consolidated output
 	out = capsys.readouterr().out
 	assert "Claude Code is configured" in out
 
@@ -1319,14 +1314,12 @@ def test_rich_and_plain_filtered_from_unexpected(
 	"""``--rich`` and ``--plain`` are filtered out of the unexpected-arg check."""
 	from camas.mcp.cli import main
 
-	# --rich + bogus arg: only the bogus arg triggers the error
 	with pytest.raises(SystemExit) as exc:
 		main(["--rich", "bogus"])
 	assert exc.value.code == 2
 	err = capsys.readouterr().err
 	assert "unexpected argument(s): bogus" in err
 
-	# --plain + bogus arg
 	with pytest.raises(SystemExit) as exc:
 		main(["--plain", "bogus"])
 	assert exc.value.code == 2

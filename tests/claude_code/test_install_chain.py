@@ -31,10 +31,6 @@ if TYPE_CHECKING:
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _UV = shutil.which("uv") or "uv"
-# The runner's system Python is 3.12; the repo's .python-version (3.14) is not installed there,
-# and UV_PYTHON_DOWNLOADS=never forbids fetching it. Pin UV_PYTHON so every `uv` invocation in the
-# test (sync, the init subprocess, and the headless-launched hook/server) resolves a present
-# interpreter instead of failing "No interpreter found for Python 3.14".
 _ENV = {**os.environ, "UV_PYTHON": "3.12", "UV_PYTHON_DOWNLOADS": "never"}
 _ENABLED = bool(os.environ.get("CAMAS_CC_E2E")) and shutil.which("claude") is not None
 

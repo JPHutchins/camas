@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""AST-evaluate the CLI task-expression mini-language into a task tree."""
-
 from __future__ import annotations
 
 import ast
@@ -51,8 +49,7 @@ EXPRESSION_PATTERN: Final = re.compile(r"^\s*(?:(?:Task|Sequential|Parallel|Pipe
 
 
 def format_syntax_error(source: str, err: SyntaxError) -> str:
-	"""Format a SyntaxError against ``source`` with a caret pointing at the offending column.
-
+	"""
 	>>> import ast
 	>>> try: ast.parse("Task(", mode="eval")
 	... except SyntaxError as e: print(format_syntax_error("Task(", e))
@@ -117,12 +114,6 @@ def eval_opt_bool(node: ast.expr | None) -> bool:
 
 
 def eval_opt_int(node: ast.expr | None) -> int | None:
-	"""A positive int literal (the AgentFormat limit), or ``None`` for an absent or ``None``
-	literal.
-
-	Raises:
-		ValueError: the value is a ``bool`` (an ``int`` subclass) or a non-positive int.
-	"""
 	match node:
 		case None:
 			return None
@@ -151,9 +142,6 @@ def _output_kind(node: ast.expr) -> OutputKind:
 def _agent_format(
 	args_node: ast.expr, kind_node: ast.expr, limit_node: ast.expr | None
 ) -> AgentFormat:
-	"""Build an :class:`AgentFormat` from its arg AST nodes, omitting ``limit`` (so the default
-	applies) when absent or ``None``; :func:`eval_opt_int` rejects a non-positive or bool limit.
-	"""
 	limit = eval_opt_int(limit_node)
 	args_val, kind_val = eval_str_lit(args_node), _output_kind(kind_node)
 	return (
@@ -256,16 +244,11 @@ def eval_matrix(node: ast.expr | None) -> dict[str, tuple[str, ...]] | None:
 
 
 def children(elts: list[ast.expr], allow_refs: bool) -> tuple[TaskNode, ...]:
-	"""Evaluate task-position children. ``Ref``s pass through here at the type level
-	via ``cast`` — they're resolved later by ``resolve_refs``.
-	"""
 	return cast("tuple[TaskNode, ...]", tuple(eval_task_pos(e, allow_refs) for e in elts))
 
 
 def eval_task_pos(node: ast.expr, allow_refs: bool) -> TaskNode | Ref:
-	"""Evaluate an AST node at a *task position*, coercing literals to nodes; other
-	forms delegate to ``eval_node``.
-
+	"""
 	>>> import ast
 	>>> eval_task_pos(ast.parse('"echo hi"', mode="eval").body, allow_refs=False)
 	Task(cmd='echo hi', name=None, env={}, cwd=None)
@@ -299,8 +282,7 @@ def eval_node(
 	node: ast.expr,
 	allow_refs: bool = False,
 ) -> TaskNode | Ref:
-	"""Walk an AST node and construct the corresponding TaskNode or Ref safely (no eval).
-
+	"""
 	Raises:
 		ValueError: on names or call shapes outside the expression language.
 
@@ -380,13 +362,7 @@ def eval_node(
 
 
 def parse_expression(expr: str, tasks: Mapping[str, TaskNode] | None = None) -> TaskNode:
-	"""Parse a typed Python expression string into a TaskNode tree using AST (no eval).
-
-	When ``tasks`` is provided, bare identifiers and dotted attribute chains in the
-	expression become Refs that are resolved against ``tasks`` after parsing. Bare
-	strings, tuple literals, and set literals are coerced into ``Task`` /
-	``Sequential`` / ``Parallel`` respectively.
-
+	"""
 	>>> parse_expression('Task("echo hi")')
 	Task(cmd='echo hi', name=None, env={}, cwd=None)
 	>>> parse_expression('Parallel(a)', tasks={"a": Task("x")})
@@ -428,14 +404,7 @@ def parse_expression(expr: str, tasks: Mapping[str, TaskNode] | None = None) -> 
 
 
 def to_expression(node: TaskNode) -> str:
-	r"""Render a task tree to a fully-typed camas expression — the verbose inverse of
-	:func:`parse_expression`, in the same notation as ``tasks.py``.
-
-	Every node is its constructor call with the command/children expanded and the
-	``name`` shown, so an agent reading it sees the exact structure, the literal
-	commands, and the handle of every task — and could paste it back into ``tasks.py``
-	or a ``camas`` expression unchanged.
-
+	r"""
 	>>> to_expression(Task("echo hi"))
 	'Task("echo hi")'
 	>>> to_expression(Task(("ruff", "check", ".")))
@@ -531,9 +500,6 @@ def mutates_kwarg(mutates: bool) -> str:
 
 
 def paths_kwarg(paths: str | PathScope | None) -> str:
-	"""A str scope round-trips; a callable scope has no source, so it renders as a
-	non-parseable marker (this preview is informational, never re-evaluated by camas).
-	"""
 	if paths is None:
 		return ""
 	if isinstance(paths, str):
@@ -542,9 +508,6 @@ def paths_kwarg(paths: str | PathScope | None) -> str:
 
 
 def when_kwarg(when: str | tuple[str, ...] | WhenPredicate | None) -> str:
-	"""A str or tuple predicate round-trips; a callable has no source, so it renders as a
-	non-parseable marker (this preview is informational, never re-evaluated by camas).
-	"""
 	if when is None:
 		return ""
 	if isinstance(when, str):
@@ -555,9 +518,7 @@ def when_kwarg(when: str | tuple[str, ...] | WhenPredicate | None) -> str:
 
 
 def agent_format_kwarg(agent_format: AgentFormat | None) -> str:
-	"""Renders ``limit`` only when it differs from :class:`AgentFormat`'s default, so the common
-	case round-trips as the terse two-arg call.
-
+	"""
 	>>> agent_format_kwarg(AgentFormat("--out sarif", "sarif"))
 	', agent_format=AgentFormat("--out sarif", "sarif")'
 	>>> agent_format_kwarg(AgentFormat("--out sarif", "sarif", 500))
@@ -584,10 +545,7 @@ def render_command(cmd: str | tuple[str, ...]) -> str:
 
 
 def parse_task_value(raw: str) -> TaskNode | Ref:
-	r"""Parse a single pyproject.toml task value. Bare strings become ``Task(cmd)``;
-	a leading ``Task``/``Sequential``/``Parallel``/``Ref`` call, ``(``, or ``{`` triggers
-	AST parsing (so ``(a, b)`` is a Sequential and ``{a, b}`` a Parallel).
-
+	r"""
 	Raises:
 		ValueError: when an expression-like value fails to parse.
 
@@ -612,8 +570,7 @@ def resolve_refs(
 	defs: Mapping[str, TaskNode | Ref],
 	visiting: frozenset[str],
 ) -> TaskNode:
-	"""Recursively substitute Ref(name) with its defined TaskNode. Detects cycles.
-
+	"""
 	Raises:
 		ValueError: on an unknown ref or a reference cycle.
 

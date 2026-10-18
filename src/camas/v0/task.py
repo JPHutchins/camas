@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""Task-tree AST: ``Task`` leaves composed by ``Sequential``, ``Parallel``, and ``Pipe`` groups."""
+"""The task tree."""
 
 from __future__ import annotations
 
@@ -33,24 +33,20 @@ if TYPE_CHECKING:
 
 
 PathScope: TypeAlias = "Callable[[tuple[str, ...]], tuple[str, ...]]"
-"""Maps the changed paths to the args injected at ``{paths}``: called with ``()`` for a
-full run (return the default target), with the changed set otherwise (``()`` → skip)."""
+"""Maps the changed paths to the arguments at ``{paths}``; called with ``()`` on a full run,
+and returning ``()`` on a scoped run skips the leaf."""
 
 
 WhenPredicate: TypeAlias = "Callable[[tuple[str, ...]], bool]"
-"""A run-if-changed predicate for :attr:`Task.when` / :attr:`Group.when`: receives the
-changed set and is never called for a full run (``changed == ()``)."""
+"""Whether a leaf runs for the changed paths; never called on a full run."""
 
 
 Nodes: TypeAlias = "TaskNode | str | Sequence[TaskNode]"
-"""One node (a ``str`` as its :class:`Task`) or a sequence of nodes: what :meth:`Group.extend`,
-:meth:`Group.remove`, and the composition operators take. A group is one node — its ``.tasks``
-is the sequence of its children, which leave its ``cwd``/``env``/``matrix`` scope behind."""
+"""One node or a sequence of nodes; a lone ``str`` is a ``Task``."""
 
 
 def _prefix(value: str | Path) -> str:
-	"""A ``when`` prefix in its stored form: a ``Path`` as POSIX, a string unchanged.
-
+	"""
 	>>> _prefix(Path("code-gen")), _prefix("src")
 	('code-gen', 'src')
 	"""
@@ -60,9 +56,7 @@ def _prefix(value: str | Path) -> str:
 def _coerce_when(
 	when: str | Path | tuple[str | Path, ...] | WhenPredicate | None,
 ) -> str | tuple[str, ...] | WhenPredicate | None:
-	"""Coerce a ``when`` argument to its stored form: a ``Path`` (or a ``Path`` inside a tuple)
-	becomes its POSIX prefix; a string, tuple of strings, callable, or ``None`` is unchanged.
-
+	"""
 	>>> _coerce_when(Path("code-gen"))
 	'code-gen'
 	>>> _coerce_when((Path("src"), "include"))
@@ -83,9 +77,7 @@ def _coerce_when(
 
 
 def by_suffix(suffixes: tuple[str, ...], default: tuple[str, ...] = (".",)) -> PathScope:
-	"""A ``PathScope`` that filters the changed files by suffix on a scoped run and returns
-	``default`` on a full run, so a ``{paths}`` command never loses its arguments to an empty
-	change set.
+	"""A ``PathScope`` for files ending in one of ``suffixes``.
 
 	>>> f = by_suffix((".c", ".h"), default=("src", "include"))
 	>>> f(())
@@ -101,10 +93,7 @@ def by_suffix(suffixes: tuple[str, ...], default: tuple[str, ...] = (".",)) -> P
 
 
 def _glob_to_regex(pattern: str) -> re.Pattern[str]:
-	"""Compile a shell glob over POSIX paths to a full-match regex: ``**`` spans any directory
-	depth (``**/`` also matching zero directories), ``*`` and ``?`` stay within a single path
-	segment, and every other character is literal.
-
+	"""
 	>>> rx = _glob_to_regex("homeassistant/**/*.py")
 	>>> bool(rx.fullmatch("homeassistant/core.py")), bool(rx.fullmatch("homeassistant/a/b.py"))
 	(True, True)
@@ -121,8 +110,7 @@ def _glob_to_regex(pattern: str) -> re.Pattern[str]:
 	ValueError: by_glob pattern must not be empty
 
 	Raises:
-		ValueError: when ``pattern`` is empty — it would compile to a regex matching only the
-			empty string, silently dropping every changed file.
+		ValueError: when ``pattern`` is empty.
 	"""
 	if not pattern:
 		raise ValueError("by_glob pattern must not be empty")
@@ -148,12 +136,7 @@ def _glob_to_regex(pattern: str) -> re.Pattern[str]:
 
 
 def by_glob(patterns: tuple[str, ...], default: tuple[str, ...] = (".",)) -> PathScope:
-	r"""A ``PathScope`` that keeps the changed files matching any of ``patterns`` — shell globs
-	over the repo-relative POSIX path, where ``**`` spans any directory depth and ``*``/``?`` stay
-	within a segment — on a scoped run, and returns ``default`` on a full run so a ``{paths}``
-	command never loses its arguments to an empty change set. Ports a pre-commit ``files:`` filter
-	— a directory prefix plus a suffix, e.g. ``^(homeassistant|pylint)/.+\.(py|pyi)$`` — to a
-	single scope, where ``by_suffix`` (suffix-only) can't express the prefix.
+	"""A ``PathScope`` for files matching one of the shell-glob ``patterns``.
 
 	>>> f = by_glob(("homeassistant/**/*.py", "homeassistant/**/*.pyi"), default=("homeassistant",))
 	>>> f(())
@@ -176,12 +159,10 @@ def by_glob(patterns: tuple[str, ...], default: tuple[str, ...] = (".",)) -> Pat
 def _check_variants(
 	variants: tuple[dict[str, str], ...] | None, matrix: dict[str, tuple[str, ...]] | None
 ) -> None:
-	"""Validate a ``variants`` declaration against its node's ``matrix``.
-
+	"""
 	Raises:
-		ValueError: when a variant binds no keys, when the variants disagree on which keys they
-			bind — a ragged bundle would leave a ``{placeholder}`` unsubstituted in some cells —
-			or when a key is declared in both ``matrix`` and ``variants``.
+		ValueError: when a variant binds no keys, variants bind different keys, or a key is
+			declared in both ``matrix`` and ``variants``.
 
 	>>> _check_variants(({"target": "a"}, {"target": "b"}), {"PROFILE": ("debug",)})
 	>>> _check_variants(({"target": "a"}, {}), None)
@@ -215,24 +196,11 @@ def _check_variants(
 
 
 OutputKind: TypeAlias = Literal["sarif", "rdjson", "lsp", "junit", "tap", "raw"]
-"""The standard a leaf's command emits its diagnostics in — the agent-facing format camas
-tags and passes through verbatim, never parsing. ``raw`` (the default) is plain text."""
+"""The format a leaf's diagnostics are in."""
 
 
 class AgentFormat(NamedTuple):
-	"""A leaf's agent-only structured-output variant: ``args`` (a producing flag the user
-	supplies — camas never infers it) appended to the command, and the ``kind`` of diagnostics
-	it makes the tool emit. Applied only when an agent runs; a human run leaves the command as-is.
-
-	``args`` containing the literal ``{report}`` switches the leaf to path mode: the gate
-	substitutes it with an allocated file path and, after the leaf runs, reads that file for the
-	payload instead of stdout — for a tool (``pytest --junitxml``, ``pytest-json-report``) that
-	writes its diagnostics to a file rather than printing them.
-
-	``limit`` bounds a structured (non-``raw``) payload — and any path-mode report file,
-	``raw`` included — in characters. A payload over ``limit`` is neither dumped nor tailed —
-	a truncated structured document is invalid — but replaced with a pointer to the full
-	file/log instead; stdout ``raw`` is exempt, since the gate line-tails it.
+	"""A leaf's agent-only structured-output variant.
 
 	>>> AgentFormat("--output-format sarif", "sarif")
 	AgentFormat(args='--output-format sarif', kind='sarif', limit=8000)
@@ -241,56 +209,18 @@ class AgentFormat(NamedTuple):
 	"""
 
 	args: str
+	"""Appended to the command on gate runs; a literal ``{report}`` names the file the gate reads."""
 	kind: OutputKind
 	limit: int = 8_000
+	"""Characters of a structured payload or report file the gate inlines."""
 
 
 _EMPTY_ENV: Mapping[str, str] = MappingProxyType({})
-"""Read-only sentinel used as the default for ``Task.env``: shared across
-instances (NamedTuple stores defaults on the class), but immutable so a
-caller can't accidentally mutate other Tasks via ``task.env``."""
 
 
 @dataclass(frozen=True, slots=True, init=False, repr=False)
 class Task:
-	"""A leaf task that executes a shell command.
-
-	``cmd`` is a tuple of argv tokens, or a string split into them by POSIX shell rules
-	(:func:`shlex.split`), so a path written into a string command, or a matrix value substituted
-	into one, uses ``/`` on every OS.
-
-	``env`` is a ``Mapping`` (read-only contract). The default is a shared
-	``MappingProxyType({})``; user-provided dicts are stored as-is.
-
-	``cwd`` is stored as ``Path | None``; the constructor also accepts a bare
-	``str`` and coerces it (``"src-tauri"`` ⇒ ``Path("src-tauri")``).
-
-	``help`` is an optional one-line description shown in ``--list`` output and
-	``camas <task> --help`` instead of the bare command.
-
-	``mutates`` marks a leaf that writes the workspace (a formatter or auto-fixer).
-	The ``--under`` budget scheduler serializes mutating subtrees ahead of a
-	``Parallel``'s pure read-only siblings, so a mutator never runs concurrently
-	with a checker over the same files.
-
-	``paths`` is the scope for a ``{paths}`` command (:mod:`camas.core.scope`): a
-	directory-prefix string (``"."``) or a ``(changed) -> tuple[str, ...]`` callable that maps the
-	changed files into the command. A ``Sequential``/``Parallel`` may set ``paths`` to supply the
-	default to descendants that set none. A command without ``{paths}`` can't be narrowed, so its
-	``paths`` is a no-op and the command always runs unless a ``when`` predicate (below) prunes it.
-
-	``when`` is a run-if-changed predicate (:mod:`camas.core.scope`) for a leaf whose command
-	can't take ``{paths}`` (``cargo build``, ``nix flake check``): a directory-prefix string or
-	``Path`` (coerced to its POSIX prefix), a tuple of those (OR'd), or a ``(changed) -> bool``
-	callable. On a scoped run a leaf whose ``when`` doesn't match the changed set is pruned; a
-	full run never consults ``when``. A leaf that also sets ``paths``/``{paths}`` is gated by
-	``when`` first, then narrowed as usual. When ``when`` is unset, a leaf with a ``cwd`` gates on
-	its ``cwd`` directory (:func:`camas.core.matrix.expand_matrix`) — a monorepo file-tree default;
-	set ``when="."`` to opt back into always-run.
-
-	``agent_format`` is the agent-only structured-output variant (:class:`AgentFormat`): the gate
-	appends its ``args`` and tags the diagnostics ``kind``; a human run leaves the command as-is.
-	A bare ``(args, kind)`` tuple is coerced to an :class:`AgentFormat`.
+	"""A leaf that runs one command.
 
 	>>> Task("echo hi")
 	Task(cmd='echo hi', name=None, env={}, cwd=None)
@@ -323,13 +253,18 @@ class Task:
 	"""
 
 	cmd: str | tuple[str, ...]
+	"""Argv tokens, or a string split by POSIX shell rules on every OS."""
 	name: str | None
 	env: Mapping[str, str]
 	cwd: Path | None
 	help: str | None
+	"""A description of the task."""
 	mutates: bool
+	"""The leaf writes the workspace."""
 	paths: str | PathScope | None
+	"""The scope a ``{paths}`` command narrows to on a scoped run."""
 	when: str | tuple[str, ...] | WhenPredicate | None
+	"""Which changes keep the leaf in a scoped run."""
 	agent_format: AgentFormat | None
 
 	def __init__(
@@ -391,7 +326,7 @@ class Task:
 		return f"Task({', '.join(parts)})"
 
 	def __or__(self, other: Nodes) -> Parallel:
-		"""``|`` composes in parallel: ``Parallel(self).extend(other)``.
+		"""Compose in parallel.
 
 		>>> (Task("format") | Task("lint")).tasks == (Task("format"), Task("lint"))
 		True
@@ -401,8 +336,7 @@ class Task:
 		return _composed(Parallel, self, other)
 
 	def __add__(self, other: Nodes) -> Sequential:
-		"""``+`` composes in sequence: ``Sequential(self).extend(other)``. ``+`` binds tighter
-		than ``|`` — parenthesize a mixed chain to control its shape.
+		"""Compose in sequence; ``+`` binds tighter than ``|``.
 
 		>>> (Task("build") + Task("test")).tasks == (Task("build"), Task("test"))
 		True
@@ -410,13 +344,7 @@ class Task:
 		return _composed(Sequential, self, other)
 
 	def __gt__(self, other: Nodes) -> Pipe:
-		"""``>`` pipes this leaf's stdout into ``other``: ``Pipe(self).extend(other)``, a plain
-		right-side :class:`Pipe` contributing its stages (see :meth:`Pipe.__gt__`).
-
-		``>`` is a comparison operator, so Python chains it as ``a > b > c`` = ``(a > b) and
-		(b > c)`` — parenthesize a chain of more than two: ``(a > b) > c``. A composed pipe is
-		always truthy, so a boolean context (``if a > b:``) silently passes — compare with
-		``==`` instead.
+		"""Pipe this leaf's stdout into ``other``; Python chains ``>``, so parenthesize longer pipes.
 
 		>>> (Task("gen") > "upper").tasks == (Task("gen"), Task("upper"))
 		True
@@ -430,28 +358,7 @@ class Task:
 
 @dataclass(frozen=True, slots=True, init=False, repr=False)
 class Group:
-	"""Shared base for ``Sequential``, ``Parallel``, and ``Pipe``: variadic ``*tasks`` (with
-	``str`` → ``Task`` coercion), identical kwargs, hashable. Use
-	``isinstance(x, Group)`` to test for "some kind of grouping node";
-	pattern-match on the concrete subclass to discriminate.
-
-	``paths`` is the default path-scope for descendant ``{paths}`` leaves that set none
-	(see :mod:`camas.core.scope`); ``env``/``cwd`` likewise propagate into leaves.
-
-	``when`` is the default run-if-changed predicate (see :class:`Task`) for descendant
-	leaves that set none — baked into leaves by :func:`camas.core.matrix.expand_matrix`,
-	the same way ``paths``/``env``/``cwd`` propagate.
-
-	``matrix`` is a cross product: each axis varies independently, and the node expands to
-	one cell per combination. ``variants`` is the *coupled* form — a tuple of bundles, each
-	binding the same keys to values that only make sense together (a backend with its
-	platform and rustup target). The two compose: the run-set is the ``matrix`` cross
-	product × the ``variants``. Overriding a ``matrix`` axis from the CLI *replaces* its
-	values; overriding a ``variants`` key *filters* to the variants that bind it, since a
-	replacement would fabricate a bundle the project never declared. Every variant must
-	bind the same keys, and a key belongs to ``matrix`` or ``variants``, not both.
-	``variants=()`` declares zero variants — a run rejects it rather than silently doing
-	nothing, exactly as ``matrix={"axis": ()}`` does.
+	"""The shared base of ``Sequential``, ``Parallel``, and ``Pipe``.
 
 	>>> isinstance(Sequential("a"), Group) and isinstance(Parallel("a"), Group)
 	True
@@ -466,12 +373,16 @@ class Group:
 	tasks: tuple[TaskNode, ...]
 	name: str | None
 	matrix: dict[str, tuple[str, ...]] | None
+	"""Axis values the group expands over, as a cross product."""
 	variants: tuple[dict[str, str], ...] | None
+	"""Coupled bundles of axis values, not crossed with each other."""
 	env: dict[str, str]
 	cwd: Path | None
 	help: str | None
 	paths: str | PathScope | None
+	"""A default ``{paths}`` scope for the group's leaves."""
 	when: str | tuple[str, ...] | WhenPredicate | None
+	"""A default ``when`` for the group's leaves."""
 
 	def __init__(
 		self,
@@ -522,10 +433,7 @@ class Group:
 		return f"{type(self).__name__}({', '.join(_group_repr_parts(self))})"
 
 	def extend(self, nodes: Nodes) -> Self:
-		"""This group with ``nodes`` appended, keeping its fields and type — the appended nodes
-		join its ``cwd``/``env``/``matrix`` scope. A group in ``nodes`` is one child; its
-		``.tasks`` are its children. A subclass must accept the Group constructor kwargs for its
-		type to carry.
+		"""This group with ``nodes`` appended inside its scope.
 
 		>>> Parallel("a").extend(Parallel("b", "c")) == Parallel("a", Parallel("b", "c"))
 		True
@@ -541,8 +449,7 @@ class Group:
 		return rebuilt(self, *_nodes(self.tasks), *_children(nodes))
 
 	def remove(self, nodes: Nodes) -> Self:
-		"""This group without every direct child equal to one of ``nodes``, keeping its fields and
-		type, as :meth:`extend` does.
+		"""This group without its direct children equal to one of ``nodes``.
 
 		>>> Parallel("a", "b", "c").remove(Task("b")) == Parallel("a", "c")
 		True
@@ -576,7 +483,7 @@ class Sequential(Group):  # pyrefly: ignore[bad-class-definition]
 	__slots__ = ()
 
 	def __or__(self, other: Nodes) -> Parallel:
-		"""``|`` composes in parallel: ``Parallel(self).extend(other)``.
+		"""Compose in parallel.
 
 		>>> seq = Sequential("build", "test")
 		>>> (seq | "lint").tasks == (seq, Task("lint"))
@@ -585,10 +492,7 @@ class Sequential(Group):  # pyrefly: ignore[bad-class-definition]
 		return _composed(Parallel, self, other)
 
 	def __add__(self, other: Nodes) -> Sequential:
-		"""``+`` is :meth:`extend` on a plain sequence — exactly ``Sequential``, every field at its
-		default — and ``Sequential(self).extend(other)`` on any other, so it runs exactly like
-		``Sequential(self, other)``. ``+`` binds tighter than ``|`` — parenthesize a mixed chain to
-		control its shape.
+		"""Compose in sequence, extending a plain ``Sequential`` rather than nesting it.
 
 		>>> (Sequential("build") + "test").tasks == (Task("build"), Task("test"))
 		True
@@ -602,8 +506,7 @@ class Sequential(Group):  # pyrefly: ignore[bad-class-definition]
 		return _composed(Sequential, self, other)
 
 	def __gt__(self, other: Nodes) -> Pipe:
-		"""``>`` cannot pipe a composite — stages must be leaves. Raises the same
-		``ValueError`` the :class:`Pipe` constructor raises for a nested stage.
+		"""Refuse: a group cannot be a pipe stage.
 
 		>>> Sequential("a") > "b"
 		Traceback (most recent call last):
@@ -623,9 +526,7 @@ class Parallel(Group):  # pyrefly: ignore[bad-class-definition]
 	__slots__ = ()
 
 	def __or__(self, other: Nodes) -> Parallel:
-		"""``|`` is :meth:`extend` on a plain group — exactly ``Parallel``, every field at its
-		default — and ``Parallel(self).extend(other)`` on any other, so it runs exactly like
-		``Parallel(self, other)``.
+		"""Compose in parallel, extending a plain ``Parallel`` rather than nesting it.
 
 		>>> (Parallel("format") | "lint").tasks == (Task("format"), Task("lint"))
 		True
@@ -639,8 +540,7 @@ class Parallel(Group):  # pyrefly: ignore[bad-class-definition]
 		return _composed(Parallel, self, other)
 
 	def __add__(self, other: Nodes) -> Sequential:
-		"""``+`` composes in sequence: ``Sequential(self).extend(other)``. ``+`` binds tighter
-		than ``|`` — parenthesize a mixed chain to control its shape.
+		"""Compose in sequence; ``+`` binds tighter than ``|``.
 
 		>>> check = Parallel("format")
 		>>> (check + "integration").tasks == (check, Task("integration"))
@@ -649,8 +549,7 @@ class Parallel(Group):  # pyrefly: ignore[bad-class-definition]
 		return _composed(Sequential, self, other)
 
 	def __gt__(self, other: Nodes) -> Pipe:
-		"""``>`` cannot pipe a composite — stages must be leaves. Raises the same
-		``ValueError`` the :class:`Pipe` constructor raises for a nested stage.
+		"""Refuse: a group cannot be a pipe stage.
 
 		>>> Parallel("a") > "b"
 		Traceback (most recent call last):
@@ -663,23 +562,11 @@ class Parallel(Group):  # pyrefly: ignore[bad-class-definition]
 STAGE_MESSAGE: Final = (
 	"Pipe stages must be Tasks — a nested group would mean several commands sharing one stream"
 )
-"""The stage-validation error, shared by the constructor and the engine boundary so a reword
-cannot leave the two disagreeing."""
 
 
 @dataclass(frozen=True, slots=True, init=False, repr=False)
 class Pipe(Group):
-	"""A group of leaf stages piped fd-to-fd, each stage its own argv vector — no shell.
-
-	Every stage runs concurrently and to completion (a dying stage feeds EOF downstream);
-	the pipeline fails ``pipefail``-style: any stage's non-zero exit fails the run, so a
-	producer failing under a succeeding last stage is still a failure. Stages must be
-	leaves — a nested group would mean several commands sharing one stream.
-
-	``agent_only=True`` runs the full pipeline on an agent run and collapses to the first
-	stage alone on a human run — the plain human-readable output for a human, the piped
-	structured output for the agent, selected by the same runner identity that appends
-	``agent_format`` args (:func:`camas.core.gate.strip_agent_only_pipes`).
+	"""Leaf stages piped stdout to stdin, each its own argv, with no shell.
 
 	>>> Pipe("cargo clippy --message-format=json", "clippy-sarif").agent_only
 	False
@@ -698,6 +585,7 @@ class Pipe(Group):
 	"""
 
 	agent_only: bool
+	"""Pipe on agent runs only; a human run keeps the first stage alone."""
 
 	def __init__(
 		self,
@@ -712,7 +600,10 @@ class Pipe(Group):
 		paths: str | PathScope | None = None,
 		when: str | Path | tuple[str | Path, ...] | WhenPredicate | None = None,
 	) -> None:
-		# Explicit base call — zero-arg super() breaks under mypyc's compiled subclasses.
+		"""
+		Raises:
+			ValueError: when there is no stage, a stage is a group, or a stage repeats.
+		"""
 		Group.__init__(
 			self,
 			*tasks,
@@ -747,19 +638,15 @@ class Pipe(Group):
 		return f"Pipe({', '.join(parts)})"
 
 	def __or__(self, other: Nodes) -> Parallel:
-		"""``|`` composes in parallel: ``Parallel(self).extend(other)``."""
+		"""Compose in parallel."""
 		return _composed(Parallel, self, other)
 
 	def __add__(self, other: Nodes) -> Sequential:
-		"""``+`` composes in sequence: ``Sequential(self).extend(other)``."""
+		"""Compose in sequence."""
 		return _composed(Sequential, self, other)
 
 	def __gt__(self, other: Nodes) -> Pipe:
-		"""``>`` is :meth:`extend`, keeping this pipe's fields and ``agent_only`` — a stage can't
-		nest, so a pipe is always extended. A plain right-side :class:`Pipe` contributes its
-		stages; one with fields or ``agent_only`` raises rather than drop them — pipe its
-		``.tasks`` instead. Like ``Task.__gt__``, parenthesize a chain of more than two, and
-		compare with ``==`` in a boolean context — a composed pipe is always truthy.
+		"""Append stages; a plain right-side ``Pipe`` adds its stages, one with fields or ``agent_only`` raises.
 
 		>>> (Pipe("a") > "b").tasks == (Task("a"), Task("b"))
 		True
@@ -780,26 +667,17 @@ UNRESOLVED_REF_MESSAGE: Final = "an unresolved Ref: task references must be reso
 
 
 def ref_problem(group: Group) -> str | None:
-	"""Why ``group`` cannot hold its :class:`~camas.v0.ref.Ref` child: the stage message inside
-	a pipe, the resolution message elsewhere; ``None`` when it holds none.
-	"""
 	if not any(isinstance(t, Ref) for t in group.tasks):
 		return None
 	return STAGE_MESSAGE if isinstance(group, Pipe) else UNRESOLVED_REF_MESSAGE
 
 
 def reject_refs(group: Group) -> None:
-	"""Reject a :class:`~camas.v0.ref.Ref` child of ``group``.
-
-	Raises:
-		ValueError: with :func:`ref_problem`'s message.
-	"""
 	if (problem := ref_problem(group)) is not None:
 		raise ValueError(problem)
 
 
 def _group_repr_parts(group: Group) -> tuple[str, ...]:
-	"""The repr parts shared by every Group kind, so a field added later renders for all."""
 	return (
 		f"tasks={group.tasks!r}",
 		f"name={group.name!r}",
@@ -814,19 +692,13 @@ def _group_repr_parts(group: Group) -> tuple[str, ...]:
 
 
 GROUP_FIELDS: Final = ("name", "matrix", "variants", "env", "cwd", "help", "paths", "when")
-"""Every ``Group.__init__`` keyword other than the variadic tasks, in signature order — the drift
-test fails when a new field lands on Group but not here."""
 
 
 G = TypeVar("G", bound=Group)
 
 
 def rebuilt(group: G, *children: TaskNode, **changes: object) -> G:
-	"""``group`` rebuilt around ``children``: fields named in ``changes`` take the new value, every
-	other field is carried verbatim — so a Group field added later is carried by construction at
-	every rebuild site, instead of being listed (and missable) at each. A ``changes`` name outside
-	:data:`GROUP_FIELDS` is a ``TypeError``, as the spelled-out constructors raised it.
-
+	"""
 	>>> rebuilt(Parallel(Task("a"), matrix={"x": ("1",)}), Task("b"), Task("c"))
 	Parallel(tasks=(Task(cmd='b', name=None, env={}, cwd=None), Task(cmd='c', name=None, env={}, cwd=None)), name=None, matrix={'x': ('1',)}, env={}, cwd=None)
 	>>> rebuilt(Sequential("a"), Task("b"), paths=".")
@@ -849,31 +721,20 @@ def rebuilt(group: G, *children: TaskNode, **changes: object) -> G:
 
 @dataclass(frozen=True, slots=True)
 class ProjectRef:
-	"""A :func:`Project` reference before the loader resolves it; never reaches the engine."""
-
 	path: str
 
 	def __or__(self, other: Nodes) -> Parallel:
-		"""Composes like a task node — see :meth:`Task.__or__`."""
 		return _composed(Parallel, cast("TaskNode", self), other)
 
 	def __add__(self, other: Nodes) -> Sequential:
-		"""Composes like a task node — see :meth:`Task.__add__`."""
 		return _composed(Sequential, cast("TaskNode", self), other)
 
 	def __gt__(self, other: Nodes) -> Pipe:
-		"""A referenced project is a group, not a leaf stage — the composition raises the same
-		``ValueError`` the :class:`Pipe` constructor raises for a nested stage.
-		"""
 		return _pipe_of(cast("TaskNode", self), other)
 
 
 def Project(path: str) -> TaskNode:  # noqa: N802  # constructor-style factory, like Task/Parallel
-	"""Another ``tasks.py`` as a task node — a private, immutable child project, referenced by
-	``path`` relative to the importing file (a directory resolves its ``tasks.py``). Runs what a
-	bare ``camas`` runs in that directory; bound at module scope, its tasks mount under the
-	binding's name for dotted dispatch (``libs``, ``libs.search.lint``).
-	"""
+	"""Another ``tasks.py``, by path relative to this one, as a task node."""
 	return cast("TaskNode", ProjectRef(path))
 
 
@@ -881,14 +742,6 @@ _NODE_KINDS: Final = (*get_args(TaskNode), ProjectRef)
 
 
 def _node(child: object) -> TaskNode:
-	"""A composition operand as a task node: a ``str`` as its :class:`Task`, a task node (a
-	:class:`Project` reference included — it resolves in the loader) as itself, anything else
-	a :class:`TypeError` naming the operand. ``object``-typed so the guard is the check, not
-	the annotation.
-
-	Raises:
-		TypeError: when ``child`` is neither a node nor a string.
-	"""
 	if isinstance(child, str):
 		return Task(cmd=child)
 	if isinstance(child, _NODE_KINDS):
@@ -899,16 +752,10 @@ def _node(child: object) -> TaskNode:
 
 
 def _nodes(children: tuple[TaskNode, ...]) -> tuple[TaskNode, ...]:
-	"""Every child back through the operand guard — a group operand's children came through the
-	lenient constructor, so composition re-checks them.
-	"""
 	return tuple(_node(child) for child in children)
 
 
 def fieldless(group: Group) -> bool:
-	"""Whether every :data:`GROUP_FIELDS` value is the constructor default: ``None``, or an
-	empty mapping for ``env``.
-	"""
 	return all(
 		getattr(group, field) is None or (field == "env" and not getattr(group, field))
 		for field in GROUP_FIELDS
@@ -916,12 +763,6 @@ def fieldless(group: Group) -> bool:
 
 
 def _member(node: object) -> TaskNode:
-	"""A sequence member as a task node — a ``str`` reads as part of a tuple command there
-	(``("python", "-c", "...")``), so it is rejected rather than coerced.
-
-	Raises:
-		TypeError: when ``node`` is a ``str`` or not a task node.
-	"""
 	if isinstance(node, str):
 		raise TypeError(
 			f"cannot compose {node!r} from a sequence: a str there is ambiguous with a tuple "
@@ -931,10 +772,6 @@ def _member(node: object) -> TaskNode:
 
 
 def _children(nodes: Nodes) -> tuple[TaskNode, ...]:
-	"""The children ``nodes`` adds: one node, or each member of a sequence — a ``str``, a
-	bytes-like value, a ``range``, or a :class:`~camas.v0.ref.Ref` (a ``NamedTuple``) is one
-	value, never a sequence of nodes.
-	"""
 	if isinstance(nodes, Sequence) and not isinstance(
 		nodes, (str, bytes, bytearray, memoryview, range, Ref)
 	):
@@ -943,9 +780,6 @@ def _children(nodes: Nodes) -> tuple[TaskNode, ...]:
 
 
 def _plain(group: Group, kind: type[Group]) -> bool:
-	"""Whether an operator may extend or splice ``group`` — exactly a ``kind`` — in place of
-	nesting it.
-	"""
 	return (
 		type(group) is kind
 		and fieldless(group)
@@ -960,21 +794,12 @@ def _composed(kind: type[Sequential], left: TaskNode, right: Nodes) -> Sequentia
 def _composed(
 	kind: type[Parallel | Sequential], left: TaskNode, right: Nodes
 ) -> Parallel | Sequential:
-	"""The ``|`` (``kind=Parallel``) and ``+`` (``kind=Sequential``) composition — see
-	:meth:`Parallel.__or__` and :meth:`Sequential.__add__`.
-	"""
 	if isinstance(left, (Parallel, Sequential)) and _plain(left, kind):
 		return left.extend(right)
 	return kind(left).extend(right)
 
 
 def _pipe_of(left: TaskNode, right: Nodes) -> Pipe:
-	"""The ``>`` composition — see :meth:`Pipe.__gt__`.
-
-	Raises:
-		ValueError: when a stage is a group, or ``right`` is a :class:`Pipe` whose fields or
-			``agent_only`` splicing would drop.
-	"""
 	head: Final = left if isinstance(left, Pipe) else Pipe(left)
 	if not isinstance(right, Pipe):
 		return head.extend(right)
@@ -987,24 +812,14 @@ def _pipe_of(left: TaskNode, right: Nodes) -> Pipe:
 
 
 def GIT_PORCELAIN() -> Task:  # noqa: N802  # constructor-style factory, like Task/Parallel
-	"""A fresh default drift check for :func:`Clean` — a factory, not an instance, so a
-	``tasks.py`` importing it registers no runnable task. Runs the maintained
-	:mod:`camas._git_porcelain` module under camas's own interpreter; ``git`` must be on
-	PATH.
-	"""
+	"""A fresh copy of the default ``Clean`` drift check."""
 	return Task((sys.executable, "-m", "camas._git_porcelain"), cwd=".")
 
 
 _GIT_PORCELAIN: Final = GIT_PORCELAIN()
-"""Kept private so importing camas into a ``tasks.py`` registers no runnable task."""
 
 
 def _as_task(value: object, message: str) -> Task:
-	"""Coerce a bare command string to a Task, or reject any other non-Task with ``message``.
-
-	Raises:
-		ValueError: ``value`` is neither a ``str`` nor a ``Task``.
-	"""
 	node: Final = _node(value) if isinstance(value, str) else value
 	if not isinstance(node, Task):
 		raise ValueError(message)
@@ -1018,29 +833,15 @@ def Clean(  # noqa: N802  # constructor-style factory, like Task/Parallel
 	before: bool = True,
 	name: str | None = None,
 ) -> Sequential:
-	"""A codegen drift gate: run the mutating generator, then fail if the working tree is not
-	exactly as it was.
+	"""A drift gate around ``mutator``: fail when the working tree is not clean.
 
-	Expands to ``Sequential``: the ``check`` as ``<label>-before``, then ``mutator``, then
-	``check`` as ``<label>-after``; ``label`` is ``name``, else the mutator's label joined
-	with the check's own name. A dirty tree fails the before-check and the blocker skips the
-	generator; the after-check's failure output is the drift diagnostic. The check leaves
-	always run — ``when="."`` and ``paths=None`` override the check's own scoping — and the
-	check reads git's view, so paths git ignores are outside its contract. The default check
-	scrubs ambient GIT_* environment (case-insensitively on Windows and MSYS/Cygwin); a
-	user-supplied ``check`` runs with the ambient environment. Under ``--under``
-	the gate keeps its ordering (#306); a check leaf measured over budget is excluded
-	outright, and a mutator measured over budget drops like any leaf, leaving the checks to
-	run around an un-run generator, so drift goes undetected.
+	>>> [t.name for t in Clean(Task("make gen", mutates=True)).tasks]
+	['make gen-before', None, 'make gen-after']
+	>>> Clean(Task("make gen", mutates=True), before=False).tasks[0].cmd
+	'make gen'
 
 	Raises:
-		ValueError: ``mutator`` or ``check`` is neither a ``str`` nor a ``Task``; ``mutator``
-			lacks ``mutates=True``; ``check`` carries a ``{paths}`` token.
-
-	>>> Clean(Task("make update-openapi", mutates=True), before=False).tasks[0].cmd
-	'make update-openapi'
-	>>> Clean(Task("make update-openapi", mutates=True)).tasks[0].name
-	'make update-openapi-before'
+		ValueError: on a ``mutator`` without ``mutates=True`` or a ``check`` with ``{paths}``.
 	"""
 	mutator = _as_task(
 		mutator,

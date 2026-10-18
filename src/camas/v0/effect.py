@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""The ``Effect`` protocol: observers over a run's event stream with per-leaf contexts."""
+"""The ``Effect`` protocol."""
 
 from __future__ import annotations
 
@@ -19,20 +19,14 @@ T = TypeVar("T")
 
 @runtime_checkable
 class Effect(Protocol[T]):
-	"""Observer over a run's event stream, with a per-leaf context of type T.
-
-	Each leaf owns an independent chain: setup seeds every leaf's slot,
-	on_event advances the slot for the affected leaf, and teardown receives
-	one final T per leaf in leaf-index order. Different leaves' on_event
-	calls may run concurrently.
-	"""
+	"""An observer of a run's events, holding one context per leaf."""
 
 	async def setup(self, task: TaskNode) -> T:
-		"""Return the initial per-leaf context."""
+		"""Return the context every leaf starts with."""
 		...
 
 	async def on_event(self, event: TaskEvent, states: Sequence[LeafState], ctx: T) -> T:
-		"""Return the next context for the leaf identified by event.leaf_index."""
+		"""Return the event's leaf's next context; calls for different leaves may overlap."""
 		...
 
 	async def teardown(self, ctxs: tuple[T, ...]) -> None:

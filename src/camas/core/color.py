@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""ANSI colors."""
-
 from typing import Final
 
 BOLD: Final = "\033[1m"

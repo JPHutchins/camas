@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""The ``camas mcp`` stdio server: exposes a project's camas tasks over the Model Context Protocol."""
-
 from __future__ import annotations
 
 import argparse
@@ -102,8 +100,6 @@ if TYPE_CHECKING:
 
 
 class ToolName(Enum):
-	"""The tools this server exposes; each member's value is its on-the-wire name."""
-
 	LIST = "camas_list"
 	RUN = "camas_run"
 	CHECK = "camas_check"
@@ -144,23 +140,11 @@ NO_RUN_DEFAULT_MSG: Final = (
 
 
 class Compat(NamedTuple):
-	"""Client-compatibility switches. ``emit_structured`` gates the 2025-11-25 ``title``,
-	``annotations``, and ``outputSchema`` tool fields plus ``structuredContent`` — all
-	default-ON (rich by default). Pass ``--plain`` to opt out for clients that choke on the
-	2025-11-25 fields (Claude Code issue #25081, closed unfixed). ``outputSchema`` is the raw
-	``model_json_schema()`` with ``$ref``s intact — current Claude Code resolves them;
-	ref-blind clients are not a target.
-	"""
-
 	emit_structured: bool = True
 
 
 @dataclass(slots=True)
 class Session:
-	"""Server state: the resolved project, its root, the compat switches, and a per-run
-	counter naming each run's log directory.
-	"""
-
 	project: TasksState
 	base: Path
 	compat: Compat
@@ -172,23 +156,19 @@ class Session:
 
 	@property
 	def camas_dir(self) -> Path:
-		"""The resolved camas directory for run logs and the timing cache."""
 		config = self.project.config if isinstance(self.project, LoadOk) else None
 		return (config if config is not None else Config()).camas_path(self.base)
 
 	def refresh(self) -> None:
-		"""Re-resolve the project from disk, matching the CLI's per-invocation re-execution."""
 		self.project = resolve_project_quiet(self.base)
 		self.version_warning = check_version_pin(self.project)
 
 	def reserve_run(self) -> int:
-		"""Claim the next run's sequence number (atomic between ``await`` points)."""
 		self.runs += 1
 		return self.runs
 
 
 def project_source(state: TasksState) -> Path | None:
-	"""The tasks file a state was resolved from, or ``None`` when none was found."""
 	match state:
 		case LoadOk(source=source) | LoadErr(source=source):
 			return source
@@ -197,33 +177,19 @@ def project_source(state: TasksState) -> Path | None:
 
 
 def base_from(source: Path | None, fallback: Path) -> Path:
-	"""The frame every leaf ``cwd`` and every ``--paths``/``paths`` entry is rebased against:
-	the directory of the composed project's own ``tasks.py`` when one was resolved, else
-	``fallback`` — the same fallback :func:`camas.core.execution.spawn_cwd` and
-	:func:`camas.core.scope.to_changed` apply to an unrebased leaf.
-	"""
 	return source.parent if source is not None else fallback
 
 
 def base_for(session: Session) -> Path:
-	"""The rebasing frame for the MCP server path (:func:`base_from`)."""
 	return base_from(project_source(session.project), session.base)
 
 
 class VersionSkew(NamedTuple):
-	"""The running camas version and the PEP 723 pin it fails to satisfy."""
-
 	running: str
 	spec: str
 
 
 def check_version_pin(state: TasksState) -> str | None:
-	"""Compare the running camas version against the PEP 723 pin in the project's ``tasks.py``.
-
-	Uses a lightweight parse (``==``, ``>=``, ``>``, ``<=``, ``<``) that avoids a ``packaging``
-	dependency. ``!=``, ``~=``, and comma-separated compound specifiers are skipped rather than
-	risking a false positive — we err toward silence. Only a single specifier is checked.
-	"""
 	skew = version_skew(state)
 	if skew is None:
 		return None
@@ -234,9 +200,6 @@ def check_version_pin(state: TasksState) -> str | None:
 
 
 def version_skew(state: TasksState) -> VersionSkew | None:
-	"""The (running, pin) pieces when the running camas version does not satisfy the project's
-	PEP 723 pin, else ``None`` — the structural form of :func:`check_version_pin`.
-	"""
 	source = project_source(state)
 	if source is None:
 		return None
@@ -255,7 +218,6 @@ def version_skew(state: TasksState) -> VersionSkew | None:
 
 
 def running_version() -> str | None:
-	"""The installed camas distribution version, or ``None`` when metadata is unavailable."""
 	try:
 		return version("camas")
 	except PackageNotFoundError:
@@ -263,31 +225,17 @@ def running_version() -> str | None:
 
 
 def version_satisfies(running: str, specifier: str) -> bool:
-	"""Lightweight PEP 440 version check avoiding a ``packaging`` dependency.
-
-	Covers the common single-operator cases (>=, >, <=, <, ==); returns ``True`` for
-	unrecognized specifiers to avoid false-positive warnings.
-	"""
 	for op in ("==", ">=", "<=", ">", "<"):
 		if specifier.startswith(op):
 			pinned = specifier[len(op) :].strip()
 			try:
 				return _op(op, _parse(running), _parse(pinned))
 			except ValueError:
-				return True  # can't parse — skip
-	return True  # unrecognized specifier — skip
+				return True
+	return True
 
 
 def _parse(version: str) -> tuple[int, ...]:
-	"""Parse a version string to a comparable tuple, stripping pre-release/build segments
-	(e.g. ``1.2.3.dev4+g5`` → ``(1, 2, 3)``).
-
-	Stripping pre-releases means a pre-release of release X (``1.0.0.dev1``) compares as
-	equal to / satisfying X under every operator — ``==1.0.0``, ``>=1.0.0``, ``<=1.0.0`` all
-	pass. That is a false negative in the safe direction (silence, not a spurious warning);
-	cross-version skew (``0.1.16`` vs ``==0.1.18``), which is what #159 is about, is still
-	caught. ``_op`` zero-pads so ``1.0`` and ``1.0.0`` compare equal per PEP 440.
-	"""
 	for sep in ("+", "a", "b", "rc", "dev", "post"):
 		idx = version.find(sep)
 		if idx >= 0:
@@ -296,11 +244,6 @@ def _parse(version: str) -> tuple[int, ...]:
 
 
 def _op(operator: str, a: tuple[int, ...], b: tuple[int, ...]) -> bool:
-	"""Compare *a* and *b* under ``operator`` (``==``, ``>=``, ``<=``, ``>``, ``<``).
-
-	Both tuples are zero-padded to equal length first so ``1.0`` and ``1.0.0`` compare equal
-	(PEP 440 release-segment equivalence).
-	"""
 	n = max(len(a), len(b))
 	a = a + (0,) * (n - len(a))
 	b = b + (0,) * (n - len(b))
@@ -319,12 +262,6 @@ Snapshot: TypeAlias = dict[str, str]
 
 
 def package_snapshot() -> Snapshot:
-	"""This camas package's source files as ``{relpath: sha256}`` — content identity, so a
-	same-size edit or a restored mtime still changes it and a ``touch`` does not; ``.so`` files
-	count too, since an in-place mypyc wheel upgrade rewrites only those. ``os.walk`` because it
-	never follows directory symlinks on the Python versions camas supports; a file deleted
-	mid-walk simply drops out, which is itself a change.
-	"""
 	root = camas_package_dir()
 	snapshot: Snapshot = {}
 	for dirpath, _, filenames in os.walk(root):
@@ -340,21 +277,13 @@ def package_snapshot() -> Snapshot:
 
 
 RELOAD_EXIT_DELAY: Final = 1.0
-"""How long a stale server lives after answering the triggering call — long enough for the
-transport's ``to_thread`` writer to flush the response the exit is scheduled after."""
 
 
 def exit_for_reload() -> None:  # pragma: no cover  # the suite cannot survive its own process exit
-	"""End this server process so the client reconnects to a freshly-imported camas. ``os._exit``
-	because ``sys.exit`` deadlocks interpreter finalization joining anyio's ``to_thread`` workers;
-	the OS closes the stdio pipe with the process, and the client restarts the server on that
-	EOF — the exit code is ``0`` because the death is deliberate, not a crash.
-	"""
 	os._exit(0)
 
 
 def serve_stdio(argv: list[str]) -> None:  # pragma: no cover
-	"""Entry point for ``camas mcp``: resolve the project, build the server, serve over stdio."""
 	os.environ["NO_COLOR"] = "1"
 	base = project_base()
 	session = Session(
@@ -366,7 +295,6 @@ def serve_stdio(argv: list[str]) -> None:  # pragma: no cover
 
 
 async def run_over_stdio(server: Server[object]) -> None:  # pragma: no cover
-	"""Wire the low-level server to the stdio transport and run until the client closes it."""
 	from mcp.server.stdio import stdio_server
 
 	options = server.create_initialization_options(NotificationOptions(tools_changed=True))
@@ -375,26 +303,13 @@ async def run_over_stdio(server: Server[object]) -> None:  # pragma: no cover
 
 
 def build_server(session: Session) -> Server[object]:
-	"""A low-level MCP ``Server`` with the camas tool handlers registered; when the camas package
-	changes, the in-flight call is answered and the server exits for the client to reconnect
-	(#58). The respawn command is the client's own MCP configuration — not this process's argv —
-	so an ad-hoc ``--plain`` launch comes back as the configured form. Every tools/call arms an
-	exit probe for when the client goes idle; after ``RELOAD_EXIT_DELAY``, off the loop, it walks
-	the package — changed exits, unchanged or unreadable stays up (the next call re-probes). A
-	tools/call response gets at least ``RELOAD_EXIT_DELAY`` (plus the walk) to flush before the
-	exit; other requests are unprotected and re-issued after the client's reconnect. A request
-	whose handler has not run when the exit is decided is not covered — recovery is the client's
-	transparent reconnect, which #297 tracks as not yet working.
-	"""
 	initial = package_snapshot()
 	probe_task: asyncio.Task[None] | None = None
 	active_calls = 0
 
 	def retrieve_probe_exception(task: asyncio.Task[None]) -> None:
 		if not task.cancelled():
-			exception = (
-				task.exception()
-			)  # retrieve a dead probe's failure — no unretrieved log, even idle
+			exception = task.exception()
 			if (
 				exception is not None
 			):  # pragma: no cover  # the suppressed surfaces cover the tested paths
@@ -452,7 +367,6 @@ def build_server(session: Session) -> Server[object]:
 
 
 async def call(session: Session, name: str, arguments: dict[str, Any]) -> types.CallToolResult:
-	"""Dispatch a ``tools/call`` to the matching handler, or a tool error for an unknown name."""
 	match parse_tool(name):
 		case ToolName.LIST:
 			return list_call(session, arguments)
@@ -476,18 +390,14 @@ async def call(session: Session, name: str, arguments: dict[str, Any]) -> types.
 
 
 def parse_tool(name: str) -> ToolName | None:
-	"""The tool matching ``name``, or ``None`` if the client named an unknown tool."""
 	return next((tool for tool in ToolName if tool.value == name), None)
 
 
 def task_names(project: TasksState) -> tuple[str, ...]:
-	"""Discovered task names, sorted; empty when the project failed to load."""
 	return tuple(sorted(project.tasks)) if isinstance(project, LoadOk) else ()
 
 
 class Tools(NamedTuple):
-	"""The fixed set of tools the server exposes — a known shape, not an open list."""
-
 	discovery: types.Tool
 	execution: types.Tool
 	validation: types.Tool
@@ -508,7 +418,6 @@ def tool_def(
 	title: str,
 	annotations: types.ToolAnnotations,
 ) -> types.Tool:
-	"""One tool definition; the 2025-11-25 rich fields are emitted by default, suppressed under ``--plain``."""
 	rich: Final = compat.emit_structured
 	return types.Tool(
 		name=name,
@@ -521,7 +430,6 @@ def tool_def(
 
 
 def tools(task_names: tuple[str, ...], compat: Compat) -> Tools:
-	"""The eight tool definitions, with ``task_names`` spliced into ``camas_run``, ``camas_gate``, ``camas_fix``, and ``camas_github_matrix``'s ``task`` enums."""
 	return Tools(
 		discovery=tool_def(
 			compat,
@@ -708,7 +616,6 @@ def tools(task_names: tuple[str, ...], compat: Compat) -> Tools:
 
 
 def list_call(session: Session, arguments: dict[str, Any]) -> types.CallToolResult:
-	"""Handle ``camas_list``: the project's task catalog, or a load error."""
 	try:
 		req = wire.ListRequest.model_validate(arguments)
 	except ValidationError as e:
@@ -730,7 +637,6 @@ def list_call(session: Session, arguments: dict[str, Any]) -> types.CallToolResu
 
 
 def check_call(session: Session) -> types.CallToolResult:
-	"""Handle ``camas_check``: validate the session's project and report the checker verdict."""
 	resp = to_check_response(session.project).model_copy(
 		update={"server_version": running_version()}
 	)
@@ -738,17 +644,11 @@ def check_call(session: Session) -> types.CallToolResult:
 
 
 def docs_call(session: Session) -> types.CallToolResult:
-	"""Handle ``camas_docs``: the camas authoring tutorial."""
 	resp = to_docs_response()
 	return success(with_warning(session, docs_text(resp)), resp, session.compat)
 
 
 def init_call(session: Session, arguments: dict[str, Any]) -> types.CallToolResult:
-	"""Handle ``camas_init``: scaffold a commented starter ``tasks.py`` in the project root,
-	refusing to overwrite an existing one, and re-resolve so the new tasks are immediately live.
-	Defaults to the kitchen-sink template (``verbose=True``); pass ``verbose=False`` for the
-	same minimal one ``camas --init`` writes.
-	"""
 	try:
 		req = wire.InitRequest.model_validate(arguments)
 	except ValidationError as e:
@@ -768,7 +668,6 @@ def init_call(session: Session, arguments: dict[str, Any]) -> types.CallToolResu
 
 
 async def run_call(session: Session, arguments: dict[str, Any]) -> types.CallToolResult:
-	"""Handle ``camas_run``: validate, resolve the node, then dry-run or execute in-process."""
 	match session.project:
 		case LoadErr(source=source, exception=exception):
 			return error_result(load_error_hint(session, source, exception))
@@ -779,13 +678,6 @@ async def run_call(session: Session, arguments: dict[str, Any]) -> types.CallToo
 
 
 def leaf_color_of(config: Config | None) -> bool:
-	"""Whether leaves get camas's forced color, defaulting when the project declares no ``Config``.
-
-	Under the stdio server this is currently moot — :func:`serve_stdio` pins ``NO_COLOR=1`` for the
-	process, which outranks the forcing either way — but it is what the two hook entry points in
-	this module (``camas mcp gate``, ``camas mcp fix``) run without, and it keeps a project's
-	setting honored rather than silently dropped if that pin ever moves.
-	"""
 	return (config if config is not None else Config()).leaf_color
 
 
@@ -795,7 +687,6 @@ async def run_for(
 	config: Config | None,
 	arguments: dict[str, Any],
 ) -> types.CallToolResult:
-	"""Validate, resolve the node, then dry-run or execute in the server's event loop."""
 	try:
 		req = wire.RunRequest.model_validate(arguments)
 	except ValidationError as e:
@@ -843,38 +734,23 @@ async def run_for(
 
 
 def record_gate(camas_dir: Path | None, outcome: GateOutcome) -> None:
-	"""Record what a gate run's leaves cost, under their carried identities — computed before any
-	rewrite, so ``agent_format`` appending to the command cannot mis-key them. Shared by both gate
-	entry points — the MCP tool and the ``Stop``-hook subcommand — which otherwise differ only in
-	where they get ``under`` from, and which between them account for two of the four paths that
-	used to run leaves and observe nothing.
-	"""
 	if outcome.result is not None:
 		timings.record_observed(camas_dir, timings.leaves_of(outcome.result))
 
 
 def empty_run_response() -> wire.RunResponse:
-	"""A successful run of nothing — no leaves executed."""
 	return wire.RunResponse(
 		returncode=0, elapsed=0.0, passed=0, failed=0, skipped=0, interrupt_count=0, leaves=()
 	)
 
 
 def nothing_covered_result(session: Session, paths: list[str]) -> types.CallToolResult:
-	"""The ``camas_run`` success for a path scope that matched no leaf — an empty run and a
-	message naming the uncovered paths, mirroring the CLI's ``No task leaf covers …``.
-	"""
 	return success(
 		with_warning(session, coverage_message(paths)), empty_run_response(), session.compat
 	)
 
 
 def require_task(tasks: Mapping[str, TaskNode], name: str) -> TaskNode:
-	"""The task named ``name``.
-
-	Raises:
-		ValueError: when ``name`` names no task — with a did-you-mean hint and the known names.
-	"""
 	if name not in tasks:
 		known = ", ".join(sorted(tasks)) or "none"
 		raise ValueError(f"no task named {name!r}{did_you_mean(name, tasks)} (known: {known})")
@@ -882,9 +758,6 @@ def require_task(tasks: Mapping[str, TaskNode], name: str) -> TaskNode:
 
 
 def required_axes_message(names: tuple[str, ...]) -> str:
-	"""The camas_run / camas_gate / camas_fix message for matrix axes left unfilled — an
-	empty-value axis is a required input a run supplies via ``matrix_overrides``.
-	"""
 	plural = len(names) > 1
 	overrides = ", ".join(f'"{n}": ["VALUE"]' for n in names)
 	return (
@@ -894,9 +767,6 @@ def required_axes_message(names: tuple[str, ...]) -> str:
 
 
 def unsatisfiable_message(node: TaskNode) -> str | None:
-	"""Why ``node`` would expand to no leaves — a required matrix axis left unfilled, or a
-	``variants=()`` that declares no bundle — or ``None`` when it is runnable.
-	"""
 	required = unfilled_required_axes(node)
 	if required:
 		return required_axes_message(required)
@@ -907,14 +777,6 @@ def unsatisfiable_message(node: TaskNode) -> str | None:
 
 
 def require_filled_axes(node: TaskNode) -> None:
-	"""Raise when ``node`` would expand to nothing — an empty-value axis is a required input a
-	run supplies via ``matrix_overrides``, and an empty ``variants`` is a declaration to fix in
-	``tasks.py``, rather than either silently expanding to zero leaves.
-
-	Raises:
-		ValueError: naming each unfilled axis and the ``matrix_overrides`` that fills it, or each
-			node whose ``variants`` is empty.
-	"""
 	blocked = unsatisfiable_message(node)
 	if blocked is not None:
 		raise ValueError(blocked)
@@ -923,17 +785,6 @@ def require_filled_axes(node: TaskNode) -> None:
 def resolve_run_node(
 	tasks: Mapping[str, TaskNode], req: wire.RunRequest, config: Config | None = None
 ) -> tuple[str, TaskNode]:
-	"""The ``(name, node)`` to run: looked up by name, then matrix-overridden. Passthrough args
-	are the caller's to apply — after keying is derived from the pre-passthrough tree.
-
-	When ``task`` is omitted, resolves the project's configured default task —
-	honored identically for a normal run and a ``dry_run`` preview.
-
-	Raises:
-		ValueError: when ``req.task`` is omitted and no default is configured, names
-			no task, an override targets an unknown matrix axis, or passthrough args
-			name a non-leaf task.
-	"""
 	if req.task is None:
 		default = config.run_default() if config is not None else None
 		if default is None:
@@ -956,7 +807,6 @@ async def run_budget(
 	req: wire.RunRequest,
 	budget_s: float,
 ) -> types.CallToolResult:
-	"""Handle ``camas_run`` with ``under``: budget the source task's leaves, then dry-run or execute."""
 	if req.args:
 		return error_result("camas_run: 'args' (passthrough) cannot be combined with 'under'")
 	try:
@@ -970,8 +820,6 @@ async def run_budget(
 	changed = to_changed(req.paths, base_for(session))
 	if requested_but_unusable(req.paths, changed):
 		return nothing_covered_result(session, req.paths)
-	# Budget before scoping, as the gate does: an estimate is keyed by the label a leaf carries
-	# before its {paths} are injected, so budgeting the scoped tree looks up a label nothing records.
 	plan = plan_under(
 		expand_matrix(source),
 		budget_s,
@@ -1000,7 +848,6 @@ async def execute_budgeted(
 	observed: timings.Observed,
 	summary: BudgetSummary,
 ) -> types.CallToolResult:
-	"""Dry-run or execute a budget's final tree, reporting its census."""
 	run_node: Final = observed.node
 	assert run_node is not None
 	report = to_budget_report(summary)
@@ -1039,12 +886,6 @@ async def execute_budgeted(
 def budget_source(
 	tasks: Mapping[str, TaskNode], config: Config | None, task: str | None
 ) -> TaskNode:
-	"""The task a budget run filters: the named task, else the project's configured default.
-
-	Raises:
-		ValueError: when ``task`` names no task, or no task is named and no
-			default is configured to budget.
-	"""
 	if task is not None:
 		return require_task(tasks, task)
 	default = config.run_default() if config is not None else None
@@ -1054,12 +895,6 @@ def budget_source(
 
 
 def gate_source(tasks: Mapping[str, TaskNode], config: Config | None, task: str | None) -> TaskNode:
-	"""The node the gate checks: the named task, else the agent's ``check`` node (or the default).
-
-	Raises:
-		ValueError: when ``task`` names no task, or no task is named and no check node
-			(``Config.agent.check`` or ``default_task``) exists.
-	"""
 	if task is not None:
 		return require_task(tasks, task)
 	check = config.gate_check(github=False) if config is not None else None
@@ -1071,9 +906,6 @@ def gate_source(tasks: Mapping[str, TaskNode], config: Config | None, task: str 
 
 
 def to_budget_report(summary: BudgetSummary) -> wire.BudgetReport:
-	"""The wire form of a budget census — the runnable labels, the over-budget leaves that
-	don't run, and the fitting leaves a pipe cut dropped.
-	"""
 	return wire.BudgetReport(
 		budget_s=summary.budget_s,
 		selected=tuple(task_label(t) for t in summary.runnable),
@@ -1094,23 +926,16 @@ def to_budget_report(summary: BudgetSummary) -> wire.BudgetReport:
 
 
 def _excluded_leaf(o: OverBudget) -> wire.ExcludedLeaf:
-	"""The wire form of an over-budget disposition — a leaf the budget did not run, or (in
-	``running_over_budget``) one it runs anyway to measure an untimed pipe sibling.
-	"""
 	return wire.ExcludedLeaf(
 		name=task_label(o.task), reason="over_budget", estimated_s=o.estimated_s
 	)
 
 
 def attach_budget(resp: wire.RunResponse, report: wire.BudgetReport) -> wire.RunResponse:
-	"""Thread the budget partition into the run response's ``budget`` field."""
 	return resp.model_copy(update={"budget": report})
 
 
 def census_of_report(report: wire.BudgetReport) -> BudgetCensus:
-	"""The shared formatter's display projection of a wire report — the gate text renders the
-	response's own census through the one formatter.
-	"""
 	return BudgetCensus(
 		budget_s=report.budget_s,
 		running=len(report.selected),
@@ -1123,14 +948,10 @@ def census_of_report(report: wire.BudgetReport) -> BudgetCensus:
 
 
 def headline(summary: BudgetSummary) -> str:
-	"""The shared formatter's lines joined — the budget text every surface prefixes."""
 	return "\n".join(summary_lines(census_of(summary)))
 
 
 def create_run_log_dir(camas_dir: Path, task: str, seq: int) -> Path:
-	"""Create and return ``camas_dir/runs/<task>/<seq>/`` (creating ``camas_dir`` if needed),
-	pruning older sibling run dirs beyond ``RUN_LOG_KEEP``.
-	"""
 	timings.ensure_camas_dir(camas_dir)
 	task_dir = camas_dir / "runs" / slug(task)
 	run_dir = task_dir / str(seq)
@@ -1140,9 +961,6 @@ def create_run_log_dir(camas_dir: Path, task: str, seq: int) -> Path:
 
 
 def _run_dir_recency(d: Path) -> tuple[int, int]:
-	"""Recency sort key for a numbered run dir: mtime, then sequence number to break
-	mtime ties deterministically on coarse-resolution filesystems.
-	"""
 	try:
 		mtime_ns = d.stat().st_mtime_ns
 	except OSError:  # pragma: no cover
@@ -1151,10 +969,6 @@ def _run_dir_recency(d: Path) -> tuple[int, int]:
 
 
 def prune_run_dirs(task_dir: Path, keep: Path, *, keep_n: int = RUN_LOG_KEEP) -> tuple[Path, ...]:
-	"""Delete the oldest numbered run dirs under ``task_dir`` so at most ``keep_n`` remain,
-	always keeping ``keep`` (the run dir just created) and never touching a non-numeric entry.
-	Returns the deleted paths; deletion is best-effort.
-	"""
 	others = sorted(
 		(d for d in task_dir.iterdir() if d.is_dir() and d.name.isdecimal() and d != keep),
 		key=_run_dir_recency,
@@ -1167,11 +981,6 @@ def prune_run_dirs(task_dir: Path, keep: Path, *, keep_n: int = RUN_LOG_KEEP) ->
 
 
 def write_logs(run_dir: Path, result: RunResult) -> tuple[Path | None, ...]:
-	"""Write each leaf's full output to ``run_dir``, one entry per leaf in DFS order.
-
-	An entry is ``None`` when that leaf produced no log — it was skipped, or ran silently.
-	Positionally aligned with ``RunResponse.leaves`` so the two zip ``strict``.
-	"""
 	return tuple(write_leaf_log(run_dir, i, leaf) for i, leaf in enumerate(result.results))
 
 
@@ -1192,7 +1001,6 @@ def write_leaf_log(run_dir: Path, index: int, leaf: TaskResult) -> Path | None:
 def failing_log_links(
 	resp: wire.RunResponse, logs: tuple[Path | None, ...]
 ) -> tuple[types.ResourceLink, ...]:
-	"""``resource_link``s to the on-disk logs of the leaves that did not pass."""
 	return tuple(
 		types.ResourceLink(
 			type="resource_link",
@@ -1207,7 +1015,6 @@ def failing_log_links(
 
 
 def list_text(resp: wire.ListResponse, *, expand_matrix: bool) -> str:
-	"""The load-bearing agent-facing summary for ``camas_list``."""
 	lines = [f"{len(resp.tasks)} task(s) defined. Call camas_run with one of these names."]
 	if resp.default is not None:
 		lines.append(f"default (developer's task): {resp.default}")
@@ -1247,7 +1054,6 @@ def matrix_note(axes: dict[str, list[str]]) -> str:
 
 
 def timing_note(task: wire.TaskInfo) -> str:
-	"""The estimated-duration annotation: ``~Ns``, the slowest leaf, and the sample count."""
 	slowest = (
 		f", slowest {task.slowest_leaf} {task.slowest_s:.2f}s"
 		if task.slowest_leaf != task.name
@@ -1257,7 +1063,6 @@ def timing_note(task: wire.TaskInfo) -> str:
 
 
 def run_text(task: str, resp: wire.RunResponse, logs: tuple[Path | None, ...]) -> str:
-	"""The load-bearing agent-facing summary for ``camas_run`` — failures carry their log path."""
 	verdict = "PASSED" if resp.returncode == 0 else "FAILED"
 	lines = [
 		f"camas_run {task!r}: {verdict} (returncode={resp.returncode}) in {resp.elapsed:.2f}s — "
@@ -1270,11 +1075,6 @@ def run_text(task: str, resp: wire.RunResponse, logs: tuple[Path | None, ...]) -
 
 
 def improve_loop_nudge(*, any_truncated: bool, any_failing_without_agent_format: bool) -> str:
-	"""The discoverability hint appended to a ``camas_run``/``camas_gate`` summary: truncated
-	output or a failing leaf with no ``agent_format`` is a ``tasks.py`` authoring gap, not a bug
-	to work around — nudge the agent to close it itself. Empty (append as a no-op) when neither
-	condition holds.
-	"""
 	if not (any_truncated or any_failing_without_agent_format):
 		return ""
 	gaps = (
@@ -1301,15 +1101,11 @@ def improve_loop_nudge(*, any_truncated: bool, any_failing_without_agent_format:
 
 
 def dry_run_text(node: TaskNode) -> str:
-	"""The fully-resolved (post-matrix) plan for ``dry_run=true`` — nothing is executed."""
 	plan = "\n".join(render_tree_lines(node, show_cmd=True, color=False))
 	return f"Dry run — fully-resolved plan, nothing executed:\n{plan}"
 
 
 def check_text(resp: wire.CheckResponse) -> str:
-	"""The load-bearing agent-facing summary for ``camas_check`` — verdict, then diagnostics,
-	then any advisory scope warnings (independent of ``status``).
-	"""
 	match resp.status:
 		case "ok":
 			how = (
@@ -1351,7 +1147,6 @@ def check_text(resp: wire.CheckResponse) -> str:
 
 
 def docs_text(resp: wire.DocsResponse) -> str:
-	"""The load-bearing agent-facing summary for ``camas_docs`` — source pointer, then tutorial."""
 	return (
 		"camas authoring guide. The API source of truth is the installed camas package at:\n"
 		f"  {resp.source}\n"
@@ -1362,7 +1157,6 @@ def docs_text(resp: wire.DocsResponse) -> str:
 
 
 def init_text(resp: wire.InitResponse) -> str:
-	"""The load-bearing agent-facing summary for ``camas_init``."""
 	match resp.status:
 		case "created":
 			return (
@@ -1381,12 +1175,6 @@ def init_text(resp: wire.InitResponse) -> str:
 
 
 def with_warning(session: Session, text: str) -> str:
-	"""``text`` with the version-mismatch warning prepended, or ``text`` unchanged.
-
-	Applied on every tool's success output — not just the read-only ``camas_list``/``camas_docs``
-	but the mutating and behavior-affecting tools too — so an agent sees the skew the moment it
-	changes behavior (the {paths} semantics the warning exists to flag).
-	"""
 	if session.version_warning is None:
 		return text
 	return session.version_warning + "\n\n" + text
@@ -1405,7 +1193,6 @@ def success(
 	*,
 	links: tuple[types.ResourceLink, ...] = (),
 ) -> types.CallToolResult:
-	"""A non-error result: the load-bearing ``TextContent`` plus gated ``structuredContent``."""
 	return types.CallToolResult(
 		content=[types.TextContent(type="text", text=text), *links],
 		structuredContent=model.model_dump(mode="json") if compat.emit_structured else None,
@@ -1414,7 +1201,6 @@ def success(
 
 
 def attach_logs(resp: wire.RunResponse, logs: tuple[Path | None, ...]) -> wire.RunResponse:
-	"""Thread each written log path into its ``LeafReport.log`` for ``structuredContent``."""
 	return resp.model_copy(
 		update={
 			"leaves": tuple(
@@ -1426,14 +1212,10 @@ def attach_logs(resp: wire.RunResponse, logs: tuple[Path | None, ...]) -> wire.R
 
 
 def error_result(text: str) -> types.CallToolResult:
-	"""A tool-execution error (``isError=true``) with self-correcting text for the agent."""
 	return types.CallToolResult(content=[types.TextContent(type="text", text=text)], isError=True)
 
 
 def load_error_hint(session: Session, source: Path, exception: Exception) -> str:
-	"""The load-error tool text, prefixed with the version-skew + CLI-fallback hint when the
-	running server does not satisfy the pin (a stale server, not a broken file).
-	"""
 	base = format_load_error_hint(source, exception)
 	skew = version_skew(session.project)
 	if skew is None:
@@ -1442,11 +1224,6 @@ def load_error_hint(session: Session, source: Path, exception: Exception) -> str
 
 
 def resolve_project(base: Path) -> TasksState:
-	"""Walk up from ``base`` for a ``tasks.py`` or ``[tool.camas.tasks]`` pyproject.
-
-	Never exits or prints (unlike the CLI's resolver): a broken tasks file becomes a
-	:class:`LoadErr` the handlers turn into a tool error.
-	"""
 	for candidate in (base, *base.parents):
 		tasks_py = candidate / "tasks.py"
 		if tasks_py.is_file():
@@ -1463,22 +1240,15 @@ def resolve_project(base: Path) -> TasksState:
 
 
 def resolve_project_quiet(base: Path) -> TasksState:
-	"""Resolve the project with stdout redirected to stderr.
-
-	``tasks.py`` runs as Python via ``runpy``; a module-level ``print`` there would
-	otherwise land on the stdout that the JSON-RPC transport owns and corrupt the stream.
-	"""
 	with redirect_stdout(sys.stderr):
 		return resolve_project(base)
 
 
 def project_base() -> Path:
-	"""The absolute project root: ``CLAUDE_PROJECT_DIR`` when Claude Code sets it, else cwd."""
 	return (Path(env) if (env := os.environ.get("CLAUDE_PROJECT_DIR")) else Path.cwd()).resolve()
 
 
 def leaf_lines(leaf: wire.LeafReport, log: Path | None) -> list[str]:
-	"""The summary lines for one leaf: a status header, any output excerpt, and its log path."""
 	match leaf.completion:
 		case wire.Finished(returncode=0, elapsed=el, output=output):
 			return [f"ok     {leaf.name} ({el:.2f}s)", *indent_lines(output)]
@@ -1504,7 +1274,6 @@ def indent_lines(output: list[str]) -> list[str]:
 
 
 def tail_lines(truncated: bool, log: Path | None) -> list[str]:
-	"""The trailing lines under a failed leaf: a truncation marker then the full-log path."""
 	lines = ["    … earlier output truncated; see full log"] if truncated else []
 	if log is not None:
 		lines.append(f"    full log: {log}")
@@ -1520,7 +1289,6 @@ def decode_log(output: Sequence[bytes]) -> str:
 
 
 async def gate_call(session: Session, arguments: dict[str, Any]) -> types.CallToolResult:
-	"""Handle ``camas_gate``: scope to the changed paths, autofix, run the checks, classify."""
 	match session.project:
 		case LoadErr(source=source, exception=exception):
 			return error_result(load_error_hint(session, source, exception))
@@ -1536,7 +1304,6 @@ async def gate_for(
 	config: Config | None,
 	arguments: dict[str, Any],
 ) -> types.CallToolResult:
-	"""Validate, resolve the gated task, run the gate, and build the verdict."""
 	try:
 		req = wire.GateRequest.model_validate(arguments)
 	except ValidationError as e:
@@ -1586,9 +1353,6 @@ async def gate_for(
 
 
 def settle_note(settled: RunResult | None) -> str:
-	"""A gate-text line naming each autofix leaf that exited non-zero; empty when the autofix did
-	not run or every leaf exited 0.
-	"""
 	failed: Final = tuple(
 		f"{result.name} exited {result.completion.returncode}"
 		for result in (settled.results if settled is not None else ())
@@ -1603,7 +1367,6 @@ def settle_note(settled: RunResult | None) -> str:
 
 
 async def fix_call(session: Session, arguments: dict[str, Any]) -> types.CallToolResult:
-	"""Handle ``camas_fix``: scope to the changed paths, run the registered fix node."""
 	match session.project:
 		case LoadErr(source=source, exception=exception):
 			return error_result(load_error_hint(session, source, exception))
@@ -1619,7 +1382,6 @@ async def fix_for(
 	config: Config | None,
 	arguments: dict[str, Any],
 ) -> types.CallToolResult:
-	"""Validate, resolve the fix node, scope to changed paths, run, and report."""
 	try:
 		req = wire.FixRequest.model_validate(arguments)
 	except ValidationError as e:
@@ -1635,8 +1397,6 @@ async def fix_for(
 		)
 	except ValueError as e:
 		return error_result(str(e))
-	# The node to run and how to observe it are bound together, since neither is meaningful without
-	# the other: nothing to run means nothing to record, and a prepared bundle always has a node.
 	prepared: timings.Observed | None = None
 	blocked = unsatisfiable_message(fix_node) if fix_node is not None else None
 	if fix_node is not None and blocked is None:
@@ -1677,10 +1437,6 @@ async def fix_for(
 
 
 def fix_text(resp: wire.RunResponse, *, empty_cause: str | None = None) -> str:
-	"""The load-bearing agent-facing summary for ``camas_fix`` — verdict for a run that
-	executed, or ``empty_cause`` when nothing ran (no fix node, or no leaf covers the paths)
-	so the agent can tell whether to register a fix node or pass different paths.
-	"""
 	if not resp.leaves:
 		return f"camas_fix: nothing to fix — {empty_cause}."
 	verdict = "FIXED" if resp.returncode == 0 else "FIX FAILED"
@@ -1691,7 +1447,6 @@ def fix_text(resp: wire.RunResponse, *, empty_cause: str | None = None) -> str:
 
 
 def github_matrix_call(session: Session, arguments: dict[str, Any]) -> types.CallToolResult:
-	"""Handle ``camas_github_matrix``: resolve the task, then emit its GHA strategy.matrix object."""
 	match session.project:
 		case LoadErr(source=source, exception=exception):
 			return error_result(load_error_hint(session, source, exception))
@@ -1707,7 +1462,6 @@ def github_matrix_for(
 	config: Config | None,
 	arguments: dict[str, Any],
 ) -> types.CallToolResult:
-	"""Validate, resolve the task (matrix-overridden), and emit its GHA object-of-arrays."""
 	try:
 		req = wire.GithubMatrixRequest.model_validate(arguments)
 	except ValidationError as e:
@@ -1723,13 +1477,6 @@ def github_matrix_for(
 def resolve_github_matrix_node(
 	tasks: Mapping[str, TaskNode], config: Config | None, req: wire.GithubMatrixRequest
 ) -> tuple[str, TaskNode]:
-	"""The ``(name, node)`` whose matrix to emit: the named task, else the project default task,
-	then matrix-overridden per the request.
-
-	Raises:
-		ValueError: when ``task`` names no task, none is named and no default_task is configured,
-			or an override targets an unknown matrix axis.
-	"""
 	if req.task is not None:
 		name, node = req.task, require_task(tasks, req.task)
 	else:
@@ -1746,10 +1493,6 @@ def resolve_github_matrix_node(
 
 
 def github_matrix_text(resp: wire.GithubMatrixResponse) -> str:
-	"""The load-bearing agent-facing summary for ``camas_github_matrix`` — the emitted shape, the
-	compact JSON for ``$GITHUB_OUTPUT``, the indented form for reading, the job command it pairs
-	with, and how to consume it in a workflow.
-	"""
 	compact = format_matrix_json(resp.matrix, pretty=False)
 	pretty = format_matrix_json(resp.matrix, pretty=True)
 	consume = (
@@ -1772,7 +1515,6 @@ def github_matrix_text(resp: wire.GithubMatrixResponse) -> str:
 
 
 def gate_text(resp: wire.GateResponse) -> str:
-	"""The load-bearing agent-facing summary for ``camas_gate`` — verdict, budget, residual."""
 	verdict = (
 		"CONTINUE — checks green; no residual needs reasoning"
 		if resp.decision == "continue"
@@ -1802,10 +1544,6 @@ def gate_text(resp: wire.GateResponse) -> str:
 
 
 def nudge_text(resp: wire.GateResponse) -> str:
-	"""The Stop-hook async-nudge message for a ``camas mcp gate --nudge`` block verdict — the
-	residual diagnostics, then an instruction to launch the fixer ladder rather than reasoning
-	about it directly. ``asyncRewake`` shows this on Claude's stderr as a system reminder.
-	"""
 	lines: list[str] = ["camas: a residual needs reasoning — the workspace is not green."]
 	if resp.diagnostics:
 		lines.extend(["", "Residual (failing checks):"])
@@ -1827,19 +1565,14 @@ def nudge_text(resp: wire.GateResponse) -> str:
 
 
 NUDGE_MARKER_PREFIX: Final = "camas-nudge-"
-"""Prefix on the per-session once-per-prompt nudge markers in the machine temp dir."""
 
 
 def _nudge_marker(session_id: str) -> Path:
-	"""The session's nudge-marker file; its content is the last prompt_id that was nudged."""
 	digest = hashlib.sha256(session_id.encode("utf-8")).hexdigest()[:16]
 	return Path(tempfile.gettempdir()) / f"{NUDGE_MARKER_PREFIX}{digest}"
 
 
 def _unlink_if_stale(path: Path, cutoff: float) -> None:
-	"""Remove ``path`` when it's a file older than ``cutoff``; best-effort, silent on races with
-	the OS reclaiming the temp dir first.
-	"""
 	try:
 		if path.is_file() and path.stat().st_mtime < cutoff:
 			path.unlink()
@@ -1848,9 +1581,6 @@ def _unlink_if_stale(path: Path, cutoff: float) -> None:
 
 
 def prune_stale_nudge_markers(max_age_s: float = STALE_TEMP_MAX_AGE_S) -> None:
-	"""Best-effort sweep of prior sessions' nudge markers older than ``max_age_s`` — bounds their
-	accumulation in the system temp dir, mirroring :func:`camas.core.gate.prune_stale_report_dirs`.
-	"""
 	base = Path(tempfile.gettempdir())
 	cutoff = time.time() - max_age_s
 	for marker in base.glob(f"{NUDGE_MARKER_PREFIX}*"):
@@ -1858,11 +1588,6 @@ def prune_stale_nudge_markers(max_age_s: float = STALE_TEMP_MAX_AGE_S) -> None:
 
 
 def should_nudge(event: HookEvent) -> bool:
-	"""Whether the async Stop-hook nudge may wake the agent for this ``Stop`` event: never while
-	Claude Code is already continuing from a stop hook (``stop_hook_active``), and at most once
-	per prompt — so a residual that stays red wakes the agent exactly once, not in a rewake loop.
-	An event without session/prompt ids (a manual run) is not throttled.
-	"""
 	if event.stop_hook_active:
 		return False
 	if not event.session_id or not event.prompt_id:
@@ -1874,9 +1599,6 @@ def should_nudge(event: HookEvent) -> bool:
 
 
 def record_nudge(event: HookEvent) -> None:
-	"""Persist that this event's prompt was nudged, for :func:`should_nudge`, sweeping prior
-	sessions' stale markers first so they never accumulate.
-	"""
 	if not event.session_id or not event.prompt_id:
 		return
 	prune_stale_nudge_markers()
@@ -1885,9 +1607,6 @@ def record_nudge(event: HookEvent) -> None:
 
 
 def rerun_command(rerun: wire.GateRerun) -> str:
-	"""The ``camas mcp gate`` invocation that reproduces a verdict — the handle a higher tier
-	or the main agent re-issues against the same scope.
-	"""
 	task = (rerun.task,) if rerun.task is not None else ()
 	paths = tuple(arg for p in rerun.paths for arg in ("--paths", p))
 	under = ("--under", str(rerun.under)) if rerun.under is not None else ()
@@ -1895,23 +1614,15 @@ def rerun_command(rerun: wire.GateRerun) -> str:
 
 
 class GateArgs(NamedTuple):
-	"""Parsed ``camas mcp gate`` arguments."""
-
 	task: str | None
 	paths: tuple[str, ...]
 	under: float | None
 	jobs: int | None
 	dry_run: bool = False
 	nudge: bool = False
-	"""Emit the Stop-hook async-nudge output instead of the JSON verdict: the fixer-ladder nudge
-	message on stderr and exit 2 (for ``asyncRewake`` to wake the main agent) only when the
-	checks ran and are not green, at most once per prompt (:func:`should_nudge`); silent exit 0
-	on green and on every configuration state (no check node, load error) — a nudge that cannot
-	go green must never rewake the agent in a loop."""
 
 
 def parse_gate_args(argv: list[str]) -> GateArgs:
-	"""Parse ``camas mcp gate [task] [--paths P]… [--under D] [--jobs N] [--nudge]``."""
 	parser = argparse.ArgumentParser(
 		prog="camas mcp gate", description="Run the gate once, headless."
 	)
@@ -1960,9 +1671,6 @@ def parse_gate_args(argv: list[str]) -> GateArgs:
 
 
 def gate_cli_load_error(state: TasksState, source: Path, exception: Exception) -> str:
-	"""The headless-gate load-error message, extended with a version-mismatch + CLI-fallback note
-	when the installed camas does not satisfy the pin.
-	"""
 	base = f"camas mcp gate: cannot load {source}: {exception}"
 	skew = version_skew(state)
 	if skew is None:
@@ -1975,15 +1683,6 @@ def gate_cli_load_error(state: TasksState, source: Path, exception: Exception) -
 
 
 def gate_cli(argv: list[str]) -> int:
-	"""Run the gate once, headless and read-only: scope this project's checks to the changed paths
-	(``--paths``, else the files in a ``PostToolBatch`` event on stdin; a ``Stop`` event names
-	none, so the whole tree), print the ``GateResponse`` as
-	JSON to stdout, and exit ``0`` (continue) / ``2`` (block) — on a block the agent-facing
-	summary goes to stderr. With ``--nudge``, prints the Stop-hook nudge text instead of the JSON
-	verdict, self-limiting per :class:`GateArgs`. The process-isolated, machine-readable gate
-	entry that CI, the async Stop hook, and the benchmark drive — the camas-fixer subagents call
-	the ``camas_gate`` MCP tool instead.
-	"""
 	args = parse_gate_args(argv)
 	base = project_base()
 	state = resolve_project_quiet(base)
@@ -2000,7 +1699,6 @@ def gate_cli(argv: list[str]) -> int:
 def gate_dry_run_text(
 	node: TaskNode, changed: tuple[str, ...], under: float | None, camas_dir: Path
 ) -> str:
-	"""The gate CLI's dry-run preview: the resolved path-scoped plan, or why nothing would run."""
 	expanded: Final = expand_matrix(node)
 	if under is None:
 		scoped = scope_to_changed(expanded, changed)
@@ -2022,7 +1720,6 @@ def gate_dry_run_text(
 
 
 def path_scoped_plan_text(node: TaskNode) -> str:
-	"""A gate dry run's resolved plan — nothing is executed."""
 	tree: Final = "\n".join(render_tree_lines(node, show_cmd=True, color=False))
 	return f"Dry run — resolved path-scoped plan, nothing executed:\n{tree}"
 
@@ -2030,10 +1727,6 @@ def path_scoped_plan_text(node: TaskNode) -> str:
 def run_gate_cli(
 	args: GateArgs, base: Path, tasks: Mapping[str, TaskNode], config: Config | None
 ) -> int:
-	"""Resolve the check node, run the gate over the changed paths, emit the verdict. Read-only: a
-	nudge that may wake the agent first waits for its sibling ``Stop`` autofix to settle
-	(:func:`camas.core.hook_event.await_settled`), so its check reads the fixed files.
-	"""
 	try:
 		node = gate_source(tasks, config, args.task)
 		require_filled_axes(node)
@@ -2044,9 +1737,6 @@ def run_gate_cli(
 	requested = args.paths or (event.changed or ())
 	changed = to_changed(requested, base)
 	if requested_but_unusable(requested, changed):
-		# Green either way, nudge or not: nothing the checks cover changed, so there is nothing to
-		# block the turn on — and running the whole tree over an edit outside the repo is what
-		# scoping was asked to prevent.
 		print(coverage_message(requested))
 		return 0
 	camas_dir = (config if config is not None else Config()).camas_path(base)

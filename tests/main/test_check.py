@@ -552,9 +552,7 @@ def test_run_typecheck_fails(tmp_path: Path) -> None:
 	p.write_text('x: int = "wrong"\n')
 	result = run_typecheck(p)
 	assert isinstance(result, CheckerErr)
-	# Both ty and mypy reference the declared type in their error message;
-	# the exact wording differs, so we only assert the shared anchor.
-	assert "int" in result.output
+	assert "int" in result.output, "ty and mypy word the error differently but both name the type"
 
 
 @requires_sibling_mypy

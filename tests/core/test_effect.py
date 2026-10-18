@@ -279,5 +279,6 @@ def test_parallel_on_event_runs_concurrently() -> None:
 	assert result.returncode == 0
 	assert len(slow.windows) == 2
 	(a_start, a_end), (b_start, b_end) = slow.windows
-	# The two 1.0s sleeps overlapped — sequential dispatch would leave a gap between them.
-	assert max(a_start, b_start) < min(a_end, b_end), f"windows did not overlap: {slow.windows}"
+	assert max(a_start, b_start) < min(a_end, b_end), (
+		f"sequential dispatch would leave a gap between the sleeps: {slow.windows}"
+	)

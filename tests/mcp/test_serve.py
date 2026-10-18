@@ -409,7 +409,7 @@ async def test_run_call_dry_run_no_task_previews_default(tmp_path: Path) -> None
 
 async def test_run_call_dry_run_no_task_no_default_errors(tmp_path: Path) -> None:
 	"""camas_run(dry_run=true) with no task and no config default still errors."""
-	config = Config()  # no default_task
+	config = Config()
 	session = _session({"ci": PASS}, config, tmp_path)
 	result = await serve.run_call(session, {"dry_run": True})
 	assert result.isError is True
@@ -623,11 +623,9 @@ async def test_stale_package_answers_the_call_then_schedules_reload(
 		assert reload_exits == []
 		(pkg / "a.py").write_text("y = 2\n")
 		assert not (await client.call_tool("camas_list", {})).isError
-		# a new call's finally cancels the previous probe and arms a fresh one — the arming
-		# runs before the response is written, the probe's fire comes RELOAD_EXIT_DELAY later
 		assert not (await client.call_tool("camas_list", {})).isError
 		await wait_until(lambda: bool(reload_exits))
-	assert reload_exits
+	assert reload_exits, "the re-armed probe never fired"
 
 
 _VALID_TASKS = "from camas import Task\nlint = Task('ruff check .')\n"

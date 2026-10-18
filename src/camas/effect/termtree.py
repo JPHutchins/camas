@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""Effect: live terminal tree that repaints leaf states in place each frame."""
-
 import asyncio
 import contextlib
 import shutil
@@ -44,11 +42,7 @@ from ..v0.task_event import TaskEvent
 
 
 def truncate_middle(text: str, max_width: int) -> str:
-	"""Middle-truncate with '...' so the result's :func:`visual_width` is ``<= max_width``.
-
-	Budgets terminal columns, not code points, so a wide glyph (CJK, emoji) can't push the
-	result past ``max_width`` and wrap the row (issue #64).
-
+	"""
 	>>> truncate_middle("hello world!", 9)
 	'hel...ld!'
 	>>> truncate_middle("built", 2)
@@ -65,7 +59,6 @@ def truncate_middle(text: str, max_width: int) -> str:
 
 
 def fit_label(text: str, max_width: int) -> str:
-	"""Return ``text`` unchanged if it fits; otherwise middle-truncate to ``max_width``."""
 	return text if visual_width(text) <= max_width else truncate_middle(text, max(max_width, 3))
 
 
@@ -93,8 +86,7 @@ PROG_MIN_MARGIN: Final = 2
 
 
 def interrupt_status(presses: int) -> str:
-	"""Colored 6-col status for an interrupting row, by Ctrl-C count.
-
+	"""
 	>>> interrupt_status(1) == f"{YELLOW}  ^C  "
 	True
 	>>> interrupt_status(2) == f"{YELLOW} ^C^C "
@@ -110,12 +102,7 @@ def interrupt_status(presses: int) -> str:
 
 
 def bucket_glyph_color(states: Sequence[LeafState]) -> tuple[str, str]:
-	"""Reduce a bucket of leaf states to (glyph, ANSI color) for a progress cell.
-
-	Worst-progress wins (any waiting → blank; else any running → dashed; else
-	solid), and color reflects the settled outcome (red on any failure, grey if
-	all skipped, else green).
-
+	"""
 	>>> t = Task("x")
 	>>> t0 = datetime(2026, 1, 1)
 	>>> bucket_glyph_color([Waiting(t)]) == (' ', GREY)
@@ -161,11 +148,7 @@ def bucket_glyph_color(states: Sequence[LeafState]) -> tuple[str, str]:
 
 
 def render_progress_bar(states: Sequence[LeafState], width: int) -> str:
-	"""Render a fragmented progress bar of visible width ``width`` for the summary slot.
-
-	Cells are equal width (capped at ``PROG_MAX_CELL_WIDTH``) and centered; when
-	``len(states)`` exceeds the usable span, leaves are bucketed into 1-column cells.
-
+	"""
 	>>> t = Task("x")
 	>>> t0 = datetime(2026, 1, 1)
 	>>> bar = render_progress_bar([Waiting(t), Waiting(t)], 10)
@@ -216,13 +199,11 @@ def render_progress_bar(states: Sequence[LeafState], width: int) -> str:
 
 
 def decode_line(line: bytes) -> str:
-	"""Decode a captured output line, stripped of trailing whitespace."""
 	return line.rstrip().decode(errors="replace")
 
 
 def last_line_display(output: Sequence[bytes]) -> str:
-	r"""Decode the final non-empty output line for inline display.
-
+	r"""
 	>>> last_line_display([b"first\n", b"last\n"])
 	'last'
 	>>> last_line_display([])
@@ -244,13 +225,6 @@ def render_lines(
 	now: datetime,
 	wall_elapsed: float,
 ) -> list[str]:
-	"""Build the list of ANSI-formatted lines for one frame (leaves + summary).
-
-	``wall_elapsed`` is supplied as monotonic seconds (``time.perf_counter()``
-	delta) by the caller so the displayed total time is immune to wall-clock
-	jumps (NTP, DST); ``now`` is still a wall-clock ``datetime`` because the
-	per-leaf running counter is derived from ``Running.start_time``.
-	"""
 	lines: list[str] = []
 	leaf_idx = 0
 	for row in rows:
@@ -366,8 +340,7 @@ def render_lines(
 
 
 class FrameResult(NamedTuple):
-	"""A positioned frame: the bytes to emit and the live-region height it occupies.
-
+	"""
 	>>> FrameResult("", 0)
 	FrameResult(text='', visible=0)
 	"""
@@ -377,14 +350,7 @@ class FrameResult(NamedTuple):
 
 
 def clamp_lines(lines: tuple[str, ...], height: int) -> tuple[str, ...]:
-	r"""Reduce a frame to at most ``height`` lines, always keeping the summary (last) line.
-
-	The summary is the most information-dense line (aggregate progress + total
-	elapsed), so it survives; the overflowing leaf rows above it collapse into one
-	elision marker. Bounding the live region to the viewport is what stops the
-	repaint from scrolling: cursor-up (``\033[NF``) clamps at the top of the
-	screen, so a frame taller than the window can never be rewritten in place.
-
+	r"""
 	>>> clamp_lines(("a", "b", "sum"), 5)
 	('a', 'b', 'sum')
 	>>> clamp_lines((), 5)
@@ -421,19 +387,6 @@ def render_frame(
 	*,
 	final: bool = False,
 ) -> FrameResult:
-	r"""Render one positioned frame for live animation, clamped to ``term_height``.
-
-	Repaints in place by moving the cursor up ``prev_visible - 1`` lines (CPL,
-	``\033[NF``) to the top of the previously-drawn region, then rewriting it.
-	``prev_visible`` is the height the *previous* frame occupied (0 on the first
-	frame, which just writes where the cursor is and lets the terminal scroll to
-	make room) — tracking that, not the current frame's height, keeps the cursor
-	math right when the line count changes across a resize, and lets a now-shorter
-	frame erase the rows the previous one left behind (``\033[0J``).
-
-	``final`` skips the clamp to emit the whole tree once at teardown so the
-	completed run persists in the scrollback.
-	"""
 	full: Final = tuple(
 		render_lines(rows, states, term_width, term_width - STATUS_COL_WIDTH - 1, now, wall_elapsed)
 	)
@@ -465,7 +418,6 @@ def print_task_output(
 
 
 def print_failures(states: Sequence[LeafState], term_width: int) -> None:
-	"""Print detailed output for each failed task."""
 	for state in states:
 		match state:
 			case Completed(task=task, completion=Finished(returncode=rc, output=output)) if rc > 0:
@@ -477,7 +429,6 @@ def print_failures(states: Sequence[LeafState], term_width: int) -> None:
 
 
 def print_passes(states: Sequence[LeafState], term_width: int) -> None:
-	"""Print detailed output for each successfully-completed task."""
 	for state in states:
 		match state:
 			case Completed(task=task, completion=Finished(returncode=0, output=output)):
@@ -487,7 +438,6 @@ def print_passes(states: Sequence[LeafState], term_width: int) -> None:
 
 
 def print_stops(states: Sequence[LeafState], term_width: int) -> None:
-	"""Print captured output for each task stopped by a forwarded signal."""
 	for state in states:
 		match state:
 			case Completed(task=task, completion=Stopped(returncode=rc, output=output)):
@@ -498,24 +448,12 @@ def print_stops(states: Sequence[LeafState], term_width: int) -> None:
 
 @dataclass
 class TermtreeState:
-	"""Mutable slots of a termtree run: the latest states view and the tick task handle."""
-
 	states: Sequence[LeafState]
 	tick_task: asyncio.Task[None] | None = None
 	visible: int = 0
-	"""Lines the previous frame occupied; :func:`draw` reads it to reposition, then writes it back."""
 
 
 class TermtreeContext(NamedTuple):
-	"""Immutable context threaded through the termtree Effect's lifecycle.
-
-	``wall_start`` is the wall-clock setup time (for human-facing timestamps if
-	ever surfaced); ``wall_start_mono`` is the corresponding monotonic reading
-	(``time.perf_counter()``) used to compute the displayed elapsed total so
-	the TUI never sees a backward/forward NTP step. Terminal dimensions are not
-	cached here — :func:`draw` re-reads them every frame so the view tracks resizes.
-	"""
-
 	rows: tuple[DisplayRow, ...]
 	wall_start: datetime
 	wall_start_mono: float
@@ -523,12 +461,7 @@ class TermtreeContext(NamedTuple):
 
 
 class Termtree:
-	"""Live terminal Effect: renders each leaf's status and a summary line.
-
-	The background tick task is the sole renderer during a run, so the
-	effective frame rate is capped at 1 / frame_interval_ms regardless of
-	how fast events arrive.
-	"""
+	"""A live task tree in the terminal."""
 
 	def __init__(
 		self,
@@ -579,13 +512,6 @@ class Termtree:
 
 
 def draw(ctx: TermtreeContext, *, final: bool = False) -> None:
-	"""Render and emit one frame, re-reading the terminal size so the view tracks resizes.
-
-	``final`` emits the whole tree (no height clamp) once the live region stops, so
-	the completed tree persists in the scrollback.
-	"""
-	# Write bytes directly: the box-drawing chars can't encode to cp1252 (Windows
-	# default in non-TTY contexts like captured subprocesses / piped CI logs).
 	size: Final = shutil.get_terminal_size()
 	frame: Final = render_frame(
 		ctx.rows,

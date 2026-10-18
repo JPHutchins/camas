@@ -54,10 +54,10 @@ def test_small_max_width_never_exceeds(text: str, max_width: int, expected: str)
 @pytest.mark.parametrize(
 	("text", "max_width"),
 	[
-		("你好世界你好世界", 7),  # CJK, wide
-		("\U0001f389" * 10, 7),  # 🎉, wide
-		("a你b好c世d界e", 6),  # mixed narrow/wide
-		("界", 1),  # a lone wide glyph cannot fit one column
+		pytest.param("你好世界你好世界", 7, id="cjk-wide"),
+		pytest.param("\U0001f389" * 10, 7, id="wide-emoji"),
+		pytest.param("a你b好c世d界e", 6, id="mixed-narrow-wide"),
+		pytest.param("界", 1, id="lone-wide-glyph-cannot-fit-one-column"),
 	],
 )
 def test_wide_chars_budget_display_width_not_code_points(text: str, max_width: int) -> None:
