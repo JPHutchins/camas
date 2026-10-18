@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""The default :func:`camas.Clean` drift check — ``python -m camas._git_porcelain``."""
+"""The default `camas.Clean` drift check — `python -m camas._git_porcelain`."""
 
 from __future__ import annotations
 

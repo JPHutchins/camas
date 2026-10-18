@@ -98,7 +98,7 @@ _DURATION: Final = re.compile(r"\s*(\d+(?:\.\d+)?)\s*(ms|s|m|h)?\s*")
 def parse_duration(raw: str) -> float:
 	"""
 	Raises:
-		ArgumentTypeError: when ``raw`` is not a positive duration.
+		ArgumentTypeError: when `raw` is not a positive duration.
 
 	>>> parse_duration("1.5s")
 	1.5

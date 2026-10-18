@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""The ``Effect`` protocol."""
+"""The `Effect` protocol."""
 
 from __future__ import annotations
 

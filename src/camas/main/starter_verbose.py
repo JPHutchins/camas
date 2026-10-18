@@ -2,22 +2,22 @@
 # requires-python = ">=3.10"
 # dependencies = ["camas"]
 # ///
-"""Project tasks — run with ``camas``. Kitchen-sink edition: every Task / Sequential /
+"""Project tasks — run with `camas`. Kitchen-sink edition: every Task / Sequential /
 Parallel / Config option, worked and explained, in one file — scaffolded by
-``camas --init --verbose`` (the MCP ``camas_init`` defaults to this template; the plain
-``camas --init`` writes the short one instead).
+`camas --init --verbose` (the MCP `camas_init` defaults to this template; the plain
+`camas --init` writes the short one instead).
 
 Read this top to bottom once, then delete everything you don't need — it is a reference,
 not a project skeleton. Every command below is a cross-platform placeholder
-(``python -c ...``); replace them with your real ones, same as the short starter:
+(`python -c ...`); replace them with your real ones, same as the short starter:
 
 	lint = Task("ruff check .")
 	test = Task("cargo test", cwd=Path("rust"))
 	build = Task("npm run build")
 
-The ``# /// script`` block above is optional PEP 723 inline metadata; see the short
-starter's docstring (``camas --init``, no ``--verbose``) for what it buys you. Both it and
-the ``__main__`` block at the bottom are inert under plain ``camas``; delete them if you
+The `# /// script` block above is optional PEP 723 inline metadata; see the short
+starter's docstring (`camas --init`, no `--verbose`) for what it buys you. Both it and
+the `__main__` block at the bottom are inert under plain `camas`; delete them if you
 don't want the standalone path.
 """
 
@@ -76,7 +76,7 @@ flake = Task("python -c \"print('flake check')\"", when="flake.nix")
 
 
 def touches_docs(changed: tuple[str, ...]) -> bool:
-	"""A ``when=`` callable — the general form behind the prefix-string/tuple shorthand above:
+	"""A `when=` callable — the general form behind the prefix-string/tuple shorthand above:
 	receives the changed set (never called for a full run) and decides whether this leaf
 	applies.
 	"""
@@ -87,9 +87,9 @@ docs_build = Task("python -c \"print('build docs')\"", name="docs", when=touches
 
 
 def web_paths(changed: tuple[str, ...]) -> tuple[str, ...]:
-	"""A hand-written ``paths=`` callable — the shape ``by_suffix`` builds for you below: map
+	"""A hand-written `paths=` callable — the shape `by_suffix` builds for you below: map
 	the changed set to the args {paths} injects, and return a default target — never () —
-	when ``changed`` is empty (a full run), so a formatter reading stdin on no args never
+	when `changed` is empty (a full run), so a formatter reading stdin on no args never
 	hangs.
 	"""
 	return tuple(c for c in changed if c.endswith((".ts", ".tsx"))) if changed else ("web",)
@@ -223,11 +223,11 @@ frontend = Sequential(
 
 
 def python_versions_from(version_file: Path) -> tuple[str, ...]:
-	"""An authoring idiom the engine can't enforce, straight from camas's own ``tasks.py``:
+	"""An authoring idiom the engine can't enforce, straight from camas's own `tasks.py`:
 	source a matrix axis from your project's single source of truth instead of hardcoding a
-	list that drifts out from under it. This one reads a ``.python-version`` file — the same
-	recipe reads a ``rust-toolchain.toml``, an ``.nvmrc``, whatever your project's SSOT is;
-	``tasks.py`` is real Python, so read it. The missing-file fallback exists only so this
+	list that drifts out from under it. This one reads a `.python-version` file — the same
+	recipe reads a `rust-toolchain.toml`, an `.nvmrc`, whatever your project's SSOT is;
+	`tasks.py` is real Python, so read it. The missing-file fallback exists only so this
 	template keeps loading in a brand-new project; a real project usually deletes it and lets
 	a missing SSOT raise.
 	"""
@@ -250,11 +250,11 @@ versions = Parallel(
 
 
 class Announce(Effect[None]):
-	"""A custom output renderer, discovered automatically from this file: ``camas --effects``
-	lists it beside the built-ins and ``camas --effects='(Announce(),)'`` activates it. These
+	"""A custom output renderer, discovered automatically from this file: `camas --effects`
+	lists it beside the built-ins and `camas --effects='(Announce(),)'` activates it. These
 	three methods are the whole Effect protocol; the generic parameter is a per-leaf context
-	this stateless example doesn't need (``None``). Import the event/state types from the
-	versioned namespace (``camas.v0.…``, at the top) to pin the API generation your plugin is
+	this stateless example doesn't need (`None`). Import the event/state types from the
+	versioned namespace (`camas.v0.…`, at the top) to pin the API generation your plugin is
 	written against.
 	"""
 

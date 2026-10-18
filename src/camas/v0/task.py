@@ -33,8 +33,8 @@ if TYPE_CHECKING:
 
 
 PathScope: TypeAlias = "Callable[[tuple[str, ...]], tuple[str, ...]]"
-"""Maps the changed paths to the arguments at ``{paths}``; called with ``()`` on a full run,
-and returning ``()`` on a scoped run skips the leaf."""
+"""Maps the changed paths to the arguments at `{paths}`; called with `()` on a full run,
+and returning `()` on a scoped run skips the leaf."""
 
 
 WhenPredicate: TypeAlias = "Callable[[tuple[str, ...]], bool]"
@@ -42,7 +42,7 @@ WhenPredicate: TypeAlias = "Callable[[tuple[str, ...]], bool]"
 
 
 Nodes: TypeAlias = "TaskNode | str | Sequence[TaskNode]"
-"""One node or a sequence of nodes; a lone ``str`` is a ``Task``."""
+"""One node or a sequence of nodes; a lone `str` is a `Task`."""
 
 
 def _prefix(value: str | Path) -> str:
@@ -77,7 +77,7 @@ def _coerce_when(
 
 
 def by_suffix(suffixes: tuple[str, ...], default: tuple[str, ...] = (".",)) -> PathScope:
-	"""A ``PathScope`` for files ending in one of ``suffixes``.
+	"""A `PathScope` for files ending in one of `suffixes`.
 
 	>>> f = by_suffix((".c", ".h"), default=("src", "include"))
 	>>> f(())
@@ -110,7 +110,7 @@ def _glob_to_regex(pattern: str) -> re.Pattern[str]:
 	ValueError: by_glob pattern must not be empty
 
 	Raises:
-		ValueError: when ``pattern`` is empty.
+		ValueError: when `pattern` is empty.
 	"""
 	if not pattern:
 		raise ValueError("by_glob pattern must not be empty")
@@ -136,7 +136,7 @@ def _glob_to_regex(pattern: str) -> re.Pattern[str]:
 
 
 def by_glob(patterns: tuple[str, ...], default: tuple[str, ...] = (".",)) -> PathScope:
-	"""A ``PathScope`` for files matching one of the shell-glob ``patterns``.
+	"""A `PathScope` for files matching one of the shell-glob `patterns`.
 
 	>>> f = by_glob(("homeassistant/**/*.py", "homeassistant/**/*.pyi"), default=("homeassistant",))
 	>>> f(())
@@ -162,7 +162,7 @@ def _check_variants(
 	"""
 	Raises:
 		ValueError: when a variant binds no keys, variants bind different keys, or a key is
-			declared in both ``matrix`` and ``variants``.
+			declared in both `matrix` and `variants`.
 
 	>>> _check_variants(({"target": "a"}, {"target": "b"}), {"PROFILE": ("debug",)})
 	>>> _check_variants(({"target": "a"}, {}), None)
@@ -209,7 +209,7 @@ class AgentFormat(NamedTuple):
 	"""
 
 	args: str
-	"""Appended to the command on gate runs; a literal ``{report}`` names the file the gate reads."""
+	"""Appended to the command on gate runs; a literal `{report}` names the file the gate reads."""
 	kind: OutputKind
 	limit: int = 8_000
 	"""Characters of a structured payload or report file the gate inlines."""
@@ -262,7 +262,7 @@ class Task:
 	mutates: bool
 	"""The leaf writes the workspace."""
 	paths: str | PathScope | None
-	"""The scope a ``{paths}`` command narrows to on a scoped run."""
+	"""The scope a `{paths}` command narrows to on a scoped run."""
 	when: str | tuple[str, ...] | WhenPredicate | None
 	"""Which changes keep the leaf in a scoped run."""
 	agent_format: AgentFormat | None
@@ -336,7 +336,7 @@ class Task:
 		return _composed(Parallel, self, other)
 
 	def __add__(self, other: Nodes) -> Sequential:
-		"""Compose in sequence; ``+`` binds tighter than ``|``.
+		"""Compose in sequence; `+` binds tighter than `|`.
 
 		>>> (Task("build") + Task("test")).tasks == (Task("build"), Task("test"))
 		True
@@ -344,7 +344,7 @@ class Task:
 		return _composed(Sequential, self, other)
 
 	def __gt__(self, other: Nodes) -> Pipe:
-		"""Pipe this leaf's stdout into ``other``; Python chains ``>``, so parenthesize longer pipes.
+		"""Pipe this leaf's stdout into `other`; Python chains `>`, so parenthesize longer pipes.
 
 		>>> (Task("gen") > "upper").tasks == (Task("gen"), Task("upper"))
 		True
@@ -358,7 +358,7 @@ class Task:
 
 @dataclass(frozen=True, slots=True, init=False, repr=False)
 class Group:
-	"""The shared base of ``Sequential``, ``Parallel``, and ``Pipe``.
+	"""The shared base of `Sequential`, `Parallel`, and `Pipe`.
 
 	>>> isinstance(Sequential("a"), Group) and isinstance(Parallel("a"), Group)
 	True
@@ -380,9 +380,9 @@ class Group:
 	cwd: Path | None
 	help: str | None
 	paths: str | PathScope | None
-	"""A default ``{paths}`` scope for the group's leaves."""
+	"""A default `{paths}` scope for the group's leaves."""
 	when: str | tuple[str, ...] | WhenPredicate | None
-	"""A default ``when`` for the group's leaves."""
+	"""A default `when` for the group's leaves."""
 
 	def __init__(
 		self,
@@ -433,7 +433,7 @@ class Group:
 		return f"{type(self).__name__}({', '.join(_group_repr_parts(self))})"
 
 	def extend(self, nodes: Nodes) -> Self:
-		"""This group with ``nodes`` appended inside its scope.
+		"""This group with `nodes` appended inside its scope.
 
 		>>> Parallel("a").extend(Parallel("b", "c")) == Parallel("a", Parallel("b", "c"))
 		True
@@ -449,7 +449,7 @@ class Group:
 		return rebuilt(self, *_nodes(self.tasks), *_children(nodes))
 
 	def remove(self, nodes: Nodes) -> Self:
-		"""This group without its direct children equal to one of ``nodes``.
+		"""This group without its direct children equal to one of `nodes`.
 
 		>>> Parallel("a", "b", "c").remove(Task("b")) == Parallel("a", "c")
 		True
@@ -461,7 +461,7 @@ class Group:
 		ValueError: cannot remove Task(cmd='b', name=None, env={}, cwd=None): not a direct child
 
 		Raises:
-			ValueError: when one of ``nodes`` is not a direct child.
+			ValueError: when one of `nodes` is not a direct child.
 		"""
 		targets = _children(nodes)
 		absent = next((target for target in targets if target not in self.tasks), None)
@@ -492,7 +492,7 @@ class Sequential(Group):  # pyrefly: ignore[bad-class-definition]
 		return _composed(Parallel, self, other)
 
 	def __add__(self, other: Nodes) -> Sequential:
-		"""Compose in sequence, extending a plain ``Sequential`` rather than nesting it.
+		"""Compose in sequence, extending a plain `Sequential` rather than nesting it.
 
 		>>> (Sequential("build") + "test").tasks == (Task("build"), Task("test"))
 		True
@@ -526,7 +526,7 @@ class Parallel(Group):  # pyrefly: ignore[bad-class-definition]
 	__slots__ = ()
 
 	def __or__(self, other: Nodes) -> Parallel:
-		"""Compose in parallel, extending a plain ``Parallel`` rather than nesting it.
+		"""Compose in parallel, extending a plain `Parallel` rather than nesting it.
 
 		>>> (Parallel("format") | "lint").tasks == (Task("format"), Task("lint"))
 		True
@@ -540,7 +540,7 @@ class Parallel(Group):  # pyrefly: ignore[bad-class-definition]
 		return _composed(Parallel, self, other)
 
 	def __add__(self, other: Nodes) -> Sequential:
-		"""Compose in sequence; ``+`` binds tighter than ``|``.
+		"""Compose in sequence; `+` binds tighter than `|`.
 
 		>>> check = Parallel("format")
 		>>> (check + "integration").tasks == (check, Task("integration"))
@@ -646,7 +646,7 @@ class Pipe(Group):
 		return _composed(Sequential, self, other)
 
 	def __gt__(self, other: Nodes) -> Pipe:
-		"""Append stages; a plain right-side ``Pipe`` adds its stages, one with fields or ``agent_only`` raises.
+		"""Append stages; a plain right-side `Pipe` adds its stages, one with fields or `agent_only` raises.
 
 		>>> (Pipe("a") > "b").tasks == (Task("a"), Task("b"))
 		True
@@ -707,7 +707,7 @@ def rebuilt(group: G, *children: TaskNode, **changes: object) -> G:
 	Sequential(tasks=(Task(cmd='b', name=None, env={}, cwd=None),), name=None, matrix=None, env={}, cwd=None)
 
 	Raises:
-		TypeError: a ``changes`` name outside :data:`GROUP_FIELDS`.
+		TypeError: a `changes` name outside `GROUP_FIELDS`.
 	"""
 	allowed = (*GROUP_FIELDS, *(("agent_only",) if isinstance(group, Pipe) else ()))
 	unknown = [name for name in changes if name not in allowed]
@@ -734,7 +734,7 @@ class ProjectRef:
 
 
 def Project(path: str) -> TaskNode:  # noqa: N802  # constructor-style factory, like Task/Parallel
-	"""Another ``tasks.py``, by path relative to this one, as a task node."""
+	"""Another `tasks.py`, by path relative to this one, as a task node."""
 	return cast("TaskNode", ProjectRef(path))
 
 
@@ -812,7 +812,7 @@ def _pipe_of(left: TaskNode, right: Nodes) -> Pipe:
 
 
 def GIT_PORCELAIN() -> Task:  # noqa: N802  # constructor-style factory, like Task/Parallel
-	"""A fresh copy of the default ``Clean`` drift check."""
+	"""A fresh copy of the default `Clean` drift check."""
 	return Task((sys.executable, "-m", "camas._git_porcelain"), cwd=".")
 
 
@@ -833,7 +833,7 @@ def Clean(  # noqa: N802  # constructor-style factory, like Task/Parallel
 	before: bool = True,
 	name: str | None = None,
 ) -> Sequential:
-	"""A drift gate around ``mutator``: fail when the working tree is not clean.
+	"""A drift gate around `mutator`: fail when the working tree is not clean.
 
 	>>> [t.name for t in Clean(Task("make gen", mutates=True)).tasks]
 	['make gen-before', None, 'make gen-after']
@@ -841,7 +841,7 @@ def Clean(  # noqa: N802  # constructor-style factory, like Task/Parallel
 	'make gen'
 
 	Raises:
-		ValueError: on a ``mutator`` without ``mutates=True`` or a ``check`` with ``{paths}``.
+		ValueError: on a `mutator` without `mutates=True` or a `check` with `{paths}`.
 	"""
 	mutator = _as_task(
 		mutator,

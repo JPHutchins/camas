@@ -549,16 +549,16 @@ def tools(task_names: tuple[str, ...], compat: Compat) -> Tools:
 			compat,
 			name=ToolName.FIX.value,
 			description=textwrap.dedent("""\
-				Run the project's registered deterministic autofix node (``Config.agent.fix``)
+				Run the project's registered deterministic autofix node (`Config.agent.fix`)
 				scoped to the changed paths — mutating, behavior-preserving formatters and
-				``--fix`` linters. It does not reason; it only fixes. Pass paths=[…] (the changed
-				files) to scope; omit to run the whole fix node un-scoped. Each ``{paths}`` command
-				is injected with the files it covers; a command without ``{paths}`` always runs
-				unless its ``when=`` excludes the changed set.
-				A no-op (exit 0, no leaves) when no fix node is registered (``Config.agent.fix`` is
-				``None``).
+				`--fix` linters. It does not reason; it only fixes. Pass paths=[…] (the changed
+				files) to scope; omit to run the whole fix node un-scoped. Each `{paths}` command
+				is injected with the files it covers; a command without `{paths}` always runs
+				unless its `when=` excludes the changed set.
+				A no-op (exit 0, no leaves) when no fix node is registered (`Config.agent.fix` is
+				`None`).
 			""").strip()
-			+ f" ``jobs`` caps concurrently running leaves ({JOBS_UNIT}).",
+			+ f" `jobs` caps concurrently running leaves ({JOBS_UNIT}).",
 			input_schema=wire.fix_input_schema(task_names),
 			output_model=wire.RunResponse,
 			title="Run deterministic autofix",

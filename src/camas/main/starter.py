@@ -2,21 +2,21 @@
 # requires-python = ">=3.10"
 # dependencies = ["camas"]
 # ///
-"""Project tasks — run with ``camas``.
+"""Project tasks — run with `camas`.
 
-Every task below is a cross-platform placeholder (``python -c ...``);
+Every task below is a cross-platform placeholder (`python -c ...`);
 replace the placeholders with your real commands:
 
 	lint = Task("ruff check .")
 	test = Task("cargo test", cwd=Path("rust"))
 	build = Task("npm run build")
 
-The ``# /// script`` block above is optional PEP 723 inline metadata. With
-it (plus the ``__main__`` block at the bottom), PEP 723-aware tools can run
-this file standalone — ``uv run tasks.py``, ``pipx run tasks.py`` — building
+The `# /// script` block above is optional PEP 723 inline metadata. With
+it (plus the `__main__` block at the bottom), PEP 723-aware tools can run
+this file standalone — `uv run tasks.py`, `pipx run tasks.py` — building
 a throwaway env with camas installed; handy for non-Python projects. It is
-also where camas gets version-pinned (``dependencies = ["camas>=X.Y"]``).
-Both are inert under plain ``camas``; delete them if you don't want the
+also where camas gets version-pinned (`dependencies = ["camas>=X.Y"]`).
+Both are inert under plain `camas`; delete them if you don't want the
 standalone path.
 """
 

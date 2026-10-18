@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""The ``Ctrf`` effect: a CTRF (https://ctrf.io) JSON test report; it needs the ``camas[ctrf]`` extra."""
+"""The `Ctrf` effect: a CTRF (https://ctrf.io) JSON test report; it needs the `camas[ctrf]` extra."""
 
 from __future__ import annotations
 

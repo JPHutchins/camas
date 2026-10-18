@@ -49,7 +49,7 @@ def split_passthrough(argv: Sequence[str]) -> SplitArgv:
 def apply_passthrough(task: TaskNode, args: tuple[str, ...]) -> Task:
 	"""
 	Raises:
-		ValueError: if ``task`` is a ``Sequential`` or ``Parallel``.
+		ValueError: if `task` is a `Sequential` or `Parallel`.
 
 	>>> apply_passthrough(Task("pytest"), ("-v",))
 	Task(cmd='pytest -v', name=None, env={}, cwd=None)

@@ -47,22 +47,22 @@ class Errored(BaseModel):
 
 
 class Planned(BaseModel):
-	"""A leaf a ``dry_run`` resolved but did not execute — part of the plan a real run would
-	run. Distinct from ``skipped`` (a leaf a real run pruned), so an all-``planned`` preview
+	"""A leaf a `dry_run` resolved but did not execute — part of the plan a real run would
+	run. Distinct from `skipped` (a leaf a real run pruned), so an all-`planned` preview
 	reads as "these leaves would run", not as a green "nothing to do".
 	"""
 
 	type: Literal["planned"] = "planned"
 	returncode: int = 0
-	"""Always ``0`` — a planned leaf never ran; the field exists so a planned leaf is uniformly
+	"""Always `0` — a planned leaf never ran; the field exists so a planned leaf is uniformly
 	a non-failure alongside the other never-ran outcomes."""
 
 
 Completion = Annotated[
 	Finished | Skipped | Stopped | Errored | Planned, Field(discriminator="type")
 ]
-"""Tagged union of run outcomes: the four mirroring ``camas.v0.completion.Completion`` plus the
-dry-run-only ``Planned`` (a leaf previewed, never executed)."""
+"""Tagged union of run outcomes: the four mirroring `camas.v0.completion.Completion` plus the
+dry-run-only `Planned` (a leaf previewed, never executed)."""
 
 
 class LeafReport(BaseModel):
@@ -73,14 +73,14 @@ class LeafReport(BaseModel):
 	cwd: str | None = None
 	completion: Completion
 	truncated: bool = False
-	"""True when this leaf's ``output`` is a tail excerpt; the full log is on disk."""
+	"""True when this leaf's `output` is a tail excerpt; the full log is on disk."""
 	log: str | None = None
 	"""Filesystem path to this leaf's full output log, when one was written."""
 
 
 class ExcludedLeaf(BaseModel):
 	"""A leaf a time budget did not run — measured over its limit, dropped by a pipe cut, or
-	(in ``BudgetReport.running_over_budget``) run anyway to measure an untimed pipe sibling.
+	(in `BudgetReport.running_over_budget`) run anyway to measure an untimed pipe sibling.
 	"""
 
 	name: str
@@ -90,7 +90,7 @@ class ExcludedLeaf(BaseModel):
 
 
 class BudgetReport(BaseModel):
-	"""How a ``camas_run`` time budget (``under``) partitioned the task's leaves."""
+	"""How a `camas_run` time budget (`under`) partitioned the task's leaves."""
 
 	budget_s: float
 	selected: tuple[str, ...]
@@ -103,7 +103,7 @@ class BudgetReport(BaseModel):
 	"""
 	running_over_budget: tuple[ExcludedLeaf, ...] = ()
 	"""The over-budget leaves that run anyway — a pipe kept whole for its untimed siblings —
-	counted in ``selected``, not ``excluded``.
+	counted in `selected`, not `excluded`.
 	"""
 	dropped_by_pipe_cut: tuple[ExcludedLeaf, ...] = ()
 	"""Planned leaves that do not run — a mid-pipe cut dropped the pipe they sit in."""
@@ -114,7 +114,7 @@ class BudgetReport(BaseModel):
 
 
 class RunResponse(BaseModel):
-	"""Structured result of a run — camas's ``RunResult``, faithfully on the wire."""
+	"""Structured result of a run — camas's `RunResult`, faithfully on the wire."""
 
 	returncode: int
 	elapsed: float
@@ -122,16 +122,16 @@ class RunResponse(BaseModel):
 	failed: int
 	skipped: int
 	planned: int = 0
-	"""Leaves previewed by a ``dry_run`` (would run, never executed); ``0`` for a real run."""
+	"""Leaves previewed by a `dry_run` (would run, never executed); `0` for a real run."""
 	interrupt_count: int
 	leaves: tuple[LeafReport, ...]
 	truncated: bool = False
 	budget: BudgetReport | None = None
-	"""Present when the run was time-budgeted (``camas_run`` with ``under``)."""
+	"""Present when the run was time-budgeted (`camas_run` with `under`)."""
 
 
 class TaskInfo(BaseModel):
-	"""One task discoverable in the project, as ``camas_list`` reports it."""
+	"""One task discoverable in the project, as `camas_list` reports it."""
 
 	name: str
 	help: str | None = None
@@ -196,10 +196,10 @@ class ListResponse(BaseModel):
 class CheckResponse(BaseModel):
 	"""Outcome of validating the project's tasks source — does it load, and does it type-check.
 
-	``status`` is the verdict; the remaining fields carry the detail an agent needs to fix
-	a problem. ``diagnostics`` holds the eval traceback, the type-checker output, or the
-	install hint, depending on ``status``. ``warnings`` is advisory and independent of
-	``status`` — a scope-authoring mistake does not change the verdict.
+	`status` is the verdict; the remaining fields carry the detail an agent needs to fix
+	a problem. `diagnostics` holds the eval traceback, the type-checker output, or the
+	install hint, depending on `status`. `warnings` is advisory and independent of
+	`status` — a scope-authoring mistake does not change the verdict.
 	"""
 
 	status: Literal["ok", "load_error", "type_error", "no_checker", "no_tasks"]
@@ -209,7 +209,7 @@ class CheckResponse(BaseModel):
 	diagnostics: str | None = None
 	warnings: tuple[str, ...] = ()
 	server_version: str | None = None
-	"""The camas version the MCP server is running; ``null`` when distribution metadata is
+	"""The camas version the MCP server is running; `null` when distribution metadata is
 	unavailable.
 	"""
 
@@ -220,25 +220,25 @@ class DocsResponse(BaseModel):
 	source: str
 	"""Absolute path to the installed camas package — the API source of truth."""
 	tutorial: str
-	"""The package ``__init__.py`` docstring: a worked, doctested authoring tutorial."""
+	"""The package `__init__.py` docstring: a worked, doctested authoring tutorial."""
 
 
 class InitResponse(BaseModel):
-	"""Outcome of scaffolding a starter ``tasks.py`` — created fresh, or an existing one left
+	"""Outcome of scaffolding a starter `tasks.py` — created fresh, or an existing one left
 	untouched.
 	"""
 
 	status: Literal["created", "exists"]
 	path: str
-	"""The ``tasks.py`` path: the file written, or the existing one left in place."""
+	"""The `tasks.py` path: the file written, or the existing one left in place."""
 	content: str | None = None
-	"""The scaffolded starter's content when ``status`` is ``created``; ``null`` when a
-	``tasks.py`` already existed.
+	"""The scaffolded starter's content when `status` is `created`; `null` when a
+	`tasks.py` already existed.
 	"""
 
 
 class InitRequest(BaseModel):
-	"""Arguments to ``camas_init``."""
+	"""Arguments to `camas_init`."""
 
 	model_config = ConfigDict(extra="forbid")
 
@@ -256,7 +256,7 @@ class InitRequest(BaseModel):
 
 
 class ListRequest(BaseModel):
-	"""Arguments to ``camas_list``."""
+	"""Arguments to `camas_list`."""
 
 	model_config = ConfigDict(extra="forbid")
 
@@ -271,7 +271,7 @@ class ListRequest(BaseModel):
 
 
 class RunRequest(BaseModel):
-	"""Arguments to ``camas_run``."""
+	"""Arguments to `camas_run`."""
 
 	model_config = ConfigDict(extra="forbid")
 
@@ -326,9 +326,9 @@ class RunRequest(BaseModel):
 
 
 def _splice_task_enum(schema: dict[str, Any], task_names: tuple[str, ...]) -> dict[str, Any]:
-	"""``schema`` with the live task-name ``enum`` spliced onto the string branch of the
-	``task`` property's ``anyOf`` — the optional-``str`` field shared by ``camas_run``,
-	``camas_gate``, ``camas_fix``, and ``camas_github_matrix``.
+	"""`schema` with the live task-name `enum` spliced onto the string branch of the
+	`task` property's `anyOf` — the optional-`str` field shared by `camas_run`,
+	`camas_gate`, `camas_fix`, and `camas_github_matrix`.
 	"""
 	for branch in schema["properties"]["task"]["anyOf"]:
 		if branch.get("type") == "string":
@@ -337,10 +337,10 @@ def _splice_task_enum(schema: dict[str, Any], task_names: tuple[str, ...]) -> di
 
 
 def run_input_schema(task_names: tuple[str, ...]) -> dict[str, Any]:
-	"""``RunRequest``'s JSON Schema with the live task-name ``enum`` spliced into ``task``.
+	"""`RunRequest`'s JSON Schema with the live task-name `enum` spliced into `task`.
 
-	``task`` is ``str | None`` (a budget run may omit it), so the enum lands on the
-	string branch of the ``anyOf`` rather than the property itself.
+	`task` is `str | None` (a budget run may omit it), so the enum lands on the
+	string branch of the `anyOf` rather than the property itself.
 
 	>>> schema = run_input_schema(("lint", "test"))
 	>>> next(b["enum"] for b in schema["properties"]["task"]["anyOf"] if b.get("type") == "string")
@@ -352,7 +352,7 @@ def run_input_schema(task_names: tuple[str, ...]) -> dict[str, Any]:
 
 
 class GateRequest(BaseModel):
-	"""Arguments to ``camas_gate``."""
+	"""Arguments to `camas_gate`."""
 
 	model_config = ConfigDict(extra="forbid")
 
@@ -384,7 +384,7 @@ class GateRequest(BaseModel):
 
 
 class FixRequest(BaseModel):
-	"""Arguments to ``camas_fix``."""
+	"""Arguments to `camas_fix`."""
 
 	model_config = ConfigDict(extra="forbid")
 
@@ -408,7 +408,7 @@ class FixRequest(BaseModel):
 
 
 def fix_input_schema(task_names: tuple[str, ...]) -> dict[str, Any]:
-	"""``FixRequest``'s JSON Schema with the live task-name ``enum`` spliced into ``task``.
+	"""`FixRequest`'s JSON Schema with the live task-name `enum` spliced into `task`.
 
 	>>> schema = fix_input_schema(("lint", "test"))
 	>>> next(b["enum"] for b in schema["properties"]["task"]["anyOf"] if b.get("type") == "string")
@@ -421,7 +421,7 @@ def fix_input_schema(task_names: tuple[str, ...]) -> dict[str, Any]:
 
 class AgentEnvelope(BaseModel):
 	"""One task's agent-facing result: its exit code and the tool's output tagged by the
-	standard it is in (``output_kind``) and passed through verbatim — camas never parses it.
+	standard it is in (`output_kind`) and passed through verbatim — camas never parses it.
 	"""
 
 	name: str
@@ -429,12 +429,12 @@ class AgentEnvelope(BaseModel):
 	output_kind: Literal["sarif", "rdjson", "lsp", "junit", "tap", "raw"]
 	payload: str
 	truncated: bool = False
-	"""True when ``payload`` is a tail excerpt (``raw``) or was omitted for exceeding
-	``agent_format.limit`` (structured).
+	"""True when `payload` is a tail excerpt (`raw`) or was omitted for exceeding
+	`agent_format.limit` (structured).
 	"""
 	log: str | None = None
-	"""This leaf's path-mode report file (see ``agent_format``'s ``{report}``) — set whenever the
-	leaf ran in path mode, whether or not ``payload`` was; ``None`` for a leaf read from stdout.
+	"""This leaf's path-mode report file (see `agent_format`'s `{report}`) — set whenever the
+	leaf ran in path mode, whether or not `payload` was; `None` for a leaf read from stdout.
 	"""
 
 
@@ -455,12 +455,12 @@ class GateResponse(BaseModel):
 	"""The SA-delegation gate's verdict: how to route the batch, and the residual that decided it."""
 
 	decision: Literal["continue", "block"]
-	"""``block`` when a residual needs reasoning, else ``continue`` when the checks pass."""
+	"""`block` when a residual needs reasoning, else `continue` when the checks pass."""
 	residual_class: Literal["green", "needs_reasoning"]
 	diagnostics: tuple[AgentEnvelope, ...] | None = None
 	"""The failing leaves as AgentJSON envelopes (failures-only); null when the checks pass."""
 	budget: BudgetReport | None = None
-	"""How ``under`` partitioned the checks, when a budget was given."""
+	"""How `under` partitioned the checks, when a budget was given."""
 	nothing_ran: str | None = None
 	"""Why nothing ran, when nothing did — the cause line the other surfaces print, carried to
 	the agent-facing text."""
@@ -469,7 +469,7 @@ class GateResponse(BaseModel):
 
 
 def gate_input_schema(task_names: tuple[str, ...]) -> dict[str, Any]:
-	"""``GateRequest``'s JSON Schema with the live task-name ``enum`` spliced into ``task``.
+	"""`GateRequest`'s JSON Schema with the live task-name `enum` spliced into `task`.
 
 	>>> schema = gate_input_schema(("lint", "test"))
 	>>> next(b["enum"] for b in schema["properties"]["task"]["anyOf"] if b.get("type") == "string")
@@ -481,7 +481,7 @@ def gate_input_schema(task_names: tuple[str, ...]) -> dict[str, Any]:
 
 
 class GithubMatrixRequest(BaseModel):
-	"""Arguments to ``camas_github_matrix``."""
+	"""Arguments to `camas_github_matrix`."""
 
 	model_config = ConfigDict(extra="forbid")
 
@@ -507,23 +507,23 @@ class GithubMatrixRequest(BaseModel):
 
 
 class GithubMatrixResponse(BaseModel):
-	"""A task's fan-out as a GitHub Actions ``strategy.matrix`` object."""
+	"""A task's fan-out as a GitHub Actions `strategy.matrix` object."""
 
 	task: str
 	"""The task the matrix was emitted for."""
 	shape: Literal["axes", "variants", "tasks"]
-	"""Which projection this is — pass it back as ``shape`` (or ``--github-matrix=<shape>``) to
-	pin it, so a later ``tasks.py`` change cannot silently reshape the workflow's matrix."""
+	"""Which projection this is — pass it back as `shape` (or `--github-matrix=<shape>`) to
+	pin it, so a later `tasks.py` change cannot silently reshape the workflow's matrix."""
 	matrix: dict[str, list[str] | list[dict[str, str]]]
-	"""The ``strategy.matrix`` object, verified to expand to exactly the jobs camas runs: axis
-	name → its distinct values in first-seen order for ``axes``/``tasks``, or
-	``{"include": [cell, ...]}`` for ``variants``. Serialize compact for ``$GITHUB_OUTPUT``."""
+	"""The `strategy.matrix` object, verified to expand to exactly the jobs camas runs: axis
+	name → its distinct values in first-seen order for `axes`/`tasks`, or
+	`{"include": [cell, ...]}` for `variants`. Serialize compact for `$GITHUB_OUTPUT`."""
 	job_command: str
-	"""The ``run:`` line a consuming job uses, as a template to adapt — not a task camas runs."""
+	"""The `run:` line a consuming job uses, as a template to adapt — not a task camas runs."""
 
 
 def github_matrix_input_schema(task_names: tuple[str, ...]) -> dict[str, Any]:
-	"""``GithubMatrixRequest``'s JSON Schema with the live task-name ``enum`` spliced into ``task``.
+	"""`GithubMatrixRequest`'s JSON Schema with the live task-name `enum` spliced into `task`.
 
 	>>> schema = github_matrix_input_schema(("lint", "matrix"))
 	>>> next(b["enum"] for b in schema["properties"]["task"]["anyOf"] if b.get("type") == "string")

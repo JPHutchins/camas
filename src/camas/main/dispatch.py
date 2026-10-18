@@ -233,7 +233,7 @@ def reconfigure_stdio_utf8() -> None:
 
 
 def run_cli(scope: Mapping[str, object]) -> None:
-	"""Run the camas CLI against a ``tasks.py``'s ``globals()``, for ``uv run tasks.py``."""
+	"""Run the camas CLI against a `tasks.py`'s `globals()`, for `uv run tasks.py`."""
 	reconfigure_stdio_utf8()
 	argv = sys.argv[1:]
 	if argv and argv[0] == "mcp":

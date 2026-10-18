@@ -329,7 +329,7 @@ class UnstartableCommandError(Exception): ...
 def command_argv(cmd: str | tuple[str, ...]) -> tuple[str, ...]:
 	"""
 	Raises:
-		UnstartableCommandError: for a command with no program, or one ``shlex`` cannot split.
+		UnstartableCommandError: for a command with no program, or one `shlex` cannot split.
 
 	>>> command_argv('echo "hi there"')
 	('echo', 'hi there')
@@ -796,7 +796,7 @@ async def run(
 ) -> RunResult:
 	"""
 	Raises:
-		ValueError: on a non-positive ``jobs`` or mismatched ``identities``.
+		ValueError: on a non-positive `jobs` or mismatched `identities`.
 		BaseExceptionGroup: errors raised by Effects.
 
 	>>> import asyncio
