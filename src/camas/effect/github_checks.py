@@ -7,9 +7,11 @@ It needs the `camas[github_checks]` extra and the workflow permission `checks: w
 `token`, `repository`, and `sha` default to `GITHUB_TOKEN`, `GITHUB_REPOSITORY`, and
 `GITHUB_SHA`, so in CI it is just `--effects='(GitHubChecks(),)'`. On `pull_request`
 events `GITHUB_SHA` is the merge commit, whose checks the PR Checks panel doesn't show; pass
-the head commit::
+the head commit:
 
-    GitHubChecks(sha="${{ github.event.pull_request.head.sha || github.sha }}")
+```python
+GitHubChecks(sha="${{ github.event.pull_request.head.sha || github.sha }}")
+```
 """
 
 from __future__ import annotations
