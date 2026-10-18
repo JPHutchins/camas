@@ -12,7 +12,7 @@ fix = lint_fix + format
 actionlint = Task("uv run actionlint")
 mypy = Task("uv run mypy .")
 ty = Task("uv run ty check")
-zuban = Task("uv run zuban check src tests --exclude tests.fixtures")
+zuban = Task("uv run zuban check src tests docs --exclude tests.fixtures")
 pyrefly = Task("uv run pyrefly check")
 pyright = Task("uv run pyright src tests")
 

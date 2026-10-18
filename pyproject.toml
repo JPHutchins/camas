@@ -105,7 +105,7 @@ lint = ["actionlint-py>=1.7,<2"]
 default-groups = ["dev", "lint"]
 
 [tool.pytest.ini_options]
-testpaths = ["src", "tests"]
+testpaths = ["src", "tests", "docs"]
 norecursedirs = ["fixtures", "examples", ".hypothesis"]
 markers = ["slow: visual demo tests with real delays"]
 asyncio_mode = "auto"
@@ -221,7 +221,7 @@ exclude = ["tests/fixtures/", "examples/", "build/", "setup.py"]
 
 [tool.pyright]
 typeCheckingMode = "strict"
-include = ["src", "tests"]
+include = ["src", "tests", "docs"]
 exclude = ["tests/fixtures/**", "examples/**"]
 
 [tool.ty.src]
@@ -231,13 +231,15 @@ exclude = ["tests/fixtures/", "examples/", "build/", "setup.py"]
 project-includes = [
 "src/**/*.py*",
 "tests/**/*.py*",
+"docs/**/*.py*",
 ]
 project-excludes = [
 "tests/fixtures/**",
 ]
+search-path = ["src", "."]
 
 [tool.coverage.run]
-source = ["camas", "tests"]
+source = ["camas", "tests", "docs"]
 branch = true
 omit = ["tests/test_demos.py", "tests/claude_code/*", "src/camas/__main__.py"]
 

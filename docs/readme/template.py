@@ -1,0 +1,50 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 JP Hutchins
+
+from __future__ import annotations
+
+import re
+from typing import Final, NamedTuple
+
+from .fields import fields_section
+from .source import Unresolved
+
+DIRECTIVE: Final = re.compile(r"<!-- GENERATED: (?P<directive>\S.*\S) -->")
+DIRECTIVE_LIKE: Final = re.compile(r"<!--\s*GENERATED", re.IGNORECASE)
+MALFORMED: Final = (
+	"malformed directive; expected `<!-- GENERATED: <kind> <target> -->` alone on its line"
+)
+
+
+class TemplateError(NamedTuple):
+	line: int
+	message: str
+
+
+def render(template: str) -> str | tuple[TemplateError, ...]:
+	expanded = tuple(expand(number, line) for number, line in enumerate(template.split("\n"), 1))
+	errors = tuple(piece for piece in expanded if isinstance(piece, TemplateError))
+	if errors:
+		return errors
+	return "\n".join(
+		line for piece in expanded if not isinstance(piece, TemplateError) for line in piece
+	)
+
+
+def expand(number: int, line: str) -> tuple[str, ...] | TemplateError:
+	if (directive := DIRECTIVE.fullmatch(line.strip())) is not None:
+		generated = generate(directive["directive"])
+		return (
+			TemplateError(number, generated.message)
+			if isinstance(generated, Unresolved)
+			else generated
+		)
+	return TemplateError(number, MALFORMED) if DIRECTIVE_LIKE.search(line) else (line,)
+
+
+def generate(directive: str) -> tuple[str, ...] | Unresolved:
+	match directive.split():
+		case ["fields", dotted]:
+			return fields_section(dotted)
+		case _:
+			return Unresolved(f"unknown directive {directive!r}")
