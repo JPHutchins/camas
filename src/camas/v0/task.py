@@ -258,7 +258,7 @@ class Task:
 	env: Mapping[str, str]
 	cwd: Path | None
 	help: str | None
-	"""A one-line description camas shows for the task."""
+	"""A description of the task."""
 	mutates: bool
 	"""The leaf writes the workspace."""
 	paths: str | PathScope | None
