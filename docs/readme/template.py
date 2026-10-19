@@ -4,11 +4,13 @@
 from __future__ import annotations
 
 import re
+import shlex
 from typing import Final, NamedTuple
 
 from .alias import alias_section
 from .anchors import broken_links
 from .callables import function_section, protocol_section
+from .cli import cli_section
 from .exports import exports_section
 from .fields import fields_section
 from .file import file_section
@@ -54,18 +56,30 @@ def expand(number: int, line: str) -> tuple[str, ...] | TemplateError:
 
 
 def generate(directive: str) -> tuple[str, ...] | Unresolved:
-	match directive.split():
-		case ["fields", dotted]:
+	words = tokens(directive)
+	if isinstance(words, Unresolved):
+		return words
+	match words:
+		case ("fields", dotted):
 			return fields_section(dotted)
-		case ["function", dotted]:
+		case ("function", dotted):
 			return function_section(dotted)
-		case ["protocol", dotted]:
+		case ("protocol", dotted):
 			return protocol_section(dotted)
-		case ["alias", dotted]:
+		case ("alias", dotted):
 			return alias_section(dotted)
-		case ["file", name]:
+		case ("file", name):
 			return file_section(name)
-		case ["exports", dotted]:
+		case ("exports", dotted):
 			return exports_section(dotted)
+		case ("cli", directory, *args):
+			return cli_section(directory, tuple(args))
 		case _:
 			return Unresolved(f"unknown directive {directive!r}")
+
+
+def tokens(directive: str) -> tuple[str, ...] | Unresolved:
+	try:
+		return tuple(shlex.split(directive))
+	except ValueError as error:
+		return Unresolved(f"unparsable directive {directive!r}: {error}")
