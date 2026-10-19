@@ -7,6 +7,7 @@ import re
 from typing import Final, NamedTuple
 
 from .alias import alias_section
+from .anchors import broken_links
 from .callables import function_section, protocol_section
 from .exports import exports_section
 from .fields import fields_section
@@ -26,13 +27,19 @@ class TemplateError(NamedTuple):
 
 
 def render(template: str) -> str | tuple[TemplateError, ...]:
-	expanded = tuple(expand(number, line) for number, line in enumerate(template.split("\n"), 1))
+	lines = tuple(template.split("\n"))
+	expanded = tuple(expand(number, line) for number, line in enumerate(lines, 1))
 	errors = tuple(piece for piece in expanded if isinstance(piece, TemplateError))
 	if errors:
 		return errors
-	return "\n".join(
+	rendered = tuple(
 		line for piece in expanded if not isinstance(piece, TemplateError) for line in piece
 	)
+	broken = tuple(
+		TemplateError(number, f"no heading for the link `#{anchor}`")
+		for number, anchor in broken_links(lines, rendered)
+	)
+	return broken or "\n".join(rendered)
 
 
 def expand(number: int, line: str) -> tuple[str, ...] | TemplateError:
