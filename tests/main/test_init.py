@@ -225,6 +225,8 @@ def test_verbose_starter_loads_with_config(tmp_path: Path) -> None:
 		"meet",
 		"port",
 		"frontend",
+		"quick",
+		"narrow",
 		"versions",
 		"ci",
 		"github_ci",

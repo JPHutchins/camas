@@ -175,7 +175,7 @@ Both are inert under plain `camas`; delete them if you don't want the
 standalone path.
 """
 
-from camas import Claude, Config, Parallel, Sequential, Task, run_cli
+from camas import Claude, Config, Parallel, Task, run_cli
 
 # A leaf is any shell command, shlex-split (so quote the -c payload). A bare
 # string inside Sequential/Parallel coerces to an anonymous Task; tuple form
@@ -192,14 +192,13 @@ greet = Parallel(
     help="say hello to everyone at once",
 )
 
-# Sequential runs in order, short-circuiting on the first failure; Parallel
-# runs concurrently. They nest freely. The binding name is the task name
-# (this defines `ci`); pass name= only to rename or to name a nested,
-# anonymous group like the Parallel below.
-ci = Sequential(
-    hello,
-    Parallel(greet, "python --version"),
-)
+# `+` chains tasks into a Sequential, which runs them in order and stops at the
+# first failure; `|` gathers them into a Parallel, which runs them concurrently.
+# They nest freely (`+` binds tighter than `|`, so parenthesize), and
+# Sequential(...) / Parallel(...) spell the same trees out. The binding name is
+# the task name (this defines `ci`); pass name= only to rename, or to name a
+# nested, anonymous group.
+ci = hello + (greet | "python --version")
 
 # Your deterministic, behavior-preserving auto-fixers, with {paths} so a run scopes to the
 # changed files. Register the node (named anything) to Config.agent.fix below; the camas_gate
@@ -207,7 +206,7 @@ ci = Sequential(
 # every turn end, for free. Replace the placeholder with your real fixers, e.g.:
 #   autofix = Task("ruff check --fix {paths}", mutates=True, paths=".")
 #   autofix = Sequential(Task("ruff check --fix {paths}", mutates=True), Task("ruff format {paths}", mutates=True), paths=".")
-autofix = Task('python -c "" {paths}', name="autofix", mutates=True, paths=".")
+autofix = Task('python -c "" {paths}', mutates=True, paths=".")
 
 # Config is discovered by type, under any binding name (here `_`): bare `camas` runs
 # default_task — or github_task under GitHub Actions, falling back to default_task when unset.

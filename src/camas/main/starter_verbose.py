@@ -221,6 +221,15 @@ frontend = Sequential(
 	help="cwd=/env=/paths= here are inherited by both children, which set none of their own",
 )
 
+# The operators build the same groups without the constructors: `+` chains into a Sequential and
+# `|` gathers into a Parallel (`+` binds tighter than `|`, so parenthesize), and `-` removes a
+# direct child (raising if it isn't one). A left operand with fields of its own (frontend's
+# cwd=/env= above) or of another group kind nests whole instead of being extended, so an operator
+# never moves a task into or out of a field's scope: quick is Sequential(Parallel(lint,
+# typed_lint), checked).
+quick = (lint | typed_lint) + checked
+narrow = quick - checked
+
 
 def python_versions_from(version_file: Path) -> tuple[str, ...]:
 	"""An authoring idiom the engine can't enforce, straight from camas's own `tasks.py`:
@@ -286,7 +295,6 @@ ci = Sequential(
 	# name= on a *nested*, anonymous group (no binding of its own) is the other half of the
 	# lesson at the top: it has no dispatch key at all, only this display label.
 	Sequential(fmt, lint, typed_lint, web_lint, checked, subproject, name="checks"),
-	name="ci",
 )
 
 # Config is discovered by type, under any binding name (here `_`): bare `camas` runs
