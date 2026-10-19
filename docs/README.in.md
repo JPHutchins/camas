@@ -543,7 +543,7 @@ _ = Config(
 
 - Define an `Effect` in your `tasks.py` and it's discovered automatically: usable by name from `--effects`, and listed under `camas --effects`.
 - The [effect-plugin fixture](https://github.com/JPHutchins/camas/tree/main/tests/fixtures/effect-plugin) has a typed `Tail` effect that streams each task's output as it arrives.
-- ⚠️ The old link text said `examples/effect-plugin/`, but it points at `tests/fixtures/effect-plugin`. `__init__.py` also still says `examples/effect-plugin/`.
+- ⚠️ The old link text said `examples/effect-plugin/`, but it points at `tests/fixtures/effect-plugin`.
 - An effect author reads the event stream and the per-leaf states below.
 
 <!-- GENERATED: protocol camas.v0.effect.Effect -->
@@ -834,3 +834,48 @@ build ∥
 ```
 
 </details>
+
+## From `__init__.py` (to distribute in the restructure)
+
+- ⚠️ `__init__.py`'s docstring prose, outlined so the README covers it before that file shrinks to its doctests. Points the draft above already covers are left out: `Project`, `Clean`, the `Config` defaults, the pre-push hook, `when=`/`by_suffix`, and agent detection on the CLI.
+- **Running tasks** (Getting started):
+  - `camas <name>` runs a task; `camas --list` enumerates them; `camas --help` shows everything (tasks, effects, hints); `camas --effects` lists the output renderers; `camas --tree` prints every task's full expansion
+  - `--dry-run` prints the tree without running it
+  - a trailing `-- ARG ...` forwards arguments to the dispatched task's command (`camas test -- -v`)
+  - shell forms the examples stand for: `camas hello`, `camas ci --dry-run`, `camas test -- -v`, `camas greet --NAME=Ada`, `camas build --effects='(Loud(),)'`
+- **Defining tasks:**
+  - a leaf is *any* shell command; the doctests use `python -c` only because every CI environment has Python. Real leaves look like `Task("ruff check .")`, `Task("cargo test", cwd=Path("rust"))`, `Task("npm test")`
+  - a module-level `Task`/`Sequential`/`Parallel` binding takes its **variable name** as the task name (`lint = Task("ruff check .")` defines `lint`), so `name=` is only for renaming or naming a nested, anonymous group; in the `[tool.camas.tasks]` TOML form the table key is the name
+  - `Sequential` runs in order and stops at the first failure: later leaves are reported `Skipped`, not run, and camas exits non-zero; `Parallel` runs concurrently
+  - bare strings inside the constructors become anonymous `Task`s, split by shell rules (`shlex`), so prefer simple forms; use the tuple form for a complex command to skip `shlex` entirely
+  - `cwd` and `env` are scoped per leaf
+  - `help="..."` overrides what `camas --list` prints for a task; rarely needed (the command or tree usually documents itself), but there for cryptic commands
+  - model independent, read-only work as `Parallel` (wall-clock `max`, not `sum`): a `&&` chain in a previous runner was *sequencing*, not a dependency, so reach for `Sequential` only for real ordering (a mutating step, or one that consumes a prior step's output)
+- **Matrix and variants:**
+  - `--AXIS VAL` overrides a matrix axis from the CLI, and `<task> --help` documents each task's override flags
+  - an override takes comma-separated values (`--NAME1=Clara,Dolores`), which can introduce values the project didn't list
+  - `variants=` is a coupled fan-out (values that only make sense together, like a target and its toolchain): it runs the listed bundles, not their product
+  - pinning one of a bundle's keys from the CLI *filters* to the bundles that bind it; replacing the value would fabricate a pairing the project never declared
+  - source matrix axis values from the project's single source of truth (e.g. read `.python-version`) instead of hardcoding a list that drifts; `tasks.py` is real Python
+- **Optimizations (`--under`):**
+  - the budgeted subset is what a pre-commit / git hook wants
+  - a cold cache (a fresh clone) runs the whole tree under a budget until each leaf has been measured once
+  - a pipe kept whole for its untimed siblings runs its over-budget stages too
+  - `by_glob` is a prefix-plus-suffix, `**`-aware shell-glob scope, for porting a pre-commit `files:` filter
+- **Continuous integration:**
+  - with `github_task` set, a CI step is just `camas` (or `uv run camas`), so the workflow doesn't go stale when `github_task` changes
+- **AI coding agents:**
+  - prefer the MCP server: `camas mcp [--help | --plain]`; `camas mcp init --claude` (`.mcp.json` + hooks + fixer ladder + gate skill); `camas mcp init` (`.mcp.json` only, for any MCP client)
+  - the MCP server re-executes `tasks.py` on every tool call, so a command computed from the filesystem at the top level of `tasks.py` (a glob, a file list) stays fresh; values computed in a separately imported module are import-cached and can go stale; prefer `{paths}`/`when=` over snapshotting file lists where freshness matters
+  - a detected agent on the CLI gets a one-line stderr banner steering it to the MCP tools; `CAMAS_NO_MCP_HINT=1` silences it
+  - `Claude.fix` is declared, not inferred from `mutates=`, because a mutating leaf may be a compiler or codegen rather than a fixer; scope it with `{paths}` on a leaf or a whole group
+  - `Claude.check` is scoped by `--paths` and time-boxed by `--under`; the plugin hands it to a tiered ladder of background camas-fixer subagents (lint/format tiers, then a test/coverage tier) that drive the changed scope to green off the main agent's context, rather than blocking on a hook
+  - `agent_format=("--output-format sarif", "sarif")` makes the gate collect machine-readable diagnostics, appended only on gate runs, never human runs; the kinds are `sarif`, `rdjson`, `lsp`, `junit`, `tap`, `raw`
+  - `AgentFormat(limit=...)` (default 8000 characters): a structured payload over it is never dumped or tailed, since a truncated SARIF/JUnit document is invalid, so the gate points at the full file or log instead
+  - path mode, for tools that write diagnostics to a *file* (`pytest --junitxml`, `pytest-json-report`): put the literal `{report}` in `args` (`agent_format=("--junitxml {report}", "junit")`), and the gate substitutes an allocated path and reads that file
+- **Output and effects:**
+  - `Summary(show_passing=True)` prints every passing task's output after the run
+  - a custom `Effect` defined inline in `tasks.py` is discovered automatically: `camas --help` lists it under *Available Effects* beside the built-ins (so an agent reading `--help` sees the plugin), and `camas --effects` with no value prints the effects-only listing
+  - `--effects` takes a *tuple* of any length, so several effects run in one go: `--effects=(Summary(), Loud())` gives both the post-run report and the streaming lines
+- **Reference:**
+  - [tests/](https://github.com/JPHutchins/camas/blob/main/tests) for advanced, granular library usage
