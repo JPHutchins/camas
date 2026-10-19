@@ -6,7 +6,7 @@ from camas import Config, Parallel, Sequential, Task
 
 src_tauri = Path("src-tauri")
 python_sdk = Path("python-sdk")
-node = Path("node_modules/.bin")
+node = "node_modules/.bin"
 
 frontend = Task(f"{node}/prettier --write .") + (
 	Task(f"{node}/eslint src/") | Task(f"{node}/tsc --noEmit") | Task(f"{node}/vitest run")
