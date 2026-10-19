@@ -1,4 +1,4 @@
-<!-- DRAFT for JP: each bullet list outlines README.md.old's prose for rewriting; ⚠️ bullets are proofreading notes; ✍️ bullets mark where your prose on each type goes, right above its generated section; ✚ bullets mark topics with no prose yet. Code examples and tables are kept verbatim. -->
+<!-- DRAFT for JP: each bullet list outlines README.md.old's prose for rewriting; ⚠️ bullets are proofreading notes; ✍️ bullets mark where your prose on each type goes, right above its generated section; ✚ bullets mark topics with no prose yet. Code examples and tables are kept verbatim. The `example` sections show the doctests' commands as written, including the `--effects=(Summary(show_passing=True),)` they use to check output. -->
 <img align="right" width="150" src="https://raw.githubusercontent.com/JPHutchins/camas/main/resources/artwork/camas-451x1023.png" alt="camas-sketch-by-jph">
 
 # Camas
@@ -119,6 +119,9 @@ camas --init
 - `--dry-run` prints the tree without running it
 - a trailing `-- ARG ...` forwards arguments to the dispatched task's command (`camas test -- -v`)
 - shell forms the examples stand for: `camas hello`, `camas ci --dry-run`, `camas test -- -v`, `camas greet --NAME=Ada`, `camas build --effects='(Loud(),)'`
+
+<!-- GENERATED: example camas hello -->
+
 - `camas` with no arguments runs the `Config` default task, or prints the full help when none is defined; `camas <task> --help` shows the expanded tree, matrix axes, and override flags.
 - ⚠️ The [walkthrough](#walkthrough) shows these commands on the tauri-app fixture, generated; point here to it rather than repeating the sessions.
 
@@ -135,14 +138,22 @@ camas --init
 - model independent, read-only work as `Parallel` (wall-clock `max`, not `sum`): a `&&` chain in a previous runner was *sequencing*, not a dependency, so reach for `Sequential` only for real ordering (a mutating step, or one that consumes a prior step's output)
 - Full fields: [`Task`](#task), [`Sequential` and `Parallel`](#sequential-and-parallel).
 
+<!-- GENERATED: example camas say -->
+
+<!-- GENERATED: example camas pipeline -->
+
 ### Pipes
 
-- ✚ `Pipe` feeds each stage's stdout to the next stage's stdin; `__init__.py`'s doctest shows it, and an `example` directive could lift it. `Pipe(agent_only=True)` is under [Structured diagnostics](#structured-diagnostics). Full fields: [`Pipe`](#pipe).
+- `Pipe` feeds each stage's stdout to the next stage's stdin, and `>` pipes one `Task` into another. `Pipe(agent_only=True)` is under [Structured diagnostics](#structured-diagnostics). Full fields: [`Pipe`](#pipe).
+
+<!-- GENERATED: example camas shout -->
 
 ### Operators
 
-- ⚠️ Your WIP removed the operators paragraph (`|`, `+`, `-`, `>`, and `.extend`/`.remove`). They're public API, so cover them here or cut them on purpose. `__init__.py` now has doctested `|`/`+`/`-` and `Pipe`/`>` examples that an `example` directive could lift.
+- ⚠️ Your WIP removed the operators paragraph (`|`, `+`, `-`, `>`, and `.extend`/`.remove`). They're public API, so cover them here or cut them on purpose; the example below is generated from `__init__.py`'s doctest.
 - `|` extends a plain `Parallel`, `+` a plain `Sequential`, `-` removes a direct child, and `>` builds a `Pipe`; a left operand with fields, of a subclass, or of another kind nests whole. `+` binds tighter than `|`. `>` chains as a comparison, so parenthesize. A composed pipe is always truthy.
+
+<!-- GENERATED: example camas quick -->
 
 ### Matrices and variants
 
@@ -152,6 +163,12 @@ camas --init
 - pinning one of a bundle's keys from the CLI *filters* to the bundles that bind it; replacing the value would fabricate a pairing the project never declared
 - source matrix axis values from the project's single source of truth (e.g. read `.python-version`) instead of hardcoding a list that drifts; `tasks.py` is real Python
 - ✚ `--matrix KEY=VAL`, the other override form, isn't mentioned anywhere yet.
+
+<!-- GENERATED: example camas greet -->
+
+<!-- GENERATED: example camas meet -->
+
+<!-- GENERATED: example camas port -->
 
 ### The default task
 
@@ -624,8 +641,10 @@ check = Task("cargo test -p mycli", env={"NO_COLOR": "1"}) # or just this leaf
 - Define an `Effect` in your `tasks.py` and it's discovered automatically: usable by name from `--effects`, and listed under `camas --effects`.
 - a custom `Effect` defined inline in `tasks.py` is discovered automatically: `camas --help` lists it under *Available Effects* beside the built-ins (so an agent reading `--help` sees the plugin), and `camas --effects` with no value prints the effects-only listing
 - The [effect-plugin fixture](https://github.com/JPHutchins/camas/tree/main/tests/fixtures/effect-plugin) has a typed `Tail` effect that streams each task's output as it arrives.
-- ⚠️ The old link text said `examples/effect-plugin/`, but it points at `tests/fixtures/effect-plugin`. The review suggests embedding the fixture with a `file` directive instead of linking it.
+- ⚠️ The old link text said `examples/effect-plugin/`, but it points at `tests/fixtures/effect-plugin`. The example below is `__init__.py`'s inline `Loud` effect; the fixture could also be embedded with a `file` directive.
 - An effect author reads the event stream and the per-leaf states: see the [Effect API](#effect-api).
+
+<!-- GENERATED: example camas Loud -->
 
 ## Versioning
 

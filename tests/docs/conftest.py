@@ -129,6 +129,38 @@ CALLABLES = dedent(
 	'''
 )
 
+EXAMPLES = (
+	'r"""Examples, parsed and never run.\n'
+	"\n"
+	"\t>>> def make_camas(tmp): ...\n"
+	"\n"
+	"One:\n"
+	"\n"
+	"\t>>> with tempfile.TemporaryDirectory() as tmp:\n"
+	"\t...     camas = make_camas(tmp)\n"
+	"\t...     _ = (Path(tmp) / 'tasks.py').write_text(dedent('''\\\n"
+	"\t...         from camas import Task\n"
+	'\t...         hello = Task("echo hi")\n'
+	"\t...     '''))\n"
+	'\t...     ran = camas("--effects=(Summary(),)", "hello")\n'
+	'\t...     listed = camas("--list")\n'
+	"\n"
+	"Two, with no camas calls:\n"
+	"\n"
+	"\t>>> _ = dedent('''\\\n"
+	"\t...     from camas import Task\n"
+	"\t...     class Loud: ...\n"
+	'\t...     again = Task("echo again")\n'
+	"\t... ''')\n"
+	"\n"
+	"Three, binding `again` too:\n"
+	"\n"
+	"\t>>> _ = dedent('''\\\n"
+	"\t...     again = 1\n"
+	"\t... ''')\n"
+	'"""\n'
+)
+
 
 @pytest.fixture
 def project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
@@ -141,6 +173,7 @@ def project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 	)
 	(demo / "shapes.py").write_text(SHAPES, encoding="utf-8")
 	(demo / "callables.py").write_text(CALLABLES, encoding="utf-8")
+	(demo / "examples.py").write_text(EXAMPLES, encoding="utf-8")
 	(demo / "api.py").write_text(
 		"import typing\nfrom .shapes import Options as Options, Leaf\nfrom . import Thing as Thing\n"
 		"if typing.TYPE_CHECKING:\n\tfrom .callables import bare as bare\n",

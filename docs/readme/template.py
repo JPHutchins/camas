@@ -11,6 +11,7 @@ from .alias import alias_section
 from .anchors import broken_links, contents
 from .callables import function_section, protocol_section
 from .cli import cli_section
+from .example import example_section
 from .exports import exports_section
 from .fields import fields_section
 from .file import file_section
@@ -85,6 +86,8 @@ def generate(directive: str) -> tuple[str, ...] | Unresolved:
 			return mcp_tools_section()
 		case ("toc",):
 			return (TOC,)
+		case ("example", dotted, binding):
+			return example_section(dotted, binding)
 		case _:
 			return Unresolved(f"unknown directive {directive!r}")
 

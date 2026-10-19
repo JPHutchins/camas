@@ -1,5 +1,5 @@
 <!-- Generated from docs/README.in.md by `python -m docs.readme`; edit that file. -->
-<!-- DRAFT for JP: each bullet list outlines README.md.old's prose for rewriting; ⚠️ bullets are proofreading notes; ✍️ bullets mark where your prose on each type goes, right above its generated section; ✚ bullets mark topics with no prose yet. Code examples and tables are kept verbatim. -->
+<!-- DRAFT for JP: each bullet list outlines README.md.old's prose for rewriting; ⚠️ bullets are proofreading notes; ✍️ bullets mark where your prose on each type goes, right above its generated section; ✚ bullets mark topics with no prose yet. Code examples and tables are kept verbatim. The `example` sections show the doctests' commands as written, including the `--effects=(Summary(show_passing=True),)` they use to check output. -->
 <img align="right" width="150" src="https://raw.githubusercontent.com/JPHutchins/camas/main/resources/artwork/camas-451x1023.png" alt="camas-sketch-by-jph">
 
 # Camas
@@ -242,6 +242,17 @@ if __name__ == "__main__":
 - `--dry-run` prints the tree without running it
 - a trailing `-- ARG ...` forwards arguments to the dispatched task's command (`camas test -- -v`)
 - shell forms the examples stand for: `camas hello`, `camas ci --dry-run`, `camas test -- -v`, `camas greet --NAME=Ada`, `camas build --effects='(Loud(),)'`
+
+```python
+from camas import Task
+hello = Task(("python", "-c", "print('hello world')"))
+```
+
+```console
+$ camas '--effects=(Summary(show_passing=True),)' hello
+$ camas --help
+```
+
 - `camas` with no arguments runs the `Config` default task, or prints the full help when none is defined; `camas <task> --help` shows the expanded tree, matrix axes, and override flags.
 - ⚠️ The [walkthrough](#walkthrough) shows these commands on the tauri-app fixture, generated; point here to it rather than repeating the sessions.
 
@@ -258,14 +269,82 @@ if __name__ == "__main__":
 - model independent, read-only work as `Parallel` (wall-clock `max`, not `sum`): a `&&` chain in a previous runner was *sequencing*, not a dependency, so reach for `Sequential` only for real ordering (a mutating step, or one that consumes a prior step's output)
 - Full fields: [`Task`](#task), [`Sequential` and `Parallel`](#sequential-and-parallel).
 
+```python
+from pathlib import Path
+from camas import Parallel, Sequential, Task
+
+lint = Task(("python", "-c", "print('lint ok')"))
+test = Task(("python", "-c", "print('test ok')"), cwd=Path("subdir"))
+say = Task(
+    ("python", "-c", "import os; print('VAR=' + os.environ['VAR'])"),
+    env={"VAR": "scoped"},
+)
+echo = Task(("python", "-c", "import sys; print(*sys.argv[1:])"))
+
+ci = Sequential(
+    lint,
+    Parallel(test, "python --version"),
+    say,
+    name="ci",
+)
+```
+
+```console
+$ camas --dry-run ci
+$ camas --tree
+$ camas '--effects=(Summary(show_passing=True),)' ci
+$ camas echo -- one two three
+```
+
+```python
+from camas import Sequential, Task
+pipeline = Sequential(
+    Task(("python", "-c", "raise SystemExit(2)"), name="boom"),
+    Task(("python", "-c", "print('never reached')"), name="follow_up"),
+    name="pipeline",
+)
+```
+
+```console
+$ camas '--effects=(Summary(),)' pipeline
+```
+
 ### Pipes
 
-- ✚ `Pipe` feeds each stage's stdout to the next stage's stdin; `__init__.py`'s doctest shows it, and an `example` directive could lift it. `Pipe(agent_only=True)` is under [Structured diagnostics](#structured-diagnostics). Full fields: [`Pipe`](#pipe).
+- `Pipe` feeds each stage's stdout to the next stage's stdin, and `>` pipes one `Task` into another. `Pipe(agent_only=True)` is under [Structured diagnostics](#structured-diagnostics). Full fields: [`Pipe`](#pipe).
+
+```python
+from camas import Pipe, Task
+upper = ("python", "-c", "import sys; print(sys.stdin.read().upper(), end='')")
+shout = Pipe(Task(("python", "-c", "print('hello pipe')")), Task(upper), name="shout")
+whisper = Task(("python", "-c", "print('quiet')")) > Task(upper)
+```
+
+```console
+$ camas '--effects=(Summary(show_passing=True),)' shout
+$ camas '--effects=(Summary(show_passing=True),)' whisper
+```
 
 ### Operators
 
-- ⚠️ Your WIP removed the operators paragraph (`|`, `+`, `-`, `>`, and `.extend`/`.remove`). They're public API, so cover them here or cut them on purpose. `__init__.py` now has doctested `|`/`+`/`-` and `Pipe`/`>` examples that an `example` directive could lift.
+- ⚠️ Your WIP removed the operators paragraph (`|`, `+`, `-`, `>`, and `.extend`/`.remove`). They're public API, so cover them here or cut them on purpose; the example below is generated from `__init__.py`'s doctest.
 - `|` extends a plain `Parallel`, `+` a plain `Sequential`, `-` removes a direct child, and `>` builds a `Pipe`; a left operand with fields, of a subclass, or of another kind nests whole. `+` binds tighter than `|`. `>` chains as a comparison, so parenthesize. A composed pipe is always truthy.
+
+```python
+from camas import Task
+fmt = Task(("python", "-c", "print('formatted')"), mutates=True)
+lint = Task(("python", "-c", "print('linted')"))
+test = Task(("python", "-c", "print('tested')"))
+check = lint | test
+ci = fmt + check
+quick = check - test
+```
+
+```console
+$ camas --dry-run ci
+$ camas --dry-run quick
+$ camas '--effects=(Summary(show_passing=True),)' ci
+```
 
 ### Matrices and variants
 
@@ -275,6 +354,57 @@ if __name__ == "__main__":
 - pinning one of a bundle's keys from the CLI *filters* to the bundles that bind it; replacing the value would fabricate a pairing the project never declared
 - source matrix axis values from the project's single source of truth (e.g. read `.python-version`) instead of hardcoding a list that drifts; `tasks.py` is real Python
 - ✚ `--matrix KEY=VAL`, the other override form, isn't mentioned anywhere yet.
+
+```python
+from camas import Parallel, Task
+greet = Parallel(
+    Task(("python", "-c", "print('hello, {NAME}')")),
+    matrix={"NAME": ("Grace", "Ada", "Wendy", "Alyssa")},
+    name="greet",
+)
+```
+
+```console
+$ camas '--effects=(Summary(),)' greet
+$ camas '--effects=(Summary(),)' greet --NAME=Ada
+$ camas greet --help
+```
+
+```python
+from camas import Parallel, Task
+meet = Parallel(
+    Task(("python", "-c", "print('hi {NAME1}, meet {NAME2}')")),
+    matrix={
+        "NAME1": ("Grace", "Ada"),
+        "NAME2": ("Wendy", "Alyssa"),
+    },
+    name="meet",
+)
+```
+
+```console
+$ camas '--effects=(Summary(show_passing=True),)' meet
+$ camas '--effects=(Summary(show_passing=True),)' meet --NAME1=Clara,Dolores --NAME2=Grace,Ada
+$ camas meet --help
+```
+
+```python
+from camas import Parallel, Task
+port = Parallel(
+    Task(("python", "-c", "print('build {TARGET} with {TOOL}')")),
+    variants=(
+        {"TARGET": "wasm", "TOOL": "emcc"},
+        {"TARGET": "native", "TOOL": "clang"},
+    ),
+    name="port",
+)
+```
+
+```console
+$ camas '--effects=(Summary(show_passing=True),)' port
+$ camas '--effects=(Summary(show_passing=True),)' port --TARGET=wasm
+$ camas port --github-matrix
+```
 
 ### The default task
 
@@ -747,8 +877,40 @@ check = Task("cargo test -p mycli", env={"NO_COLOR": "1"}) # or just this leaf
 - Define an `Effect` in your `tasks.py` and it's discovered automatically: usable by name from `--effects`, and listed under `camas --effects`.
 - a custom `Effect` defined inline in `tasks.py` is discovered automatically: `camas --help` lists it under *Available Effects* beside the built-ins (so an agent reading `--help` sees the plugin), and `camas --effects` with no value prints the effects-only listing
 - The [effect-plugin fixture](https://github.com/JPHutchins/camas/tree/main/tests/fixtures/effect-plugin) has a typed `Tail` effect that streams each task's output as it arrives.
-- ⚠️ The old link text said `examples/effect-plugin/`, but it points at `tests/fixtures/effect-plugin`. The review suggests embedding the fixture with a `file` directive instead of linking it.
+- ⚠️ The old link text said `examples/effect-plugin/`, but it points at `tests/fixtures/effect-plugin`. The example below is `__init__.py`'s inline `Loud` effect; the fixture could also be embedded with a `file` directive.
 - An effect author reads the event stream and the per-leaf states: see the [Effect API](#effect-api).
+
+```python
+from collections.abc import Sequence
+from camas.v0.effect import Effect
+from camas.v0.leaf_state import LeafState
+from camas.v0.task import Parallel, Task, TaskNode
+from camas.v0.task_event import OutputEvent, TaskEvent
+
+class Loud(Effect[None]):
+    async def setup(self, task: TaskNode) -> None: ...
+    async def on_event(
+        self, event: TaskEvent, states: Sequence[LeafState], ctx: None,
+    ) -> None:
+        if isinstance(event, OutputEvent):
+            print(f"!! {event.task.name}: {event.line.decode().strip()}")
+    async def teardown(self, ctxs: tuple[None, ...]) -> None: ...
+
+build = Parallel(
+    Task(("python", "-c", "print('built {STAGE}')")),
+    matrix={"STAGE": ("compile", "link")},
+    name="build",
+)
+```
+
+```console
+$ camas --help
+$ camas --list
+$ camas --effects
+$ camas build --help
+$ camas '--effects=(Loud(),)' build
+$ camas '--effects=(Summary(), Loud())' build
+```
 
 ## Versioning
 
