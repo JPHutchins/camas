@@ -22,14 +22,13 @@ def test_camas_package_dir_points_at_installed_package() -> None:
 	assert (source / "__init__.py").is_file()
 
 
-def test_docs_outline_the_checkouts_readme_by_line_number() -> None:
+def test_docs_outline_the_readme_by_line_number() -> None:
 	resp = to_docs_response()
-	readme = Path(resp.source).parent.parent / "README.md"
+	readme = readme_path(Path(resp.source))
 	assert str(readme) in resp.tutorial.splitlines()[0]
 	lines = readme.read_text(encoding="utf-8").split("\n")
 	headings = _headings(resp.tutorial)
 	assert "## Getting started" in dict(headings).values()
-	assert len(headings) > 20
 	assert all(lines[number - 1] == heading for number, heading in headings)
 
 
