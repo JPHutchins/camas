@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 
 SHAPES = dedent(
 	'''\
+	import typing
 	from pathlib import Path
 	from types import MappingProxyType
 	from typing import Final, Mapping, NamedTuple
@@ -68,6 +69,21 @@ SHAPES = dedent(
 		env: Mapping[str, str]
 
 		def __init__(self, cwd: str | Path | None = None, env: Mapping[str, str] = _EMPTY) -> None: ...
+
+
+	class Effectish:
+		limit: Final[int]
+		"""How many."""
+		mode: typing.Final[str]
+
+		def __init__(self, limit: int = 3, mode: str = "x") -> None: ...
+
+
+	class Drifted:
+		kept: int
+		renamed: int
+
+		def __init__(self, kept: int, other: int) -> None: ...
 	'''
 )
 

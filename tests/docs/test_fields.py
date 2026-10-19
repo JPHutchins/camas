@@ -73,3 +73,14 @@ def test_undocumented_fields_get_an_empty_description(
 		"| `cwd` | `str \\| Path \\| None` → `Path \\| None` | `None` |  |",
 		"| `env` | `Mapping[str, str]` | `MappingProxyType({})` |  |",
 	)
+
+
+def test_a_final_attribute_shows_the_type_it_holds(
+	generated: Callable[[str], tuple[str, ...]],
+) -> None:
+	assert generated("fields demo.shapes.Effectish") == (
+		"| `Effectish` | Type | Default | |",
+		"|---|---|---|---|",
+		"| `limit` | `int` | `3` | How many. |",
+		'| `mode` | `str` | `"x"` |  |',
+	)

@@ -157,6 +157,10 @@ def test_check_fails_without_a_readme_and_write_creates_it(
 			"docs/README.in.md:1: no file 'nope/tasks.py'",
 		),
 		(
+			"<!-- GENERATED: fields demo.shapes.Drifted -->\n",
+			"docs/README.in.md:1: Drifted declares renamed, which its __init__ doesn't take",
+		),
+		(
 			"<!-- GENERATED: exports demo.nope -->\n",
 			"docs/README.in.md:1: no module 'demo.nope' under src/",
 		),

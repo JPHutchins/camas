@@ -47,6 +47,11 @@ def fields_section(dotted: str) -> tuple[str, ...] | Unresolved:
 	defined = type_definitions(target.module)
 	if target.name not in defined:
 		return Unresolved(f"no type {target.name!r} in {target.module.path.as_posix()}")
+	unmatched = orphans(defined[target.name], defined, target.module.source)
+	if unmatched:
+		return Unresolved(
+			f"{target.name} declares {', '.join(unmatched)}, which its __init__ doesn't take"
+		)
 	fields = type_fields(defined[target.name], defined, target.module)
 	docs = documented(target.name, ast.get_docstring(defined[target.name]) or "")
 	return (
@@ -61,6 +66,22 @@ def fields_section(dotted: str) -> tuple[str, ...] | Unresolved:
 			),
 		),
 		*(("", *docs.examples) if docs.examples else ()),
+	)
+
+
+def orphans(cls: ast.ClassDef, defined: dict[str, ast.ClassDef], source: str) -> tuple[str, ...]:
+	ancestry = lineage(cls, defined)
+	init = next(
+		(method for ancestor in ancestry if (method := init_of(ancestor)) is not None), None
+	)
+	if init is None:
+		return ()
+	taken = parameters(init, source)
+	return tuple(
+		name
+		for ancestor in reversed(ancestry)
+		for name in attribute_docs(ancestor, source)
+		if name not in taken
 	)
 
 
@@ -134,7 +155,7 @@ def lineage(cls: ast.ClassDef, classes: dict[str, ast.ClassDef]) -> tuple[ast.Cl
 def attribute_docs(cls: ast.ClassDef, source: str) -> dict[str, Attribute]:
 	return {
 		statement.target.id: Attribute(
-			segment(source, statement.annotation),
+			segment(source, unwrapped(statement.annotation)),
 			segment(source, statement.value) if statement.value is not None else None,
 			string_constant(following),
 		)
@@ -143,6 +164,14 @@ def attribute_docs(cls: ast.ClassDef, source: str) -> dict[str, Attribute]:
 		and isinstance(statement.target, ast.Name)
 		and not statement.target.id.startswith("_")
 	}
+
+
+def unwrapped(annotation: ast.expr) -> ast.expr:
+	match annotation:
+		case ast.Subscript(value=ast.Name(id="Final") | ast.Attribute(attr="Final"), slice=inner):
+			return inner
+		case _:
+			return annotation
 
 
 def init_of(cls: ast.ClassDef) -> ast.FunctionDef | None:
