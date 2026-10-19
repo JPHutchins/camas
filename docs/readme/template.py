@@ -14,6 +14,7 @@ from .cli import cli_section
 from .exports import exports_section
 from .fields import fields_section
 from .file import file_section
+from .mcp_tools import mcp_tools_section
 from .source import Unresolved
 
 DIRECTIVE: Final = re.compile(r"<!-- GENERATED: (?P<directive>\S.*\S) -->")
@@ -74,6 +75,8 @@ def generate(directive: str) -> tuple[str, ...] | Unresolved:
 			return exports_section(dotted)
 		case ("cli", directory, *args):
 			return cli_section(directory, tuple(args))
+		case ("mcp-tools",):
+			return mcp_tools_section()
 		case _:
 			return Unresolved(f"unknown directive {directive!r}")
 
