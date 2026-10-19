@@ -98,6 +98,50 @@ A composed tree: `--dry-run`, `--tree`, a run, and `--` argument forwarding:
 	>>> "never reached" not in r.stdout
 	True
 
+`lint | test` is a `Parallel`, `fmt + check` a `Sequential`, and `check - test`
+drops a child:
+
+	>>> with tempfile.TemporaryDirectory() as tmp:
+	...     camas = make_camas(tmp)
+	...     _ = (Path(tmp) / "tasks.py").write_text(dedent('''\
+	...         from camas import Task
+	...         fmt = Task(("python", "-c", "print('formatted')"), mutates=True)
+	...         lint = Task(("python", "-c", "print('linted')"))
+	...         test = Task(("python", "-c", "print('tested')"))
+	...         check = lint | test
+	...         ci = fmt + check
+	...         quick = check - test
+	...     '''))
+	...     tree = camas("--dry-run", "ci")
+	...     quick_ = camas("--dry-run", "quick")
+	...     run_ = camas("--effects=(Summary(show_passing=True),)", "ci")
+	>>> [r.returncode for r in (tree, quick_, run_)]
+	[0, 0, 0]
+	>>> tree.stdout.index("fmt:") < tree.stdout.index("lint:") < tree.stdout.index("test:")
+	True
+	>>> "lint:" in quick_.stdout and "test:" not in quick_.stdout
+	True
+	>>> all(s in run_.stdout for s in ("formatted", "linted", "tested"))
+	True
+
+A `Pipe` feeds each stage's stdout to the next stage's stdin, and `>` pipes one
+`Task` into another:
+
+	>>> with tempfile.TemporaryDirectory() as tmp:
+	...     camas = make_camas(tmp)
+	...     _ = (Path(tmp) / "tasks.py").write_text(dedent('''\
+	...         from camas import Pipe, Task
+	...         upper = ("python", "-c", "import sys; print(sys.stdin.read().upper(), end='')")
+	...         shout = Pipe(Task(("python", "-c", "print('hello pipe')")), Task(upper), name="shout")
+	...         whisper = Task(("python", "-c", "print('quiet')")) > Task(upper)
+	...     '''))
+	...     piped = camas("--effects=(Summary(show_passing=True),)", "shout")
+	...     chained = camas("--effects=(Summary(show_passing=True),)", "whisper")
+	>>> piped.returncode, chained.returncode
+	(0, 0)
+	>>> "HELLO PIPE" in piped.stdout and "QUIET" in chained.stdout
+	True
+
 A matrix, an axis pinned from the CLI, and the task's `--help`:
 
 	>>> with tempfile.TemporaryDirectory() as tmp:
@@ -106,7 +150,7 @@ A matrix, an axis pinned from the CLI, and the task's `--help`:
 	...         from camas import Parallel, Task
 	...         greet = Parallel(
 	...             Task(("python", "-c", "print('hello, {NAME}')")),
-	...             matrix={"NAME": ("Jane", "Ada", "Wendy", "Alyssa")},
+	...             matrix={"NAME": ("Grace", "Ada", "Wendy", "Alyssa")},
 	...             name="greet",
 	...         )
 	...     '''))
@@ -115,7 +159,7 @@ A matrix, an axis pinned from the CLI, and the task's `--help`:
 	...     axes = camas("greet", "--help")
 	>>> full.returncode, pinned.returncode, axes.returncode
 	(0, 0, 0)
-	>>> all(n in full.stdout for n in ("Jane", "Ada", "Wendy", "Alyssa"))
+	>>> all(n in full.stdout for n in ("Grace", "Ada", "Wendy", "Alyssa"))
 	True
 	>>> "[NAME=Ada]" in pinned.stdout
 	True
@@ -131,7 +175,7 @@ Two axes, overridden from the CLI with comma-separated values:
 	...         meet = Parallel(
 	...             Task(("python", "-c", "print('hi {NAME1}, meet {NAME2}')")),
 	...             matrix={
-	...                 "NAME1": ("Jane", "Ada"),
+	...                 "NAME1": ("Grace", "Ada"),
 	...                 "NAME2": ("Wendy", "Alyssa"),
 	...             },
 	...             name="meet",
@@ -140,22 +184,22 @@ Two axes, overridden from the CLI with comma-separated values:
 	...     baseline = camas("--effects=(Summary(show_passing=True),)", "meet")
 	...     overridden = camas(
 	...         "--effects=(Summary(show_passing=True),)",
-	...         "meet", "--NAME1=Clara,Dolores", "--NAME2=Jane,Ada",
+	...         "meet", "--NAME1=Clara,Dolores", "--NAME2=Grace,Ada",
 	...     )
 	...     axes = camas("meet", "--help")
 	>>> [r.returncode for r in (baseline, overridden, axes)]
 	[0, 0, 0]
 	>>> all(s in baseline.stdout for s in (
-	...     "hi Jane, meet Wendy",
-	...     "hi Jane, meet Alyssa",
+	...     "hi Grace, meet Wendy",
+	...     "hi Grace, meet Alyssa",
 	...     "hi Ada, meet Wendy",
 	...     "hi Ada, meet Alyssa",
 	... ))
 	True
 	>>> all(s in overridden.stdout for s in (
-	...     "hi Clara, meet Jane",
+	...     "hi Clara, meet Grace",
 	...     "hi Clara, meet Ada",
-	...     "hi Dolores, meet Jane",
+	...     "hi Dolores, meet Grace",
 	...     "hi Dolores, meet Ada",
 	... ))
 	True

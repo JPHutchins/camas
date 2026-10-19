@@ -37,7 +37,7 @@ ci = Sequential(
 ```
 
 - The animated tree above comes from a live test fixture; link to the [walkthrough](#walkthrough).
-- ⚠️ Your WIP removed the operators paragraph (`|`, `+`, `-`, `>`, and `.extend`/`.remove`). They're public API, so cover them somewhere or cut them on purpose. See the Operators bullets under Reference.
+- ⚠️ Your WIP removed the operators paragraph (`|`, `+`, `-`, `>`, and `.extend`/`.remove`). They're public API, so cover them somewhere or cut them on purpose. See the Operators bullets under Reference. `__init__.py` now has doctested `|`/`+`/`-` and `Pipe`/`>` examples that an `example` directive could lift.
 
 ## Install
 
@@ -690,7 +690,7 @@ pipx run tasks.py test
 - [src/camas/](https://github.com/JPHutchins/camas/tree/main/src/camas): typed Python with thorough docstrings; `camas --help` and `camas <task> --help` link back here.
 - `camas` with no arguments runs the `Config` default task, or prints the full help when none is defined; `camas <task> --help` shows the expanded tree, matrix axes, and override flags.
 - Operators:
-  - ⚠️ These are missing from the draft (see Example). `|` extends a plain `Parallel`, `+` a plain `Sequential`, `-` removes a direct child, and `>` builds a `Pipe`; a left operand with fields, of a subclass, or of another kind nests whole. `+` binds tighter than `|`. `>` chains as a comparison, so parenthesize. A composed pipe is always truthy.
+  - ⚠️ These are missing from the draft (see Example); `__init__.py`'s operator and `Pipe` doctests demonstrate them. `|` extends a plain `Parallel`, `+` a plain `Sequential`, `-` removes a direct child, and `>` builds a `Pipe`; a left operand with fields, of a subclass, or of another kind nests whole. `+` binds tighter than `|`. `>` chains as a comparison, so parenthesize. A composed pipe is always truthy.
 
 ### `Task`
 
