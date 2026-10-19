@@ -75,5 +75,5 @@ def string_constant(statement: ast.stmt | None) -> str | None:
 	return None
 
 
-def class_definitions(module: Module) -> dict[str, ast.ClassDef]:
+def type_definitions(module: Module) -> dict[str, ast.ClassDef]:
 	return {node.name: node for node in module.tree.body if isinstance(node, ast.ClassDef)}

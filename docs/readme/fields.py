@@ -6,16 +6,16 @@ from __future__ import annotations
 import ast
 from typing import NamedTuple
 
-from .docstring import paragraphs
+from .docstring import documented, paragraphs
 from .markdown import cell, code, details
 from .source import (
 	Module,
 	Unresolved,
-	class_definitions,
 	constants,
 	resolve,
 	segment,
 	string_constant,
+	type_definitions,
 )
 
 
@@ -44,11 +44,13 @@ def fields_section(dotted: str) -> tuple[str, ...] | Unresolved:
 	target = resolve(dotted)
 	if isinstance(target, Unresolved):
 		return target
-	defined = class_definitions(target.module)
+	defined = type_definitions(target.module)
 	if target.name not in defined:
-		return Unresolved(f"no class {target.name!r} in {target.module.path.as_posix()}")
-	fields = class_fields(defined[target.name], defined, target.module)
+		return Unresolved(f"no type {target.name!r} in {target.module.path.as_posix()}")
+	fields = type_fields(defined[target.name], defined, target.module)
+	docs = documented(target.name, ast.get_docstring(defined[target.name]) or "")
 	return (
+		*((*docs.prose, "") if docs.prose else ()),
 		*table(target.name, fields),
 		*details(
 			f"<code>{target.name}</code> fields",
@@ -58,6 +60,7 @@ def fields_section(dotted: str) -> tuple[str, ...] | Unresolved:
 				if field.doc and len(paragraphs(field.doc)) > 1
 			),
 		),
+		*(("", *docs.examples) if docs.examples else ()),
 	)
 
 
@@ -81,7 +84,7 @@ def label(field: Field) -> str:
 	return f"*{field.name}" if field.variadic else field.name
 
 
-def class_fields(
+def type_fields(
 	cls: ast.ClassDef, classes: dict[str, ast.ClassDef], module: Module
 ) -> tuple[Field, ...]:
 	ancestry = lineage(cls, classes)

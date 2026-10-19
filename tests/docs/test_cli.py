@@ -120,7 +120,7 @@ def test_check_fails_without_a_readme_and_write_creates_it(
 		("<!-- GENERATED: fields demo.Thing extra -->\n", "docs/README.in.md:1: unknown directive"),
 		(
 			"<!-- GENERATED: fields demo.Nope -->\n",
-			"docs/README.in.md:1: no class 'Nope' in src/demo/__init__.py",
+			"docs/README.in.md:1: no type 'Nope' in src/demo/__init__.py",
 		),
 		(
 			"<!-- GENERATED: fields demo.nope.X -->\n",
@@ -141,7 +141,7 @@ def test_check_fails_without_a_readme_and_write_creates_it(
 		),
 		(
 			"<!-- GENERATED: protocol demo.callables.bare -->\n",
-			"docs/README.in.md:1: no class 'bare' in",
+			"docs/README.in.md:1: no type 'bare' in",
 		),
 		("<!-- GENERATED: alias demo.nope.A -->\n", "docs/README.in.md:1: no module 'demo.nope'"),
 		(

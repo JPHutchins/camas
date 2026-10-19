@@ -23,6 +23,32 @@ class Examples(NamedTuple):
 	lines: tuple[str, ...]
 
 
+class Documented(NamedTuple):
+	prose: tuple[str, ...]
+	examples: tuple[str, ...]
+
+
+def documented(name: str, docstring: str) -> Documented:
+	parts = split(docstring)
+	texts = tuple(part for part in parts if isinstance(part, Text))
+	examples = tuple(part for part in parts if isinstance(part, Examples))
+	return Documented(
+		tuple(
+			line
+			for index, text in enumerate(texts)
+			for line in ((*(("",) if index else ()), *text.lines))
+		),
+		(
+			f"<details><summary><code>{name}</code> examples</summary>",
+			"",
+			*(line for example in examples for line in ("```pycon", *example.lines, "```", "")),
+			"</details>",
+		)
+		if examples
+		else (),
+	)
+
+
 def split(docstring: str) -> tuple[Text | Examples, ...]:
 	parsed = doctest.DocTestParser().parse(inspect.cleandoc(docstring))
 	grouped = itertools.groupby(

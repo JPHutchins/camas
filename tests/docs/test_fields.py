@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""The `fields <module>.<Class>` directive: a field table, then the field docs."""
+"""The `fields <module>.<Type>` directive: the type's docstring around a table of its fields."""
 
 from __future__ import annotations
 
@@ -11,8 +11,12 @@ if TYPE_CHECKING:
 	from collections.abc import Callable
 
 
-def test_named_tuple_rows_follow_the_fields(generated: Callable[[str], tuple[str, ...]]) -> None:
+def test_a_named_tuple_renders_its_docstring_around_its_field_table(
+	generated: Callable[[str], tuple[str, ...]],
+) -> None:
 	assert generated("fields demo.shapes.Options") == (
+		"Options.",
+		"",
 		"| `Options` | Type | Default | |",
 		"|---|---|---|---|",
 		"| `path` | `str` | required | Where the output goes. |",
@@ -25,6 +29,15 @@ def test_named_tuple_rows_follow_the_fields(generated: Callable[[str], tuple[str
 		"- `path`: Where the output goes.",
 		"",
 		"  A second paragraph.",
+		"",
+		"</details>",
+		"",
+		"<details><summary><code>Options</code> examples</summary>",
+		"",
+		"```pycon",
+		'>>> Options("out").path',
+		"'out'",
+		"```",
 		"",
 		"</details>",
 	)
@@ -42,7 +55,7 @@ def test_init_rows_follow_the_parameters_with_inherited_docs(
 	)
 
 
-def test_a_class_without_init_or_fields_inherits_both(
+def test_a_type_without_init_or_fields_inherits_both(
 	generated: Callable[[str], tuple[str, ...]],
 ) -> None:
 	child = generated("fields demo.shapes.Child")

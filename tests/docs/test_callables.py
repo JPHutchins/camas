@@ -86,7 +86,7 @@ def test_a_protocol_renders_its_public_methods_and_their_docs(
 	)
 
 
-def test_a_class_without_bases_renders_bare(generated: Callable[[str], tuple[str, ...]]) -> None:
+def test_a_protocol_without_bases_renders_bare(generated: Callable[[str], tuple[str, ...]]) -> None:
 	assert generated("protocol demo.callables.Plain") == (
 		"```python",
 		"class Plain:",

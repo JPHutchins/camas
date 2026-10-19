@@ -5,10 +5,10 @@ from __future__ import annotations
 
 import ast
 
-from .docstring import Examples, Text, split
+from .docstring import documented
 from .markdown import details
 from .signature import signature
-from .source import Unresolved, class_definitions, resolve, segment
+from .source import Unresolved, resolve, segment, type_definitions
 
 
 def function_section(dotted: str) -> tuple[str, ...] | Unresolved:
@@ -26,24 +26,13 @@ def function_section(dotted: str) -> tuple[str, ...] | Unresolved:
 	)
 	if function is None:
 		return Unresolved(f"no function {target.name!r} in {target.module.path.as_posix()}")
-	parts = split(ast.get_docstring(function) or "")
-	examples = tuple(part for part in parts if isinstance(part, Examples))
+	docs = documented(target.name, ast.get_docstring(function) or "")
 	return (
 		"```python",
 		signature(function, target.module),
 		"```",
-		*(line for part in parts if isinstance(part, Text) for line in ("", *part.lines)),
-		*(
-			(
-				"",
-				f"<details><summary><code>{target.name}</code> examples</summary>",
-				"",
-				*(line for part in examples for line in ("```pycon", *part.lines, "```", "")),
-				"</details>",
-			)
-			if examples
-			else ()
-		),
+		*(("", *docs.prose) if docs.prose else ()),
+		*(("", *docs.examples) if docs.examples else ()),
 	)
 
 
@@ -51,9 +40,9 @@ def protocol_section(dotted: str) -> tuple[str, ...] | Unresolved:
 	target = resolve(dotted)
 	if isinstance(target, Unresolved):
 		return target
-	found = class_definitions(target.module)
+	found = type_definitions(target.module)
 	if target.name not in found:
-		return Unresolved(f"no class {target.name!r} in {target.module.path.as_posix()}")
+		return Unresolved(f"no type {target.name!r} in {target.module.path.as_posix()}")
 	cls = found[target.name]
 	bases = ", ".join(segment(target.module.source, base) for base in cls.bases)
 	methods = tuple(

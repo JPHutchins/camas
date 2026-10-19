@@ -28,7 +28,11 @@ SHAPES = dedent(
 
 
 	class Options(NamedTuple):
-		"""Options."""
+		"""Options.
+
+		>>> Options("out").path
+		'out'
+		"""
 
 		path: str
 		"""Where the output goes.
