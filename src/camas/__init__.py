@@ -29,6 +29,7 @@ One leaf, run and listed by `--help`:
 	...         from camas import Task
 	...         hello = Task(("python", "-c", "print('hello world')"))
 	...     '''))
+	...     # Equivalent shell: $ camas --effects='(Summary(...))' hello
 	...     run_ = camas("--effects=(Summary(show_passing=True),)", "hello")
 	...     helped = camas("--help")
 	>>> run_.returncode, helped.returncode
