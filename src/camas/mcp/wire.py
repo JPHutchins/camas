@@ -220,7 +220,7 @@ class DocsResponse(BaseModel):
 	source: str
 	"""Absolute path to the installed camas package — the API source of truth."""
 	tutorial: str
-	"""The camas README: the authoring guide, worked examples, and the API reference."""
+	"""Where the camas README is, and each of its headings by line number."""
 
 
 class InitResponse(BaseModel):

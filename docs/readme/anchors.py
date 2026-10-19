@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import itertools
-import operator
 import re
 from typing import Final
 
@@ -48,7 +47,7 @@ def slug(heading: str) -> str:
 
 def prose(lines: tuple[str, ...]) -> tuple[tuple[int, str], ...]:
 	fences = tuple(FENCE.match(line) is not None for line in lines)
-	inside = itertools.accumulate(fences, operator.xor)
+	inside = itertools.accumulate(fences, lambda inside, fence: inside != fence)
 	return tuple(
 		(number, line)
 		for number, (line, fence, fenced) in enumerate(zip(lines, fences, inside, strict=True), 1)

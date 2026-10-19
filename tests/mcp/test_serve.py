@@ -797,7 +797,7 @@ def test_docs_call_serves_tutorial_and_source(tmp_path: Path) -> None:
 	text = _text(result)
 	assert "authoring guide" in text
 	assert "source of truth" in text
-	assert "Task(" in text
+	assert ": ## Getting started" in text
 	assert result.structuredContent is None
 
 

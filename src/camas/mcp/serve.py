@@ -512,12 +512,12 @@ def tools(task_names: tuple[str, ...], compat: Compat) -> Tools:
 			name=ToolName.DOCS.value,
 			description=textwrap.dedent("""\
 				How to author or edit THIS project's tasks.py. Returns camas's own installed
-				source path and its authoring tutorial — served live from the package, so it
-				never drifts: the Task / Sequential / Parallel / Pipe / Config API, matrix expansion,
-				per-leaf cwd and env, and custom output Effects, with worked examples. Read this
+				source path and where its README is, with every heading's line number, served
+				live from the package so it never drifts: the Task / Sequential / Parallel / Pipe
+				/ Config API, matrix expansion, per-leaf cwd and env, and custom output Effects,
+				with worked examples and the full API reference. Read the sections you need
 				before writing tasks.py, then validate your work with camas_check. The cited
-				source path is the API source of truth — read it for exact signatures and the
-				examples directory.
+				source path is the API source of truth — read it for exact signatures.
 			""").strip(),
 			input_schema=NO_ARGS_SCHEMA,
 			output_model=wire.DocsResponse,
@@ -1150,8 +1150,8 @@ def docs_text(resp: wire.DocsResponse) -> str:
 	return (
 		"camas authoring guide. The API source of truth is the installed camas package at:\n"
 		f"  {resp.source}\n"
-		"Read its v0/ submodules for exact Task/Sequential/Parallel/Pipe/Config signatures and the "
-		"examples/ directory for full project layouts; validate your tasks.py with camas_check."
+		"Read its v0/ submodules for exact Task/Sequential/Parallel/Pipe/Config signatures; "
+		"validate your tasks.py with camas_check."
 		f"\n\n{resp.tutorial}"
 	)
 
