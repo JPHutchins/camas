@@ -70,3 +70,11 @@ def bulleted(section: re.Match[str]) -> str:
 def entry_bullet(entry: str) -> str:
 	match = ENTRY.fullmatch(entry)
 	return f"- {entry}" if match is None else f"- `{match['name']}`: {match['text']}"
+
+
+def paragraphs(doc: str) -> tuple[str, ...]:
+	return tuple(
+		paragraph
+		for paragraph in re.split(r"\n[ \t]*\n", inspect.cleandoc(doc))
+		if paragraph.strip()
+	)

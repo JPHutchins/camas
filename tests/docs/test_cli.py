@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""`python -m docs.readme`: render README.md from docs/README.md.in; `--check` it."""
+"""`python -m docs.readme`: render README.md from docs/README.in.md; `--check` it."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ def test_write_renders_the_template_under_a_banner(
 ) -> None:
 	template("# Title\n\nProse.\n\n<!-- GENERATED: fields demo.Thing -->\n\nMore prose.\n")
 	assert main([]) == 0
-	assert capsys.readouterr().out == "README.md: regenerated from docs/README.md.in\n"
+	assert capsys.readouterr().out == "README.md: regenerated from docs/README.in.md\n"
 	assert (project / "README.md").read_text(encoding="utf-8") == dedent(
 		f"""\
 		{BANNER}
@@ -32,15 +32,9 @@ def test_write_renders_the_template_under_a_banner(
 
 		Prose.
 
-		| Field | Type | Default |
-		|---|---|---|
-		| `size` | `int` | required |
-
-		<details><summary><code>Thing</code> fields</summary>
-
-		- `size`: How big.
-
-		</details>
+		| Field | Type | Default | |
+		|---|---|---|---|
+		| `size` | `int` | required | How big. |
 
 		More prose.
 		"""
@@ -90,7 +84,7 @@ def test_check_prints_a_diff_and_writes_nothing(
 	out, err = capsys.readouterr()
 	assert out.splitlines() == [
 		"--- README.md (committed)",
-		"+++ README.md (rendered from docs/README.md.in)",
+		"+++ README.md (rendered from docs/README.in.md)",
 		"@@ -1,2 +1,2 @@",
 		f" {BANNER}",
 		"-prose",
@@ -113,50 +107,62 @@ def test_check_fails_without_a_readme_and_write_creates_it(
 @pytest.mark.parametrize(
 	("text", "error"),
 	[
-		("x\n<!-- generated: fields demo.Thing -->\n", "docs/README.md.in:2: malformed directive"),
-		("<!-- GENERATED: -->\n", "docs/README.md.in:1: malformed directive"),
+		("x\n<!-- generated: fields demo.Thing -->\n", "docs/README.in.md:2: malformed directive"),
+		("<!-- GENERATED: -->\n", "docs/README.in.md:1: malformed directive"),
 		(
 			"Text <!-- GENERATED: fields demo.Thing -->\n",
-			"docs/README.md.in:1: malformed directive",
+			"docs/README.in.md:1: malformed directive",
 		),
 		(
 			"<!-- GENERATED: feilds demo.Thing -->\n",
-			"docs/README.md.in:1: unknown directive 'feilds demo.Thing'",
+			"docs/README.in.md:1: unknown directive 'feilds demo.Thing'",
 		),
-		("<!-- GENERATED: fields demo.Thing extra -->\n", "docs/README.md.in:1: unknown directive"),
+		("<!-- GENERATED: fields demo.Thing extra -->\n", "docs/README.in.md:1: unknown directive"),
 		(
 			"<!-- GENERATED: fields demo.Nope -->\n",
-			"docs/README.md.in:1: no class 'Nope' in src/demo/__init__.py",
+			"docs/README.in.md:1: no class 'Nope' in src/demo/__init__.py",
 		),
 		(
 			"<!-- GENERATED: fields demo.nope.X -->\n",
-			"docs/README.md.in:1: no module 'demo.nope' under src/",
+			"docs/README.in.md:1: no module 'demo.nope' under src/",
 		),
-		("<!-- GENERATED: fields Thing -->\n", "docs/README.md.in:1: no module '' under src/"),
+		("<!-- GENERATED: fields Thing -->\n", "docs/README.in.md:1: no module '' under src/"),
 		(
 			"<!-- GENERATED: function demo.nope.f -->\n",
-			"docs/README.md.in:1: no module 'demo.nope'",
+			"docs/README.in.md:1: no module 'demo.nope'",
 		),
 		(
 			"<!-- GENERATED: function demo.callables.Plain -->\n",
-			"docs/README.md.in:1: no function 'Plain' in",
+			"docs/README.in.md:1: no function 'Plain' in",
 		),
 		(
 			"<!-- GENERATED: protocol demo.nope.P -->\n",
-			"docs/README.md.in:1: no module 'demo.nope'",
+			"docs/README.in.md:1: no module 'demo.nope'",
 		),
 		(
 			"<!-- GENERATED: protocol demo.callables.bare -->\n",
-			"docs/README.md.in:1: no class 'bare' in",
+			"docs/README.in.md:1: no class 'bare' in",
 		),
-		("<!-- GENERATED: alias demo.nope.A -->\n", "docs/README.md.in:1: no module 'demo.nope'"),
+		("<!-- GENERATED: alias demo.nope.A -->\n", "docs/README.in.md:1: no module 'demo.nope'"),
 		(
 			"<!-- GENERATED: alias demo.callables._DEFAULT -->\n",
-			"docs/README.md.in:1: no alias '_DEFAULT' in",
+			"docs/README.in.md:1: no alias '_DEFAULT' in",
 		),
 		(
 			"<!-- GENERATED: alias demo.callables.Missing -->\n",
-			"docs/README.md.in:1: no alias 'Missing' in",
+			"docs/README.in.md:1: no alias 'Missing' in",
+		),
+		(
+			"<!-- GENERATED: file nope/tasks.py -->\n",
+			"docs/README.in.md:1: no file 'nope/tasks.py'",
+		),
+		(
+			"<!-- GENERATED: exports demo.nope -->\n",
+			"docs/README.in.md:1: no module 'demo.nope' under src/",
+		),
+		(
+			"<!-- GENERATED: exports demo.shapes -->\n",
+			"docs/README.in.md:1: no `import X as X` re-exports in",
 		),
 	],
 )

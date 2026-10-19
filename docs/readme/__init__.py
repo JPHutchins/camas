@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""Render README.md from docs/README.md.in; `--check` reports a stale README.md."""
+"""Render README.md from docs/README.in.md; `--check` reports a stale README.md."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ if sys.version_info >= (3, 11):
 else:  # pragma: no cover
 	from typing_extensions import assert_never
 
-TEMPLATE: Final = Path("docs/README.md.in")
+TEMPLATE: Final = Path("docs/README.in.md")
 README: Final = Path("README.md")
 COMMAND: Final = "python -m docs.readme"
 BANNER: Final = f"<!-- Generated from {TEMPLATE.as_posix()} by `{COMMAND}`; edit that file. -->"

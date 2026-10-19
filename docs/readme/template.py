@@ -8,7 +8,9 @@ from typing import Final, NamedTuple
 
 from .alias import alias_section
 from .callables import function_section, protocol_section
+from .exports import exports_section
 from .fields import fields_section
+from .file import file_section
 from .source import Unresolved
 
 DIRECTIVE: Final = re.compile(r"<!-- GENERATED: (?P<directive>\S.*\S) -->")
@@ -54,5 +56,9 @@ def generate(directive: str) -> tuple[str, ...] | Unresolved:
 			return protocol_section(dotted)
 		case ["alias", dotted]:
 			return alias_section(dotted)
+		case ["file", name]:
+			return file_section(name)
+		case ["exports", dotted]:
+			return exports_section(dotted)
 		case _:
 			return Unresolved(f"unknown directive {directive!r}")

@@ -6,7 +6,8 @@ from __future__ import annotations
 import ast
 from typing import NamedTuple
 
-from .markdown import code, details
+from .docstring import paragraphs
+from .markdown import cell, code, details
 from .source import (
 	Module,
 	Unresolved,
@@ -51,20 +52,25 @@ def fields_section(dotted: str) -> tuple[str, ...] | Unresolved:
 		*table(fields),
 		*details(
 			f"<code>{target.name}</code> fields",
-			tuple((label(field), field.doc) for field in fields if field.doc),
+			tuple(
+				(label(field), field.doc)
+				for field in fields
+				if field.doc and len(paragraphs(field.doc)) > 1
+			),
 		),
 	)
 
 
 def table(fields: tuple[Field, ...]) -> tuple[str, ...]:
-	return ("| Field | Type | Default |", "|---|---|---|", *(row(field) for field in fields))
+	return ("| Field | Type | Default | |", "|---|---|---|---|", *(row(field) for field in fields))
 
 
 def row(field: Field) -> str:
 	accepts = code(field.accepts)
 	shown = accepts if field.accepts == field.stored else f"{accepts} → {code(field.stored)}"
 	default = "" if field.variadic else "required" if field.default is None else code(field.default)
-	return f"| `{label(field)}` | {shown} | {default} |"
+	summary = cell(paragraphs(field.doc)[0]) if field.doc else ""
+	return f"| `{label(field)}` | {shown} | {default} | {summary} |"
 
 
 def label(field: Field) -> str:

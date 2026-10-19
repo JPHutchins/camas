@@ -27,19 +27,26 @@ class Target(NamedTuple):
 
 def resolve(dotted: str) -> Target | Unresolved:
 	module, _, name = dotted.rpartition(".")
-	base = SOURCE.joinpath(*module.split("."))
+	found = module_at(module)
+	if isinstance(found, Unresolved):
+		return Unresolved(f"{found.message} for {dotted!r}")
+	return Target(found, name)
+
+
+def module_at(dotted: str) -> Module | Unresolved:
+	base = SOURCE.joinpath(*dotted.split("."))
 	found = next(
 		(
 			path
 			for path in (base.with_suffix(".py"), base / "__init__.py")
-			if module and path.is_file()
+			if dotted and path.is_file()
 		),
 		None,
 	)
 	if found is None:
-		return Unresolved(f"no module {module!r} under {SOURCE.as_posix()}/ for {dotted!r}")
+		return Unresolved(f"no module {dotted!r} under {SOURCE.as_posix()}/")
 	source = found.read_text(encoding="utf-8")
-	return Target(Module(found, source, ast.parse(source)), name)
+	return Module(found, source, ast.parse(source))
 
 
 def constants(module: Module) -> dict[str, str]:

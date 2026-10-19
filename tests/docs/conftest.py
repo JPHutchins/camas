@@ -137,13 +137,18 @@ def project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 	)
 	(demo / "shapes.py").write_text(SHAPES, encoding="utf-8")
 	(demo / "callables.py").write_text(CALLABLES, encoding="utf-8")
+	(demo / "api.py").write_text(
+		"import typing\nfrom .shapes import Options as Options, Leaf\nfrom . import Thing as Thing\n"
+		"if typing.TYPE_CHECKING:\n\tfrom .callables import bare as bare\n",
+		encoding="utf-8",
+	)
 	return tmp_path
 
 
 @pytest.fixture
 def template(project: Path) -> Callable[[str], None]:
 	def write(text: str) -> None:
-		(project / "docs" / "README.md.in").write_text(text, encoding="utf-8", newline="\n")
+		(project / "docs" / "README.in.md").write_text(text, encoding="utf-8", newline="\n")
 
 	return write
 

@@ -13,12 +13,12 @@ if TYPE_CHECKING:
 
 def test_named_tuple_rows_follow_the_fields(generated: Callable[[str], tuple[str, ...]]) -> None:
 	assert generated("fields demo.shapes.Options") == (
-		"| Field | Type | Default |",
-		"|---|---|---|",
-		"| `path` | `str` | required |",
-		"| `mode` | `int \\| None` | `None` |",
-		'| `directory` | `str` | `".x"` |',
-		"| `limit` | `int` | `8_000` |",
+		"| Field | Type | Default | |",
+		"|---|---|---|---|",
+		"| `path` | `str` | required | Where the output goes. |",
+		"| `mode` | `int \\| None` | `None` |  |",
+		'| `directory` | `str` | `".x"` |  |',
+		"| `limit` | `int` | `8_000` |  |",
 		"",
 		"<details><summary><code>Options</code> fields</summary>",
 		"",
@@ -34,18 +34,11 @@ def test_init_rows_follow_the_parameters_with_inherited_docs(
 	generated: Callable[[str], tuple[str, ...]],
 ) -> None:
 	assert generated("fields demo.shapes.Child") == (
-		"| Field | Type | Default |",
-		"|---|---|---|",
-		"| `*items` | `str` → `tuple[str, ...]` |  |",
-		"| `extra` | `bool` | `False` |",
-		"| `label` | `str \\| None` | `None` |",
-		"",
-		"<details><summary><code>Child</code> fields</summary>",
-		"",
-		"- `*items`: The `a | b` items.",
-		"- `extra`: An extra.",
-		"",
-		"</details>",
+		"| Field | Type | Default | |",
+		"|---|---|---|---|",
+		"| `*items` | `str` → `tuple[str, ...]` |  | The `a \\| b` items. |",
+		"| `extra` | `bool` | `False` | An extra. |",
+		"| `label` | `str \\| None` | `None` |  |",
 	)
 
 
@@ -58,10 +51,12 @@ def test_a_class_without_init_or_fields_inherits_both(
 	)
 
 
-def test_undocumented_fields_get_no_details(generated: Callable[[str], tuple[str, ...]]) -> None:
+def test_undocumented_fields_get_an_empty_description(
+	generated: Callable[[str], tuple[str, ...]],
+) -> None:
 	assert generated("fields demo.shapes.Leaf") == (
-		"| Field | Type | Default |",
-		"|---|---|---|",
-		"| `cwd` | `str \\| Path \\| None` → `Path \\| None` | `None` |",
-		"| `env` | `Mapping[str, str]` | `MappingProxyType({})` |",
+		"| Field | Type | Default | |",
+		"|---|---|---|---|",
+		"| `cwd` | `str \\| Path \\| None` → `Path \\| None` | `None` |  |",
+		"| `env` | `Mapping[str, str]` | `MappingProxyType({})` |  |",
 	)
