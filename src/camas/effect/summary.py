@@ -67,18 +67,23 @@ class SummaryContext(NamedTuple):
 class Summary:
 	"""The final task tree, rendered once after the run."""
 
+	term_width: Final[TermWidth]
+	"""`Auto()` measures the terminal; `Fixed(columns)` sets the width."""
+	show_passing: Final[bool]
+	"""Print passing leaves' output after the tree."""
+
 	def __init__(self, term_width: TermWidth = Auto(), show_passing: bool = False) -> None:
-		self._term_width: Final = term_width
-		self._show_passing: Final = show_passing
+		self.term_width = term_width
+		self.show_passing = show_passing
 
 	async def setup(self, task: TaskNode) -> SummaryContext:
-		match self._term_width:
+		match self.term_width:
 			case Auto():
 				term_width = shutil.get_terminal_size().columns
 			case Fixed(columns=columns):
 				term_width = columns
 			case _:
-				assert_never(self._term_width)
+				assert_never(self.term_width)
 		return SummaryContext(
 			rows=flatten_rows(task),
 			term_width=term_width,
@@ -112,5 +117,5 @@ class Summary:
 		sys.stdout.buffer.write(("\n".join(cleaned) + "\n").encode("utf-8", errors="replace"))
 		sys.stdout.flush()
 		print_failures(ctx.state.states, ctx.term_width)
-		if self._show_passing:
+		if self.show_passing:
 			print_passes(ctx.state.states, ctx.term_width)

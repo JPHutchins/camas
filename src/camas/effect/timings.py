@@ -30,6 +30,13 @@ class TimingsContext(NamedTuple):
 class Timings:
 	"""Each leaf's observed duration, recorded for later runs."""
 
+	camas_dir: Final[Path]
+	"""Where the timing cache is."""
+	scope: Final[int]
+	"""The run's scope, recorded with each duration."""
+	identities: Final[tuple[timings.CacheKey, ...] | None]
+	"""One cache key per leaf, in leaf order, in place of the keys derived from labels."""
+
 	def __init__(
 		self,
 		camas_dir: Path,
@@ -37,25 +44,25 @@ class Timings:
 		identities: tuple[timings.CacheKey, ...] | None = None,
 	) -> None:
 		timings.reject_non_tuple_identities(identities)
-		self._camas_dir: Final = camas_dir
-		self._scope: Final = scope
-		self._identities: Final = identities
+		self.camas_dir = camas_dir
+		self.scope = scope
+		self.identities = identities
 
 	def for_run(
 		self,
 		scope: int,
 		identities: tuple[timings.CacheKey, ...] | None = None,
 	) -> "Timings":
-		return Timings(self._camas_dir, scope, identities)
+		return Timings(self.camas_dir, scope, identities)
 
 	async def setup(self, task: TaskNode) -> TimingsContext:
 		leaves = flatten_leaves(task)
-		if self._identities is not None and len(self._identities) != len(leaves):
-			timings.raise_identities_mismatch(len(self._identities), len(leaves))
+		if self.identities is not None and len(self.identities) != len(leaves):
+			timings.raise_identities_mismatch(len(self.identities), len(leaves))
 		return TimingsContext(
-			camas_dir=self._camas_dir,
-			scope=self._scope,
-			identities=self._identities,
+			camas_dir=self.camas_dir,
+			scope=self.scope,
+			identities=self.identities,
 			state=TimingsState(tuple(Waiting(info.task) for info in leaves)),
 		)
 

@@ -463,15 +463,22 @@ class TermtreeContext(NamedTuple):
 class Termtree:
 	"""A live task tree in the terminal."""
 
+	frame_interval_ms: Final[float]
+	"""Milliseconds between redraws."""
+	show_passing: Final[bool]
+	"""Print passing leaves' output after the run."""
+	output_ctrl_c: Final[bool]
+	"""Print stopped leaves' output after the run."""
+
 	def __init__(
 		self,
 		frame_interval_ms: float = 16.667,
 		show_passing: bool = False,
 		output_ctrl_c: bool = False,
 	) -> None:
-		self._frame_interval_ms: Final = frame_interval_ms
-		self._show_passing: Final = show_passing
-		self._output_ctrl_c: Final = output_ctrl_c
+		self.frame_interval_ms = frame_interval_ms
+		self.show_passing = show_passing
+		self.output_ctrl_c = output_ctrl_c
 
 	async def setup(self, task: TaskNode) -> TermtreeContext:
 		ctx: Final = TermtreeContext(  # zuban: ignore[misc] # zuban defies PEP591
@@ -483,7 +490,7 @@ class Termtree:
 			),
 		)
 		draw(ctx)
-		ctx.state.tick_task = asyncio.create_task(tick_loop(ctx, self._frame_interval_ms / 1000))
+		ctx.state.tick_task = asyncio.create_task(tick_loop(ctx, self.frame_interval_ms / 1000))
 		return ctx
 
 	async def on_event(
@@ -505,9 +512,9 @@ class Termtree:
 			shutil.get_terminal_size().columns
 		)
 		print_failures(ctx.state.states, term_width)
-		if self._output_ctrl_c:
+		if self.output_ctrl_c:
 			print_stops(ctx.state.states, term_width)
-		if self._show_passing:
+		if self.show_passing:
 			print_passes(ctx.state.states, term_width)
 
 

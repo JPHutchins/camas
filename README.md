@@ -1581,9 +1581,9 @@ A live task tree in the terminal.
 
 | `Termtree` | Type | Default | |
 |---|---|---|---|
-| `frame_interval_ms` | `float` | `16.667` |  |
-| `show_passing` | `bool` | `False` |  |
-| `output_ctrl_c` | `bool` | `False` |  |
+| `frame_interval_ms` | `float` | `16.667` | Milliseconds between redraws. |
+| `show_passing` | `bool` | `False` | Print passing leaves' output after the run. |
+| `output_ctrl_c` | `bool` | `False` | Print stopped leaves' output after the run. |
 
 #### `Status`
 
@@ -1591,22 +1591,28 @@ A live task tree in the terminal.
 
 Line-oriented status output.
 
+Its line formats are `str.format` templates; an empty one prints no line.
+
 | `Status` | Type | Default | |
 |---|---|---|---|
-| `output_mode` | `OutputMode` | `"errors"` |  |
-| `started_fmt` | `str` | `f"{GREY}[{{timestamp:%Y-%m-%d %H:%M:%S}}.{{ms:03d}}]{RESET} " f"{CAMAS_VIOLET}▶ [{{name}}] started{RESET}"` |  |
-| `finished_fmt` | `str` | `f"{GREY}[{{timestamp:%Y-%m-%d %H:%M:%S}}.{{ms:03d}}]{RESET} " f"{GREEN}✓ [{{name}}] success{RESET} ({{elapsed:.3f}}s)"` |  |
-| `failed_fmt` | `str` | `f"{GREY}[{{timestamp:%Y-%m-%d %H:%M:%S}}.{{ms:03d}}]{RESET} " f"{RED}✗ [{{name}}] error{RESET} exit={{rc}} ({{elapsed:.3f}}s)"` |  |
-| `skipped_fmt` | `str` | `f"{GREY}[{{timestamp:%Y-%m-%d %H:%M:%S}}.{{ms:03d}}]{RESET} " f"{GREY}⏭ [{{name}}] skipped{RESET} (prior rc={{rc}})"` |  |
-| `stopped_fmt` | `str` | `f"{GREY}[{{timestamp:%Y-%m-%d %H:%M:%S}}.{{ms:03d}}]{RESET} " f"{YELLOW}■ [{{name}}] stopped{RESET} exit={{rc}} ({{elapsed:.3f}}s)"` |  |
-| `errored_fmt` | `str` | `f"{GREY}[{{timestamp:%Y-%m-%d %H:%M:%S}}.{{ms:03d}}]{RESET} " f"{RED}⚠ [{{name}}] errored{RESET} {{msg}}"` |  |
-| `output_fmt` | `str` | `f"{GREY}[{{timestamp:%Y-%m-%d %H:%M:%S}}.{{ms:03d}}] · [{{name}}]{RESET} {{line}}"` |  |
+| `output_mode` | `OutputMode` | `"errors"` | Which leaf output to print, and when. |
+| `started_fmt` | `str` | `f"{GREY}[{{timestamp:%Y-%m-%d %H:%M:%S}}.{{ms:03d}}]{RESET} " f"{CAMAS_VIOLET}▶ [{{name}}] started{RESET}"` | The line when a leaf starts, over `name`, `cmd`, `timestamp`, and `ms`. |
+| `finished_fmt` | `str` | `f"{GREY}[{{timestamp:%Y-%m-%d %H:%M:%S}}.{{ms:03d}}]{RESET} " f"{GREEN}✓ [{{name}}] success{RESET} ({{elapsed:.3f}}s)"` | The line when a leaf exits 0, adding `rc` and `elapsed`. |
+| `failed_fmt` | `str` | `f"{GREY}[{{timestamp:%Y-%m-%d %H:%M:%S}}.{{ms:03d}}]{RESET} " f"{RED}✗ [{{name}}] error{RESET} exit={{rc}} ({{elapsed:.3f}}s)"` | The line when a leaf exits non-zero, adding `rc` and `elapsed`. |
+| `skipped_fmt` | `str` | `f"{GREY}[{{timestamp:%Y-%m-%d %H:%M:%S}}.{{ms:03d}}]{RESET} " f"{GREY}⏭ [{{name}}] skipped{RESET} (prior rc={{rc}})"` | The line for a skipped leaf, adding `rc`, the blocking leaf's. |
+| `stopped_fmt` | `str` | `f"{GREY}[{{timestamp:%Y-%m-%d %H:%M:%S}}.{{ms:03d}}]{RESET} " f"{YELLOW}■ [{{name}}] stopped{RESET} exit={{rc}} ({{elapsed:.3f}}s)"` | The line for a stopped leaf, adding `rc` and `elapsed`. |
+| `errored_fmt` | `str` | `f"{GREY}[{{timestamp:%Y-%m-%d %H:%M:%S}}.{{ms:03d}}]{RESET} " f"{RED}⚠ [{{name}}] errored{RESET} {{msg}}"` | The line for a leaf whose command can't start, adding `rc` and `msg`. |
+| `output_fmt` | `str` | `f"{GREY}[{{timestamp:%Y-%m-%d %H:%M:%S}}.{{ms:03d}}] · [{{name}}]{RESET} {{line}}"` | Each output line in `stream` mode, adding `line`. |
 
 #### `OutputMode`
 
 ```python
 OutputMode: TypeAlias = Literal["quiet", "all", "errors", "stream", "github"]
 ```
+
+What `Status` prints of a leaf's output: `errors` a leaf's that exits non-zero, `all` every
+leaf's, and `github` every leaf's in a collapsed workflow group, each once the leaf ends;
+`stream` prints each line as it arrives instead, and `quiet` none.
 
 #### `Summary`
 
@@ -1616,8 +1622,8 @@ The final task tree, rendered once after the run.
 
 | `Summary` | Type | Default | |
 |---|---|---|---|
-| `term_width` | `TermWidth` | `Auto()` |  |
-| `show_passing` | `bool` | `False` |  |
+| `term_width` | `TermWidth` | `Auto()` | `Auto()` measures the terminal; `Fixed(columns)` sets the width. |
+| `show_passing` | `bool` | `False` | Print passing leaves' output after the tree. |
 
 #### `TermWidth`
 
@@ -1654,8 +1660,8 @@ A CTRF JSON test report.
 
 | `Ctrf` | Type | Default | |
 |---|---|---|---|
-| `path` | `str \| None` | `None` |  |
-| `tail_bytes` | `int` | `8192` |  |
+| `path` | `str \| None` | `None` | The file to write the report to; `None` writes it to stdout. |
+| `tail_bytes` | `int` | `8192` | Bytes of each leaf's output the report keeps, counted from the end. |
 
 #### `GitHubChecks`
 
@@ -1665,12 +1671,12 @@ Per-leaf check runs on the GitHub Checks API.
 
 | `GitHubChecks` | Type | Default | |
 |---|---|---|---|
-| `token` | `str \| None` | `None` |  |
-| `repository` | `str \| None` | `None` |  |
-| `sha` | `str \| None` | `None` |  |
-| `name_prefix` | `str` | `""` |  |
-| `tail_bytes` | `int` | `8192` |  |
-| `fail_on_api_error` | `bool` | `False` |  |
+| `token` | `str \| None` | `None` | `None` reads `GITHUB_TOKEN`. |
+| `repository` | `str \| None` | `None` | `owner/repo`; `None` reads `GITHUB_REPOSITORY`. |
+| `sha` | `str \| None` | `None` | The commit the check runs attach to; `None` reads `GITHUB_SHA`. |
+| `name_prefix` | `str` | `""` | Prepended to each leaf's label to name its check run. |
+| `tail_bytes` | `int` | `8192` | Bytes of each leaf's output its check run keeps, counted from the end. |
+| `fail_on_api_error` | `bool` | `False` | Raise on a Checks API failure instead of logging it. |
 
 #### `Timings`
 
@@ -1680,9 +1686,9 @@ Each leaf's observed duration, recorded for later runs.
 
 | `Timings` | Type | Default | |
 |---|---|---|---|
-| `camas_dir` | `Path` | required |  |
-| `scope` | `int` | `0` |  |
-| `identities` | `tuple[timings.CacheKey, ...] \| None` | `None` |  |
+| `camas_dir` | `Path` | required | Where the timing cache is. |
+| `scope` | `int` | `0` | The run's scope, recorded with each duration. |
+| `identities` | `tuple[timings.CacheKey, ...] \| None` | `None` | One cache key per leaf, in leaf order, in place of the keys derived from labels. |
 
 ### Exports
 

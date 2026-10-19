@@ -160,7 +160,7 @@ def parse_effects(
 
 	>>> [type(e).__name__ for e in parse_effects("(Summary(),)")]
 	['Summary']
-	>>> parse_effects("(Summary(term_width=Fixed(80)),)")[0]._term_width
+	>>> parse_effects("(Summary(term_width=Fixed(80)),)")[0].term_width
 	Fixed(columns=80)
 	>>> parse_effects("()")
 	()
@@ -276,7 +276,7 @@ def format_effect_call(effect: Effect[Any]) -> str:
 	args = ", ".join(
 		f"{name}={value!r}"
 		for name, _kind, _annotation, default in signature_fields(cls)
-		if (value := getattr(effect, f"_{name}", MISSING)) is not MISSING and value != default
+		if (value := getattr(effect, name, MISSING)) is not MISSING and value != default
 	)
 	return f"{cls.__name__}({args})"
 

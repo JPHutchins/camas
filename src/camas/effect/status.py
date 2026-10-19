@@ -26,6 +26,9 @@ if TYPE_CHECKING:
 	from ..v0.task import Task, TaskNode
 
 OutputMode: TypeAlias = Literal["quiet", "all", "errors", "stream", "github"]
+"""What `Status` prints of a leaf's output: `errors` a leaf's that exits non-zero, `all` every
+leaf's, and `github` every leaf's in a collapsed workflow group, each once the leaf ends;
+`stream` prints each line as it arrives instead, and `quiet` none."""
 
 
 STARTED_FMT: Final = (
@@ -291,7 +294,27 @@ def next_ctx_on_output(mode: OutputMode, ctx: Active, line: bytes) -> Active:
 
 
 class Status:
-	"""Line-oriented status output."""
+	"""Line-oriented status output.
+
+	Its line formats are `str.format` templates; an empty one prints no line.
+	"""
+
+	output_mode: Final[OutputMode]
+	"""Which leaf output to print, and when."""
+	started_fmt: Final[str]
+	"""The line when a leaf starts, over `name`, `cmd`, `timestamp`, and `ms`."""
+	finished_fmt: Final[str]
+	"""The line when a leaf exits 0, adding `rc` and `elapsed`."""
+	failed_fmt: Final[str]
+	"""The line when a leaf exits non-zero, adding `rc` and `elapsed`."""
+	skipped_fmt: Final[str]
+	"""The line for a skipped leaf, adding `rc`, the blocking leaf's."""
+	stopped_fmt: Final[str]
+	"""The line for a stopped leaf, adding `rc` and `elapsed`."""
+	errored_fmt: Final[str]
+	"""The line for a leaf whose command can't start, adding `rc` and `msg`."""
+	output_fmt: Final[str]
+	"""Each output line in `stream` mode, adding `line`."""
 
 	def __init__(
 		self,
@@ -304,14 +327,14 @@ class Status:
 		errored_fmt: str = ERRORED_FMT,
 		output_fmt: str = OUTPUT_FMT,
 	) -> None:
-		self._output_mode: Final = output_mode
-		self._started_fmt: Final = started_fmt
-		self._finished_fmt: Final = finished_fmt
-		self._failed_fmt: Final = failed_fmt
-		self._skipped_fmt: Final = skipped_fmt
-		self._stopped_fmt: Final = stopped_fmt
-		self._errored_fmt: Final = errored_fmt
-		self._output_fmt: Final = output_fmt
+		self.output_mode = output_mode
+		self.started_fmt = started_fmt
+		self.finished_fmt = finished_fmt
+		self.failed_fmt = failed_fmt
+		self.skipped_fmt = skipped_fmt
+		self.stopped_fmt = stopped_fmt
+		self.errored_fmt = errored_fmt
+		self.output_fmt = output_fmt
 
 	async def setup(self, task: TaskNode) -> LeafCtx:
 		return Idle()
@@ -321,35 +344,35 @@ class Status:
 	) -> LeafCtx:
 		match event, ctx:
 			case StartedEvent(task=t, timestamp=ts), Idle():
-				emit_line(fmt_started(self._started_fmt, t, ts))
+				emit_line(fmt_started(self.started_fmt, t, ts))
 				return Active(b"")
 			case OutputEvent(task=t, line=line, timestamp=ts), Active() as active:
-				if self._output_mode == "stream":
-					emit_line(fmt_output(self._output_fmt, t, line, ts))
-				return next_ctx_on_output(self._output_mode, active, line)
+				if self.output_mode == "stream":
+					emit_line(fmt_output(self.output_fmt, t, line, ts))
+				return next_ctx_on_output(self.output_mode, active, line)
 			case CompletedEvent(task=t, completion=c, timestamp=ts), Active(output=buf):
 				emit_line(
 					fmt_completed(
-						self._finished_fmt,
-						self._failed_fmt,
-						self._skipped_fmt,
-						self._stopped_fmt,
-						self._errored_fmt,
+						self.finished_fmt,
+						self.failed_fmt,
+						self.skipped_fmt,
+						self.stopped_fmt,
+						self.errored_fmt,
 						t,
 						c,
 						ts,
 					)
 				)
-				emit(block_for(self._output_mode, t, c, buf))
+				emit(block_for(self.output_mode, t, c, buf))
 				return Done()
 			case CompletedEvent(task=t, completion=c, timestamp=ts), Idle():
 				emit_line(
 					fmt_completed(
-						self._finished_fmt,
-						self._failed_fmt,
-						self._skipped_fmt,
-						self._stopped_fmt,
-						self._errored_fmt,
+						self.finished_fmt,
+						self.failed_fmt,
+						self.skipped_fmt,
+						self.stopped_fmt,
+						self.errored_fmt,
 						t,
 						c,
 						ts,

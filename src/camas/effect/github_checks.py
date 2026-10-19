@@ -388,6 +388,19 @@ def pipeline_of(state: EffectState, ctx: LeafCtx) -> asyncio.Task[None] | None:
 class GitHubChecks:
 	"""Per-leaf check runs on the GitHub Checks API."""
 
+	token: Final[str | None]
+	"""`None` reads `GITHUB_TOKEN`."""
+	repository: Final[str | None]
+	"""`owner/repo`; `None` reads `GITHUB_REPOSITORY`."""
+	sha: Final[str | None]
+	"""The commit the check runs attach to; `None` reads `GITHUB_SHA`."""
+	name_prefix: Final[str]
+	"""Prepended to each leaf's label to name its check run."""
+	tail_bytes: Final[int]
+	"""Bytes of each leaf's output its check run keeps, counted from the end."""
+	fail_on_api_error: Final[bool]
+	"""Raise on a Checks API failure instead of logging it."""
+
 	def __init__(
 		self,
 		token: str | None = None,
@@ -397,23 +410,23 @@ class GitHubChecks:
 		tail_bytes: int = 8192,
 		fail_on_api_error: bool = False,
 	) -> None:
-		self._token: Final = token
-		self._repository: Final = repository
-		self._sha: Final = sha
-		self._name_prefix: Final = name_prefix
-		self._tail_bytes: Final = tail_bytes
-		self._fail_on_api_error: Final = fail_on_api_error
+		self.token = token
+		self.repository = repository
+		self.sha = sha
+		self.name_prefix = name_prefix
+		self.tail_bytes = tail_bytes
+		self.fail_on_api_error = fail_on_api_error
 		self.state: EffectState | None = None
 
 	async def setup(self, task: TaskNode) -> LeafCtx:
 		httpx_mod: Final = require_httpx()  # zuban: ignore[misc] # zuban defies PEP591
 		cfg: Final = resolve_config(  # zuban: ignore[misc] # zuban defies PEP591
-			self._token,
-			self._repository,
-			self._sha,
-			self._name_prefix,
-			self._tail_bytes,
-			self._fail_on_api_error,
+			self.token,
+			self.repository,
+			self.sha,
+			self.name_prefix,
+			self.tail_bytes,
+			self.fail_on_api_error,
 		)
 		self.state = EffectState(
 			http=httpx_mod.AsyncClient(timeout=5.0, headers=auth_headers(cfg)),

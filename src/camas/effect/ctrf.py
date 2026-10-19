@@ -59,9 +59,14 @@ class ReportContext(NamedTuple):
 class Ctrf:
 	"""A CTRF JSON test report."""
 
+	path: Final[str | None]
+	"""The file to write the report to; `None` writes it to stdout."""
+	tail_bytes: Final[int]
+	"""Bytes of each leaf's output the report keeps, counted from the end."""
+
 	def __init__(self, path: str | None = None, tail_bytes: int = 8192) -> None:
-		self._path: Final = path
-		self._tail_bytes: Final = tail_bytes
+		self.path = path
+		self.tail_bytes = tail_bytes
 		self._model: ModuleType | None = None
 
 	async def setup(self, task: TaskNode) -> ReportContext:
@@ -83,6 +88,6 @@ class Ctrf:
 			return
 		ctx = ctxs[0]
 		data: bytes = model.encode_run(
-			ctx.state.states, ctx.start_ms, now_ms(), self._tail_bytes, version("camas")
+			ctx.state.states, ctx.start_ms, now_ms(), self.tail_bytes, version("camas")
 		)
-		await asyncio.to_thread(emit_report, self._path, data)
+		await asyncio.to_thread(emit_report, self.path, data)
