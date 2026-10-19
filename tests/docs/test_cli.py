@@ -32,7 +32,7 @@ def test_write_renders_the_template_under_a_banner(
 
 		Prose.
 
-		| Field | Type | Default | |
+		| `Thing` | Type | Default | |
 		|---|---|---|---|
 		| `size` | `int` | required | How big. |
 

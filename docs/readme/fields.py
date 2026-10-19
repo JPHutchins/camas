@@ -49,7 +49,7 @@ def fields_section(dotted: str) -> tuple[str, ...] | Unresolved:
 		return Unresolved(f"no class {target.name!r} in {target.module.path.as_posix()}")
 	fields = class_fields(defined[target.name], defined, target.module)
 	return (
-		*table(fields),
+		*table(target.name, fields),
 		*details(
 			f"<code>{target.name}</code> fields",
 			tuple(
@@ -61,8 +61,8 @@ def fields_section(dotted: str) -> tuple[str, ...] | Unresolved:
 	)
 
 
-def table(fields: tuple[Field, ...]) -> tuple[str, ...]:
-	return ("| Field | Type | Default | |", "|---|---|---|---|", *(row(field) for field in fields))
+def table(name: str, fields: tuple[Field, ...]) -> tuple[str, ...]:
+	return (f"| `{name}` | Type | Default | |", "|---|---|---|---|", *(row(field) for field in fields))
 
 
 def row(field: Field) -> str:

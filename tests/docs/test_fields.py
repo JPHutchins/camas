@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
 def test_named_tuple_rows_follow_the_fields(generated: Callable[[str], tuple[str, ...]]) -> None:
 	assert generated("fields demo.shapes.Options") == (
-		"| Field | Type | Default | |",
+		"| `Options` | Type | Default | |",
 		"|---|---|---|---|",
 		"| `path` | `str` | required | Where the output goes. |",
 		"| `mode` | `int \\| None` | `None` |  |",
@@ -34,7 +34,7 @@ def test_init_rows_follow_the_parameters_with_inherited_docs(
 	generated: Callable[[str], tuple[str, ...]],
 ) -> None:
 	assert generated("fields demo.shapes.Child") == (
-		"| Field | Type | Default | |",
+		"| `Child` | Type | Default | |",
 		"|---|---|---|---|",
 		"| `*items` | `str` → `tuple[str, ...]` |  | The `a \\| b` items. |",
 		"| `extra` | `bool` | `False` | An extra. |",
@@ -47,7 +47,7 @@ def test_a_class_without_init_or_fields_inherits_both(
 ) -> None:
 	child = generated("fields demo.shapes.Child")
 	assert generated("fields demo.shapes.Grandchild") == tuple(
-		line.replace("<code>Child</code>", "<code>Grandchild</code>") for line in child
+		line.replace("`Child`", "`Grandchild`") for line in child
 	)
 
 
@@ -55,7 +55,7 @@ def test_undocumented_fields_get_an_empty_description(
 	generated: Callable[[str], tuple[str, ...]],
 ) -> None:
 	assert generated("fields demo.shapes.Leaf") == (
-		"| Field | Type | Default | |",
+		"| `Leaf` | Type | Default | |",
 		"|---|---|---|---|",
 		"| `cwd` | `str \\| Path \\| None` → `Path \\| None` | `None` |  |",
 		"| `env` | `Mapping[str, str]` | `MappingProxyType({})` |  |",
