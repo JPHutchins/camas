@@ -1,5 +1,5 @@
 <!-- Generated from docs/README.in.md by `python -m docs.readme`; edit that file. -->
-<!-- DRAFT for JP: each bullet list outlines README.md.old's prose for rewriting; ⚠️ bullets are proofreading notes. Code examples and tables are kept verbatim, in their original places. -->
+<!-- DRAFT for JP: each bullet list outlines README.md.old's prose for rewriting; ⚠️ bullets are proofreading notes; ✍️ bullets mark where your prose on each type goes, right above its generated section. Code examples and tables are kept verbatim, in their original places. -->
 <img align="right" width="150" src="https://raw.githubusercontent.com/JPHutchins/camas/main/resources/artwork/camas-451x1023.png" alt="camas-sketch-by-jph">
 
 # Camas
@@ -261,6 +261,10 @@ OutputMode: TypeAlias = Literal["quiet", "all", "errors", "stream", "github"]
   - the [`github-checks-demo` job](https://github.com/JPHutchins/camas/blob/main/.github/workflows/ci.yaml) is a working example
   - ⚠️ `github_checks.py`'s public module docstring states the extra, the permission, the env defaults, and the head-SHA override. A `module` directive could generate this list.
 
+- ✍️ `GitHubChecks`: what it's for and how it's used
+
+Per-leaf check runs on the GitHub Checks API.
+
 | `GitHubChecks` | Type | Default | |
 |---|---|---|---|
 | `token` | `str \| None` | `None` |  |
@@ -334,6 +338,10 @@ strategy:
 uv run --extra ctrf camas check --effects='(Status(output_mode="errors"), Ctrf(path="ctrf-report.json"))'
 ```
 
+- ✍️ `Ctrf`: what it's for and how it's used
+
+A CTRF JSON test report.
+
 | `Ctrf` | Type | Default | |
 |---|---|---|---|
 | `path` | `str \| None` | `None` |  |
@@ -378,6 +386,10 @@ echo 'exec camas check' > .git/hooks/pre-push && chmod +x .git/hooks/pre-push
 - `git push --no-verify` still bypasses the hook deliberately.
 - An LLM agent needs no hook: when a `github_task` is declared, `camas_list` reports it as `github_default`, so the agent runs `camas_run` with that name before pushing. The field is `null` when no `github_task` is set; camas never infers it from your CI workflow files.
 
+- ✍️ `Config`: what it's for and how it's used
+
+Project configuration for a `tasks.py`.
+
 | `Config` | Type | Default | |
 |---|---|---|---|
 | `default_task` | `TaskNode \| None` | `None` |  |
@@ -387,6 +399,10 @@ echo 'exec camas check' > .git/hooks/pre-push && chmod +x .git/hooks/pre-push
 | `camas_dir` | `str` | `".camas"` | Subdirectory for run logs and timings. |
 | `agent` | `Agent \| None` | `None` |  |
 | `leaf_color` | `bool` | `True` | Whether camas forces color on in leaf subprocesses. |
+
+- ✍️ `Claude`: what it's for and how it's used
+
+The Claude Code agent integration.
 
 | `Claude` | Type | Default | |
 |---|---|---|---|
@@ -727,11 +743,30 @@ class Effect(Protocol[T]):
 TaskEvent: TypeAlias = StartedEvent | OutputEvent | CompletedEvent
 ```
 
+- ✍️ `StartedEvent`: what it's for and how it's used
+
+A leaf started.
+
 | `StartedEvent` | Type | Default | |
 |---|---|---|---|
 | `task` | `Task` | required |  |
 | `leaf_index` | `int` | required |  |
 | `timestamp` | `datetime` | required |  |
+
+<details><summary><code>StartedEvent</code> examples</summary>
+
+```pycon
+>>> from datetime import datetime
+>>> from camas.v0 import Task
+>>> StartedEvent(Task("hi"), 0, datetime(2026, 1, 1, 12, 0, 0))
+StartedEvent(task=Task(cmd='hi', name=None, env={}, cwd=None), leaf_index=0, timestamp=datetime.datetime(2026, 1, 1, 12, 0))
+```
+
+</details>
+
+- ✍️ `OutputEvent`: what it's for and how it's used
+
+A leaf printed a line.
 
 | `OutputEvent` | Type | Default | |
 |---|---|---|---|
@@ -740,6 +775,21 @@ TaskEvent: TypeAlias = StartedEvent | OutputEvent | CompletedEvent
 | `line` | `bytes` | required |  |
 | `timestamp` | `datetime` | required |  |
 
+<details><summary><code>OutputEvent</code> examples</summary>
+
+```pycon
+>>> from datetime import datetime
+>>> from camas.v0 import Task
+>>> OutputEvent(Task("hi"), 0, b"hello", datetime(2026, 1, 1, 12, 0, 1))
+OutputEvent(task=Task(cmd='hi', name=None, env={}, cwd=None), leaf_index=0, line=b'hello', timestamp=datetime.datetime(2026, 1, 1, 12, 0, 1))
+```
+
+</details>
+
+- ✍️ `CompletedEvent`: what it's for and how it's used
+
+A leaf completed.
+
 | `CompletedEvent` | Type | Default | |
 |---|---|---|---|
 | `task` | `Task` | required |  |
@@ -747,19 +797,66 @@ TaskEvent: TypeAlias = StartedEvent | OutputEvent | CompletedEvent
 | `completion` | `Completion` | required |  |
 | `timestamp` | `datetime` | required |  |
 
+<details><summary><code>CompletedEvent</code> examples</summary>
+
+```pycon
+>>> from datetime import datetime
+>>> from camas.v0 import Task
+>>> from camas.v0.completion import Finished, Skipped
+>>> CompletedEvent(Task("hi"), 0, Finished(0, 1.0, (b"done",)), datetime(2026, 1, 1, 12, 0, 2))
+CompletedEvent(task=Task(cmd='hi', name=None, env={}, cwd=None), leaf_index=0, completion=Finished(returncode=0, elapsed=1.0, output=(b'done',)), timestamp=datetime.datetime(2026, 1, 1, 12, 0, 2))
+>>> CompletedEvent(Task("hi"), 0, Skipped(1), datetime(2026, 1, 1, 12, 0, 0))
+CompletedEvent(task=Task(cmd='hi', name=None, env={}, cwd=None), leaf_index=0, completion=Skipped(returncode=1, blocked_by=None), timestamp=datetime.datetime(2026, 1, 1, 12, 0))
+```
+
+</details>
+
 ```python
 LeafState: TypeAlias = Waiting | Running | Interrupting | Completed
 ```
 
+- ✍️ `Waiting`: what it's for and how it's used
+
+A leaf not yet started.
+
 | `Waiting` | Type | Default | |
 |---|---|---|---|
 | `task` | `Task` | required |  |
+
+<details><summary><code>Waiting</code> examples</summary>
+
+```pycon
+>>> from camas.v0 import Task
+>>> Waiting(Task("echo hi"))
+Waiting(task=Task(cmd='echo hi', name=None, env={}, cwd=None))
+```
+
+</details>
+
+- ✍️ `Running`: what it's for and how it's used
+
+A running leaf.
 
 | `Running` | Type | Default | |
 |---|---|---|---|
 | `task` | `Task` | required |  |
 | `start_time` | `datetime` | required |  |
 | `last_line` | `bytes` | required |  |
+
+<details><summary><code>Running</code> examples</summary>
+
+```pycon
+>>> from datetime import datetime
+>>> from camas.v0 import Task
+>>> Running(Task("echo hi"), datetime(2026, 1, 1, 12, 0, 0), b"output")
+Running(task=Task(cmd='echo hi', name=None, env={}, cwd=None), start_time=datetime.datetime(2026, 1, 1, 12, 0), last_line=b'output')
+```
+
+</details>
+
+- ✍️ `Interrupting`: what it's for and how it's used
+
+A signalled leaf that has not exited yet.
 
 | `Interrupting` | Type | Default | |
 |---|---|---|---|
@@ -768,14 +865,46 @@ LeafState: TypeAlias = Waiting | Running | Interrupting | Completed
 | `last_line` | `bytes` | required |  |
 | `presses` | `int` | required | Ctrl-C presses this leaf has absorbed. |
 
+<details><summary><code>Interrupting</code> examples</summary>
+
+```pycon
+>>> from datetime import datetime
+>>> from camas.v0 import Task
+>>> Interrupting(Task("echo hi"), datetime(2026, 1, 1, 12, 0, 0), b"output", 1)
+Interrupting(task=Task(cmd='echo hi', name=None, env={}, cwd=None), start_time=datetime.datetime(2026, 1, 1, 12, 0), last_line=b'output', presses=1)
+```
+
+</details>
+
+- ✍️ `Completed`: what it's for and how it's used
+
+A leaf that is done.
+
 | `Completed` | Type | Default | |
 |---|---|---|---|
 | `task` | `Task` | required |  |
 | `completion` | `Completion` | required |  |
 
+<details><summary><code>Completed</code> examples</summary>
+
+```pycon
+>>> from camas.v0 import Task
+>>> from camas.v0.completion import Finished, Skipped
+>>> Completed(Task("echo hi"), Finished(0, 0.5, ()))
+Completed(task=Task(cmd='echo hi', name=None, env={}, cwd=None), completion=Finished(returncode=0, elapsed=0.5, output=()))
+>>> Completed(Task("echo hi"), Skipped(1))
+Completed(task=Task(cmd='echo hi', name=None, env={}, cwd=None), completion=Skipped(returncode=1, blocked_by=None))
+```
+
+</details>
+
 ```python
 Completion: TypeAlias = Finished | Skipped | Stopped | Errored
 ```
+
+- ✍️ `Finished`: what it's for and how it's used
+
+A leaf that ran to exit.
 
 | `Finished` | Type | Default | |
 |---|---|---|---|
@@ -783,10 +912,38 @@ Completion: TypeAlias = Finished | Skipped | Stopped | Errored
 | `elapsed` | `float` | required |  |
 | `output` | `Sequence[bytes]` | required |  |
 
+<details><summary><code>Finished</code> examples</summary>
+
+```pycon
+>>> Finished(0, 1.234, (b"all clean",))
+Finished(returncode=0, elapsed=1.234, output=(b'all clean',))
+```
+
+</details>
+
+- ✍️ `Skipped`: what it's for and how it's used
+
+A leaf skipped because of an earlier leaf's outcome.
+
 | `Skipped` | Type | Default | |
 |---|---|---|---|
 | `returncode` | `int` | required | The blocking leaf's return code. |
 | `blocked_by` | `str \| None` | `None` | The blocking leaf's label, when known. |
+
+<details><summary><code>Skipped</code> examples</summary>
+
+```pycon
+>>> Skipped(1)
+Skipped(returncode=1, blocked_by=None)
+>>> Skipped(1, "lint").blocked_by
+'lint'
+```
+
+</details>
+
+- ✍️ `Stopped`: what it's for and how it's used
+
+A leaf of a run or pipe the runner stopped.
 
 | `Stopped` | Type | Default | |
 |---|---|---|---|
@@ -794,10 +951,32 @@ Completion: TypeAlias = Finished | Skipped | Stopped | Errored
 | `elapsed` | `float` | required |  |
 | `output` | `Sequence[bytes]` | required |  |
 
+<details><summary><code>Stopped</code> examples</summary>
+
+```pycon
+>>> Stopped(130, 0.5, (b"caught SIGINT",))
+Stopped(returncode=130, elapsed=0.5, output=(b'caught SIGINT',))
+```
+
+</details>
+
+- ✍️ `Errored`: what it's for and how it's used
+
+A leaf whose command could not start.
+
 | `Errored` | Type | Default | |
 |---|---|---|---|
 | `returncode` | `int` | required |  |
 | `message` | `str` | required |  |
+
+<details><summary><code>Errored</code> examples</summary>
+
+```pycon
+>>> Errored(127, "no such file or directory: does-not-exist")
+Errored(returncode=127, message='no such file or directory: does-not-exist')
+```
+
+</details>
 
 ### Built-in effects
 
@@ -809,11 +988,19 @@ Completion: TypeAlias = Finished | Skipped | Stopped | Errored
 - `Timings`: each leaf's observed duration, recorded for later runs
 - ⚠️ These one-line summaries are the classes' docstrings, which `camas --effects` prints. A directive could generate them; the tables below cover only the constructors. `Status`'s format-string defaults render as long f-strings.
 
+- ✍️ `Termtree`: what it's for and how it's used
+
+A live task tree in the terminal.
+
 | `Termtree` | Type | Default | |
 |---|---|---|---|
 | `frame_interval_ms` | `float` | `16.667` |  |
 | `show_passing` | `bool` | `False` |  |
 | `output_ctrl_c` | `bool` | `False` |  |
+
+- ✍️ `Status`: what it's for and how it's used
+
+Line-oriented status output.
 
 | `Status` | Type | Default | |
 |---|---|---|---|
@@ -826,6 +1013,10 @@ Completion: TypeAlias = Finished | Skipped | Stopped | Errored
 | `errored_fmt` | `str` | `f"{GREY}[{{timestamp:%Y-%m-%d %H:%M:%S}}.{{ms:03d}}]{RESET} " f"{RED}⚠ [{{name}}] errored{RESET} {{msg}}"` |  |
 | `output_fmt` | `str` | `f"{GREY}[{{timestamp:%Y-%m-%d %H:%M:%S}}.{{ms:03d}}] · [{{name}}]{RESET} {{line}}"` |  |
 
+- ✍️ `Summary`: what it's for and how it's used
+
+The final task tree, rendered once after the run.
+
 | `Summary` | Type | Default | |
 |---|---|---|---|
 | `term_width` | `TermWidth` | `Auto()` |  |
@@ -835,9 +1026,26 @@ Completion: TypeAlias = Finished | Skipped | Stopped | Errored
 TermWidth: TypeAlias = Auto | Fixed
 ```
 
+- ✍️ `Fixed`: what it's for and how it's used
+
+A fixed terminal width.
+
 | `Fixed` | Type | Default | |
 |---|---|---|---|
 | `columns` | `int` | required |  |
+
+<details><summary><code>Fixed</code> examples</summary>
+
+```pycon
+>>> Fixed(200)
+Fixed(columns=200)
+```
+
+</details>
+
+- ✍️ `Timings`: what it's for and how it's used
+
+Each leaf's observed duration, recorded for later runs.
 
 | `Timings` | Type | Default | |
 |---|---|---|---|
@@ -949,6 +1157,10 @@ Run the camas CLI against a `tasks.py`'s `globals()`, for `uv run tasks.py`.
 
 ### `Task`
 
+- ✍️ `Task`: what it's for and how it's used
+
+A leaf that runs one command.
+
 | `Task` | Type | Default | |
 |---|---|---|---|
 | `cmd` | `str \| tuple[str, ...]` | required | Argv tokens, or a string split by POSIX shell rules on every OS. |
@@ -961,11 +1173,61 @@ Run the camas CLI against a `tasks.py`'s `globals()`, for `uv run tasks.py`.
 | `when` | `str \| Path \| tuple[str \| Path, ...] \| WhenPredicate \| None` → `str \| tuple[str, ...] \| WhenPredicate \| None` | `None` | Which changes keep the leaf in a scoped run. |
 | `agent_format` | `AgentFormat \| tuple[str, OutputKind] \| None` → `AgentFormat \| None` | `None` |  |
 
+<details><summary><code>Task</code> examples</summary>
+
+```pycon
+>>> Task("echo hi")
+Task(cmd='echo hi', name=None, env={}, cwd=None)
+>>> Task(("ruff", "check", "."), name="lint")
+Task(cmd=('ruff', 'check', '.'), name='lint', env={}, cwd=None)
+>>> Task("cargo test", cwd=Path("src-tauri")).cwd == Path("src-tauri")
+True
+>>> Task("cargo test", cwd="src-tauri").cwd == Path("src-tauri")
+True
+>>> Task("ruff check .", help="Lint all sources").help
+'Lint all sources'
+>>> Task("ruff format .", mutates=True)
+Task(cmd='ruff format .', name=None, env={}, cwd=None, mutates=True)
+>>> Task("ruff format {paths}", mutates=True, paths=".")
+Task(cmd='ruff format {paths}', name=None, env={}, cwd=None, mutates=True, paths='.')
+>>> Task("cargo build", when=("src", "include"))
+Task(cmd='cargo build', name=None, env={}, cwd=None, when=('src', 'include'))
+>>> Task("cargo build", when=Path("src")).when
+'src'
+>>> Task("cargo build", when=(Path("src"), "include")).when
+('src', 'include')
+>>> Task("ruff check .", agent_format=AgentFormat("--output-format sarif", "sarif"))
+Task(cmd='ruff check .', name=None, env={}, cwd=None, agent_format=AgentFormat(args='--output-format sarif', kind='sarif', limit=8000))
+>>> Task("ruff check .", agent_format=("--output-format sarif", "sarif")).agent_format
+AgentFormat(args='--output-format sarif', kind='sarif', limit=8000)
+>>> hash(Task("a")) == hash(Task("a"))
+True
+>>> {Task("a", env={"K": "v"}), Task("a", env={"K": "v"})} == {Task("a", env={"K": "v"})}
+True
+```
+
+</details>
+
+- ✍️ `AgentFormat`: what it's for and how it's used
+
+A leaf's agent-only structured-output variant.
+
 | `AgentFormat` | Type | Default | |
 |---|---|---|---|
 | `args` | `str` | required | Appended to the command on gate runs; a literal `{report}` names the file the gate reads. |
 | `kind` | `OutputKind` | required |  |
 | `limit` | `int` | `8_000` | Characters of a structured payload or report file the gate inlines. |
+
+<details><summary><code>AgentFormat</code> examples</summary>
+
+```pycon
+>>> AgentFormat("--output-format sarif", "sarif")
+AgentFormat(args='--output-format sarif', kind='sarif', limit=8000)
+>>> AgentFormat("--junitxml {report}", "junit").args
+'--junitxml {report}'
+```
+
+</details>
 
 ```python
 OutputKind: TypeAlias = Literal["sarif", "rdjson", "lsp", "junit", "tap", "raw"]
@@ -974,6 +1236,10 @@ OutputKind: TypeAlias = Literal["sarif", "rdjson", "lsp", "junit", "tap", "raw"]
 The format a leaf's diagnostics are in.
 
 ### `Sequential` and `Parallel`
+
+- ✍️ `Sequential`: what it's for and how it's used
+
+A group of tasks that run one after another, short-circuiting on failure.
 
 | `Sequential` | Type | Default | |
 |---|---|---|---|
@@ -987,7 +1253,20 @@ The format a leaf's diagnostics are in.
 | `paths` | `str \| PathScope \| None` | `None` | A default `{paths}` scope for the group's leaves. |
 | `when` | `str \| Path \| tuple[str \| Path, ...] \| WhenPredicate \| None` → `str \| tuple[str, ...] \| WhenPredicate \| None` | `None` | A default `when` for the group's leaves. |
 
+<details><summary><code>Sequential</code> examples</summary>
+
+```pycon
+>>> Sequential("build", "test", name="ci").tasks
+(Task(cmd='build', name=None, env={}, cwd=None), Task(cmd='test', name=None, env={}, cwd=None))
+```
+
+</details>
+
 ### `Pipe`
+
+- ✍️ `Pipe`: what it's for and how it's used
+
+Leaf stages piped stdout to stdin, each its own argv, with no shell.
 
 | `Pipe` | Type | Default | |
 |---|---|---|---|
@@ -1001,6 +1280,27 @@ The format a leaf's diagnostics are in.
 | `help` | `str \| None` | `None` |  |
 | `paths` | `str \| PathScope \| None` | `None` | A default `{paths}` scope for the group's leaves. |
 | `when` | `str \| Path \| tuple[str \| Path, ...] \| WhenPredicate \| None` → `str \| tuple[str, ...] \| WhenPredicate \| None` | `None` | A default `when` for the group's leaves. |
+
+<details><summary><code>Pipe</code> examples</summary>
+
+```pycon
+>>> Pipe("cargo clippy --message-format=json", "clippy-sarif").agent_only
+False
+>>> Pipe("a", "b", agent_only=True).tasks[0].cmd
+'a'
+>>> Pipe()
+Traceback (most recent call last):
+    ...
+ValueError: Pipe needs at least one stage
+>>> Pipe("a", "b")
+Pipe(tasks=(Task(cmd='a', name=None, env={}, cwd=None), Task(cmd='b', name=None, env={}, cwd=None)), name=None, matrix=None, env={}, cwd=None)
+>>> Pipe("a", Sequential("b"))
+Traceback (most recent call last):
+    ...
+ValueError: Pipe stages must be Tasks — a nested group would mean several commands sharing one stream
+```
+
+</details>
 
 ### Types
 

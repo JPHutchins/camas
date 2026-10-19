@@ -1,4 +1,4 @@
-<!-- DRAFT for JP: each bullet list outlines README.md.old's prose for rewriting; ⚠️ bullets are proofreading notes. Code examples and tables are kept verbatim, in their original places. -->
+<!-- DRAFT for JP: each bullet list outlines README.md.old's prose for rewriting; ⚠️ bullets are proofreading notes; ✍️ bullets mark where your prose on each type goes, right above its generated section. Code examples and tables are kept verbatim, in their original places. -->
 <img align="right" width="150" src="https://raw.githubusercontent.com/JPHutchins/camas/main/resources/artwork/camas-451x1023.png" alt="camas-sketch-by-jph">
 
 # Camas
@@ -189,6 +189,8 @@ camas --init
   - the [`github-checks-demo` job](https://github.com/JPHutchins/camas/blob/main/.github/workflows/ci.yaml) is a working example
   - ⚠️ `github_checks.py`'s public module docstring states the extra, the permission, the env defaults, and the head-SHA override. A `module` directive could generate this list.
 
+- ✍️ `GitHubChecks`: what it's for and how it's used
+
 <!-- GENERATED: fields camas.effect.github_checks.GitHubChecks -->
 
 - **When to use it:**
@@ -255,6 +257,8 @@ strategy:
 uv run --extra ctrf camas check --effects='(Status(output_mode="errors"), Ctrf(path="ctrf-report.json"))'
 ```
 
+- ✍️ `Ctrf`: what it's for and how it's used
+
 <!-- GENERATED: fields camas.effect.ctrf.Ctrf -->
 
 ## Config
@@ -296,7 +300,11 @@ echo 'exec camas check' > .git/hooks/pre-push && chmod +x .git/hooks/pre-push
 - `git push --no-verify` still bypasses the hook deliberately.
 - An LLM agent needs no hook: when a `github_task` is declared, `camas_list` reports it as `github_default`, so the agent runs `camas_run` with that name before pushing. The field is `null` when no `github_task` is set; camas never infers it from your CI workflow files.
 
+- ✍️ `Config`: what it's for and how it's used
+
 <!-- GENERATED: fields camas.v0.config.Config -->
+
+- ✍️ `Claude`: what it's for and how it's used
 
 <!-- GENERATED: fields camas.v0.config.Claude -->
 
@@ -542,29 +550,51 @@ _ = Config(
 
 <!-- GENERATED: alias camas.v0.task_event.TaskEvent -->
 
+- ✍️ `StartedEvent`: what it's for and how it's used
+
 <!-- GENERATED: fields camas.v0.task_event.StartedEvent -->
 
+- ✍️ `OutputEvent`: what it's for and how it's used
+
 <!-- GENERATED: fields camas.v0.task_event.OutputEvent -->
+
+- ✍️ `CompletedEvent`: what it's for and how it's used
 
 <!-- GENERATED: fields camas.v0.task_event.CompletedEvent -->
 
 <!-- GENERATED: alias camas.v0.leaf_state.LeafState -->
 
+- ✍️ `Waiting`: what it's for and how it's used
+
 <!-- GENERATED: fields camas.v0.leaf_state.Waiting -->
+
+- ✍️ `Running`: what it's for and how it's used
 
 <!-- GENERATED: fields camas.v0.leaf_state.Running -->
 
+- ✍️ `Interrupting`: what it's for and how it's used
+
 <!-- GENERATED: fields camas.v0.leaf_state.Interrupting -->
+
+- ✍️ `Completed`: what it's for and how it's used
 
 <!-- GENERATED: fields camas.v0.leaf_state.Completed -->
 
 <!-- GENERATED: alias camas.v0.completion.Completion -->
 
+- ✍️ `Finished`: what it's for and how it's used
+
 <!-- GENERATED: fields camas.v0.completion.Finished -->
+
+- ✍️ `Skipped`: what it's for and how it's used
 
 <!-- GENERATED: fields camas.v0.completion.Skipped -->
 
+- ✍️ `Stopped`: what it's for and how it's used
+
 <!-- GENERATED: fields camas.v0.completion.Stopped -->
+
+- ✍️ `Errored`: what it's for and how it's used
 
 <!-- GENERATED: fields camas.v0.completion.Errored -->
 
@@ -578,15 +608,25 @@ _ = Config(
 - `Timings`: each leaf's observed duration, recorded for later runs
 - ⚠️ These one-line summaries are the classes' docstrings, which `camas --effects` prints. A directive could generate them; the tables below cover only the constructors. `Status`'s format-string defaults render as long f-strings.
 
+- ✍️ `Termtree`: what it's for and how it's used
+
 <!-- GENERATED: fields camas.effect.termtree.Termtree -->
 
+- ✍️ `Status`: what it's for and how it's used
+
 <!-- GENERATED: fields camas.effect.status.Status -->
+
+- ✍️ `Summary`: what it's for and how it's used
 
 <!-- GENERATED: fields camas.effect.summary.Summary -->
 
 <!-- GENERATED: alias camas.effect.summary.TermWidth -->
 
+- ✍️ `Fixed`: what it's for and how it's used
+
 <!-- GENERATED: fields camas.effect.summary.Fixed -->
+
+- ✍️ `Timings`: what it's for and how it's used
 
 <!-- GENERATED: fields camas.effect.timings.Timings -->
 
@@ -654,7 +694,11 @@ pipx run tasks.py test
 
 ### `Task`
 
+- ✍️ `Task`: what it's for and how it's used
+
 <!-- GENERATED: fields camas.v0.task.Task -->
+
+- ✍️ `AgentFormat`: what it's for and how it's used
 
 <!-- GENERATED: fields camas.v0.task.AgentFormat -->
 
@@ -662,9 +706,13 @@ pipx run tasks.py test
 
 ### `Sequential` and `Parallel`
 
+- ✍️ `Sequential`: what it's for and how it's used
+
 <!-- GENERATED: fields camas.v0.task.Sequential -->
 
 ### `Pipe`
+
+- ✍️ `Pipe`: what it's for and how it's used
 
 <!-- GENERATED: fields camas.v0.task.Pipe -->
 
