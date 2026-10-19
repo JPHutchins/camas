@@ -47,6 +47,7 @@ class Fixed(NamedTuple):
 
 
 TermWidth: TypeAlias = Auto | Fixed
+"""The terminal width `Summary` renders to."""
 
 
 @dataclass

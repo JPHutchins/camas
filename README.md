@@ -392,12 +392,12 @@ Project configuration for a `tasks.py`.
 
 | `Config` | Type | Default | |
 |---|---|---|---|
-| `default_task` | `TaskNode \| None` | `None` |  |
+| `default_task` | `TaskNode \| None` | `None` | The task a bare `camas` runs, unless `github_task` applies. |
 | `github_task` | `TaskNode \| None` | `None` | The bare task under GitHub Actions; `None` defers to `default_task`. |
 | `default_effects` | `tuple[Effect[Any], ...] \| None` | `None` | `None` keeps the engine's default; `()` runs none. |
 | `default_github_effects` | `tuple[Effect[Any], ...] \| None` | `None` | `None` keeps the engine's default; `()` runs none. |
 | `camas_dir` | `str` | `".camas"` | Subdirectory for run logs and timings. |
-| `agent` | `Agent \| None` | `None` |  |
+| `agent` | `Agent \| None` | `None` | The nodes the agent gate and MCP tools run. |
 | `leaf_color` | `bool` | `True` | Whether camas forces color on in leaf subprocesses. |
 
 - ✍️ `Claude`: what it's for and how it's used
@@ -413,6 +413,8 @@ The Claude Code agent integration.
 ```python
 Agent: TypeAlias = Claude
 ```
+
+The supported coding-agent integrations.
 
 ### Leaf color (`leaf_color`)
 
@@ -743,6 +745,8 @@ class Effect(Protocol[T]):
 TaskEvent: TypeAlias = StartedEvent | OutputEvent | CompletedEvent
 ```
 
+An event a run emits.
+
 - ✍️ `StartedEvent`: what it's for and how it's used
 
 A leaf started.
@@ -750,8 +754,8 @@ A leaf started.
 | `StartedEvent` | Type | Default | |
 |---|---|---|---|
 | `task` | `Task` | required |  |
-| `leaf_index` | `int` | required |  |
-| `timestamp` | `datetime` | required |  |
+| `leaf_index` | `int` | required | The leaf's index into the `states` that `on_event` receives. |
+| `timestamp` | `datetime` | required | When the event happened. |
 
 <details><summary><code>StartedEvent</code> examples</summary>
 
@@ -771,9 +775,9 @@ A leaf printed a line.
 | `OutputEvent` | Type | Default | |
 |---|---|---|---|
 | `task` | `Task` | required |  |
-| `leaf_index` | `int` | required |  |
+| `leaf_index` | `int` | required | The leaf's index into the `states` that `on_event` receives. |
 | `line` | `bytes` | required |  |
-| `timestamp` | `datetime` | required |  |
+| `timestamp` | `datetime` | required | When the event happened. |
 
 <details><summary><code>OutputEvent</code> examples</summary>
 
@@ -793,9 +797,9 @@ A leaf completed.
 | `CompletedEvent` | Type | Default | |
 |---|---|---|---|
 | `task` | `Task` | required |  |
-| `leaf_index` | `int` | required |  |
+| `leaf_index` | `int` | required | The leaf's index into the `states` that `on_event` receives. |
 | `completion` | `Completion` | required |  |
-| `timestamp` | `datetime` | required |  |
+| `timestamp` | `datetime` | required | When the event happened. |
 
 <details><summary><code>CompletedEvent</code> examples</summary>
 
@@ -814,6 +818,8 @@ CompletedEvent(task=Task(cmd='hi', name=None, env={}, cwd=None), leaf_index=0, c
 ```python
 LeafState: TypeAlias = Waiting | Running | Interrupting | Completed
 ```
+
+Where a leaf is in its run.
 
 - ✍️ `Waiting`: what it's for and how it's used
 
@@ -840,8 +846,8 @@ A running leaf.
 | `Running` | Type | Default | |
 |---|---|---|---|
 | `task` | `Task` | required |  |
-| `start_time` | `datetime` | required |  |
-| `last_line` | `bytes` | required |  |
+| `start_time` | `datetime` | required | When the leaf started. |
+| `last_line` | `bytes` | required | The leaf's latest output line; empty before its first. |
 
 <details><summary><code>Running</code> examples</summary>
 
@@ -861,8 +867,8 @@ A signalled leaf that has not exited yet.
 | `Interrupting` | Type | Default | |
 |---|---|---|---|
 | `task` | `Task` | required |  |
-| `start_time` | `datetime` | required |  |
-| `last_line` | `bytes` | required |  |
+| `start_time` | `datetime` | required | When the leaf started. |
+| `last_line` | `bytes` | required | The leaf's latest output line; empty before its first. |
 | `presses` | `int` | required | Ctrl-C presses this leaf has absorbed. |
 
 <details><summary><code>Interrupting</code> examples</summary>
@@ -902,6 +908,8 @@ Completed(task=Task(cmd='echo hi', name=None, env={}, cwd=None), completion=Skip
 Completion: TypeAlias = Finished | Skipped | Stopped | Errored
 ```
 
+How a leaf's run ended.
+
 - ✍️ `Finished`: what it's for and how it's used
 
 A leaf that ran to exit.
@@ -909,8 +917,8 @@ A leaf that ran to exit.
 | `Finished` | Type | Default | |
 |---|---|---|---|
 | `returncode` | `int` | required |  |
-| `elapsed` | `float` | required |  |
-| `output` | `Sequence[bytes]` | required |  |
+| `elapsed` | `float` | required | Seconds the leaf ran. |
+| `output` | `Sequence[bytes]` | required | The lines the leaf printed, in order. |
 
 <details><summary><code>Finished</code> examples</summary>
 
@@ -948,8 +956,8 @@ A leaf of a run or pipe the runner stopped.
 | `Stopped` | Type | Default | |
 |---|---|---|---|
 | `returncode` | `int` | required |  |
-| `elapsed` | `float` | required |  |
-| `output` | `Sequence[bytes]` | required |  |
+| `elapsed` | `float` | required | Seconds the leaf ran. |
+| `output` | `Sequence[bytes]` | required | The lines the leaf printed, in order. |
 
 <details><summary><code>Stopped</code> examples</summary>
 
@@ -967,7 +975,7 @@ A leaf whose command could not start.
 | `Errored` | Type | Default | |
 |---|---|---|---|
 | `returncode` | `int` | required |  |
-| `message` | `str` | required |  |
+| `message` | `str` | required | Why the command could not start. |
 
 <details><summary><code>Errored</code> examples</summary>
 
@@ -1025,6 +1033,8 @@ The final task tree, rendered once after the run.
 ```python
 TermWidth: TypeAlias = Auto | Fixed
 ```
+
+The terminal width `Summary` renders to.
 
 - ✍️ `Fixed`: what it's for and how it's used
 
@@ -1164,14 +1174,14 @@ A leaf that runs one command.
 | `Task` | Type | Default | |
 |---|---|---|---|
 | `cmd` | `str \| tuple[str, ...]` | required | Argv tokens, or a string split by POSIX shell rules on every OS. |
-| `name` | `str \| None` | `None` |  |
-| `env` | `Mapping[str, str]` | `MappingProxyType({})` |  |
-| `cwd` | `str \| Path \| None` → `Path \| None` | `None` |  |
+| `name` | `str \| None` | `None` | Renames a module-level binding, or names a nested node. |
+| `env` | `Mapping[str, str]` | `MappingProxyType({})` | Variables set on top of the inherited environment. |
+| `cwd` | `str \| Path \| None` → `Path \| None` | `None` | The directory the command runs in. |
 | `help` | `str \| None` | `None` | A description of the task. |
 | `mutates` | `bool` | `False` | The leaf writes the workspace. |
 | `paths` | `str \| PathScope \| None` | `None` | The scope a `{paths}` command narrows to on a scoped run. |
 | `when` | `str \| Path \| tuple[str \| Path, ...] \| WhenPredicate \| None` → `str \| tuple[str, ...] \| WhenPredicate \| None` | `None` | Which changes keep the leaf in a scoped run. |
-| `agent_format` | `AgentFormat \| tuple[str, OutputKind] \| None` → `AgentFormat \| None` | `None` |  |
+| `agent_format` | `AgentFormat \| tuple[str, OutputKind] \| None` → `AgentFormat \| None` | `None` | The structured-output variant of the command that gate runs use. |
 
 <details><summary><code>Task</code> examples</summary>
 
@@ -1215,7 +1225,7 @@ A leaf's agent-only structured-output variant.
 | `AgentFormat` | Type | Default | |
 |---|---|---|---|
 | `args` | `str` | required | Appended to the command on gate runs; a literal `{report}` names the file the gate reads. |
-| `kind` | `OutputKind` | required |  |
+| `kind` | `OutputKind` | required | The format of the diagnostics `args` produces. |
 | `limit` | `int` | `8_000` | Characters of a structured payload or report file the gate inlines. |
 
 <details><summary><code>AgentFormat</code> examples</summary>
@@ -1243,13 +1253,13 @@ A group of tasks that run one after another, short-circuiting on failure.
 
 | `Sequential` | Type | Default | |
 |---|---|---|---|
-| `*tasks` | `TaskNode \| str` → `tuple[TaskNode, ...]` |  |  |
-| `name` | `str \| None` | `None` |  |
+| `*tasks` | `TaskNode \| str` → `tuple[TaskNode, ...]` |  | The child nodes; a `str` becomes a `Task`. |
+| `name` | `str \| None` | `None` | Renames a module-level binding, or names a nested node. |
 | `matrix` | `dict[str, tuple[str, ...]] \| None` | `None` | Axis values the group expands over, as a cross product. |
 | `variants` | `tuple[dict[str, str], ...] \| None` | `None` | Coupled bundles of axis values, not crossed with each other. |
-| `env` | `dict[str, str] \| None` → `dict[str, str]` | `None` |  |
-| `cwd` | `str \| Path \| None` → `Path \| None` | `None` |  |
-| `help` | `str \| None` | `None` |  |
+| `env` | `dict[str, str] \| None` → `dict[str, str]` | `None` | Variables the group's leaves inherit. |
+| `cwd` | `str \| Path \| None` → `Path \| None` | `None` | A default working directory for the group's leaves. |
+| `help` | `str \| None` | `None` | A description of the task. |
 | `paths` | `str \| PathScope \| None` | `None` | A default `{paths}` scope for the group's leaves. |
 | `when` | `str \| Path \| tuple[str \| Path, ...] \| WhenPredicate \| None` → `str \| tuple[str, ...] \| WhenPredicate \| None` | `None` | A default `when` for the group's leaves. |
 
@@ -1270,14 +1280,14 @@ Leaf stages piped stdout to stdin, each its own argv, with no shell.
 
 | `Pipe` | Type | Default | |
 |---|---|---|---|
-| `*tasks` | `TaskNode \| str` → `tuple[TaskNode, ...]` |  |  |
+| `*tasks` | `TaskNode \| str` → `tuple[TaskNode, ...]` |  | The child nodes; a `str` becomes a `Task`. |
 | `agent_only` | `bool` | `False` | Pipe on agent runs only; a human run keeps the first stage alone. |
-| `name` | `str \| None` | `None` |  |
+| `name` | `str \| None` | `None` | Renames a module-level binding, or names a nested node. |
 | `matrix` | `dict[str, tuple[str, ...]] \| None` | `None` | Axis values the group expands over, as a cross product. |
 | `variants` | `tuple[dict[str, str], ...] \| None` | `None` | Coupled bundles of axis values, not crossed with each other. |
-| `env` | `dict[str, str] \| None` → `dict[str, str]` | `None` |  |
-| `cwd` | `str \| Path \| None` → `Path \| None` | `None` |  |
-| `help` | `str \| None` | `None` |  |
+| `env` | `dict[str, str] \| None` → `dict[str, str]` | `None` | Variables the group's leaves inherit. |
+| `cwd` | `str \| Path \| None` → `Path \| None` | `None` | A default working directory for the group's leaves. |
+| `help` | `str \| None` | `None` | A description of the task. |
 | `paths` | `str \| PathScope \| None` | `None` | A default `{paths}` scope for the group's leaves. |
 | `when` | `str \| Path \| tuple[str \| Path, ...] \| WhenPredicate \| None` → `str \| tuple[str, ...] \| WhenPredicate \| None` | `None` | A default `when` for the group's leaves. |
 
@@ -1307,6 +1317,8 @@ ValueError: Pipe stages must be Tasks — a nested group would mean several comm
 ```python
 TaskNode: TypeAlias = Task | Sequential | Parallel | Pipe
 ```
+
+Any node of a task tree.
 
 ```python
 Nodes: TypeAlias = TaskNode | str | Sequence[TaskNode]

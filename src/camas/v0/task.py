@@ -211,6 +211,7 @@ class AgentFormat(NamedTuple):
 	args: str
 	"""Appended to the command on gate runs; a literal `{report}` names the file the gate reads."""
 	kind: OutputKind
+	"""The format of the diagnostics `args` produces."""
 	limit: int = 8_000
 	"""Characters of a structured payload or report file the gate inlines."""
 
@@ -255,8 +256,11 @@ class Task:
 	cmd: str | tuple[str, ...]
 	"""Argv tokens, or a string split by POSIX shell rules on every OS."""
 	name: str | None
+	"""Renames a module-level binding, or names a nested node."""
 	env: Mapping[str, str]
+	"""Variables set on top of the inherited environment."""
 	cwd: Path | None
+	"""The directory the command runs in."""
 	help: str | None
 	"""A description of the task."""
 	mutates: bool
@@ -266,6 +270,7 @@ class Task:
 	when: str | tuple[str, ...] | WhenPredicate | None
 	"""Which changes keep the leaf in a scoped run."""
 	agent_format: AgentFormat | None
+	"""The structured-output variant of the command that gate runs use."""
 
 	def __init__(
 		self,
@@ -371,14 +376,19 @@ class Group:
 	"""
 
 	tasks: tuple[TaskNode, ...]
+	"""The child nodes; a `str` becomes a `Task`."""
 	name: str | None
+	"""Renames a module-level binding, or names a nested node."""
 	matrix: dict[str, tuple[str, ...]] | None
 	"""Axis values the group expands over, as a cross product."""
 	variants: tuple[dict[str, str], ...] | None
 	"""Coupled bundles of axis values, not crossed with each other."""
 	env: dict[str, str]
+	"""Variables the group's leaves inherit."""
 	cwd: Path | None
+	"""A default working directory for the group's leaves."""
 	help: str | None
+	"""A description of the task."""
 	paths: str | PathScope | None
 	"""A default `{paths}` scope for the group's leaves."""
 	when: str | tuple[str, ...] | WhenPredicate | None
@@ -661,6 +671,7 @@ class Pipe(Group):
 
 
 TaskNode: TypeAlias = Task | Sequential | Parallel | Pipe
+"""Any node of a task tree."""
 
 
 UNRESOLVED_REF_MESSAGE: Final = "an unresolved Ref: task references must be resolved before a run"

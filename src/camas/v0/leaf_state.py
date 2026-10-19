@@ -36,7 +36,9 @@ class Running(NamedTuple):
 
 	task: Task
 	start_time: datetime
+	"""When the leaf started."""
 	last_line: bytes
+	"""The leaf's latest output line; empty before its first."""
 
 
 class Interrupting(NamedTuple):
@@ -50,7 +52,9 @@ class Interrupting(NamedTuple):
 
 	task: Task
 	start_time: datetime
+	"""When the leaf started."""
 	last_line: bytes
+	"""The leaf's latest output line; empty before its first."""
 	presses: int
 	"""Ctrl-C presses this leaf has absorbed."""
 
@@ -71,3 +75,4 @@ class Completed(NamedTuple):
 
 
 LeafState: TypeAlias = Waiting | Running | Interrupting | Completed
+"""Where a leaf is in its run."""

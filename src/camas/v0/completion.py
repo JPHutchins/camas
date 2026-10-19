@@ -25,7 +25,9 @@ class Finished(NamedTuple):
 
 	returncode: int
 	elapsed: float
+	"""Seconds the leaf ran."""
 	output: Sequence[bytes]
+	"""The lines the leaf printed, in order."""
 
 
 class Skipped(NamedTuple):
@@ -52,7 +54,9 @@ class Stopped(NamedTuple):
 
 	returncode: int
 	elapsed: float
+	"""Seconds the leaf ran."""
 	output: Sequence[bytes]
+	"""The lines the leaf printed, in order."""
 
 
 class Errored(NamedTuple):
@@ -64,6 +68,8 @@ class Errored(NamedTuple):
 
 	returncode: int
 	message: str
+	"""Why the command could not start."""
 
 
 Completion: TypeAlias = Finished | Skipped | Stopped | Errored
+"""How a leaf's run ended."""

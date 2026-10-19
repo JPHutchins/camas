@@ -30,12 +30,14 @@ class Claude(NamedTuple):
 
 
 Agent: TypeAlias = Claude
+"""The supported coding-agent integrations."""
 
 
 class Config(NamedTuple):
 	"""Project configuration for a `tasks.py`."""
 
 	default_task: TaskNode | None = None
+	"""The task a bare `camas` runs, unless `github_task` applies."""
 	github_task: TaskNode | None = None
 	"""The bare task under GitHub Actions; `None` defers to `default_task`."""
 	default_effects: tuple[Effect[Any], ...] | None = None
@@ -45,6 +47,7 @@ class Config(NamedTuple):
 	camas_dir: str = DEFAULT_CAMAS_DIR
 	"""Subdirectory for run logs and timings."""
 	agent: Agent | None = None
+	"""The nodes the agent gate and MCP tools run."""
 	leaf_color: bool = True
 	"""Whether camas forces color on in leaf subprocesses."""
 

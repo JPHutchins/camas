@@ -25,7 +25,9 @@ class StartedEvent(NamedTuple):
 
 	task: Task
 	leaf_index: int
+	"""The leaf's index into the `states` that `on_event` receives."""
 	timestamp: datetime
+	"""When the event happened."""
 
 
 class OutputEvent(NamedTuple):
@@ -39,8 +41,10 @@ class OutputEvent(NamedTuple):
 
 	task: Task
 	leaf_index: int
+	"""The leaf's index into the `states` that `on_event` receives."""
 	line: bytes
 	timestamp: datetime
+	"""When the event happened."""
 
 
 class CompletedEvent(NamedTuple):
@@ -57,8 +61,11 @@ class CompletedEvent(NamedTuple):
 
 	task: Task
 	leaf_index: int
+	"""The leaf's index into the `states` that `on_event` receives."""
 	completion: Completion
 	timestamp: datetime
+	"""When the event happened."""
 
 
 TaskEvent: TypeAlias = StartedEvent | OutputEvent | CompletedEvent
+"""An event a run emits."""
