@@ -62,7 +62,11 @@ def fields_section(dotted: str) -> tuple[str, ...] | Unresolved:
 
 
 def table(name: str, fields: tuple[Field, ...]) -> tuple[str, ...]:
-	return (f"| `{name}` | Type | Default | |", "|---|---|---|---|", *(row(field) for field in fields))
+	return (
+		f"| `{name}` | Type | Default | |",
+		"|---|---|---|---|",
+		*(row(field) for field in fields),
+	)
 
 
 def row(field: Field) -> str:
