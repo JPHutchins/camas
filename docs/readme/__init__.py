@@ -1,15 +1,17 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""Render README.md from docs/README.in.md; `--check` reports a stale README.md."""
+"""Render README.md from docs/README.in.md; `--check` reports a stale README.md, `--watch` re-renders on edits."""
 
 from __future__ import annotations
 
 import difflib
 import sys
+import time
 from pathlib import Path
 from typing import Final, NamedTuple
 
+from .source import SOURCE
 from .template import render
 
 if sys.version_info >= (3, 11):
@@ -21,6 +23,7 @@ TEMPLATE: Final = Path("docs/README.in.md")
 README: Final = Path("README.md")
 COMMAND: Final = "python -m docs.readme"
 BANNER: Final = f"<!-- Generated from {TEMPLATE.as_posix()} by `{COMMAND}`; edit that file. -->"
+WATCH_INTERVAL: Final = 0.5
 
 
 class Write(NamedTuple):
@@ -37,9 +40,33 @@ def main(argv: list[str]) -> int:
 			return run(Write())
 		case ["--check"]:
 			return run(Check())
+		case ["--watch"]:
+			return watch()
 		case _:
-			print(f"usage: {COMMAND} [--check]", file=sys.stderr)
+			print(f"usage: {COMMAND} [--check | --watch]", file=sys.stderr)
 			return 2
+
+
+def watch() -> int:
+	print(f"watching {TEMPLATE.as_posix()} and {SOURCE.as_posix()}/; Ctrl-C stops", file=sys.stderr)
+	seen: frozenset[tuple[Path, int]] = frozenset()
+	try:
+		while True:
+			current = inputs()
+			if current != seen:
+				run(Write())
+				seen = current
+			time.sleep(WATCH_INTERVAL)
+	except KeyboardInterrupt:
+		return 0
+
+
+def inputs() -> frozenset[tuple[Path, int]]:
+	return frozenset(
+		(path, path.stat().st_mtime_ns)
+		for path in (TEMPLATE, *SOURCE.rglob("*.py"))
+		if path.is_file()
+	)
 
 
 def run(mode: Write | Check) -> int:
@@ -57,7 +84,7 @@ def run(mode: Write | Check) -> int:
 		case Write():
 			if expected != committed:
 				README.write_text(expected, encoding="utf-8", newline="\n")
-				print(f"{README}: regenerated from {TEMPLATE.as_posix()}")
+				print(f"{README}: regenerated from {TEMPLATE.as_posix()}", flush=True)
 			return 0
 		case Check():
 			if expected == committed:

@@ -191,7 +191,7 @@ def test_every_bad_directive_is_reported(
 @pytest.mark.usefixtures("project")
 def test_an_unknown_argument_is_a_usage_error(capsys: pytest.CaptureFixture[str]) -> None:
 	assert main(["--bogus"]) == 2
-	assert capsys.readouterr().err == "usage: python -m docs.readme [--check]\n"
+	assert capsys.readouterr().err == "usage: python -m docs.readme [--check | --watch]\n"
 
 
 def test_the_module_runs_as_a_script(
