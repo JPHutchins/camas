@@ -220,7 +220,7 @@ class DocsResponse(BaseModel):
 	source: str
 	"""Absolute path to the installed camas package — the API source of truth."""
 	tutorial: str
-	"""The package `__init__.py` docstring: a worked, doctested authoring tutorial."""
+	"""The camas README: the authoring guide, worked examples, and the API reference."""
 
 
 class InitResponse(BaseModel):
