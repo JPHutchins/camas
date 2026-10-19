@@ -16,6 +16,12 @@
 
 ![demo](https://raw.githubusercontent.com/JPHutchins/camas/gh-storage/demos/demo-latest.gif)
 
+<details><summary>Contents</summary>
+
+<!-- GENERATED: toc -->
+
+</details>
+
 ### Example
 
 - The example runs two formatters in parallel, then five lints and tests in parallel.

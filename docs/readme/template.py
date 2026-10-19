@@ -8,7 +8,7 @@ import shlex
 from typing import Final, NamedTuple
 
 from .alias import alias_section
-from .anchors import broken_links
+from .anchors import broken_links, contents
 from .callables import function_section, protocol_section
 from .cli import cli_section
 from .exports import exports_section
@@ -19,6 +19,7 @@ from .source import Unresolved
 
 DIRECTIVE: Final = re.compile(r"<!-- GENERATED: (?P<directive>\S.*\S) -->")
 DIRECTIVE_LIKE: Final = re.compile(r"<!--\s*GENERATED", re.IGNORECASE)
+TOC: Final = "\x00toc"
 MALFORMED: Final = (
 	"malformed directive; expected `<!-- GENERATED: <kind> <target> -->` alone on its line"
 )
@@ -35,8 +36,13 @@ def render(template: str) -> str | tuple[TemplateError, ...]:
 	errors = tuple(piece for piece in expanded if isinstance(piece, TemplateError))
 	if errors:
 		return errors
-	rendered = tuple(
+	drafted = tuple(
 		line for piece in expanded if not isinstance(piece, TemplateError) for line in piece
+	)
+	rendered = tuple(
+		line
+		for drafted_line in drafted
+		for line in (contents(drafted) if drafted_line == TOC else (drafted_line,))
 	)
 	broken = tuple(
 		TemplateError(number, f"no heading for the link `#{anchor}`")
@@ -77,6 +83,8 @@ def generate(directive: str) -> tuple[str, ...] | Unresolved:
 			return cli_section(directory, tuple(args))
 		case ("mcp-tools",):
 			return mcp_tools_section()
+		case ("toc",):
+			return (TOC,)
 		case _:
 			return Unresolved(f"unknown directive {directive!r}")
 
