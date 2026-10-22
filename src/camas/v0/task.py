@@ -286,7 +286,7 @@ class Task:
 		put(self, "cwd", Path(cwd) if isinstance(cwd, str) else cwd)
 		put(self, "help", help)
 		put(self, "mutates", mutates)
-		put(self, "paths", paths)
+		put(self, "paths", _prefix(paths) if isinstance(paths, Path) else paths)
 		put(self, "when", _coerce_when(when))
 		put(
 			self,
@@ -405,7 +405,7 @@ class Group:
 		put(self, "env", env if env is not None else {})
 		put(self, "cwd", Path(cwd) if isinstance(cwd, str) else cwd)
 		put(self, "help", help)
-		put(self, "paths", paths)
+		put(self, "paths", _prefix(paths) if isinstance(paths, Path) else paths)
 		put(self, "when", _coerce_when(when))
 
 	def __hash__(self) -> int:
