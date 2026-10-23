@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from pathlib import PurePath, PureWindowsPath
 from typing import TYPE_CHECKING
 
 import pytest
@@ -18,6 +19,22 @@ if TYPE_CHECKING:
 def _cmd(node: object) -> str | tuple[str, ...]:
 	assert isinstance(node, Task)
 	return node.cmd
+
+
+@pytest.mark.parametrize(
+	"path",
+	[PurePath("src", "sub"), PureWindowsPath("src", "sub")],
+)
+def test_pure_path_scoped_run(path: PurePath) -> None:
+	task = Task("ruff check {paths}", paths=path)
+	scoped = scope_to_changed(task, ("src/sub/a.py", "other.py"))
+	assert _cmd(scoped) == "ruff check src/sub/a.py"
+	assert scope_to_changed(task, ("other.py",)) is None
+
+	group = expand_matrix(Parallel(Task("ruff check {paths}"), paths=path))
+	group_scoped = scope_to_changed(group, ("src/sub/a.py",))
+	assert isinstance(group_scoped, Parallel)
+	assert _cmd(group_scoped.tasks[0]) == "ruff check src/sub/a.py"
 
 
 def test_prefix_string_full_run_uses_prefix() -> None:

@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from collections import deque
-from pathlib import Path
+from pathlib import Path, PurePath, PureWindowsPath
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Final, cast
 
@@ -23,14 +23,26 @@ if TYPE_CHECKING:
 	from camas.v0.task import Nodes, TaskNode
 
 
-def test_task_accepts_path() -> None:
-	task = Task("echo {paths}", paths=Path("src"))
-	assert task.paths == "src"
+@pytest.mark.parametrize(
+	"path",
+	[Path("src", "sub"), PurePath("src", "sub"), PureWindowsPath("src", "sub")],
+)
+def test_task_accepts_path(path: PurePath) -> None:
+	task = Task("echo {paths}", paths=path)
+	assert task.paths == "src/sub"
 
 
-def test_parallel_accepts_path() -> None:
-	group = Parallel(Task("echo {paths}"), paths=Path("src"))
-	assert group.paths == "src"
+@pytest.mark.parametrize(
+	"path",
+	[Path("src", "sub"), PurePath("src", "sub"), PureWindowsPath("src", "sub")],
+)
+def test_group_accepts_path(path: PurePath) -> None:
+	for group in (
+		Parallel(Task("echo {paths}"), paths=path),
+		Sequential(Task("echo {paths}"), paths=path),
+		Pipe(Task("echo {paths}"), paths=path),
+	):
+		assert group.paths == "src/sub"
 
 
 a = Task("a")
