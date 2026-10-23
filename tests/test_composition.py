@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from collections import deque
+from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Final, cast
 
@@ -19,9 +20,18 @@ from camas.v0.ref import Ref
 from camas.v0.task import GROUP_FIELDS, Group, fieldless
 
 if TYPE_CHECKING:
-	from pathlib import Path
-
 	from camas.v0.task import Nodes, TaskNode
+
+
+def test_task_accepts_path() -> None:
+	task = Task("echo {paths}", paths=Path("src"))
+	assert task.paths == "src"
+
+
+def test_parallel_accepts_path() -> None:
+	group = Parallel(Task("echo {paths}"), paths=Path("src"))
+	assert group.paths == "src"
+
 
 a = Task("a")
 b = Task("b")

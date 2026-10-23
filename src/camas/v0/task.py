@@ -275,7 +275,7 @@ class Task:
 		cwd: str | Path | None = None,
 		help: str | None = None,
 		mutates: bool = False,
-		paths: str | PathScope | None = None,
+		paths: str | Path | PathScope | None = None,
 		when: str | Path | tuple[str | Path, ...] | WhenPredicate | None = None,
 		agent_format: AgentFormat | tuple[str, OutputKind] | None = None,
 	) -> None:
@@ -393,7 +393,7 @@ class Group:
 		env: dict[str, str] | None = None,
 		cwd: str | Path | None = None,
 		help: str | None = None,
-		paths: str | PathScope | None = None,
+		paths: str | Path | PathScope | None = None,
 		when: str | Path | tuple[str | Path, ...] | WhenPredicate | None = None,
 	) -> None:
 		_check_variants(variants, matrix)
@@ -597,7 +597,7 @@ class Pipe(Group):
 		env: dict[str, str] | None = None,
 		cwd: str | Path | None = None,
 		help: str | None = None,
-		paths: str | PathScope | None = None,
+		paths: str | Path | PathScope | None = None,
 		when: str | Path | tuple[str | Path, ...] | WhenPredicate | None = None,
 	) -> None:
 		"""
