@@ -9,7 +9,7 @@ import re
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
-from pathlib import Path
+from pathlib import Path, PurePath
 from types import MappingProxyType
 from typing import (
 	TYPE_CHECKING,
@@ -45,12 +45,19 @@ Nodes: TypeAlias = "TaskNode | str | Sequence[TaskNode]"
 """One node or a sequence of nodes; a lone ``str`` is a ``Task``."""
 
 
-def _prefix(value: str | Path) -> str:
+def _prefix(value: str | PurePath) -> str:
 	"""
 	>>> _prefix(Path("code-gen")), _prefix("src")
 	('code-gen', 'src')
 	"""
-	return value.as_posix() if isinstance(value, Path) else value
+	return value.as_posix() if isinstance(value, PurePath) else value
+
+
+def _coerce_paths(
+	paths: str | PurePath | PathScope | None,
+) -> str | PathScope | None:
+	"""Normalize path objects without changing callable path scopes."""
+	return _prefix(paths) if isinstance(paths, PurePath) else paths
 
 
 def _coerce_when(
@@ -236,6 +243,8 @@ class Task:
 	Task(cmd='ruff format .', name=None, env={}, cwd=None, mutates=True)
 	>>> Task("ruff format {paths}", mutates=True, paths=".")
 	Task(cmd='ruff format {paths}', name=None, env={}, cwd=None, mutates=True, paths='.')
+	>>> Task("ruff format {paths}", paths=PurePath("src", "sub")).paths
+	'src/sub'
 	>>> Task("cargo build", when=("src", "include"))
 	Task(cmd='cargo build', name=None, env={}, cwd=None, when=('src', 'include'))
 	>>> Task("cargo build", when=Path("src")).when
@@ -275,7 +284,7 @@ class Task:
 		cwd: str | Path | None = None,
 		help: str | None = None,
 		mutates: bool = False,
-		paths: str | PathScope | None = None,
+		paths: str | PurePath | PathScope | None = None,
 		when: str | Path | tuple[str | Path, ...] | WhenPredicate | None = None,
 		agent_format: AgentFormat | tuple[str, OutputKind] | None = None,
 	) -> None:
@@ -286,7 +295,7 @@ class Task:
 		put(self, "cwd", Path(cwd) if isinstance(cwd, str) else cwd)
 		put(self, "help", help)
 		put(self, "mutates", mutates)
-		put(self, "paths", paths)
+		put(self, "paths", _coerce_paths(paths))
 		put(self, "when", _coerce_when(when))
 		put(
 			self,
@@ -366,6 +375,8 @@ class Group:
 	True
 	>>> Parallel(Task("ruff {paths}"), paths=".").paths
 	'.'
+	>>> Parallel(Task("ruff {paths}"), paths=PurePath("src", "sub")).paths
+	'src/sub'
 	>>> Parallel(Task("cargo build -b {backend}"), variants=({"backend": "thumbv7"},)).variants
 	({'backend': 'thumbv7'},)
 	"""
@@ -393,7 +404,7 @@ class Group:
 		env: dict[str, str] | None = None,
 		cwd: str | Path | None = None,
 		help: str | None = None,
-		paths: str | PathScope | None = None,
+		paths: str | PurePath | PathScope | None = None,
 		when: str | Path | tuple[str | Path, ...] | WhenPredicate | None = None,
 	) -> None:
 		_check_variants(variants, matrix)
@@ -405,7 +416,7 @@ class Group:
 		put(self, "env", env if env is not None else {})
 		put(self, "cwd", Path(cwd) if isinstance(cwd, str) else cwd)
 		put(self, "help", help)
-		put(self, "paths", paths)
+		put(self, "paths", _coerce_paths(paths))
 		put(self, "when", _coerce_when(when))
 
 	def __hash__(self) -> int:
@@ -597,7 +608,7 @@ class Pipe(Group):
 		env: dict[str, str] | None = None,
 		cwd: str | Path | None = None,
 		help: str | None = None,
-		paths: str | PathScope | None = None,
+		paths: str | PurePath | PathScope | None = None,
 		when: str | Path | tuple[str | Path, ...] | WhenPredicate | None = None,
 	) -> None:
 		"""

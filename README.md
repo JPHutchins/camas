@@ -275,7 +275,7 @@ Durations are `1s`, `500ms`, `2m`, `1h`, or a bare number of seconds. Only leave
 
 ## Path scoping (`--paths`)
 
-`camas <task> --paths <path>…` scopes a run to changed paths instead of the whole tree. A command opts in by writing the `{paths}` placeholder and declaring its scope with `paths=` — a directory prefix, or a `(changed) -> paths` callable. A `Sequential`/`Parallel` may carry `paths=` too: it's the default scope for descendant `{paths}` commands that set none (the same way `env`/`cwd` propagate into a group's leaves):
+`camas <task> --paths <path>…` scopes a run to changed paths instead of the whole tree. A command opts in by writing the `{paths}` placeholder and declaring its scope with `paths=` — a directory prefix (string or `pathlib.PurePath`, including `Path`), or a `(changed) -> paths` callable. Path objects are converted to POSIX-style strings. A `Sequential`/`Parallel` may carry `paths=` too: it's the default scope for descendant `{paths}` commands that set none (the same way `env`/`cwd` propagate into a group's leaves):
 
 ```python
 py = Task("ruff format {paths}", mutates=True, paths="src")
