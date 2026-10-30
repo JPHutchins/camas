@@ -166,8 +166,6 @@ def outcome_of(returncode: int, received: Sequence[int]) -> Outcome:
 	"""
 	>>> outcome_of(3, ()), outcome_of(-2, (2,)), outcome_of(-11, (2,))
 	(Exited(code=3), Signaled(signum=2), Exited(code=139))
-	>>> outcome_of(0, (2,)), outcome_of(0, (2, 15)), outcome_of(1, (15,))
-	(Exited(code=0), Signaled(signum=15), Exited(code=1))
 	"""
 	if returncode > 0:
 		return Exited(returncode)

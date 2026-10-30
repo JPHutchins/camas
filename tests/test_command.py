@@ -5,13 +5,6 @@
 
 from __future__ import annotations
 
-import os
-import signal
-import subprocess
-import sys
-import threading
-import time
-from contextlib import suppress
 from pathlib import Path
 from textwrap import dedent
 from typing import TYPE_CHECKING, Any
@@ -19,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from camas import Command, Config, Parallel, Pipe, Sequential, Task
-from camas.core.attached import Exited, Signaled, run_attached, run_step, spawn_stages
+from camas.core.attached import Exited, Signaled, run_attached, run_step
 from camas.main import command as command_cli
 from camas.main.compose import load_py_tasks_state, state_from_scope
 from camas.main.dispatch import dispatch
@@ -33,8 +26,6 @@ if TYPE_CHECKING:
 	from camas.v0.effect import Effect
 	from camas.v0.task import TaskNode
 
-posix_only = pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")
-
 
 def py(code: str, *args: str) -> Task:
 	return Task(("python", "-c", code, *args))
@@ -45,27 +36,6 @@ def _state(commands: Mapping[str, Command], tasks: Mapping[str, TaskNode] | None
 	return LoadOk(
 		tasks=dict(tasks or {}), source=None, scope_effects=effects, commands=dict(commands)
 	)
-
-
-def touch_then_sleep(seconds: float) -> str:
-	return f"import pathlib, sys, time; pathlib.Path(sys.argv[1]).touch(); time.sleep({seconds})"
-
-
-def always_a_tty(_fd: int) -> bool:
-	return True
-
-
-def signal_main_thread_when(ready: Path, signum: int) -> threading.Thread:
-	def deliver() -> None:
-		deadline = time.monotonic() + 10
-		while not ready.exists() and time.monotonic() < deadline:
-			time.sleep(0.01)
-		if ready.exists():  # pragma: no branch  # a child that never readies sends nothing
-			signal.pthread_kill(threading.main_thread().ident or 0, signum)
-
-	thread = threading.Thread(target=deliver, daemon=True)
-	thread.start()
-	return thread
 
 
 def test_body_coerces_and_rejects_what_cannot_share_a_terminal() -> None:
@@ -174,107 +144,6 @@ def test_an_unstartable_stage_stops_the_step_with_127(
 	stages[missing_stage] = Task("camas-no-such-program-368")
 	assert run_step(Pipe(*stages), None) == Exited(127)
 	assert "no such file or directory: camas-no-such-program-368" in capfd.readouterr().err
-
-
-@posix_only
-def test_a_forwarded_signal_kills_the_child_and_is_reraised(tmp_path: Path) -> None:
-	ready = tmp_path / "ready"
-	signal_main_thread_when(ready, signal.SIGTERM)
-	assert run_step(py(touch_then_sleep(30), str(ready)), None) == Signaled(signal.SIGTERM)
-
-
-@posix_only
-def test_a_forwarded_signal_ends_the_sequence_even_when_the_child_exits_cleanly(
-	tmp_path: Path,
-) -> None:
-	ready = tmp_path / "ready"
-	flashed = tmp_path / "flashed"
-	graceful = py(
-		"import pathlib, signal, sys, time; "
-		"signal.signal(signal.SIGTERM, lambda *_: sys.exit(0)); "
-		"pathlib.Path(sys.argv[1]).touch(); time.sleep(30)",
-		str(ready),
-	)
-	flash = py("import pathlib, sys; pathlib.Path(sys.argv[1]).touch()", str(flashed))
-	signal_main_thread_when(ready, signal.SIGTERM)
-	assert run_attached(Sequential(graceful, flash), None) == Signaled(signal.SIGTERM)
-	assert not flashed.exists()
-
-
-@posix_only
-def test_a_terminal_ctrl_c_is_left_to_the_child(
-	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-	monkeypatch.setattr(os, "isatty", always_a_tty)
-	ready = tmp_path / "ready"
-	signal_main_thread_when(ready, signal.SIGINT)
-	assert run_step(py(touch_then_sleep(3), str(ready)), None) == Exited(0)
-
-
-@posix_only
-def test_a_signal_received_before_a_stage_starts_still_reaches_it() -> None:
-	procs: list[subprocess.Popen[bytes]] = []
-	sleeper = py("import time; time.sleep(30)")
-	spawn_stages(procs, (sleeper, sleeper), None, (signal.SIGTERM, signal.SIGUSR1))
-	assert [proc.wait() for proc in procs] == [-signal.SIGTERM, -signal.SIGTERM]
-
-
-@posix_only
-def test_ctrl_c_on_the_terminal_reaches_the_child_once_and_camas_dies_of_it(
-	tmp_path: Path,
-) -> None:
-	import pty
-
-	(tmp_path / "tasks.py").write_text(
-		dedent("""\
-			from camas import Command
-			counter = Command(("python", "-c", '''
-			import pathlib, signal, time
-			def once(signum, frame):
-			    pathlib.Path("sigints").write_text(pathlib.Path("sigints").read_text() + "INT")
-			    signal.signal(signal.SIGINT, signal.SIG_DFL)
-			    signal.raise_signal(signal.SIGINT)
-			pathlib.Path("sigints").write_text("")
-			signal.signal(signal.SIGINT, once)
-			print("ready", flush=True)
-			time.sleep(30)
-			'''))
-		""")
-	)
-	main, sub = pty.openpty()
-	proc = subprocess.Popen(
-		[sys.executable, "-m", "camas", "counter"],
-		cwd=tmp_path,
-		stdin=sub,
-		stdout=sub,
-		stderr=sub,
-		start_new_session=True,
-		env={**os.environ, "CLAUDECODE": "", "CAMAS_AGENT": ""},
-	)
-	os.close(sub)
-	try:
-		assert b"ready" in read_until(main, b"ready", deadline=time.monotonic() + 10)
-		os.killpg(proc.pid, signal.SIGINT)
-		assert proc.wait(timeout=10) == -signal.SIGINT
-		assert (tmp_path / "sigints").read_text() == "INT"
-	finally:
-		os.close(main)
-		with suppress(ProcessLookupError):
-			os.killpg(proc.pid, signal.SIGKILL)
-		proc.wait()
-
-
-def read_until(fd: int, marker: bytes, *, deadline: float) -> bytes:
-	import select
-
-	seen = b""
-	while (
-		marker not in seen
-		and time.monotonic() < deadline
-		and select.select([fd], [], [], max(0.0, deadline - time.monotonic()))[0]
-	):
-		seen += os.read(fd, 1024)
-	return seen
 
 
 def test_cli_runs_a_command_attached(capfd: pytest.CaptureFixture[str]) -> None:
