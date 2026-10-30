@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import sys
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Final, TypeGuard, cast
 
 if sys.version_info >= (3, 11):
@@ -14,6 +15,7 @@ else:  # pragma: no cover
 	import tomli as tomllib
 	from typing_extensions import assert_never
 
+from ..v0.command import Command, CommandBody
 from ..v0.config import Agent, Config
 from ..v0.effect import Effect
 from ..v0.task import Group, Parallel, Pipe, Sequential, Task, TaskNode, rebuilt, reject_refs
@@ -21,7 +23,7 @@ from .expression import Ref, parse_task_value, resolve_refs
 from .state import LoadOk
 
 if TYPE_CHECKING:
-	from collections.abc import Mapping
+	from collections.abc import Callable, Mapping
 	from pathlib import Path
 
 
@@ -177,12 +179,50 @@ def load_tasks(path: Path) -> LoadOk:
 	)
 
 
-def name_scope_bindings(scope: Mapping[str, object]) -> dict[str, TaskNode]:
-	bindings: Final = {
+def scope_task_bindings(scope: Mapping[str, object]) -> dict[str, TaskNode]:
+	return {
 		name: val
 		for name, val in scope.items()
 		if not name.startswith("_") and isinstance(val, Task | Sequential | Parallel | Pipe)
 	}
+
+
+def name_scope_bindings(scope: Mapping[str, object]) -> dict[str, TaskNode]:
+	bindings: Final = scope_task_bindings(scope)
+	promote: Final = bound_name_promoter(bindings)
+	return {name: promote(val) for name, val in bindings.items()}
+
+
+def name_scope_commands(scope: Mapping[str, object]) -> dict[str, Command]:
+	"""
+	>>> build = Task("cargo build")
+	>>> flash = Command(build + "probe-rs download")
+	>>> named = name_scope_commands({"build": build, "flash": flash})["flash"]
+	>>> named.name, named.body.name, named.body.tasks[0].name  # type: ignore[union-attr]
+	('flash', 'flash', 'build')
+	>>> relabeled = name_scope_commands({"flash": Command("probe-rs run", name="board")})["flash"]
+	>>> relabeled.name, relabeled.body.name
+	('board', 'board')
+	"""
+	promote: Final = bound_name_promoter(scope_task_bindings(scope))
+	return {
+		name: labeled_command(val, val.name if val.name is not None else name, promote)
+		for name, val in scope.items()
+		if not name.startswith("_") and isinstance(val, Command)
+	}
+
+
+def labeled_command(
+	command: Command, label: str, promote: Callable[[TaskNode], TaskNode]
+) -> Command:
+	return replace(
+		command,
+		name=label,
+		body=cast("CommandBody", assign_key_name(promote(command.body), label)),
+	)
+
+
+def bound_name_promoter(bindings: Mapping[str, TaskNode]) -> Callable[[TaskNode], TaskNode]:
 	named_by_id: Final = {id(val): assign_key_name(val, name) for name, val in bindings.items()}
 
 	def promote(node: TaskNode) -> TaskNode:
@@ -196,7 +236,7 @@ def name_scope_bindings(scope: Mapping[str, object]) -> dict[str, TaskNode]:
 			case _:
 				assert_never(source)
 
-	return {name: promote(val) for name, val in bindings.items()}
+	return promote
 
 
 def name_scope_effects(scope: Mapping[str, object]) -> dict[str, type[Effect[Any]]]:

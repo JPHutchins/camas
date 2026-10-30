@@ -255,6 +255,19 @@ def is_batch_program(name: str) -> bool:
 	return name.rstrip(". ").lower().endswith(BATCH_SUFFIXES)
 
 
+def inherited_env(overlay: Mapping[str, str]) -> dict[str, str]:
+	inherited: Final = (
+		drop_case_variants(dict(overlay), dict(os.environ))
+		if sys.platform == "win32"
+		else dict(os.environ)
+	)
+	return {**inherited, **overlay}
+
+
+def spawn_argv(argv: tuple[str, ...], env: Mapping[str, str]) -> tuple[str, ...]:
+	return resolve_program(argv, env) if sys.platform == "win32" else argv
+
+
 def resolve_program(argv: tuple[str, ...], env: Mapping[str, str]) -> tuple[str, ...]:
 	return refuse_cmd_reparse(_shim_on_path(argv, env) or argv)
 
@@ -405,14 +418,9 @@ async def _spawn_stage(
 	argv: Final = command_argv(task.cmd)
 	cwd: Final = spawn_cwd(base, task.cwd)
 	try:
-		inherited = (
-			drop_case_variants(dict(task.env), dict(os.environ))
-			if sys.platform == "win32"
-			else dict(os.environ)
-		)
-		env: Final = subprocess_env({**inherited, **task.env}, color=leaf_color)
+		env: Final = subprocess_env(inherited_env(task.env), color=leaf_color)
 		return await asyncio.create_subprocess_exec(
-			*(resolve_program(argv, env) if sys.platform == "win32" else argv),
+			*spawn_argv(argv, env),
 			stdin=stdin,
 			stdout=stdout,
 			stderr=stderr,
@@ -793,6 +801,7 @@ async def run(
 	base: Path | None = None,
 	leaf_color: bool = True,
 	identities: tuple[CacheKey, ...] | None = None,
+	stdin: int | None = None,
 ) -> RunResult:
 	"""
 	Raises:
@@ -851,7 +860,7 @@ async def run(
 		interrupts,
 		states,
 		base,
-		None if interactive else DEVNULL,
+		stdin if stdin is not None else (None if interactive else DEVNULL),
 		leaf_color,
 		identities,
 	)

@@ -4,8 +4,9 @@
 from __future__ import annotations
 
 import sys
+from dataclasses import replace
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 if sys.version_info >= (3, 11):
 	from typing import assert_never
@@ -15,6 +16,7 @@ else:  # pragma: no cover
 from ...v0.task import Group, Task, rebuilt
 
 if TYPE_CHECKING:
+	from ...v0.command import Command, CommandBody
 	from ...v0.task import PathScope, TaskNode, WhenPredicate
 
 
@@ -215,3 +217,20 @@ def rebase_tree(node: TaskNode, rel: PurePosixPath, namespace: str, *, is_root: 
 			)
 		case _:
 			assert_never(node)
+
+
+def rebase_command(command: Command, rel: PurePosixPath, namespace: str) -> Command:
+	"""
+	>>> from camas.v0.command import Command
+	>>> rebased = rebase_command(
+	...     Command(Task("cargo run", cwd="fw"), name="run"), PurePosixPath("apps/x"), "x"
+	... )
+	>>> rebased.name, rebased.cwd == Path("apps/x"), rebased.body.cwd == Path("apps/x/fw")
+	('x.run', True, True)
+	"""
+	return replace(
+		command,
+		name=qualify(command.name, namespace),
+		cwd=rebase_cwd(command.cwd, rel, is_root=True),
+		body=cast("CommandBody", rebase_tree(command.body, rel, namespace, is_root=False)),
+	)

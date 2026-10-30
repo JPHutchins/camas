@@ -29,6 +29,7 @@ from ..main.check import (
 	unresolved_dispatch_warnings,
 	unsatisfiable_declaration_warnings,
 )
+from ..main.command import placeholder_warnings
 from ..main.github_matrix import (
 	NO_TASKS,
 	Axes,
@@ -159,12 +160,13 @@ def to_check_response(state: TasksState) -> wire.CheckResponse:
 			return wire.CheckResponse(
 				status="load_error", source=str(source), diagnostics=trace + checker
 			)
-		case LoadOk(tasks=tasks, source=source, naming_warnings=naming_warnings):
+		case LoadOk(tasks=tasks, source=source, naming_warnings=naming_warnings, commands=commands):
 			warnings = (
 				scope_warning_messages(tasks.values())
-				+ unresolved_dispatch_warnings(tasks)
+				+ unresolved_dispatch_warnings(tasks, commands)
 				+ unsatisfiable_declaration_warnings(tasks)
 				+ naming_warnings
+				+ placeholder_warnings(commands)
 				+ pep723_run_cli_warning(source)
 			)
 			if source is None:

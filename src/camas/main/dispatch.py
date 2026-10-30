@@ -28,7 +28,7 @@ from ..core.matrix import (
 	override_matrix,
 	unfilled_required_axes,
 )
-from ..core.render import print_tree, render_tree_lines
+from ..core.render import color_on, print_tree, render_tree_lines
 from ..core.scope import coverage_message, requested_but_unusable, to_changed, with_default_paths
 from ..core.task import did_you_mean
 from ..v0.config import Config
@@ -38,6 +38,14 @@ from .argv import (
 	parse_axis_values,
 	parse_matrix_kv,
 	split_passthrough,
+)
+from .command import (
+	command_name,
+	format_command_listing,
+	placeholder_warnings,
+	print_command_help,
+	print_command_trees,
+	run_command_cli,
 )
 from .compose import load_py_tasks_state, state_from_scope
 from .effects import default_effect_names, keyed_to_run, resolve_effects, running_under_agent
@@ -63,18 +71,22 @@ if TYPE_CHECKING:
 	from collections.abc import Mapping, Sequence
 
 	from ..core.completion import RunResult
+	from ..v0.command import Command
 	from ..v0.effect import Effect
 	from ..v0.task import TaskNode
 
 
-def dispatch_arg(arg: str, tasks: Mapping[str, TaskNode]) -> TaskNode:
+def dispatch_arg(
+	arg: str, tasks: Mapping[str, TaskNode], commands: Mapping[str, Command] | None = None
+) -> TaskNode:
 	for candidate in (arg, arg.replace("-", "_")):
 		if candidate in tasks:
 			return tasks[candidate]
 	if NAME_LIKE.match(arg):
-		known = ", ".join(sorted(tasks)) or "none"
+		names = (*tasks, *(commands or {}))
+		known = ", ".join(sorted(names)) or "none"
 		print(
-			f"error: no task named {arg!r}{did_you_mean(arg, tasks)} (known: {known})",
+			f"error: no task named {arg!r}{did_you_mean(arg, names)} (known: {known})",
 			file=sys.stderr,
 		)
 		sys.exit(2)
@@ -252,17 +264,23 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 	split: Final = split_passthrough(sys.argv[1:] if argv is None else argv)
 	head: Final = normalize_github_matrix(split.head)
 	tasks: Mapping[str, TaskNode] = state.tasks if isinstance(state, LoadOk) else {}
-
-	if running_under_agent() and not os.environ.get("CAMAS_NO_MCP_HINT"):
-		print(mcp_cli_hint(), file=sys.stderr)
+	commands: Mapping[str, Command] = state.commands if isinstance(state, LoadOk) else {}
+	head_command: Final = command_name(split.head[0], commands) if split.head else None
 
 	if (
-		len(split.head) >= 2
-		and split.head[0] in tasks
-		and any(a in ("-h", "--help") for a in split.head[1:])
+		running_under_agent()
+		and not os.environ.get("CAMAS_NO_MCP_HINT")
+		and not any(command_name(token, commands) for token in split.head)
 	):
-		print_task_help(split.head[0], tasks[split.head[0]])
-		sys.exit(0)
+		print(mcp_cli_hint(), file=sys.stderr)
+
+	if len(split.head) >= 2 and any(a in ("-h", "--help") for a in split.head[1:]):
+		if split.head[0] in tasks:
+			print_task_help(split.head[0], tasks[split.head[0]])
+			sys.exit(0)
+		if head_command is not None:
+			print_command_help(head_command, commands[head_command])
+			sys.exit(0)
 
 	parser: Final = build_parser(state)
 
@@ -299,6 +317,7 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 			scope_effects=scope_effects,
 			config=config,
 			naming_warnings=naming_warnings,
+			commands=commands,
 		):
 			args, _leftover = parser.parse_known_args(head)
 			in_github: Final = os.environ.get("GITHUB_ACTIONS") == "true"
@@ -336,10 +355,13 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 					default_task_name=default_node.name if default_node is not None else None,
 					camas_dir=camas_dir,
 				)
+				if commands:
+					print(format_command_listing(commands, color=color_on()))
 				sys.exit(0)
 
 			if args.tree:
 				print_task_trees(tasks, source, camas_dir=camas_dir)
+				print_command_trees(commands)
 				sys.exit(0)
 
 			if args.check:
@@ -354,9 +376,10 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 					w
 					for w in (
 						format_scope_warnings(tasks),
-						*unresolved_dispatch_warnings(tasks),
+						*unresolved_dispatch_warnings(tasks, commands),
 						*unsatisfiable_declaration_warnings(tasks),
 						*naming_warnings,
+						*placeholder_warnings(commands),
 						*pep723_run_cli_warning(source),
 					)
 					if w
@@ -372,6 +395,21 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 				)
 				sys.exit(0)
 
+			named_command: Final = (
+				command_name(args.expression, commands)
+				if isinstance(args.expression, str)
+				else None
+			)
+			if named_command is not None:
+				run_command_cli(
+					commands[named_command],
+					args,
+					split.passthrough,
+					axes=augmented_axes,
+					base=source.parent if source is not None else None,
+					agent=in_agent,
+				)
+
 			resolved: TaskNode
 			if args.expression is None:
 				if default_node is None:
@@ -385,7 +423,7 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 					sys.exit(2)
 				resolved = default_node
 			else:
-				resolved = dispatch_arg(args.expression, tasks)
+				resolved = dispatch_arg(args.expression, tasks, commands)
 
 			overrides: dict[str, tuple[str, ...]] = {}
 			for raw in args.matrix:

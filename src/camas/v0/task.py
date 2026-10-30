@@ -409,7 +409,7 @@ class Group:
 	) -> None:
 		_check_variants(variants, matrix)
 		put = object.__setattr__
-		put(self, "tasks", tuple(Task(cmd=t) if isinstance(t, str) else t for t in tasks))
+		put(self, "tasks", tuple(map(_child, tasks)))
 		put(self, "name", name)
 		put(self, "matrix", matrix or None)
 		put(self, "variants", variants)
@@ -757,9 +757,17 @@ def _node(child: object) -> TaskNode:
 		return Task(cmd=child)
 	if isinstance(child, _NODE_KINDS):
 		return cast("TaskNode", child)
+	from .command import NEVER_COMPOSES, Command
+
+	if isinstance(child, Command):
+		raise TypeError(f"cannot compose {child!r}: {NEVER_COMPOSES}")
 	raise TypeError(
 		f"cannot compose {child!r} of type {type(child).__name__}: a child is a task node or str"
 	)
+
+
+def _child(child: object) -> TaskNode:
+	return cast("TaskNode", child) if isinstance(child, Ref) else _node(child)
 
 
 def _nodes(children: tuple[TaskNode, ...]) -> tuple[TaskNode, ...]:

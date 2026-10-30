@@ -21,6 +21,7 @@ from ..core.render import color_on
 from ..v0.config import Config
 from .check import describe_check_help
 from .color import maybe_color
+from .command import format_command_listing
 from .effects import (
 	default_effect_names,
 	format_effects_expr,
@@ -174,6 +175,11 @@ class CamasArgumentParser(argparse.ArgumentParser):
 				pass
 			case _:
 				assert_never(self.state)
+		commands_listing = format_command_listing(
+			self.state.commands if isinstance(self.state, LoadOk) else {}, color
+		)
+		if commands_listing:
+			sections.append(commands_listing)
 		effects: Mapping[str, type[Effect[Any]]] = (
 			self.state.scope_effects if isinstance(self.state, LoadOk) else {}
 		)

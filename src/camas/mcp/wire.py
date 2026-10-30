@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -163,12 +163,24 @@ class TaskInfo(BaseModel):
 	"""That leaf's mean observed duration."""
 
 
+class CommandInfo(BaseModel):
+	"""One Command, as ``camas_list`` reports it."""
+
+	name: str
+	help: str | None = None
+	command_preview: str
+
+
 class ListResponse(BaseModel):
 	"""The project's task catalog: every task plus the default, CI-default, and no-task-run
 	names.
 	"""
 
 	tasks: tuple[TaskInfo, ...]
+	commands: tuple[CommandInfo, ...] = Field(
+		default=(),
+		description="Side-effectful actions, run with camas_command, never camas_run.",
+	)
 	default: str | None = Field(
 		default=None,
 		description=(
@@ -349,6 +361,37 @@ def run_input_schema(task_names: tuple[str, ...]) -> dict[str, Any]:
 	False
 	"""
 	return _splice_task_enum(RunRequest.model_json_schema(), task_names)
+
+
+class CommandRequest(BaseModel):
+	"""Arguments to ``camas_command``."""
+
+	model_config = ConfigDict(extra="forbid")
+
+	name: str = Field(description="Command name — one of camas_list's commands.")
+	args: list[str] = Field(
+		default_factory=list,
+		description="Passthrough flags appended to a single-leaf command (camas's --).",
+	)
+	input: str | None = Field(
+		default=None,
+		description="Text written to stdin, which then closes; a single-leaf or Pipe command "
+		"only. Omitted: stdin is empty.",
+	)
+	verbosity: Literal["summary", "failures", "full"] = Field(
+		default="full",
+		description="summary: pass/fail only; failures: + output of failed leaves; full: all output.",
+	)
+
+
+def command_input_schema(command_names: tuple[str, ...]) -> dict[str, Any]:
+	"""
+	>>> command_input_schema(("flash",))["properties"]["name"]["enum"]
+	['flash']
+	"""
+	schema: Final = CommandRequest.model_json_schema()
+	schema["properties"]["name"]["enum"] = list(command_names)
+	return schema
 
 
 class GateRequest(BaseModel):

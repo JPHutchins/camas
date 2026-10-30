@@ -4,6 +4,7 @@
 
 import typing
 
+from .command import Command as Command
 from .config import Agent as Agent
 from .config import Claude as Claude
 from .config import Config as Config
