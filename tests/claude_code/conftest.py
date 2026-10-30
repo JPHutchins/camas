@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 
 _ENABLED = bool(os.environ.get("CAMAS_CC_E2E")) and shutil.which("claude") is not None
 
-os.environ.setdefault("UV_PYTHON", "3.12")
+os.environ.setdefault("UV_PYTHON", "3.14")
 os.environ.setdefault("UV_PYTHON_DOWNLOADS", "never")
 
 

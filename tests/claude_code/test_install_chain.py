@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _UV = shutil.which("uv") or "uv"
-_ENV = {**os.environ, "UV_PYTHON": "3.12", "UV_PYTHON_DOWNLOADS": "never"}
+_ENV = {**os.environ, "UV_PYTHON": "3.14", "UV_PYTHON_DOWNLOADS": "never"}
 _ENABLED = bool(os.environ.get("CAMAS_CC_E2E")) and shutil.which("claude") is not None
 
 _PYPROJECT = (
