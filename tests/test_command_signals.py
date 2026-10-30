@@ -17,6 +17,8 @@ if sys.platform != "win32":  # pragma: no branch
 	from textwrap import dedent
 	from typing import TYPE_CHECKING
 
+	import pytest
+
 	from camas import Sequential, Task
 	from camas.core.attached import (
 		Exited,
@@ -29,8 +31,6 @@ if sys.platform != "win32":  # pragma: no branch
 
 	if TYPE_CHECKING:
 		from pathlib import Path
-
-		import pytest
 
 	def py(code: str, *args: str) -> Task:
 		return Task(("python", "-c", code, *args))
@@ -106,7 +106,7 @@ if sys.platform != "win32":  # pragma: no branch
 				    signal.raise_signal(signal.SIGINT)
 				pathlib.Path("sigints").write_text("")
 				signal.signal(signal.SIGINT, once)
-				print("ready", flush=True)
+				print("camas-368-child-ready", flush=True)
 				time.sleep(30)
 				'''))
 			""")
@@ -122,16 +122,40 @@ if sys.platform != "win32":  # pragma: no branch
 			env={**os.environ, "CLAUDECODE": "", "CAMAS_AGENT": ""},
 		)
 		os.close(sub)
+		marker = b"camas-368-child-ready"
 		try:
-			assert b"ready" in read_until(main, b"ready", deadline=time.monotonic() + 10)
+			seen = read_until(main, marker, deadline=time.monotonic() + 10)
+			assert marker in seen
 			os.killpg(proc.pid, signal.SIGINT)
-			assert proc.wait(timeout=10) == -signal.SIGINT
+			try:
+				returncode = proc.wait(timeout=10)
+			except (
+				subprocess.TimeoutExpired
+			):  # pragma: no cover  # diagnoses a hang seen once in CI
+				pytest.fail(outlived_sigint(proc.pid, seen, main, tmp_path / "sigints"))
+			assert returncode == -signal.SIGINT
 			assert (tmp_path / "sigints").read_text() == "INT"
 		finally:
 			os.close(main)
 			with suppress(ProcessLookupError):
 				os.killpg(proc.pid, signal.SIGKILL)
 			proc.wait()
+
+	def outlived_sigint(  # pragma: no cover  # diagnoses a hang seen once in CI
+		pgid: int, seen: bytes, fd: int, sigints: Path
+	) -> str:
+		table = subprocess.run(
+			["ps", "-A", "-o", "pid=,pgid=,stat=,args="],
+			capture_output=True,
+			text=True,
+			check=False,
+		).stdout
+		group = [row for row in table.splitlines() if row.split()[1:2] == [str(pgid)]]
+		late = read_until(fd, b"\0", deadline=time.monotonic() + 1)
+		return (
+			f"camas outlived SIGINT; sigints={sigints.read_text()!r}; "
+			f"pty={seen + late!r}; group:\n" + "\n".join(group)
+		)
 
 	def read_until(fd: int, marker: bytes, *, deadline: float) -> bytes:
 		import select
