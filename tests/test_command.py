@@ -150,7 +150,7 @@ def test_run_attached_stops_at_the_first_failure_with_its_exact_code(
 def test_run_attached_pipes_stages_and_follows_pipefail(capfd: pytest.CaptureFixture[str]) -> None:
 	upper = py("import sys; sys.stdout.write(sys.stdin.read().upper())")
 	assert run_attached(Pipe(py("print('hi')"), upper), None) == Exited(0)
-	assert capfd.readouterr().out == "HI\n"
+	assert capfd.readouterr().out.splitlines() == ["HI"]
 	assert run_attached(Pipe(py("raise SystemExit(4)"), upper), None) == Exited(4)
 
 
@@ -284,7 +284,7 @@ def test_cli_runs_a_command_attached(capfd: pytest.CaptureFixture[str]) -> None:
 			["show", "--", "a", "b"],
 		)
 	assert exit_info.value.code == 0
-	assert capfd.readouterr().out == "a b\n"
+	assert capfd.readouterr().out.splitlines() == ["a b"]
 
 
 def test_cli_exits_with_the_childs_exact_code() -> None:
