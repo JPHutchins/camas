@@ -105,6 +105,7 @@ if sys.platform != "win32":  # pragma: no branch
 		import fcntl, os, sys, termios
 		os.setsid()
 		terminal = os.open(sys.argv[1], os.O_RDWR | os.O_NOCTTY)
+		os.set_inheritable(terminal, True)
 		fcntl.ioctl(terminal, termios.TIOCSCTTY, 0)
 		stdio = terminal if sys.argv[2] == "terminal" else os.open(os.devnull, os.O_RDWR)
 		for fd in (0, 1, 2):
@@ -153,6 +154,7 @@ if sys.platform != "win32":  # pragma: no branch
 		tmp_path: Path, stdio: str
 	) -> None:
 		import pty
+		import termios
 
 		(tmp_path / "tasks.py").write_text(
 			dedent("""\
@@ -175,6 +177,9 @@ if sys.platform != "win32":  # pragma: no branch
 			""")
 		)
 		main, sub = pty.openpty()
+		silent = termios.tcgetattr(sub)
+		silent[3] &= ~termios.ECHO
+		termios.tcsetattr(sub, termios.TCSANOW, silent)
 		proc = subprocess.Popen(
 			[sys.executable, "-c", IN_TERMINAL, os.ttyname(sub), stdio, "-m", "camas", "counter"],
 			cwd=tmp_path,
@@ -197,7 +202,7 @@ if sys.platform != "win32":  # pragma: no branch
 			assert (tmp_path / "sigints").read_text() == "INT"
 		finally:
 			os.close(main)
-			with suppress(ProcessLookupError):
+			with suppress(ProcessLookupError, PermissionError):
 				os.killpg(proc.pid, signal.SIGKILL)
 			proc.wait()
 
