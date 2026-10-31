@@ -71,6 +71,12 @@ async def test_camas_command_feeds_input_and_args(tmp_path: Path) -> None:
 	assert "-q x" in _text(argv)
 
 
+async def test_camas_command_reports_the_paths_it_ran_with(tmp_path: Path) -> None:
+	session = _session({"scope": Command(Task(("python", "-c", "pass", "{paths}")))}, tmp_path)
+	result = await serve.call(session, "camas_command", {"name": "scope"})
+	assert "ok     python -c pass . (" in _text(result)
+
+
 async def test_camas_command_refusals_are_tool_errors(tmp_path: Path) -> None:
 	session = _session({"seq": Command(Task("a") + Task("b"))}, tmp_path)
 	cases = (

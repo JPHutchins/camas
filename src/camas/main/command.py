@@ -16,15 +16,15 @@ from ..core.attached import Exited, Signaled, die_of, run_attached, scoped_body
 from ..core.color import BOLD_CYAN, CAMAS_VIOLET
 from ..core.gate import strip_agent_only_pipes
 from ..core.render import color_on, print_tree
-from ..core.scope import with_default_paths
-from ..core.traversal import flatten_leaves
+from ..core.scope import PATHS_TOKEN, with_default_paths
 from ..v0.task import Task
 from .argv import apply_passthrough
 from .color import maybe_color
+from .format import colorize_summary, task_summary
 
 if TYPE_CHECKING:
 	import argparse
-	from collections.abc import Iterable, Mapping
+	from collections.abc import Collection, Mapping
 	from pathlib import Path
 
 	from ..core.attached import Outcome
@@ -32,7 +32,9 @@ if TYPE_CHECKING:
 	from ..v0.task import TaskNode
 
 
-PLACEHOLDER: Final = re.compile(r"\{(\w+)\}")
+PLACEHOLDER: Final = re.compile(r"\{\w+\}")
+
+COMMAND_ARGUMENTS: Final = frozenset({"expression", "dry_run"})
 
 
 def command_name(token: str, commands: Mapping[str, Command]) -> str | None:
@@ -49,11 +51,12 @@ def run_command_cli(
 	args: argparse.Namespace,
 	passthrough: tuple[str, ...],
 	*,
-	axes: Iterable[str],
+	parser: argparse.ArgumentParser,
+	axes: Collection[str],
 	base: Path | None,
 	agent: bool,
 ) -> NoReturn:
-	refused: Final = refused_flag(args, axes)
+	refused: Final = refused_flag(args, parser, axes)
 	if refused is not None:
 		print(f"error: {refused} does not apply to a Command", file=sys.stderr)
 		sys.exit(2)
@@ -68,23 +71,24 @@ def run_command_cli(
 	exit_with(run_attached(node, base))
 
 
-def refused_flag(args: argparse.Namespace, axes: Iterable[str]) -> str | None:
+def refused_flag(
+	args: argparse.Namespace, parser: argparse.ArgumentParser, axes: Collection[str]
+) -> str | None:
 	"""
 	>>> from camas.main.parser import build_parser
-	>>> refused_flag(build_parser().parse_args(["flash", "--dry-run"]), ())
-	>>> refused_flag(build_parser().parse_args(["flash", "--jobs", "2"]), ())
-	'--jobs'
+	>>> parser = build_parser()
+	>>> refused_flag(parser.parse_args(["flash", "--dry-run"]), parser, ())
+	>>> refused_flag(parser.parse_args(["flash", "--github-matrix=auto"]), parser, ())
+	'--github-matrix'
 	"""
-	flags: Final = (
-		("--effects", args.effects is not None),
-		("--jobs", args.jobs is not None),
-		("--under", args.under is not None),
-		("--paths", args.paths is not None),
-		("--github-matrix", args.github_matrix is not None),
-		("--matrix", bool(args.matrix)),
-		*((f"--{axis}", getattr(args, axis, None) is not None) for axis in axes),
+	return next(
+		(
+			f"--{dest}" if dest in axes else f"--{dest.replace('_', '-')}"
+			for dest, value in vars(args).items()
+			if dest not in COMMAND_ARGUMENTS and value != parser.get_default(dest)
+		),
+		None,
 	)
-	return next((flag for flag, given in flags if given), None)
 
 
 def command_node(command: Command, passthrough: tuple[str, ...], *, agent: bool) -> TaskNode:
@@ -146,26 +150,23 @@ def format_command_listing(commands: Mapping[str, Command], color: bool) -> str:
 		(
 			maybe_color("Commands:", CAMAS_VIOLET, color),
 			*(
-				f"  {maybe_color(name.ljust(width), BOLD_CYAN, color)}  {summary(command)}"
+				f"  {maybe_color(name.ljust(width), BOLD_CYAN, color)}  {summary(command, color)}"
 				for name, command in sorted(commands.items())
 			),
 		)
 	)
 
 
-def summary(command: Command) -> str:
+def summary(command: Command, color: bool) -> str:
 	"""
 	>>> from camas.v0.command import Command
-	>>> summary(Command(Task("build") + Task(("probe-rs", "run"))))
-	'build; probe-rs run'
+	>>> from camas.v0.task import Pipe
+	>>> summary(Command(Task("build") + Pipe("gen", Task(("probe-rs", "run")))), color=False)
+	'build, gen | probe-rs run'
 	"""
 	if command.help is not None:
 		return command.help
-	return "; ".join(leaf_cmd(info.task) for info in flatten_leaves(command.body))
-
-
-def leaf_cmd(task: Task) -> str:
-	return task.cmd if isinstance(task.cmd, str) else " ".join(task.cmd)
+	return colorize_summary(task_summary(command.body, frozenset()), color)
 
 
 def placeholder_warnings(commands: Mapping[str, Command]) -> tuple[str, ...]:
@@ -175,14 +176,9 @@ def placeholder_warnings(commands: Mapping[str, Command]) -> tuple[str, ...]:
 	("command 'flash' runs {CHIP} literally: a Command has no matrix axes",)
 	"""
 	return tuple(
-		f"command {name!r} runs {{{token}}} literally: a Command has no matrix axes"
+		f"command {name!r} runs {token} literally: a Command has no matrix axes"
 		for name, command in sorted(commands.items())
 		for token in sorted(
-			{
-				token
-				for info in flatten_leaves(command.body)
-				for token in PLACEHOLDER.findall(leaf_cmd(info.task))
-			}
-			- {"paths"}
+			set(PLACEHOLDER.findall(task_summary(command.body, frozenset()))) - {PATHS_TOKEN}
 		)
 	)

@@ -204,11 +204,17 @@ def name_scope_commands(scope: Mapping[str, object]) -> dict[str, Command]:
 	>>> relabeled.name, relabeled.body.name
 	('board', 'board')
 	"""
-	promote: Final = bound_name_promoter(scope_task_bindings(scope))
-	return {
-		name: labeled_command(val, val.name if val.name is not None else name, promote)
+	commands: Final = {
+		name: val
 		for name, val in scope.items()
 		if not name.startswith("_") and isinstance(val, Command)
+	}
+	if not commands:
+		return {}
+	promote: Final = bound_name_promoter(scope_task_bindings(scope))
+	return {
+		name: labeled_command(command, command.name if command.name is not None else name, promote)
+		for name, command in commands.items()
 	}
 
 

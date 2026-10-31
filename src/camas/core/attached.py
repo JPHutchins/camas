@@ -17,6 +17,7 @@ if sys.version_info >= (3, 11):
 else:  # pragma: no cover
 	from typing_extensions import assert_never
 
+from ..v0.command import body_problem
 from ..v0.completion import NOT_FOUND_RC
 from ..v0.task import STAGE_MESSAGE, Parallel, Pipe, Sequential, Task
 from .execution import (
@@ -93,8 +94,6 @@ def attached_steps(node: TaskNode) -> tuple[Step, ...]:
 		case Sequential(tasks=children):
 			return tuple(step for child in children for step in attached_steps(child))
 		case Parallel():
-			from ..v0.command import body_problem
-
 			raise ValueError(body_problem(node))
 		case _:
 			assert_never(node)
@@ -117,14 +116,11 @@ def run_attached(node: TaskNode, base: Path | None) -> Outcome:
 
 def run_step(step: Step, base: Path | None) -> Outcome:
 	procs: Final[list[subprocess.Popen[bytes]]] = []
-	with relaying(procs) as received:
+	with relaying(procs) as received, reaping(procs):
 		try:
 			spawn_stages(procs, stages_of(step), base, received)
 		except UnstartableCommandError as exc:
 			print(f"error: {exc}", file=sys.stderr)
-			for proc in procs:
-				proc.kill()
-				proc.wait()
 			return Exited(NOT_FOUND_RC)
 		returncode: Final = pipefail(tuple(proc.wait() for proc in procs))
 	return outcome_of(returncode, received)
@@ -187,14 +183,14 @@ def spawn_stages(
 		read_end, write_end = os.pipe() if index < len(stages) - 1 else (None, None)
 		try:
 			proc = spawn(stage, base, stdin=upstream, stdout=write_end)
-		except UnstartableCommandError:
+		except BaseException:
 			close_fd(read_end)
 			raise
 		finally:
 			close_fd(write_end)
 			close_fd(upstream)
 		procs.append(proc)
-		for signum in received:
+		for signum in tuple(received):
 			if signum in FORWARDABLE:
 				send(proc, signum)
 		upstream = read_end
@@ -229,13 +225,23 @@ def send(proc: subprocess.Popen[bytes], signum: int) -> None:
 
 
 @contextmanager
+def reaping(procs: Sequence[subprocess.Popen[bytes]]) -> Generator[None]:
+	try:
+		yield
+	finally:
+		for proc in procs:
+			if proc.poll() is None:
+				proc.kill()
+			proc.wait()
+
+
+@contextmanager
 def relaying(procs: Sequence[subprocess.Popen[bytes]]) -> Generator[Sequence[int]]:
 	received: Final[list[int]] = []
-	forwarded: Final = FORWARDED if on_terminal() else FORWARDED | FORWARDED_OFF_TTY
 
 	def relay(signum: int, _frame: FrameType | None) -> None:
 		received.append(signum)
-		if signum in forwarded:
+		if signum in FORWARDED or (signum in FORWARDED_OFF_TTY and not in_foreground()):
 			for proc in procs:
 				send(proc, signum)
 
@@ -247,8 +253,22 @@ def relaying(procs: Sequence[subprocess.Popen[bytes]]) -> Generator[Sequence[int
 			signal.signal(signum, handler if handler is not None else signal.SIG_DFL)
 
 
-def on_terminal() -> bool:
-	return any(map(os.isatty, (0, 1, 2)))
+if sys.platform == "win32":  # pragma: no cover
+
+	def in_foreground() -> bool:
+		return False
+
+else:
+
+	def in_foreground() -> bool:
+		try:
+			terminal = os.open(os.ctermid(), os.O_RDONLY | os.O_NOCTTY)
+		except OSError:
+			return False
+		try:
+			return os.tcgetpgrp(terminal) == os.getpgrp()
+		finally:
+			os.close(terminal)
 
 
 def die_of(signum: int) -> NoReturn:  # pragma: no cover  # the process ends before coverage writes

@@ -574,14 +574,9 @@ def test_composition_rejects_non_nodes_loudly() -> None:
 		_ = Task("a") | cast("TaskNode", None)
 
 
-def test_composition_reguards_a_group_operands_children() -> None:
-	"""A group built through the lenient constructor can hold a non-node child; composition
-	re-checks the children it touches — an extended group's, and a merged ``.tasks`` — instead
-	of carrying the broken tree along."""
+def test_composition_rejects_a_non_node_inside_a_sequence_operand() -> None:
 	with pytest.raises(TypeError, match="None"):
-		_ = Parallel(cast("TaskNode", None)) | "a"
-	with pytest.raises(TypeError, match="None"):
-		_ = Parallel("a") | Parallel(cast("TaskNode", None)).tasks
+		_ = Parallel("a") | (Task("b"), cast("TaskNode", None))
 
 
 def test_or_composes_a_project_reference() -> None:

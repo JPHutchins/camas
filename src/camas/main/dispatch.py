@@ -279,7 +279,7 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 			print_task_help(split.head[0], tasks[split.head[0]])
 			sys.exit(0)
 		if head_command is not None:
-			print_command_help(head_command, commands[head_command])
+			print_command_help(split.head[0], commands[head_command])
 			sys.exit(0)
 
 	parser: Final = build_parser(state)
@@ -405,6 +405,7 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 					commands[named_command],
 					args,
 					split.passthrough,
+					parser=parser,
 					axes=augmented_axes,
 					base=source.parent if source is not None else None,
 					agent=in_agent,

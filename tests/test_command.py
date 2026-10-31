@@ -12,7 +12,8 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from camas import Command, Config, Parallel, Pipe, Sequential, Task
-from camas.core.attached import Exited, Signaled, run_attached, run_step
+from camas.core import attached
+from camas.core.attached import Exited, Signaled, run_attached, run_step, spawn
 from camas.main import command as command_cli
 from camas.main.compose import load_py_tasks_state, state_from_scope
 from camas.main.dispatch import dispatch
@@ -21,6 +22,7 @@ from camas.v0.command import body_problem
 from camas.v0.task import Project
 
 if TYPE_CHECKING:
+	import subprocess
 	from collections.abc import Callable, Mapping
 
 	from camas.v0.effect import Effect
@@ -146,6 +148,25 @@ def test_an_unstartable_stage_stops_the_step_with_127(
 	assert "no such file or directory: camas-no-such-program-368" in capfd.readouterr().err
 
 
+def test_a_stage_that_fails_to_spawn_takes_the_started_stages_down(
+	monkeypatch: pytest.MonkeyPatch,
+) -> None:
+	started: list[subprocess.Popen[bytes]] = []
+
+	def spawn_once(
+		task: Task, base: Path | None, *, stdin: int | None, stdout: int | None
+	) -> subprocess.Popen[bytes]:
+		if started:
+			raise RuntimeError("spawn failed")
+		started.append(spawn(task, base, stdin=stdin, stdout=stdout))
+		return started[0]
+
+	monkeypatch.setattr(attached, "spawn", spawn_once)
+	with pytest.raises(RuntimeError, match="spawn failed"):
+		run_step(Pipe(py("import time; time.sleep(30)"), py("pass")), None)
+	assert [proc.returncode is not None for proc in started] == [True]
+
+
 def test_cli_runs_a_command_attached(capfd: pytest.CaptureFixture[str]) -> None:
 	with pytest.raises(SystemExit) as exit_info:
 		dispatch(
@@ -172,6 +193,7 @@ def test_cli_exits_with_the_childs_exact_code() -> None:
 		(["flash", "--github-matrix"], "--github-matrix"),
 		(["flash", "--matrix", "PY=3.13"], "--matrix"),
 		(["flash", "--PY", "3.13"], "--PY"),
+		(["flash", "--verbose"], "--verbose"),
 	],
 )
 def test_cli_refuses_tree_run_flags(
@@ -200,6 +222,7 @@ def test_cli_help_list_and_tree_show_commands(capsys: pytest.CaptureFixture[str]
 		{
 			"flash": Command(Task("build") + Task("probe-rs run")),
 			"run": Command("cargo run", help="Run it"),
+			"flash_board": Command("probe-rs run"),
 		},
 		{"lint": Task("ruff check .")},
 	)
@@ -212,14 +235,20 @@ def test_cli_help_list_and_tree_show_commands(capsys: pytest.CaptureFixture[str]
 		dispatch(state, ["flash", "-h"])
 	assert capsys.readouterr().out.startswith("usage: camas flash [-h] [--dry-run]\n")
 	with pytest.raises(SystemExit, match="0"):
+		dispatch(state, ["flash-board", "-h"])
+	assert capsys.readouterr().out.startswith("usage: camas flash-board [-h]")
+	with pytest.raises(SystemExit, match="0"):
 		dispatch(state, ["--list"])
-	assert "Commands:\n  flash  build; probe-rs run\n  run    Run it" in capsys.readouterr().out
+	assert (
+		"Commands:\n  flash        build, probe-rs run\n  flash_board  probe-rs run\n"
+		"  run          Run it"
+	) in capsys.readouterr().out
 	with pytest.raises(SystemExit, match="0"):
 		dispatch(state, ["--tree"])
 	assert "Commands:" in capsys.readouterr().out
 	with pytest.raises(SystemExit, match="0"):
 		dispatch(state, ["--help"])
-	assert "  run    Run it" in capsys.readouterr().out
+	assert "  run          Run it" in capsys.readouterr().out
 
 
 def test_cli_help_for_an_unknown_name_falls_through_to_the_parser(

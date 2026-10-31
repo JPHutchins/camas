@@ -16,10 +16,9 @@ else:  # pragma: no cover
 from mcp import types
 from pydantic import ValidationError
 
-from ..core.attached import scoped_body
 from ..core.execution import run
 from ..core.task import did_you_mean
-from ..main.argv import apply_passthrough
+from ..main.command import command_node
 from ..main.state import LoadErr, LoadOk
 from ..v0.task import Pipe, Task
 from . import wire
@@ -57,6 +56,8 @@ def resolve_command(commands: Mapping[str, Command], req: wire.CommandRequest) -
 	>>> from camas.v0.command import Command
 	>>> resolve_command({"run": Command("cargo run")}, wire.CommandRequest(name="run", args=["-q"]))
 	Task(cmd='cargo run -q', name=None, env={}, cwd=None)
+	>>> resolve_command({"flash": Command("probe-rs run {paths}")}, wire.CommandRequest(name="flash"))
+	Task(cmd='probe-rs run .', name=None, env={}, cwd=None)
 
 	Raises:
 		ValueError: on an unknown name, or ``input`` for a ``Sequential`` body.
@@ -69,8 +70,7 @@ def resolve_command(commands: Mapping[str, Command], req: wire.CommandRequest) -
 	command: Final = commands[req.name]
 	if req.input is not None and not isinstance(command.body, (Task, Pipe)):
 		raise ValueError("input applies to a single-leaf or Pipe command")
-	body: Final = scoped_body(command)
-	return apply_passthrough(body, tuple(req.args)) if req.args else body
+	return command_node(command, tuple(req.args), agent=True)
 
 
 @contextmanager
