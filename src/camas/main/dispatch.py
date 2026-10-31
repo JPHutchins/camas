@@ -267,11 +267,7 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 	commands: Mapping[str, Command] = state.commands if isinstance(state, LoadOk) else {}
 	head_command: Final = command_name(split.head[0], commands) if split.head else None
 
-	if (
-		running_under_agent()
-		and not os.environ.get("CAMAS_NO_MCP_HINT")
-		and not any(command_name(token, commands) for token in split.head)
-	):
+	if running_under_agent() and not os.environ.get("CAMAS_NO_MCP_HINT") and head_command is None:
 		print(mcp_cli_hint(), file=sys.stderr)
 
 	if len(split.head) >= 2 and any(a in ("-h", "--help") for a in split.head[1:]):

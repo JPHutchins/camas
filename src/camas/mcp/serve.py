@@ -1070,7 +1070,10 @@ def list_text(resp: wire.ListResponse, *, expand_matrix: bool) -> str:
 	if resp.commands:
 		lines.append("")
 		lines.append("Commands (side-effectful; run with camas_command, never camas_run):")
-		lines.extend(f"  {c.name}  {c.help or c.command_preview}" for c in resp.commands)
+		lines.extend(
+			f"  {c.name}  {c.help if c.help is not None else c.command_preview}"
+			for c in resp.commands
+		)
 	if not expand_matrix and any(t.matrix_axes for t in resp.tasks):
 		lines.append("")
 		lines.append(

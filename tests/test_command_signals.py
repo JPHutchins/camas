@@ -86,6 +86,16 @@ if sys.platform != "win32":  # pragma: no branch
 		signal_main_thread_when(ready, signal.SIGINT)
 		assert run_step(py(touch_then_sleep(3), str(ready)), None) == Exited(0)
 
+	def test_a_terminal_that_cannot_report_its_foreground_is_not_ours(
+		monkeypatch: pytest.MonkeyPatch,
+	) -> None:
+		def unusable(_fd: int) -> int:
+			raise OSError(5, "Input/output error")
+
+		monkeypatch.setattr(os, "ctermid", lambda: os.devnull)
+		monkeypatch.setattr(os, "tcgetpgrp", unusable)
+		assert not in_foreground()
+
 	def test_a_ctrl_c_without_a_controlling_terminal_is_forwarded(
 		tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 	) -> None:

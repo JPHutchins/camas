@@ -107,7 +107,10 @@ async def test_camas_run_points_a_command_name_to_camas_command(tmp_path: Path) 
 
 def test_camas_list_reports_commands_apart_from_tasks(tmp_path: Path) -> None:
 	session = _session(
-		{"flash": Command("probe-rs run", help="Flash the board")},
+		{
+			"flash": Command("probe-rs run", help="Flash the board"),
+			"quiet": Command("probe-rs reset", help=""),
+		},
 		tmp_path,
 		tasks={"lint": Task("ruff check .")},
 	)
@@ -115,6 +118,7 @@ def test_camas_list_reports_commands_apart_from_tasks(tmp_path: Path) -> None:
 	text = _text(result)
 	assert "Commands (side-effectful; run with camas_command, never camas_run):" in text
 	assert "  flash  Flash the board" in text
+	assert "probe-rs reset" not in text
 	assert "Commands" not in _text(serve.list_call(_session({}, tmp_path), {}))
 
 

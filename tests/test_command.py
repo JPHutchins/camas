@@ -265,7 +265,7 @@ def test_cli_suggests_command_names_and_skips_the_mcp_banner_for_them(
 ) -> None:
 	monkeypatch.setenv("CAMAS_AGENT", "1")
 	monkeypatch.delenv("CAMAS_NO_MCP_HINT", raising=False)
-	state = _state({"flash": Command("x")})
+	state = _state({"flash": Command("x")}, {"lint": Task("ruff check")})
 	with pytest.raises(SystemExit, match="2"):
 		dispatch(state, ["flsah"])
 	err = capsys.readouterr().err
@@ -274,6 +274,9 @@ def test_cli_suggests_command_names_and_skips_the_mcp_banner_for_them(
 	with pytest.raises(SystemExit, match="0"):
 		dispatch(state, ["flash", "--dry-run"])
 	assert "prefer the camas MCP tools" not in capsys.readouterr().err
+	with pytest.raises(SystemExit, match="0"):
+		dispatch(state, ["lint", "--paths", "flash", "--dry-run"])
+	assert "prefer the camas MCP tools" in capsys.readouterr().err
 
 
 def test_exit_with_a_signal_dies_of_it(monkeypatch: pytest.MonkeyPatch) -> None:

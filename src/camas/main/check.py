@@ -11,6 +11,7 @@ import subprocess
 import sys
 import traceback
 from pathlib import Path
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Final, Literal, NamedTuple, TypeAlias
 
 from ..paths import camas_package_dir
@@ -21,8 +22,9 @@ else:  # pragma: no cover
 	from typing_extensions import assert_never
 
 if TYPE_CHECKING:
-	from collections.abc import Collection, Mapping
+	from collections.abc import Mapping
 
+	from ..v0.command import Command
 	from ..v0.task import TaskNode
 
 
@@ -100,18 +102,23 @@ def pep723_run_cli_warning(source: Path | None) -> tuple[str, ...]:
 	)
 
 
+NO_COMMANDS: Final[Mapping[str, Command]] = MappingProxyType({})
+
+
 def unresolved_dispatch_warnings(
-	tasks: Mapping[str, TaskNode], commands: Collection[str] = ()
+	tasks: Mapping[str, TaskNode], commands: Mapping[str, Command] = NO_COMMANDS
 ) -> tuple[str, ...]:
 	"""
-	>>> from camas import Parallel, Task
+	>>> from camas import Command, Parallel, Task
 	>>> fan = Parallel(Task("camas {crate}"), matrix={"crate": ("core", "gone")})
 	>>> unresolved_dispatch_warnings({"fan": fan, "core": Task("cargo test -p core")})
 	("task 'fan' runs `camas gone`, but no task named 'gone' exists (known: core, fan) — that command fails wherever it runs, CI included",)
 	>>> unresolved_dispatch_warnings({"core": Task("camas core")})
 	()
-	>>> unresolved_dispatch_warnings({"ship": Task("camas flash-board")}, {"flash_board"})
+	>>> unresolved_dispatch_warnings({"ship": Task("camas flash-board")}, {"flash_board": Command("x")})
 	()
+	>>> unresolved_dispatch_warnings({}, {"deploy": Command(Task("camas build") + "ship")})
+	("command 'deploy' runs `camas build`, but no task named 'build' exists (known: deploy) — that command fails wherever it runs, CI included",)
 	"""
 	from ..core.matrix import expand_matrix
 	from ..core.task import did_you_mean
@@ -124,12 +131,16 @@ def unresolved_dispatch_warnings(
 		return arg in dispatchable or arg.replace("-", "_") in dispatchable
 
 	known: Final = ", ".join(sorted(dispatchable)) or "none"
+	callers: Final = (
+		*(("task", name, node) for name, node in tasks.items()),
+		*(("command", name, command.body) for name, command in commands.items()),
+	)
 	return tuple(
 		dict.fromkeys(
-			f"task {name!r} runs `camas {arg}`, but no task named {arg!r} exists"
+			f"{kind} {name!r} runs `camas {arg}`, but no task named {arg!r} exists"
 			f"{did_you_mean(arg, dispatchable)} (known: {known}) — that command fails wherever "
 			"it runs, CI included"
-			for name, node in tasks.items()
+			for kind, name, node in callers
 			for info in flatten_leaves(expand_matrix(node))
 			if (arg := camas_task_arg(info.task.cmd)) is not None and not resolves(arg)
 		)

@@ -267,6 +267,8 @@ else:
 			return False
 		try:
 			return os.tcgetpgrp(terminal) == os.getpgrp()
+		except OSError:
+			return False
 		finally:
 			os.close(terminal)
 
