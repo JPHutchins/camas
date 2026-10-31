@@ -169,6 +169,12 @@ def _compose_scope(
 			child_cache[tasks_py] = (rel, child)
 		return child_cache[tasks_py]
 
+	def has_context(child: LoadOk) -> bool:
+		return (
+			child.config is not None
+			and child_node(Field.CONTEXT, child.config, github=github, agent=agent) is not None
+		)
+
 	def project_node(marker: ProjectRef, field: Field) -> TaskNode:
 		rel, child = child_view(marker)
 		node = (
@@ -239,7 +245,7 @@ def _compose_scope(
 			resolved_scope[name] = value
 		elif isinstance(value, ProjectRef):
 			rel, child = child_view(value)
-			if child.tasks or not child.commands:
+			if child.tasks or not child.commands or has_context(child):
 				resolved_scope[name] = resolve(value, Field.CONTEXT)
 			for key, mounted in child.tasks.items():
 				namespaces[f"{name}.{key}"] = rebase_tree(mounted, rel, name, is_root=True)

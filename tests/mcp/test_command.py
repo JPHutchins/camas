@@ -99,10 +99,14 @@ async def test_camas_command_reports_a_load_error(tmp_path: Path) -> None:
 
 
 async def test_camas_run_points_a_command_name_to_camas_command(tmp_path: Path) -> None:
-	session = _session({"flash": Command("x")}, tmp_path, tasks={"lint": Task("ruff")})
+	session = _session(
+		{"flash": Command("x"), "flash_board": Command("y")}, tmp_path, tasks={"lint": Task("ruff")}
+	)
 	result = await serve.run_call(session, {"task": "flash"})
 	assert result.isError is True
 	assert "'flash' is a Command: run it with camas_command" in _text(result)
+	hyphenated = await serve.run_call(session, {"task": "flash-board"})
+	assert "'flash_board' is a Command: run it with camas_command" in _text(hyphenated)
 
 
 def test_camas_list_reports_commands_apart_from_tasks(tmp_path: Path) -> None:

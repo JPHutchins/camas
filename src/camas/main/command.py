@@ -35,7 +35,9 @@ if TYPE_CHECKING:
 	from ..v0.task import TaskNode
 
 
-PLACEHOLDER: Final = re.compile(r"(?<!\$)\{\w+\}")
+PLACEHOLDER: Final = re.compile(r"\{\w+\}")
+
+SHELL_UNEXPANDED_PLACEHOLDER: Final = re.compile(r"(?<!\$)\{\w+\}")
 
 TOLERATED_ARGUMENTS: Final = frozenset({"expression", "dry_run", "verbose"})
 
@@ -199,6 +201,8 @@ def placeholder_warnings(commands: Mapping[str, Command]) -> tuple[str, ...]:
 	("command 'flash' runs {PROBE} literally: a Command has no matrix axes",)
 	>>> placeholder_warnings({"flash": Command("sh -c 'cd ${HOME}'", cwd="boards/{CHIP}")})
 	("command 'flash' runs {CHIP} literally: a Command has no matrix axes",)
+	>>> placeholder_warnings({"flash": Command("probe-rs run", env={"PROBE": "${PROBE}"})})
+	("command 'flash' runs {PROBE} literally: a Command has no matrix axes",)
 	"""
 	return tuple(
 		f"command {name!r} runs {token} literally: a Command has no matrix axes"
@@ -209,9 +213,11 @@ def placeholder_warnings(commands: Mapping[str, Command]) -> tuple[str, ...]:
 
 def literal_placeholders(command: Command) -> set[str]:
 	body: Final = scoped_body(command)
-	texts: Final = (
-		task_summary(body, frozenset()),
+	unexpanded: Final = (
 		*(value for info in flatten_leaves(body) for value in info.task.env.values()),
 		*(str(info.task.cwd) for info in flatten_leaves(body) if info.task.cwd is not None),
 	)
-	return {token for text in texts for token in PLACEHOLDER.findall(text)} - {PATHS_TOKEN}
+	return {
+		*SHELL_UNEXPANDED_PLACEHOLDER.findall(task_summary(body, frozenset())),
+		*(token for text in unexpanded for token in PLACEHOLDER.findall(text)),
+	} - {PATHS_TOKEN}

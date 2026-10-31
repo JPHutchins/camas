@@ -11,7 +11,6 @@ import subprocess
 import sys
 import traceback
 from pathlib import Path
-from types import MappingProxyType
 from typing import TYPE_CHECKING, Final, Literal, NamedTuple, TypeAlias
 
 from ..paths import camas_package_dir
@@ -22,9 +21,8 @@ else:  # pragma: no cover
 	from typing_extensions import assert_never
 
 if TYPE_CHECKING:
-	from collections.abc import Mapping
+	from collections.abc import Collection, Mapping
 
-	from ..v0.command import Command
 	from ..v0.task import TaskNode
 
 
@@ -102,39 +100,19 @@ def pep723_run_cli_warning(source: Path | None) -> tuple[str, ...]:
 	)
 
 
-NO_COMMANDS: Final[Mapping[str, Command]] = MappingProxyType({})
-
-UNRESOLVED: Final = {"task": "no task named", "command": "no task or command named"}
-
-FAILS: Final = {
-	"task": "that command fails wherever it runs, CI included",
-	"command": "the Command fails when run",
-}
-
-
 def unresolved_dispatch_warnings(
-	tasks: Mapping[str, TaskNode], commands: Mapping[str, Command] = NO_COMMANDS
+	tasks: Mapping[str, TaskNode], commands: Collection[str] = ()
 ) -> tuple[str, ...]:
 	"""
-	>>> from camas import Command, Parallel, Task
+	>>> from camas import Parallel, Task
 	>>> fan = Parallel(Task("camas {crate}"), matrix={"crate": ("core", "gone")})
 	>>> unresolved_dispatch_warnings({"fan": fan, "core": Task("cargo test -p core")})
 	("task 'fan' runs `camas gone`, but no task named 'gone' exists (known: core, fan) — that command fails wherever it runs, CI included",)
 	>>> unresolved_dispatch_warnings({"core": Task("camas core")})
 	()
-	>>> unresolved_dispatch_warnings({"ship": Task("camas flash-board")}, {"flash_board": Command("x")})
-	()
-	>>> unresolved_dispatch_warnings({}, {"deploy": Command(Task("camas build") + "ship")})
-	("command 'deploy' runs `camas build`, but no task or command named 'build' exists (known: deploy) — the Command fails when run",)
-	>>> mounted = {"libs.build": Task("cargo build"), "build": Task("make")}
-	>>> unresolved_dispatch_warnings(mounted, {"libs.deploy": Command("camas build", cwd="libs")})
-	()
-	>>> unresolved_dispatch_warnings({"build": Task("make")}, {"libs.ship": Command("camas build", cwd="libs")})
-	("command 'libs.ship' runs `camas build`, but no task or command named 'build' exists (known: ship) — the Command fails when run",)
-	>>> unresolved_dispatch_warnings({}, {"deploy": Command("camas build", cwd="libs")})
+	>>> unresolved_dispatch_warnings({"ship": Task("camas flash-board")}, {"flash_board"})
 	()
 	"""
-	from ..core.attached import scoped_body
 	from ..core.matrix import expand_matrix
 	from ..core.task import did_you_mean
 	from ..core.traversal import flatten_leaves
@@ -142,33 +120,18 @@ def unresolved_dispatch_warnings(
 
 	dispatchable: Final = {*tasks, *commands}
 
-	def visible(caller: str, cwd: Path | None) -> frozenset[str] | None:
-		scope = caller.rpartition(".")[0]
-		if cwd is None or cwd == Path():
-			return frozenset(dispatchable)
-		if not scope:
-			return None
-		return frozenset(
-			name.removeprefix(f"{scope}.") for name in dispatchable if name.startswith(f"{scope}.")
-		)
+	def resolves(arg: str) -> bool:
+		return arg in dispatchable or arg.replace("-", "_") in dispatchable
 
-	def resolves(names: frozenset[str], arg: str) -> bool:
-		return arg in names or arg.replace("-", "_") in names
-
-	callers: Final = (
-		*(("task", name, expand_matrix(node)) for name, node in tasks.items()),
-		*(("command", name, scoped_body(command)) for name, command in commands.items()),
-	)
+	known: Final = ", ".join(sorted(dispatchable)) or "none"
 	return tuple(
 		dict.fromkeys(
-			f"{kind} {name!r} runs `camas {arg}`, but {UNRESOLVED[kind]} {arg!r} exists"
-			f"{did_you_mean(arg, names)} (known: {', '.join(sorted(names)) or 'none'}) — "
-			f"{FAILS[kind]}"
-			for kind, name, node in callers
-			for info in flatten_leaves(node)
-			if (arg := camas_task_arg(info.task.cmd)) is not None
-			and (names := visible(name, info.task.cwd)) is not None
-			and not resolves(names, arg)
+			f"task {name!r} runs `camas {arg}`, but no task named {arg!r} exists"
+			f"{did_you_mean(arg, dispatchable)} (known: {known}) — that command fails wherever "
+			"it runs, CI included"
+			for name, node in tasks.items()
+			for info in flatten_leaves(expand_matrix(node))
+			if (arg := camas_task_arg(info.task.cmd)) is not None and not resolves(arg)
 		)
 	)
 

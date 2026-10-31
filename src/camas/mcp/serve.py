@@ -59,6 +59,7 @@ from ..core.render import render_tree_lines, strip_ansi
 from ..core.scope import coverage_message, requested_but_unusable, scope_to_changed, to_changed
 from ..core.task import did_you_mean, task_label
 from ..main.argv import apply_passthrough
+from ..main.command import command_name
 from ..main.compose import load_py_tasks_state
 from ..main.format import (
 	format_empty_variants_error,
@@ -698,8 +699,10 @@ async def run_call(session: Session, arguments: dict[str, Any]) -> types.CallToo
 		case LoadErr(source=source, exception=exception):
 			return error_result(load_error_hint(session, source, exception))
 		case LoadOk(tasks=tasks, config=config, commands=commands):
-			if isinstance(task := arguments.get("task"), str) and task in commands:
-				return error_result(command_refusal(task))
+			if isinstance(task := arguments.get("task"), str) and (
+				named := command_name(task, commands)
+			):
+				return error_result(command_refusal(named))
 			return await run_for(session, tasks, config, arguments)
 		case _:
 			assert_never(session.project)

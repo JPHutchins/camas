@@ -118,6 +118,14 @@ def test_project_mounts_a_child_that_defines_only_commands(tmp_path: Path) -> No
 	state = load_py_tasks_state(tmp_path / "tasks.py")
 	assert isinstance(state, LoadOk)
 	assert (list(state.tasks), list(state.commands)) == ([], ["ops.deploy"])
+	(tmp_path / "ops" / "tasks.py").write_text(
+		"from camas import Command, Config, Task\n"
+		'deploy = Command("deploy-tool")\n'
+		'_ = Config(default_task=Task("echo default"))\n'
+	)
+	with_default = load_py_tasks_state(tmp_path / "tasks.py")
+	assert isinstance(with_default, LoadOk)
+	assert (list(with_default.tasks), list(with_default.commands)) == (["ops"], ["ops.deploy"])
 
 
 def test_run_attached_stops_at_the_first_failure_with_its_exact_code(
