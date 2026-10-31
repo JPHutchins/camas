@@ -35,6 +35,7 @@ HEADLINE: Final = frozenset(
 		"AgentFormat",
 		"Claude",
 		"Clean",
+		"Command",
 		"Config",
 		"Effect",
 		"GIT_PORCELAIN",

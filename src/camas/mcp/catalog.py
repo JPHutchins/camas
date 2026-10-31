@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 	from collections.abc import Mapping
 
 	from ..core.timings import CacheKey, Estimate, TaskTiming
+	from ..v0.command import Command
 	from ..v0.config import Config
 	from ..v0.task import TaskNode
 
@@ -24,6 +25,7 @@ def to_list_response(
 	timings: Mapping[CacheKey, TaskTiming] = {},
 	*,
 	expand: bool = False,
+	commands: Mapping[str, Command] = {},
 ) -> wire.ListResponse:
 	default = task_name(config.default_task) if config is not None else None
 	github_default = task_name(config.github_task) if config is not None else None
@@ -39,6 +41,12 @@ def to_list_response(
 				expand=expand,
 			)
 			for name, node in sorted(tasks.items())
+		),
+		commands=tuple(
+			wire.CommandInfo(
+				name=name, help=command.help, command_preview=to_expression(command.body)
+			)
+			for name, command in sorted(commands.items())
 		),
 		default=default,
 		github_default=github_default,

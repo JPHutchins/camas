@@ -30,6 +30,7 @@ from camas import (
 	AgentFormat,
 	Claude,
 	Clean,
+	Command,
 	Config,
 	Effect,
 	Parallel,
@@ -136,6 +137,10 @@ diagnostics = Pipe(
 	Task("python -c pass"),
 	agent_only=True,
 )
+
+# Command(body) is a side-effectful action or interactive program: on the CLI it runs attached
+# to the terminal, as if typed; over MCP, camas_command runs it. It never composes into a task.
+greet_interactively = Command(Task("python -c \"input('name? ')\""))
 
 # by_suffix(suffixes, default=...) builds a paths= callable: it filters the changed files by
 # extension on a scoped run, and returns default on a full run (never empty, for the reason

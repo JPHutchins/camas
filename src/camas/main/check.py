@@ -21,7 +21,7 @@ else:  # pragma: no cover
 	from typing_extensions import assert_never
 
 if TYPE_CHECKING:
-	from collections.abc import Mapping
+	from collections.abc import Collection, Mapping
 
 	from ..v0.task import TaskNode
 
@@ -100,7 +100,9 @@ def pep723_run_cli_warning(source: Path | None) -> tuple[str, ...]:
 	)
 
 
-def unresolved_dispatch_warnings(tasks: Mapping[str, TaskNode]) -> tuple[str, ...]:
+def unresolved_dispatch_warnings(
+	tasks: Mapping[str, TaskNode], commands: Collection[str] = ()
+) -> tuple[str, ...]:
 	"""
 	>>> from camas import Parallel, Task
 	>>> fan = Parallel(Task("camas {crate}"), matrix={"crate": ("core", "gone")})
@@ -108,21 +110,25 @@ def unresolved_dispatch_warnings(tasks: Mapping[str, TaskNode]) -> tuple[str, ..
 	("task 'fan' runs `camas gone`, but no task named 'gone' exists (known: core, fan) — that command fails wherever it runs, CI included",)
 	>>> unresolved_dispatch_warnings({"core": Task("camas core")})
 	()
+	>>> unresolved_dispatch_warnings({"ship": Task("camas flash-board")}, {"flash_board"})
+	()
 	"""
 	from ..core.matrix import expand_matrix
 	from ..core.task import did_you_mean
 	from ..core.traversal import flatten_leaves
 	from .argv import camas_task_arg
 
-	def resolves(arg: str) -> bool:
-		return arg in tasks or arg.replace("-", "_") in tasks
+	dispatchable: Final = {*tasks, *commands}
 
-	known: Final = ", ".join(sorted(tasks)) or "none"
+	def resolves(arg: str) -> bool:
+		return arg in dispatchable or arg.replace("-", "_") in dispatchable
+
+	known: Final = ", ".join(sorted(dispatchable)) or "none"
 	return tuple(
 		dict.fromkeys(
 			f"task {name!r} runs `camas {arg}`, but no task named {arg!r} exists"
-			f"{did_you_mean(arg, tasks)} (known: {known}) — that command fails wherever it runs, "
-			"CI included"
+			f"{did_you_mean(arg, dispatchable)} (known: {known}) — that command fails wherever "
+			"it runs, CI included"
 			for name, node in tasks.items()
 			for info in flatten_leaves(expand_matrix(node))
 			if (arg := camas_task_arg(info.task.cmd)) is not None and not resolves(arg)

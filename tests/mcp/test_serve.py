@@ -134,9 +134,17 @@ def test_task_names_empty_on_load_error(tmp_path: Path) -> None:
 
 
 def test_tools_default_omits_rich_fields() -> None:
-	(tool_list, tool_run, tool_check, tool_docs, tool_gate, tool_fix, tool_init, tool_gh_matrix) = (
-		serve.tools(("a", "b"), Compat(emit_structured=False))
-	)
+	(
+		tool_list,
+		tool_run,
+		tool_check,
+		tool_docs,
+		tool_gate,
+		tool_fix,
+		tool_init,
+		tool_gh_matrix,
+		_,
+	) = serve.tools(("a", "b"), Compat(emit_structured=False))
 	assert (tool_list.title, tool_list.outputSchema, tool_list.annotations) == (None, None, None)
 	assert _task_enum(tool_run.inputSchema) == ["a", "b"]
 	assert (tool_run.outputSchema, tool_run.annotations) == (None, None)
@@ -162,9 +170,17 @@ def test_tools_default_omits_rich_fields() -> None:
 
 
 def test_tools_rich_includes_title_annotations_and_schema() -> None:
-	(tool_list, tool_run, tool_check, tool_docs, tool_gate, tool_fix, tool_init, tool_gh_matrix) = (
-		serve.tools((), Compat(emit_structured=True))
-	)
+	(
+		tool_list,
+		tool_run,
+		tool_check,
+		tool_docs,
+		tool_gate,
+		tool_fix,
+		tool_init,
+		tool_gh_matrix,
+		_,
+	) = serve.tools((), Compat(emit_structured=True))
 	assert tool_list.title == "List camas tasks"
 	assert tool_list.annotations is not None
 	assert tool_list.annotations.readOnlyHint is True
@@ -1453,6 +1469,7 @@ async def test_in_memory_round_trip(tmp_path: Path) -> None:
 			"camas_fix",
 			"camas_init",
 			"camas_github_matrix",
+			"camas_command",
 		}
 		catalog = await client.call_tool("camas_list", {})
 		assert "lint" in _text(catalog)
@@ -1878,7 +1895,7 @@ async def test_fix_call_tool_is_in_round_trip(tmp_path: Path) -> None:
 
 
 async def test_in_memory_round_trip_includes_fix_tool(tmp_path: Path) -> None:
-	"""The full round trip tool list now has 8 tools including camas_github_matrix."""
+	"""The full round trip tool list now has 9 tools including camas_github_matrix."""
 	session = _session({"lint": PASS}, Config(default_task=PASS), tmp_path)
 	async with create_connected_server_and_client_session(serve.build_server(session)) as client:
 		listed = await client.list_tools()
@@ -1891,6 +1908,7 @@ async def test_in_memory_round_trip_includes_fix_tool(tmp_path: Path) -> None:
 			"camas_fix",
 			"camas_init",
 			"camas_github_matrix",
+			"camas_command",
 		}
 
 

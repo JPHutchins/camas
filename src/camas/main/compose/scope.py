@@ -15,6 +15,7 @@ if sys.version_info >= (3, 11):
 else:  # pragma: no cover
 	from typing_extensions import assert_never
 
+from ...v0.command import NEVER_COMPOSES, Command
 from ...v0.config import Config
 from ...v0.ref import Ref
 from ...v0.task import (
@@ -33,13 +34,14 @@ from ..state import LoadErr, LoadOk
 from ..tasks import (
 	anonymous_config_field_warnings,
 	name_scope_bindings,
+	name_scope_commands,
 	name_scope_config,
 	name_scope_effects,
 	redundant_name_warnings,
 	reject_reserved_names,
 )
 from .errors import ProjectLoadError
-from .rebase import rebase_tree
+from .rebase import rebase_command, rebase_tree
 
 if TYPE_CHECKING:
 	from collections.abc import Mapping
@@ -167,6 +169,12 @@ def _compose_scope(
 			child_cache[tasks_py] = (rel, child)
 		return child_cache[tasks_py]
 
+	def has_context(child: LoadOk) -> bool:
+		return (
+			child.config is not None
+			and child_node(Field.CONTEXT, child.config, github=github, agent=agent) is not None
+		)
+
 	def project_node(marker: ProjectRef, field: Field) -> TaskNode:
 		rel, child = child_view(marker)
 		node = (
@@ -202,6 +210,8 @@ def _compose_scope(
 				return rebuilt(group, *children)
 			case Ref():  # pyright: ignore[reportUnnecessaryComparison]  # the Ref/TaskNode parse-time gap
 				raise unresolved_ref(UNRESOLVED_REF_MESSAGE, field)
+			case Command():  # pyright: ignore[reportUnnecessaryComparison]  # a Config field typed TaskNode can still hold one at runtime
+				raise unresolved_ref(NEVER_COMPOSES, field)
 			case _:
 				assert_never(node)
 
@@ -224,6 +234,7 @@ def _compose_scope(
 
 	resolved_scope: dict[str, object] = {}
 	namespaces: dict[str, TaskNode] = {}
+	command_namespaces: dict[str, Command] = {}
 	child_naming_warnings: list[str] = []
 	for name, value in scope.items():
 		if isinstance(value, Config):
@@ -233,10 +244,13 @@ def _compose_scope(
 		):
 			resolved_scope[name] = value
 		elif isinstance(value, ProjectRef):
-			resolved_scope[name] = resolve(value, Field.CONTEXT)
 			rel, child = child_view(value)
+			if child.tasks or not child.commands or has_context(child):
+				resolved_scope[name] = resolve(value, Field.CONTEXT)
 			for key, mounted in child.tasks.items():
 				namespaces[f"{name}.{key}"] = rebase_tree(mounted, rel, name, is_root=True)
+			for key, command in child.commands.items():
+				command_namespaces[f"{name}.{key}"] = rebase_command(command, rel, name)
 			child_naming_warnings.extend(f"{name}: {w}" for w in child.naming_warnings)
 		else:
 			resolved_scope[name] = resolve(value, Field.CONTEXT)
@@ -246,6 +260,7 @@ def _compose_scope(
 		source=source,
 		scope_effects=name_scope_effects(resolved_scope),
 		config=name_scope_config(resolved_scope),
+		commands=name_scope_commands(resolved_scope),
 		naming_warnings=(
 			redundant_name_warnings(scope)
 			+ anonymous_config_field_warnings(scope)
@@ -253,8 +268,9 @@ def _compose_scope(
 		),
 	)
 	merged: Final = {**own.tasks, **namespaces}
-	reject_reserved_names(merged)
-	return own._replace(tasks=merged)
+	merged_commands: Final = {**own.commands, **command_namespaces}
+	reject_reserved_names({**merged, **merged_commands})
+	return own._replace(tasks=merged, commands=merged_commands)
 
 
 def load_scope(path: Path, *, seen: frozenset[Path] = frozenset()) -> LoadOk:

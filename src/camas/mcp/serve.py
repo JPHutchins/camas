@@ -59,6 +59,7 @@ from ..core.render import render_tree_lines, strip_ansi
 from ..core.scope import coverage_message, requested_but_unusable, scope_to_changed, to_changed
 from ..core.task import did_you_mean, task_label
 from ..main.argv import apply_passthrough
+from ..main.command import command_name
 from ..main.compose import load_py_tasks_state
 from ..main.format import (
 	format_empty_variants_error,
@@ -76,6 +77,7 @@ from ..v0.config import Config
 from ..v0.task import Task
 from . import wire
 from .catalog import to_list_response
+from .command import COMMAND_ANNOTATIONS, COMMAND_DESCRIPTION, command_call, command_refusal
 from .docs import to_docs_response
 from .result import (
 	has_failing_leaf_without_agent_format,
@@ -108,6 +110,7 @@ class ToolName(Enum):
 	FIX = "camas_fix"
 	INIT = "camas_init"
 	GITHUB_MATRIX = "camas_github_matrix"
+	COMMAND = "camas_command"
 
 
 NO_ARGS_SCHEMA: Final[dict[str, Any]] = {
@@ -342,16 +345,18 @@ def build_server(session: Session) -> Server[object]:
 	)
 
 	async def list_handler() -> list[types.Tool]:
-		return list(tools(task_names(session.project), session.compat))
+		return list(
+			tools(task_names(session.project), session.compat, command_names(session.project))
+		)
 
 	async def call_handler(name: str, arguments: dict[str, Any]) -> types.CallToolResult:
 		nonlocal probe_task, active_calls
 		try:
 			active_calls += 1
-			before = task_names(session.project)
+			before = (task_names(session.project), command_names(session.project))
 			session.refresh()
 			result = await call(session, name, arguments)
-			if task_names(session.project) != before:
+			if (task_names(session.project), command_names(session.project)) != before:
 				await server.request_context.session.send_tool_list_changed()
 		finally:
 			active_calls -= 1
@@ -384,6 +389,8 @@ async def call(session: Session, name: str, arguments: dict[str, Any]) -> types.
 			return init_call(session, arguments)
 		case ToolName.GITHUB_MATRIX:
 			return github_matrix_call(session, arguments)
+		case ToolName.COMMAND:
+			return await command_call(session, arguments)
 		case _:
 			known = ", ".join(repr(tool.value) for tool in ToolName)
 			return error_result(f"unknown tool {name!r}; expected one of: {known}")
@@ -397,6 +404,10 @@ def task_names(project: TasksState) -> tuple[str, ...]:
 	return tuple(sorted(project.tasks)) if isinstance(project, LoadOk) else ()
 
 
+def command_names(project: TasksState) -> tuple[str, ...]:
+	return tuple(sorted(project.commands)) if isinstance(project, LoadOk) else ()
+
+
 class Tools(NamedTuple):
 	discovery: types.Tool
 	execution: types.Tool
@@ -406,6 +417,7 @@ class Tools(NamedTuple):
 	fix: types.Tool
 	init: types.Tool
 	github_matrix: types.Tool
+	command: types.Tool
 
 
 def tool_def(
@@ -429,7 +441,9 @@ def tool_def(
 	)
 
 
-def tools(task_names: tuple[str, ...], compat: Compat) -> Tools:
+def tools(
+	task_names: tuple[str, ...], compat: Compat, command_names: tuple[str, ...] = ()
+) -> Tools:
 	return Tools(
 		discovery=tool_def(
 			compat,
@@ -612,6 +626,15 @@ def tools(task_names: tuple[str, ...], compat: Compat) -> Tools:
 			title="Emit GitHub Actions matrix",
 			annotations=GITHUB_MATRIX_ANNOTATIONS,
 		),
+		command=tool_def(
+			compat,
+			name=ToolName.COMMAND.value,
+			description=COMMAND_DESCRIPTION,
+			input_schema=wire.command_input_schema(command_names),
+			output_model=wire.RunResponse,
+			title="Run a camas Command",
+			annotations=COMMAND_ANNOTATIONS,
+		),
 	)
 
 
@@ -623,9 +646,13 @@ def list_call(session: Session, arguments: dict[str, Any]) -> types.CallToolResu
 	match session.project:
 		case LoadErr(source=source, exception=exception):
 			return error_result(load_error_hint(session, source, exception))
-		case LoadOk(tasks=tasks, config=config):
+		case LoadOk(tasks=tasks, config=config, commands=commands):
 			resp = to_list_response(
-				tasks, config, timings.load(session.camas_dir), expand=req.expand_matrix
+				tasks,
+				config,
+				timings.load(session.camas_dir),
+				expand=req.expand_matrix,
+				commands=commands,
 			)
 			return success(
 				with_warning(session, list_text(resp, expand_matrix=req.expand_matrix)),
@@ -671,7 +698,11 @@ async def run_call(session: Session, arguments: dict[str, Any]) -> types.CallToo
 	match session.project:
 		case LoadErr(source=source, exception=exception):
 			return error_result(load_error_hint(session, source, exception))
-		case LoadOk(tasks=tasks, config=config):
+		case LoadOk(tasks=tasks, config=config, commands=commands):
+			if isinstance(task := arguments.get("task"), str) and (
+				named := command_name(task, commands)
+			):
+				return error_result(command_refusal(named))
 			return await run_for(session, tasks, config, arguments)
 		case _:
 			assert_never(session.project)
@@ -1039,6 +1070,13 @@ def list_text(resp: wire.ListResponse, *, expand_matrix: bool) -> str:
 		timing = timing_note(t) if t.estimated_s is not None else ""
 		lines.append(f"  {t.name.ljust(width)}{marks}{help_note}{matrix}{timing}")
 		lines.append(f"      {t.command_preview}")
+	if resp.commands:
+		lines.append("")
+		lines.append("Commands (side-effectful; run with camas_command, never camas_run):")
+		lines.extend(
+			f"  {c.name}  {c.help if c.help is not None else c.command_preview}"
+			for c in resp.commands
+		)
 	if not expand_matrix and any(t.matrix_axes for t in resp.tasks):
 		lines.append("")
 		lines.append(
@@ -1062,10 +1100,12 @@ def timing_note(task: wire.TaskInfo) -> str:
 	return f"  [~{task.estimated_s:.2f}s{slowest}, n={task.samples}]"
 
 
-def run_text(task: str, resp: wire.RunResponse, logs: tuple[Path | None, ...]) -> str:
+def run_text(
+	task: str, resp: wire.RunResponse, logs: tuple[Path | None, ...], tool: str = "camas_run"
+) -> str:
 	verdict = "PASSED" if resp.returncode == 0 else "FAILED"
 	lines = [
-		f"camas_run {task!r}: {verdict} (returncode={resp.returncode}) in {resp.elapsed:.2f}s — "
+		f"{tool} {task!r}: {verdict} (returncode={resp.returncode}) in {resp.elapsed:.2f}s — "
 		f"{resp.passed} passed, {resp.failed} failed, {resp.skipped} skipped",
 		"",
 	]
