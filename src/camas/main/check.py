@@ -104,6 +104,13 @@ def pep723_run_cli_warning(source: Path | None) -> tuple[str, ...]:
 
 NO_COMMANDS: Final[Mapping[str, Command]] = MappingProxyType({})
 
+UNRESOLVED: Final = {"task": "no task named", "command": "no task or command named"}
+
+FAILS: Final = {
+	"task": "that command fails wherever it runs, CI included",
+	"command": "the Command fails when run",
+}
+
 
 def unresolved_dispatch_warnings(
 	tasks: Mapping[str, TaskNode], commands: Mapping[str, Command] = NO_COMMANDS
@@ -118,7 +125,9 @@ def unresolved_dispatch_warnings(
 	>>> unresolved_dispatch_warnings({"ship": Task("camas flash-board")}, {"flash_board": Command("x")})
 	()
 	>>> unresolved_dispatch_warnings({}, {"deploy": Command(Task("camas build") + "ship")})
-	("command 'deploy' runs `camas build`, but no task named 'build' exists (known: deploy) — that command fails wherever it runs, CI included",)
+	("command 'deploy' runs `camas build`, but no task or command named 'build' exists (known: deploy) — the Command fails when run",)
+	>>> unresolved_dispatch_warnings({"libs.build": Task("cargo build")}, {"libs.deploy": Command("camas build")})
+	()
 	"""
 	from ..core.matrix import expand_matrix
 	from ..core.task import did_you_mean
@@ -127,8 +136,12 @@ def unresolved_dispatch_warnings(
 
 	dispatchable: Final = {*tasks, *commands}
 
-	def resolves(arg: str) -> bool:
-		return arg in dispatchable or arg.replace("-", "_") in dispatchable
+	def resolves(caller: str, arg: str) -> bool:
+		scope = caller.rpartition(".")[0]
+		return any(
+			candidate in dispatchable or f"{scope}.{candidate}" in dispatchable
+			for candidate in (arg, arg.replace("-", "_"))
+		)
 
 	known: Final = ", ".join(sorted(dispatchable)) or "none"
 	callers: Final = (
@@ -137,12 +150,11 @@ def unresolved_dispatch_warnings(
 	)
 	return tuple(
 		dict.fromkeys(
-			f"{kind} {name!r} runs `camas {arg}`, but no task named {arg!r} exists"
-			f"{did_you_mean(arg, dispatchable)} (known: {known}) — that command fails wherever "
-			"it runs, CI included"
+			f"{kind} {name!r} runs `camas {arg}`, but {UNRESOLVED[kind]} {arg!r} exists"
+			f"{did_you_mean(arg, dispatchable)} (known: {known}) — {FAILS[kind]}"
 			for kind, name, node in callers
 			for info in flatten_leaves(expand_matrix(node))
-			if (arg := camas_task_arg(info.task.cmd)) is not None and not resolves(arg)
+			if (arg := camas_task_arg(info.task.cmd)) is not None and not resolves(name, arg)
 		)
 	)
 

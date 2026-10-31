@@ -284,7 +284,7 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 	if lenient_args.init:
 		strict_args = parser.parse_args(head)
 		sys.exit(write_starter_tasks_py(Path.cwd(), verbose=strict_args.verbose))
-	if lenient_args.verbose:
+	if lenient_args.verbose and command_name(lenient_args.expression or "", commands) is None:
 		print(
 			"warning: --verbose only applies to --init; ignoring it for this run", file=sys.stderr
 		)
@@ -352,7 +352,7 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 					camas_dir=camas_dir,
 				)
 				if commands:
-					print(format_command_listing(commands, color=color_on()))
+					print(f"\n{format_command_listing(commands, color=color_on())}")
 				sys.exit(0)
 
 			if args.tree:

@@ -204,7 +204,9 @@ def test_cli_refuses_tree_run_flags(
 	)
 	with pytest.raises(SystemExit, match="2"):
 		dispatch(state, argv)
-	assert f"error: {flag} does not apply to a Command" in capsys.readouterr().err
+	err = capsys.readouterr().err
+	assert f"error: {flag} does not apply to a Command" in err
+	assert "ignoring it for this run" not in err
 
 
 def test_cli_dry_run_and_passthrough_rules(capsys: pytest.CaptureFixture[str]) -> None:
@@ -240,7 +242,7 @@ def test_cli_help_list_and_tree_show_commands(capsys: pytest.CaptureFixture[str]
 	with pytest.raises(SystemExit, match="0"):
 		dispatch(state, ["--list"])
 	assert (
-		"Commands:\n  flash        build, probe-rs run\n  flash_board  probe-rs run\n"
+		"\n\nCommands:\n  flash        build, probe-rs run\n  flash_board  probe-rs run\n"
 		"  run          Run it"
 	) in capsys.readouterr().out
 	with pytest.raises(SystemExit, match="0"):

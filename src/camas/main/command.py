@@ -17,6 +17,7 @@ from ..core.color import BOLD_CYAN, CAMAS_VIOLET
 from ..core.gate import strip_agent_only_pipes
 from ..core.render import color_on, print_tree
 from ..core.scope import PATHS_TOKEN, with_default_paths
+from ..core.traversal import flatten_leaves
 from ..v0.task import Task
 from .argv import apply_passthrough
 from .color import maybe_color
@@ -174,11 +175,20 @@ def placeholder_warnings(commands: Mapping[str, Command]) -> tuple[str, ...]:
 	>>> from camas.v0.command import Command
 	>>> placeholder_warnings({"flash": Command("probe-rs run --chip {CHIP} {paths}")})
 	("command 'flash' runs {CHIP} literally: a Command has no matrix axes",)
+	>>> placeholder_warnings({"flash": Command("probe-rs run", env={"PROBE": "{PROBE}"})})
+	("command 'flash' runs {PROBE} literally: a Command has no matrix axes",)
 	"""
 	return tuple(
 		f"command {name!r} runs {token} literally: a Command has no matrix axes"
 		for name, command in sorted(commands.items())
-		for token in sorted(
-			set(PLACEHOLDER.findall(task_summary(command.body, frozenset()))) - {PATHS_TOKEN}
-		)
+		for token in sorted(literal_placeholders(command))
 	)
+
+
+def literal_placeholders(command: Command) -> set[str]:
+	body: Final = scoped_body(command)
+	texts: Final = (
+		task_summary(body, frozenset()),
+		*(value for info in flatten_leaves(body) for value in info.task.env.values()),
+	)
+	return {token for text in texts for token in PLACEHOLDER.findall(text)} - {PATHS_TOKEN}
