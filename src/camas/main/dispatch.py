@@ -31,6 +31,7 @@ from ..core.matrix import (
 from ..core.render import color_on, print_tree, render_tree_lines
 from ..core.scope import coverage_message, requested_but_unusable, to_changed, with_default_paths
 from ..core.task import did_you_mean
+from ..v0.command import NEVER_COMPOSES
 from ..v0.config import Config
 from .argv import (
 	NAME_LIKE,
@@ -41,6 +42,7 @@ from .argv import (
 )
 from .command import (
 	command_name,
+	composed_command,
 	format_command_listing,
 	placeholder_warnings,
 	print_command_help,
@@ -89,6 +91,10 @@ def dispatch_arg(
 			f"error: no task named {arg!r}{did_you_mean(arg, names)} (known: {known})",
 			file=sys.stderr,
 		)
+		sys.exit(2)
+	composed: Final = composed_command(arg, commands or {})
+	if composed is not None:
+		print(f"error: {composed!r} is a Command: {NEVER_COMPOSES}", file=sys.stderr)
 		sys.exit(2)
 	return parse_expression(arg, tasks=tasks)
 
@@ -284,7 +290,7 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 	if lenient_args.init:
 		strict_args = parser.parse_args(head)
 		sys.exit(write_starter_tasks_py(Path.cwd(), verbose=strict_args.verbose))
-	if lenient_args.verbose and command_name(lenient_args.expression or "", commands) is None:
+	if lenient_args.verbose:
 		print(
 			"warning: --verbose only applies to --init; ignoring it for this run", file=sys.stderr
 		)

@@ -81,13 +81,16 @@ def redundant_name_warnings(scope: Mapping[str, object]) -> tuple[str, ...]:
 	()
 	>>> redundant_name_warnings({"checks": Parallel(Task("a"), name="ci")})
 	()
+	>>> redundant_name_warnings({"flash": Command("probe-rs run", name="flash")})[0].startswith("command 'flash'")
+	True
 	"""
 	return tuple(
-		f"task {name!r} passes name={name!r}, which just repeats its binding name; the binding "
-		"name is already the task name, so drop the redundant name="
+		f"{'command' if isinstance(val, Command) else 'task'} {name!r} passes name={name!r}, which "
+		"just repeats its binding name; the binding name is already the task name, so drop the "
+		"redundant name="
 		for name, val in scope.items()
 		if not name.startswith("_")
-		and isinstance(val, Task | Sequential | Parallel | Pipe)
+		and isinstance(val, Task | Sequential | Parallel | Pipe | Command)
 		and val.name == name
 	)
 

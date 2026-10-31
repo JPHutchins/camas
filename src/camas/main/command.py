@@ -3,8 +3,10 @@
 
 from __future__ import annotations
 
+import ast
 import re
 import sys
+from contextlib import suppress
 from typing import TYPE_CHECKING, Final, NoReturn
 
 if sys.version_info >= (3, 11):
@@ -33,9 +35,9 @@ if TYPE_CHECKING:
 	from ..v0.task import TaskNode
 
 
-PLACEHOLDER: Final = re.compile(r"\{\w+\}")
+PLACEHOLDER: Final = re.compile(r"(?<!\$)\{\w+\}")
 
-COMMAND_ARGUMENTS: Final = frozenset({"expression", "dry_run"})
+TOLERATED_ARGUMENTS: Final = frozenset({"expression", "dry_run", "verbose"})
 
 
 def command_name(token: str, commands: Mapping[str, Command]) -> str | None:
@@ -78,7 +80,7 @@ def refused_flag(
 	"""
 	>>> from camas.main.parser import build_parser
 	>>> parser = build_parser()
-	>>> refused_flag(parser.parse_args(["flash", "--dry-run"]), parser, ())
+	>>> refused_flag(parser.parse_args(["flash", "--dry-run", "--verbose"]), parser, ())
 	>>> refused_flag(parser.parse_args(["flash", "--github-matrix=auto"]), parser, ())
 	'--github-matrix'
 	"""
@@ -86,10 +88,28 @@ def refused_flag(
 		(
 			f"--{dest}" if dest in axes else f"--{dest.replace('_', '-')}"
 			for dest, value in vars(args).items()
-			if dest not in COMMAND_ARGUMENTS and value != parser.get_default(dest)
+			if dest not in TOLERATED_ARGUMENTS and value != parser.get_default(dest)
 		),
 		None,
 	)
+
+
+def composed_command(expression: str, commands: Collection[str]) -> str | None:
+	"""
+	>>> composed_command("lint | fw.flash", {"fw.flash"}), composed_command('Task("flash")', {"flash"})
+	('fw.flash', None)
+	"""
+	with suppress(SyntaxError):
+		return next(
+			(
+				ref
+				for node in ast.walk(ast.parse(expression, mode="eval"))
+				if isinstance(node, ast.Name | ast.Attribute)
+				and (ref := ast.unparse(node)) in commands
+			),
+			None,
+		)
+	return None
 
 
 def command_node(command: Command, passthrough: tuple[str, ...], *, agent: bool) -> TaskNode:
@@ -177,6 +197,8 @@ def placeholder_warnings(commands: Mapping[str, Command]) -> tuple[str, ...]:
 	("command 'flash' runs {CHIP} literally: a Command has no matrix axes",)
 	>>> placeholder_warnings({"flash": Command("probe-rs run", env={"PROBE": "{PROBE}"})})
 	("command 'flash' runs {PROBE} literally: a Command has no matrix axes",)
+	>>> placeholder_warnings({"flash": Command("sh -c 'cd ${HOME}'", cwd="boards/{CHIP}")})
+	("command 'flash' runs {CHIP} literally: a Command has no matrix axes",)
 	"""
 	return tuple(
 		f"command {name!r} runs {token} literally: a Command has no matrix axes"
@@ -190,5 +212,6 @@ def literal_placeholders(command: Command) -> set[str]:
 	texts: Final = (
 		task_summary(body, frozenset()),
 		*(value for info in flatten_leaves(body) for value in info.task.env.values()),
+		*(str(info.task.cwd) for info in flatten_leaves(body) if info.task.cwd is not None),
 	)
 	return {token for text in texts for token in PLACEHOLDER.findall(text)} - {PATHS_TOKEN}

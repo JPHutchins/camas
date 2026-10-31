@@ -126,9 +126,15 @@ def unresolved_dispatch_warnings(
 	()
 	>>> unresolved_dispatch_warnings({}, {"deploy": Command(Task("camas build") + "ship")})
 	("command 'deploy' runs `camas build`, but no task or command named 'build' exists (known: deploy) — the Command fails when run",)
-	>>> unresolved_dispatch_warnings({"libs.build": Task("cargo build")}, {"libs.deploy": Command("camas build")})
+	>>> mounted = {"libs.build": Task("cargo build"), "build": Task("make")}
+	>>> unresolved_dispatch_warnings(mounted, {"libs.deploy": Command("camas build", cwd="libs")})
+	()
+	>>> unresolved_dispatch_warnings({"build": Task("make")}, {"libs.ship": Command("camas build", cwd="libs")})
+	("command 'libs.ship' runs `camas build`, but no task or command named 'build' exists (known: ship) — the Command fails when run",)
+	>>> unresolved_dispatch_warnings({}, {"deploy": Command("camas build", cwd="libs")})
 	()
 	"""
+	from ..core.attached import scoped_body
 	from ..core.matrix import expand_matrix
 	from ..core.task import did_you_mean
 	from ..core.traversal import flatten_leaves
@@ -136,25 +142,33 @@ def unresolved_dispatch_warnings(
 
 	dispatchable: Final = {*tasks, *commands}
 
-	def resolves(caller: str, arg: str) -> bool:
+	def visible(caller: str, cwd: Path | None) -> frozenset[str] | None:
 		scope = caller.rpartition(".")[0]
-		return any(
-			candidate in dispatchable or f"{scope}.{candidate}" in dispatchable
-			for candidate in (arg, arg.replace("-", "_"))
+		if cwd is None or cwd == Path():
+			return frozenset(dispatchable)
+		if not scope:
+			return None
+		return frozenset(
+			name.removeprefix(f"{scope}.") for name in dispatchable if name.startswith(f"{scope}.")
 		)
 
-	known: Final = ", ".join(sorted(dispatchable)) or "none"
+	def resolves(names: frozenset[str], arg: str) -> bool:
+		return arg in names or arg.replace("-", "_") in names
+
 	callers: Final = (
-		*(("task", name, node) for name, node in tasks.items()),
-		*(("command", name, command.body) for name, command in commands.items()),
+		*(("task", name, expand_matrix(node)) for name, node in tasks.items()),
+		*(("command", name, scoped_body(command)) for name, command in commands.items()),
 	)
 	return tuple(
 		dict.fromkeys(
 			f"{kind} {name!r} runs `camas {arg}`, but {UNRESOLVED[kind]} {arg!r} exists"
-			f"{did_you_mean(arg, dispatchable)} (known: {known}) — {FAILS[kind]}"
+			f"{did_you_mean(arg, names)} (known: {', '.join(sorted(names)) or 'none'}) — "
+			f"{FAILS[kind]}"
 			for kind, name, node in callers
-			for info in flatten_leaves(expand_matrix(node))
-			if (arg := camas_task_arg(info.task.cmd)) is not None and not resolves(name, arg)
+			for info in flatten_leaves(node)
+			if (arg := camas_task_arg(info.task.cmd)) is not None
+			and (names := visible(name, info.task.cwd)) is not None
+			and not resolves(names, arg)
 		)
 	)
 

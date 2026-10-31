@@ -238,8 +238,9 @@ def _compose_scope(
 		):
 			resolved_scope[name] = value
 		elif isinstance(value, ProjectRef):
-			resolved_scope[name] = resolve(value, Field.CONTEXT)
 			rel, child = child_view(value)
+			if child.tasks or not child.commands:
+				resolved_scope[name] = resolve(value, Field.CONTEXT)
 			for key, mounted in child.tasks.items():
 				namespaces[f"{name}.{key}"] = rebase_tree(mounted, rel, name, is_root=True)
 			for key, command in child.commands.items():

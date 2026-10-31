@@ -388,9 +388,12 @@ def command_input_schema(command_names: tuple[str, ...]) -> dict[str, Any]:
 	"""
 	>>> command_input_schema(("flash",))["properties"]["name"]["enum"]
 	['flash']
+	>>> "enum" in command_input_schema(())["properties"]["name"]
+	False
 	"""
 	schema: Final = CommandRequest.model_json_schema()
-	schema["properties"]["name"]["enum"] = list(command_names)
+	if command_names:
+		schema["properties"]["name"]["enum"] = list(command_names)
 	return schema
 
 

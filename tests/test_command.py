@@ -109,6 +109,17 @@ def test_project_mounts_child_commands_anchored_to_the_child(tmp_path: Path) -> 
 	assert (mounted.name, mounted.cwd) == ("fw.flash", Path("fw"))
 
 
+def test_project_mounts_a_child_that_defines_only_commands(tmp_path: Path) -> None:
+	(tmp_path / "ops").mkdir()
+	(tmp_path / "ops" / "tasks.py").write_text(
+		'from camas import Command\ndeploy = Command("deploy-tool")\n'
+	)
+	(tmp_path / "tasks.py").write_text('from camas import Project\nops = Project("ops")\n')
+	state = load_py_tasks_state(tmp_path / "tasks.py")
+	assert isinstance(state, LoadOk)
+	assert (list(state.tasks), list(state.commands)) == ([], ["ops.deploy"])
+
+
 def test_run_attached_stops_at_the_first_failure_with_its_exact_code(
 	capfd: pytest.CaptureFixture[str],
 ) -> None:
@@ -193,7 +204,6 @@ def test_cli_exits_with_the_childs_exact_code() -> None:
 		(["flash", "--github-matrix"], "--github-matrix"),
 		(["flash", "--matrix", "PY=3.13"], "--matrix"),
 		(["flash", "--PY", "3.13"], "--PY"),
-		(["flash", "--verbose"], "--verbose"),
 	],
 )
 def test_cli_refuses_tree_run_flags(
@@ -207,6 +217,27 @@ def test_cli_refuses_tree_run_flags(
 	err = capsys.readouterr().err
 	assert f"error: {flag} does not apply to a Command" in err
 	assert "ignoring it for this run" not in err
+
+
+def test_cli_warns_that_verbose_is_ignored_and_runs_the_command(
+	capfd: pytest.CaptureFixture[str],
+) -> None:
+	with pytest.raises(SystemExit, match="0"):
+		dispatch(_state({"hi": Command(py("print('ran')"))}), ["hi", "--verbose"])
+	out, err = capfd.readouterr()
+	assert "--verbose only applies to --init; ignoring it for this run" in err
+	assert out.splitlines() == ["ran"]
+
+
+def test_cli_names_a_command_composed_in_an_expression(
+	capsys: pytest.CaptureFixture[str],
+) -> None:
+	with pytest.raises(SystemExit, match="2"):
+		dispatch(_state({"flash": Command("x")}, {"lint": Task("ruff")}), ["lint | flash"])
+	assert (
+		"error: 'flash' is a Command: a Command never composes into a task tree"
+		in capsys.readouterr().err
+	)
 
 
 def test_cli_dry_run_and_passthrough_rules(capsys: pytest.CaptureFixture[str]) -> None:

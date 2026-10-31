@@ -41,6 +41,9 @@ if sys.platform != "win32":  # pragma: no branch
 			f"import pathlib, sys, time; pathlib.Path(sys.argv[1]).touch(); time.sleep({seconds})"
 		)
 
+	def touch_sleep_touch(seconds: float) -> str:
+		return f"{touch_then_sleep(seconds)}; pathlib.Path(sys.argv[2]).touch()"
+
 	def foreground_of(_fd: int) -> int:
 		return os.getpgrp()
 
@@ -58,23 +61,32 @@ if sys.platform != "win32":  # pragma: no branch
 
 	def test_a_forwarded_signal_kills_the_child_and_is_reraised(tmp_path: Path) -> None:
 		ready = tmp_path / "ready"
-		signal_main_thread_when(ready, signal.SIGTERM)
-		assert run_step(py(touch_then_sleep(30), str(ready)), None) == Signaled(signal.SIGTERM)
+		survived = tmp_path / "survived"
+		delivery = signal_main_thread_when(ready, signal.SIGTERM)
+		child = py(touch_sleep_touch(30), str(ready), str(survived))
+		assert run_step(child, None) == Signaled(signal.SIGTERM)
+		delivery.join()
+		assert not survived.exists()
 
 	def test_a_forwarded_signal_ends_the_sequence_even_when_the_child_exits_cleanly(
 		tmp_path: Path,
 	) -> None:
 		ready = tmp_path / "ready"
+		stopped = tmp_path / "stopped"
 		flashed = tmp_path / "flashed"
 		graceful = py(
 			"import pathlib, signal, sys, time; "
-			"signal.signal(signal.SIGTERM, lambda *_: sys.exit(0)); "
+			"signal.signal(signal.SIGTERM, "
+			"lambda *_: (pathlib.Path(sys.argv[2]).touch(), sys.exit(0))); "
 			"pathlib.Path(sys.argv[1]).touch(); time.sleep(30)",
 			str(ready),
+			str(stopped),
 		)
 		flash = py("import pathlib, sys; pathlib.Path(sys.argv[1]).touch()", str(flashed))
-		signal_main_thread_when(ready, signal.SIGTERM)
+		delivery = signal_main_thread_when(ready, signal.SIGTERM)
 		assert run_attached(Sequential(graceful, flash), None) == Signaled(signal.SIGTERM)
+		delivery.join()
+		assert stopped.exists()
 		assert not flashed.exists()
 
 	def test_a_terminal_ctrl_c_is_left_to_the_child(
@@ -83,8 +95,9 @@ if sys.platform != "win32":  # pragma: no branch
 		monkeypatch.setattr(os, "ctermid", lambda: os.devnull)
 		monkeypatch.setattr(os, "tcgetpgrp", foreground_of)
 		ready = tmp_path / "ready"
-		signal_main_thread_when(ready, signal.SIGINT)
+		delivery = signal_main_thread_when(ready, signal.SIGINT)
 		assert run_step(py(touch_then_sleep(3), str(ready)), None) == Exited(0)
+		delivery.join()
 
 	def test_a_terminal_that_cannot_report_its_foreground_is_not_ours(
 		monkeypatch: pytest.MonkeyPatch,
@@ -102,8 +115,9 @@ if sys.platform != "win32":  # pragma: no branch
 		monkeypatch.setattr(os, "ctermid", lambda: str(tmp_path / "no-terminal"))
 		assert not in_foreground()
 		ready = tmp_path / "ready"
-		signal_main_thread_when(ready, signal.SIGINT)
+		delivery = signal_main_thread_when(ready, signal.SIGINT)
 		assert run_step(py(touch_then_sleep(30), str(ready)), None) == Signaled(signal.SIGINT)
+		delivery.join()
 
 	def test_a_signal_received_before_a_stage_starts_still_reaches_it() -> None:
 		procs: list[subprocess.Popen[bytes]] = []
