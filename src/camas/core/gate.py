@@ -213,7 +213,7 @@ async def settle(
 ) -> RunResult | None:
 	if fix is None:
 		return None
-	keying: Final = observed(camas_dir, expand_matrix(fix), changed)
+	keying: Final = observed(camas_dir, expand_matrix(strip_agent_only_pipes(fix)), changed)
 	if keying.node is None:
 		return None
 	result: Final = await run(

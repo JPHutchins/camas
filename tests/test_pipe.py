@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""Pipe (#276): fd-wired stages, pipefail, and the agent/human runner split."""
+"""Pipe (#276): fd-wired stages, pipefail, and the gate-only agent_only split."""
 
 from __future__ import annotations
 
@@ -539,7 +539,7 @@ def test_github_matrix_rejects_a_pipe_with_the_fd_wiring_message() -> None:
 
 
 def test_github_matrix_rejects_a_single_stage_pipe_as_a_leaf() -> None:
-	"""A collapsed agent_only pipe is one stage — the leaf message, not the fd-wiring one."""
+	"""A one-stage pipe is a leaf — the leaf message, not the fd-wiring one."""
 	from camas.main.github_matrix import jobs_emission
 
 	with pytest.raises(ValueError, match="single leaf"):

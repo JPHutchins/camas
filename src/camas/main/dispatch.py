@@ -183,7 +183,7 @@ def _fix(paths: tuple[str, ...], stdin: tuple[str, ...] | None, *, dry_run: bool
 		if dry_run:
 			print(coverage_message(requested))
 		return 0
-	expanded = expand_matrix(node)
+	expanded = expand_matrix(strip_agent_only_pipes(node))
 	keying: Final = timings.observed(state.config.camas_path(base), expanded, changed)
 	if dry_run:
 		if keying.node is None:
@@ -411,9 +411,6 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 					print(f"error: {e}", file=sys.stderr)
 					sys.exit(2)
 
-			if not in_agent:
-				resolved = strip_agent_only_pipes(resolved)
-
 			if args.github_matrix:
 				try:
 					print(
@@ -425,6 +422,8 @@ def dispatch(state: TasksState, argv: list[str] | None = None) -> None:
 					print(f"error: {e}", file=sys.stderr)
 					sys.exit(2)
 				sys.exit(0)
+
+			resolved = strip_agent_only_pipes(resolved)
 
 			required_axes: Final = unfilled_required_axes(resolved)
 			if required_axes:
