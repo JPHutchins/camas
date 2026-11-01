@@ -40,6 +40,16 @@ def flatten_leaves(task: TaskNode) -> tuple[LeafInfo, ...]:
 	return tuple(iter_leaves(task, depth=0, is_last_chain=()))
 
 
+def reporting_units(node: TaskNode) -> tuple[Task | Pipe, ...]:
+	match node:
+		case Task() | Pipe():
+			return (node,)
+		case Sequential(tasks=children) | Parallel(tasks=children):
+			return tuple(unit for child in children for unit in reporting_units(child))
+		case _:
+			assert_never(node)
+
+
 def subtree_leaf_indices(task: TaskNode, index_map: dict[int, int]) -> tuple[int, ...]:
 	match task:
 		case Task():
