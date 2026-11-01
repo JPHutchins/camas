@@ -458,7 +458,9 @@ class GateResponse(BaseModel):
 	"""``block`` when a residual needs reasoning, else ``continue`` when the checks pass."""
 	residual_class: Literal["green", "needs_reasoning"]
 	diagnostics: tuple[AgentEnvelope, ...] | None = None
-	"""The failing leaves as AgentJSON envelopes (failures-only); null when the checks pass."""
+	"""The failing leaves and pipes as AgentJSON envelopes (failures-only) — a failed pipe as one
+	envelope under its own name carrying its last stage's output, then one per failing earlier
+	stage; null when the checks pass."""
 	budget: BudgetReport | None = None
 	"""How ``under`` partitioned the checks, when a budget was given."""
 	nothing_ran: str | None = None

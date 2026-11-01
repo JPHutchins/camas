@@ -14,6 +14,7 @@ if sys.version_info >= (3, 11):
 else:  # pragma: no cover
 	from typing_extensions import assert_never
 
+from ..core.completion import failed
 from ..core.gate import decision_of
 from ..core.matrix import expand_matrix
 from ..core.render import group_display_name, strip_ansi
@@ -367,12 +368,10 @@ def pipe_envelope(name: str, exit_code: int, last: RanLeaf) -> tuple[wire.AgentE
 
 
 def upstream_envelope(stage: RanLeaf) -> wire.AgentEnvelope:
-	return to_agent_envelope(
-		stage.task
-		if stage.report_path is not None
-		else dataclasses.replace(stage.task, agent_format=None),
-		stage.result,
-		report_path=stage.report_path,
+	return (
+		to_agent_envelope(stage.task, stage.result, report_path=stage.report_path)
+		if stage.report_path is not None and stage.report_path.is_file()
+		else to_agent_envelope(dataclasses.replace(stage.task, agent_format=None), stage.result)
 	)
 
 
@@ -387,6 +386,7 @@ def fails_without_agent_format(unit: Ran) -> bool:
 		case RanPipe(stages=stages):
 			return (
 				any(failed(stage.result) for stage in stages)
+				and not isinstance(stages[-1].result.completion, Skipped)
 				and stages[-1].task.agent_format is None
 			)
 		case _:
@@ -439,10 +439,6 @@ def ran_unit(unit: Task | Pipe, stages: tuple[RanLeaf, ...]) -> Ran:
 			return RanPipe(name if name is not None else group_display_name(tasks, " | "), stages)
 		case _:
 			assert_never(unit)
-
-
-def failed(result: TaskResult) -> bool:
-	return not isinstance(result.completion, Skipped) and result.completion.returncode != 0
 
 
 def to_gate_response(

@@ -18,11 +18,12 @@ if TYPE_CHECKING:
 FORMATLESS_TRUNCATED_FAILURE = Task(
 	("python", "-c", "[print(i) for i in range(60)]; raise SystemExit(1)"), name="bad"
 )
+TRUNCATED_PASS = Task(("python", "-c", "[print(i) for i in range(60)]"), name="many")
 
 
 def _session(base: Path) -> Session:
 	state = LoadOk(
-		tasks={"bad": FORMATLESS_TRUNCATED_FAILURE},
+		tasks={"bad": FORMATLESS_TRUNCATED_FAILURE, "many": TRUNCATED_PASS},
 		source=base / "tasks.py",
 		scope_effects={},
 		config=None,
@@ -50,3 +51,9 @@ async def test_camas_run_under_a_budget_points_a_formatless_failure_at_the_gate(
 	text = _text(await serve.run_call(_session(tmp_path), {"task": "bad", "under": 60.0}))
 	assert "so camas_gate reports its output as unstructured raw text" in text
 	assert "Tip: output was truncated" not in text
+
+
+async def test_camas_run_marks_a_truncated_passing_leaf_and_names_its_log(tmp_path: Path) -> None:
+	text = _text(await serve.run_call(_session(tmp_path), {"task": "many", "verbosity": "full"}))
+	assert "… earlier output truncated; see full log" in text
+	assert "full log: " in text

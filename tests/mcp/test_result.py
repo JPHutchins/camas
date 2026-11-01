@@ -446,6 +446,29 @@ def test_a_path_mode_upstream_stage_keeps_its_report_file(tmp_path: Path) -> Non
 	)
 
 
+def test_a_path_mode_upstream_stage_without_its_report_reports_its_stderr_raw(
+	tmp_path: Path,
+) -> None:
+	producer = Task(
+		"producer",
+		name="producer",
+		agent_format=AgentFormat("--junitxml {report}", "junit", limit=5),
+	)
+	result = _ran(
+		("producer", Finished(1, 0.1, (b"ImportError: boom\n",))),
+		("converter", Finished(0, 0.1, ())),
+	)
+	upstream = agent_envelopes(
+		Pipe(producer, CONVERTER, name="lint"), result, (tmp_path / "never-written.report", None)
+	)[1]
+	assert (upstream.output_kind, upstream.payload, upstream.truncated, upstream.log) == (
+		"raw",
+		"ImportError: boom",
+		False,
+		None,
+	)
+
+
 def test_a_path_mode_last_stage_reports_its_report_file_as_the_pipe(tmp_path: Path) -> None:
 	report = tmp_path / "out.sarif"
 	report.write_text("{sarif}")
@@ -480,6 +503,15 @@ def test_a_failed_pipe_lacks_agent_format_only_when_its_last_stage_does(
 ) -> None:
 	result = _ran(("producer", Finished(1, 0.1, ())), ("converter", Finished(0, 0.1, ())))
 	assert has_failing_leaf_without_agent_format(Pipe(PRODUCER, converter), result) is expected
+
+
+def test_a_pipe_whose_last_stage_never_ran_is_not_blamed_on_its_agent_format() -> None:
+	result = _ran(
+		("producer", Errored(127, "no such file or directory: producer")),
+		("converter", Skipped(127, "producer")),
+	)
+	pipe = Pipe(PRODUCER, Task("converter", name="converter"))
+	assert has_failing_leaf_without_agent_format(pipe, result) is False
 
 
 async def test_the_gate_hands_a_failed_agent_only_pipe_its_structured_output() -> None:
