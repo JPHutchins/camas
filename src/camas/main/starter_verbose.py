@@ -125,9 +125,10 @@ generators = Clean(
 # through a shell quoting layer. Stages must be leaves. The pipeline fails pipefail-style: any
 # stage's non-zero exit fails the run, so a producer failing under a succeeding last stage is
 # still a failure, and every stage still runs to completion (a dying stage feeds EOF downstream).
-# agent_only=True runs the full pipeline on an agent run and collapses to the first stage alone
-# on a human run — the human gets the plain human-readable output, the agent the piped
-# structured output, the same runner split as agent_format's args. Stages also compose with `>`:
+# agent_only=True runs the full pipeline only in the gate's checks (camas_gate, camas mcp gate)
+# and collapses to the first stage alone on every other run, human or agent (the CLI, camas_run,
+# the autofix) — the gate's checks get the piped structured output, every other run the plain
+# human-readable output, the same split as agent_format's args. Stages also compose with `>`:
 # clippy > "sarif" is a Pipe — parenthesize a chain of more than two ((a > b) > c), since Python
 # chains `>` comparisons. The placeholders below are inert (nothing writes); a real pipeline
 # pairs a producer with the converter that turns its output into the agent's structured format.
@@ -152,10 +153,10 @@ typed_lint = Task('python -c "" {paths}', paths=by_glob(("src/**/*.py",), defaul
 # The hand-written callable from above, wired to a leaf the same way.
 web_lint = Task('python -c "" {paths}', paths=web_paths)
 
-# agent_format=AgentFormat(args, kind) is agent-only: the gate appends args to the command and
-# tags the resulting diagnostics as kind, but a human run leaves the command untouched. kind is
-# one of the standards camas passes through verbatim, never parsing: sarif, rdjson, lsp, junit,
-# tap, or raw (the default when agent_format is unset). The tuple shorthand
+# agent_format=AgentFormat(args, kind) is gate-only: the gate appends args to its check commands
+# and tags the resulting diagnostics as kind; every other run, human or agent, leaves the command
+# untouched. kind is one of the standards camas passes through verbatim, never parsing: sarif,
+# rdjson, lsp, junit, tap, or raw (the default when agent_format is unset). The tuple shorthand
 # agent_format=("--output-format sarif", "sarif") coerces to the same thing. limit= (default
 # 8000) caps a structured payload in characters — over it, the gate swaps in a pointer to the
 # full file/log instead of dumping or tailing a truncated (and invalid) document; raw is exempt,

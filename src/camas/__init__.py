@@ -115,7 +115,8 @@ tier) that drive the changed scope to green off the main agent's context,
 rather than blocking on a hook. A checking leaf may add
 ``agent_format=("--output-format sarif", "sarif")`` (kinds: ``sarif``,
 ``rdjson``, ``lsp``, ``junit``, ``tap``, ``raw``) so the gate collects
-machine-readable diagnostics — appended only on gate runs, not human runs.
+machine-readable diagnostics — appended only in the gate's checks; every
+other run, human or agent, leaves the command untouched.
 ``AgentFormat`` also takes ``limit=`` (default 8000 characters): a structured
 payload over it is never dumped or tailed — a truncated SARIF/JUnit document
 is invalid — so the gate substitutes a pointer to the full file/log instead.

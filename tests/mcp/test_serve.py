@@ -48,6 +48,11 @@ PASS = Task(("python", "-c", "print('ok')"), name="lint")
 FAIL = Task(("python", "-c", "import sys; print('boom'); sys.exit(3)"), name="bad")
 
 
+def _leaf_names(result: types.CallToolResult) -> list[str]:
+	assert result.structuredContent is not None
+	return [leaf["name"] for leaf in result.structuredContent["leaves"]]
+
+
 def _task_enum(input_schema: dict[str, Any]) -> list[str]:
 	"""The task-name enum, spliced onto the string branch of the optional ``task`` field."""
 	branches = input_schema["properties"]["task"]["anyOf"]
@@ -425,9 +430,8 @@ async def test_run_call_paths_prunes_leaves_the_scope_misses(tmp_path: Path) -> 
 	session = _session({"all": node}, None, tmp_path, rich=True)
 	result = await serve.run_call(session, {"task": "all", "paths": ["src/a.py"]})
 	assert result.isError is False
+	assert _leaf_names(result) == ["src_lint"]
 	assert result.structuredContent is not None
-	names = [leaf["name"] for leaf in result.structuredContent["leaves"]]
-	assert names == ["src_lint"]
 	assert "src/a.py" in result.structuredContent["leaves"][0]["command"]
 
 
@@ -460,9 +464,7 @@ async def test_run_call_paths_with_under_scopes_then_budgets(tmp_path: Path) -> 
 	session = _session({"all": node}, None, tmp_path, rich=True)
 	result = await serve.run_call(session, {"task": "all", "paths": ["src/a.py"], "under": 5.0})
 	assert result.isError is False
-	assert result.structuredContent is not None
-	names = [leaf["name"] for leaf in result.structuredContent["leaves"]]
-	assert names == ["src_lint"]
+	assert _leaf_names(result) == ["src_lint"]
 
 
 async def test_run_call_paths_with_under_no_leaf_covered_runs_nothing(tmp_path: Path) -> None:
@@ -2287,3 +2289,95 @@ async def test_run_budget_paths_all_outside_repo_runs_nothing(tmp_path: Path) ->
 	)
 	assert not result.isError
 	assert "nothing to run" in _text(result)
+
+
+AGENT_ONLY_LINT = Pipe(
+	Task(
+		("python", "-c", "import sys; print(sys.argv[1:])"),
+		name="producer",
+		agent_format=("--json", "raw"),
+	),
+	Task(
+		(
+			"python",
+			"-c",
+			"import sys; print('converter got:', sys.stdin.read().strip()); sys.exit(1)",
+		),
+		name="converter",
+	),
+	agent_only=True,
+	name="lint",
+)
+
+_TOUCH = "import pathlib, sys; pathlib.Path(sys.argv[1]).touch()"
+
+AGENT_ONLY_FIX = Pipe(
+	Task(("python", "-c", _TOUCH, "produced"), name="produce"),
+	Task(("python", "-c", _TOUCH, "converted"), name="convert"),
+	agent_only=True,
+	name="fix",
+)
+
+
+async def test_run_call_collapses_an_agent_only_pipe_to_its_first_stage(tmp_path: Path) -> None:
+	session = _session({"lint": AGENT_ONLY_LINT}, None, tmp_path, rich=True)
+	result = await serve.run_call(session, {"task": "lint", "verbosity": "full"})
+	assert result.structuredContent is not None
+	assert result.structuredContent["returncode"] == 0
+	assert _leaf_names(result) == ["producer"]
+	assert result.structuredContent["leaves"][0]["completion"]["output"] == ["[]"]
+
+
+async def test_run_call_dry_run_plans_an_agent_only_pipe_as_its_first_stage(
+	tmp_path: Path,
+) -> None:
+	session = _session({"lint": AGENT_ONLY_LINT}, None, tmp_path, rich=True)
+	result = await serve.run_call(session, {"task": "lint", "dry_run": True})
+	assert _leaf_names(result) == ["producer"]
+
+
+async def test_run_call_under_collapses_an_agent_only_pipe_to_its_first_stage(
+	tmp_path: Path,
+) -> None:
+	session = _session({"lint": AGENT_ONLY_LINT}, None, tmp_path, rich=True)
+	result = await serve.run_call(session, {"task": "lint", "under": 5.0})
+	assert result.structuredContent is not None
+	assert result.structuredContent["returncode"] == 0
+	assert _leaf_names(result) == ["producer"]
+
+
+async def test_fix_call_collapses_an_agent_only_pipe_to_its_first_stage(tmp_path: Path) -> None:
+	session = _session({"fix": AGENT_ONLY_FIX}, Config(agent=Claude(fix=AGENT_ONLY_FIX)), tmp_path)
+	assert "FIXED" in _text(await serve.call(session, "camas_fix", {}))
+	assert (tmp_path / "produced").exists()
+	assert not (tmp_path / "converted").exists()
+
+
+async def test_gate_call_settles_an_agent_only_fix_pipe_as_its_first_stage(tmp_path: Path) -> None:
+	config = Config(default_task=PASS, agent=Claude(fix=AGENT_ONLY_FIX))
+	session = _session({"lint": PASS}, config, tmp_path)
+	assert "CONTINUE" in _text(await serve.call(session, "camas_gate", {}))
+	assert (tmp_path / "produced").exists()
+	assert not (tmp_path / "converted").exists()
+
+
+async def test_gate_call_keeps_an_agent_only_pipe_whole_with_its_agent_format_args(
+	tmp_path: Path,
+) -> None:
+	session = _session({"lint": AGENT_ONLY_LINT}, Config(default_task=AGENT_ONLY_LINT), tmp_path)
+	text = _text(await serve.call(session, "camas_gate", {}))
+	assert "BLOCK" in text
+	assert "converter got: ['--json']" in text
+
+
+def test_github_matrix_call_emits_an_agent_only_pipe_child_as_its_own_job(tmp_path: Path) -> None:
+	other = Task("make other", name="other")
+	session = _session(
+		{"lint": AGENT_ONLY_LINT, "other": other, "ci": Parallel(AGENT_ONLY_LINT, other)},
+		None,
+		tmp_path,
+		rich=True,
+	)
+	result = serve.github_matrix_call(session, {"task": "ci"})
+	assert result.structuredContent is not None
+	assert result.structuredContent["matrix"] == {"task": ["lint", "other"]}

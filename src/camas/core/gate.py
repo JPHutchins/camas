@@ -144,30 +144,18 @@ def strip_agent_only_pipes(node: TaskNode) -> TaskNode:
 	>>> strip_agent_only_pipes(Pipe("a", "b")).tasks[0].cmd
 	'a'
 	"""
-	if not _has_agent_only(node):
-		return node
 	match node:
 		case Pipe(tasks=stages, agent_only=True):
 			return rebuilt(node, stages[0], agent_only=False)
 		case Group() as group:
 			children = tuple(strip_agent_only_pipes(c) for c in group.tasks)
-			if all(new is old for new, old in zip(children, group.tasks, strict=True)):
-				return node  # pragma: no cover
-			return rebuilt(group, *children)
-		case Task():  # pragma: no cover
+			return (
+				group
+				if all(new is old for new, old in zip(children, group.tasks, strict=True))
+				else rebuilt(group, *children)
+			)
+		case _:
 			return node
-		case _:
-			assert_never(node)
-
-
-def _has_agent_only(node: TaskNode) -> bool:
-	match node:
-		case Pipe(agent_only=True):
-			return True
-		case Group() as group:
-			return any(_has_agent_only(c) for c in group.tasks)
-		case _:
-			return False
 
 
 def uses_path_mode(node: TaskNode) -> bool:
@@ -213,7 +201,7 @@ async def settle(
 ) -> RunResult | None:
 	if fix is None:
 		return None
-	keying: Final = observed(camas_dir, expand_matrix(fix), changed)
+	keying: Final = observed(camas_dir, expand_matrix(strip_agent_only_pipes(fix)), changed)
 	if keying.node is None:
 		return None
 	result: Final = await run(
@@ -271,6 +259,7 @@ async def run_gate(
 		interactive=False,
 		leaf_color=leaf_color,
 		identities=final_keying.identities,
+		whole_agent_only_pipes=True,
 	)
 	residual: ResidualClass = "needs_reasoning" if checks.returncode != 0 else "green"
 	return GateOutcome(

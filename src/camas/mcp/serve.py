@@ -40,7 +40,7 @@ from ..core.budget import (
 	summary_lines,
 )
 from ..core.execution import run
-from ..core.gate import GateOutcome, run_gate, settle
+from ..core.gate import GateOutcome, run_gate, settle, strip_agent_only_pipes
 from ..core.hook_event import (
 	NO_EVENT,
 	STALE_TEMP_MAX_AGE_S,
@@ -797,7 +797,7 @@ def resolve_run_node(
 	if req.args and not isinstance(node, Task):
 		raise ValueError(f"pass-through args (--) only apply to Task, got {type(node).__name__}")
 	require_filled_axes(node)
-	return name, node
+	return name, strip_agent_only_pipes(node)
 
 
 async def run_budget(
@@ -821,7 +821,7 @@ async def run_budget(
 	if requested_but_unusable(req.paths, changed):
 		return nothing_covered_result(session, req.paths)
 	plan = plan_under(
-		expand_matrix(source),
+		expand_matrix(strip_agent_only_pipes(source)),
 		budget_s,
 		timings.load(session.camas_dir),
 		timings.scope_of(changed),
@@ -1401,7 +1401,7 @@ async def fix_for(
 	blocked = unsatisfiable_message(fix_node) if fix_node is not None else None
 	if fix_node is not None and blocked is None:
 		changed = to_changed(req.paths, base_for(session))
-		expanded = expand_matrix(fix_node)
+		expanded = expand_matrix(strip_agent_only_pipes(fix_node))
 		if not requested_but_unusable(req.paths, changed):
 			keying = timings.observed(session.camas_dir, expanded, changed)
 			if keying.node is not None:

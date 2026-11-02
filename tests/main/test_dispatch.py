@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from camas import Config, Parallel, Sequential, Task
+from camas import Config, Parallel, Pipe, Sequential, Task
 from camas.core import timings
 from camas.core.color import WHITE
 from camas.core.completion import RunResult
@@ -753,3 +753,68 @@ def test_fix_cli_dry_run_reports_unusable_paths(
 	monkeypatch.chdir(tmp_path)
 	assert fix_cli(["--dry-run", "--paths", "/etc/passwd"]) == 0
 	assert "No task leaf covers /etc/passwd — nothing to run." in capsys.readouterr().out
+
+
+_AGENT_ONLY_LINT = Pipe(
+	Task(
+		(
+			"python",
+			"-c",
+			"import pathlib, sys; pathlib.Path('argv').write_text(repr(sys.argv[1:]))",
+		),
+		agent_format=("--json", "raw"),
+	),
+	Task(("python", "-c", "import pathlib; pathlib.Path('converted').touch()")),
+	agent_only=True,
+	name="lint",
+)
+
+
+def test_an_agent_run_collapses_an_agent_only_pipe_to_its_first_stage(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	_as_agent(monkeypatch)
+	monkeypatch.chdir(tmp_path)
+	with pytest.raises(SystemExit, match="0"):
+		dispatch(_state({"lint": _AGENT_ONLY_LINT}), ["lint", "--effects", "()"])
+	assert (tmp_path / "argv").read_text() == "[]"
+	assert not (tmp_path / "converted").exists()
+
+
+def test_github_matrix_emits_an_agent_only_pipe_child_as_its_own_job(
+	monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+	monkeypatch.delenv("CLAUDECODE", raising=False)
+	monkeypatch.delenv("CAMAS_AGENT", raising=False)
+	other = Task(("python", "-c", "pass"), name="other")
+	with pytest.raises(SystemExit, match="0"):
+		dispatch(
+			_state(
+				{"lint": _AGENT_ONLY_LINT, "other": other, "ci": Parallel(_AGENT_ONLY_LINT, other)}
+			),
+			["--github-matrix=tasks", "ci"],
+		)
+	assert json.loads(capsys.readouterr().out) == {"task": ["lint", "other"]}
+
+
+_AGENT_ONLY_FIX = (
+	"from camas import Claude, Config, Pipe, Task\n"
+	"touch = 'import pathlib, sys; pathlib.Path(sys.argv[1]).touch()'\n"
+	"fix = Pipe(\n"
+	"    Task(('python', '-c', touch, 'produced')),\n"
+	"    Task(('python', '-c', touch, 'converted')),\n"
+	"    agent_only=True,\n"
+	")\n"
+	"_ = Config(agent=Claude(fix=fix))\n"
+)
+
+
+def test_fix_cli_collapses_an_agent_only_pipe_to_its_first_stage(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	(tmp_path / "tasks.py").write_text(_AGENT_ONLY_FIX)
+	monkeypatch.chdir(tmp_path)
+	monkeypatch.setattr("sys.stdin", io.StringIO(""))
+	assert fix_cli([]) == 0
+	assert (tmp_path / "produced").exists()
+	assert not (tmp_path / "converted").exists()

@@ -207,7 +207,7 @@ OutputKind: TypeAlias = Literal["sarif", "rdjson", "lsp", "junit", "tap", "raw"]
 
 
 class AgentFormat(NamedTuple):
-	"""A leaf's agent-only structured-output variant.
+	"""A leaf's gate-only structured-output variant.
 
 	>>> AgentFormat("--output-format sarif", "sarif")
 	AgentFormat(args='--output-format sarif', kind='sarif', limit=8000)
@@ -216,7 +216,7 @@ class AgentFormat(NamedTuple):
 	"""
 
 	args: str
-	"""Appended to the command on gate runs; a literal ``{report}`` names the file the gate reads."""
+	"""Appended to the command in the gate's checks; a literal ``{report}`` names the file the gate reads."""
 	kind: OutputKind
 	limit: int = 8_000
 	"""Characters of a structured payload or report file the gate inlines."""
@@ -596,7 +596,7 @@ class Pipe(Group):
 	"""
 
 	agent_only: bool
-	"""Pipe on agent runs only; a human run keeps the first stage alone."""
+	"""Pipe in the gate's checks only; every other run keeps the first stage alone."""
 
 	def __init__(
 		self,

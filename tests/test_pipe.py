@@ -1,11 +1,12 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""Pipe (#276): fd-wired stages, pipefail, and the agent/human runner split."""
+"""Pipe (#276): fd-wired stages, pipefail, and the gate-only agent_only split."""
 
 from __future__ import annotations
 
 import asyncio
+import re
 import sys
 from typing import TYPE_CHECKING
 
@@ -150,9 +151,16 @@ def test_strip_agent_only_pipes_leaves_a_pipeless_tree_untouched() -> None:
 	assert strip_agent_only_pipes(seq) is seq
 
 
+def test_strip_agent_only_pipes_keeps_an_untouched_sibling_subtree_by_identity() -> None:
+	untouched = Parallel(Task("a"), Pipe("b", "c"))
+	stripped = strip_agent_only_pipes(Sequential(Pipe("d", "e", agent_only=True), untouched))
+	assert isinstance(stripped, Sequential)
+	assert stripped.tasks[1] is untouched
+
+
 def test_strip_agent_only_pipes_collapses_to_the_first_stage() -> None:
 	"""The collapse keeps the group's fields on a single-stage Pipe, so env/cwd/matrix still
-	reach the human's run of that stage."""
+	reach every non-gate run of that stage."""
 	node = Sequential(
 		Pipe("cargo clippy", "clippy-sarif", agent_only=True, env={"A": "1"}),
 		Pipe("fmt", "tee"),
@@ -162,6 +170,31 @@ def test_strip_agent_only_pipes_collapses_to_the_first_stage() -> None:
 		Pipe("fmt", "tee"),
 	)
 	assert strip_agent_only_pipes(Pipe("a", "b")) == Pipe("a", "b")
+
+
+async def test_run_refuses_an_agent_only_pipe_outside_the_gate() -> None:
+	with pytest.raises(ValueError, match="agent_only Pipe 'lint' reached a run outside the gate"):
+		await run(Pipe(Task(DRAIN), Task(DRAIN), agent_only=True, name="lint"))
+
+
+async def test_run_names_an_unnamed_agent_only_pipe_by_its_stages() -> None:
+	with pytest.raises(ValueError, match=re.escape("agent_only Pipe 'producer | converter'")):
+		await run(
+			Sequential(Pipe(Task("producer"), Task("converter"), agent_only=True)),
+			jobs=1,
+		)
+
+
+async def test_run_keeps_an_agent_only_pipe_whole_when_the_caller_opts_in() -> None:
+	pipe = Pipe(
+		Task(("python", "-c", "import sys; sys.stdout.write('x')")),
+		Task(ECHO_UPPER),
+		agent_only=True,
+	)
+	result = await run(pipe, jobs=1, whole_agent_only_pipes=True)
+	last = result.results[1].completion
+	assert isinstance(last, Finished)
+	assert last.output == (b"X",)
 
 
 def test_apply_overrides_keeps_agent_only() -> None:
@@ -539,7 +572,7 @@ def test_github_matrix_rejects_a_pipe_with_the_fd_wiring_message() -> None:
 
 
 def test_github_matrix_rejects_a_single_stage_pipe_as_a_leaf() -> None:
-	"""A collapsed agent_only pipe is one stage — the leaf message, not the fd-wiring one."""
+	"""A one-stage pipe is a leaf — the leaf message, not the fd-wiring one."""
 	from camas.main.github_matrix import jobs_emission
 
 	with pytest.raises(ValueError, match="single leaf"):
