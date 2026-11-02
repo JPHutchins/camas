@@ -6,9 +6,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from camas import AgentFormat, Parallel, Sequential, Task
+import pytest
+
+from camas import AgentFormat, Parallel, Pipe, Sequential, Task
 from camas.core.completion import RunResult, TaskResult
 from camas.core.execution import run
+from camas.core.gate import run_gate
 from camas.main.state import LoadOk
 from camas.mcp import wire
 from camas.mcp.result import (
@@ -16,6 +19,7 @@ from camas.mcp.result import (
 	has_failing_leaf_without_agent_format,
 	to_agent_envelope,
 	to_check_response,
+	to_gate_response,
 	to_plan_response,
 	to_run_response,
 )
@@ -23,6 +27,7 @@ from camas.v0.completion import Errored, Finished, Skipped, Stopped
 
 if TYPE_CHECKING:
 	from camas.mcp.result import Verbosity
+	from camas.v0.completion import Completion
 	from camas.v0.task import TaskNode
 
 
@@ -320,6 +325,217 @@ def test_has_failing_leaf_without_agent_format_false_when_all_pass() -> None:
 		interrupt_count=0,
 	)
 	assert has_failing_leaf_without_agent_format(node, result) is False
+
+
+PRODUCER = Task("producer", name="producer")
+CONVERTER = Task("converter", name="converter", agent_format=AgentFormat("", "sarif"))
+LINT = Pipe(PRODUCER, CONVERTER, name="lint")
+
+
+def _ran(*stages: tuple[str, Completion]) -> RunResult:
+	return RunResult(1, tuple(TaskResult(name, completion) for name, completion in stages), 0.1)
+
+
+def _summary(envelopes: tuple[wire.AgentEnvelope, ...]) -> list[tuple[str, int, str, str]]:
+	return [(e.name, e.exit_code, e.output_kind, e.payload) for e in envelopes]
+
+
+@pytest.mark.parametrize("agent_only", [False, True])
+def test_a_failed_pipe_reports_its_last_stage_as_the_pipe_then_each_failing_stage(
+	agent_only: bool,
+) -> None:
+	result = _ran(
+		("producer", Finished(1, 0.1, (b"human-ish stderr\n",))),
+		("converter", Finished(0, 0.1, (b"SARIF<x>\n",))),
+	)
+	envelopes = agent_envelopes(
+		Pipe(PRODUCER, CONVERTER, name="lint", agent_only=agent_only), result
+	)
+	assert _summary(envelopes) == [
+		("lint", 1, "sarif", "SARIF<x>"),
+		("producer", 1, "raw", "human-ish stderr"),
+	]
+
+
+def test_a_failing_last_stage_is_reported_once_as_the_pipe() -> None:
+	result = _ran(
+		("producer", Finished(0, 0.1, ())),
+		("converter", Finished(2, 0.1, (b"SARIF<>\n",))),
+	)
+	assert _summary(agent_envelopes(LINT, result)) == [("lint", 2, "sarif", "SARIF<>")]
+
+
+def test_a_pipe_exits_with_its_rightmost_failing_stage_so_sigpipe_never_masks_the_converter() -> (
+	None
+):
+	result = _ran(
+		("producer", Finished(-13, 0.1, ())),
+		("converter", Finished(2, 0.1, (b"converter crashed\n",))),
+	)
+	assert _summary(agent_envelopes(LINT, result)) == [
+		("lint", 2, "sarif", "converter crashed"),
+		("producer", -13, "raw", ""),
+	]
+
+
+def test_a_pipe_whose_last_stage_passed_exits_with_its_rightmost_failing_upstream_stage() -> None:
+	result = _ran(
+		("a", Finished(3, 0.1, ())),
+		("b", Finished(4, 0.1, ())),
+		("converter", Finished(0, 0.1, ())),
+	)
+	pipe = Pipe(Task("a", name="a"), Task("b", name="b"), CONVERTER, name="lint")
+	assert [(e.name, e.exit_code) for e in agent_envelopes(pipe, result)] == [
+		("lint", 4),
+		("a", 3),
+		("b", 4),
+	]
+
+
+def test_a_passing_pipe_reports_nothing() -> None:
+	result = _ran(("producer", Finished(0, 0.1, ())), ("converter", Finished(0, 0.1, ())))
+	assert agent_envelopes(LINT, result) == ()
+
+
+def test_a_pipe_whose_last_stage_never_ran_reports_only_the_stage_that_failed() -> None:
+	result = _ran(
+		("producer", Errored(127, "no such file or directory: producer")),
+		("converter", Skipped(127, "producer")),
+	)
+	assert _summary(agent_envelopes(LINT, result)) == [
+		("producer", 127, "raw", "no such file or directory: producer"),
+	]
+
+
+def test_an_anonymous_pipe_is_named_after_its_stages() -> None:
+	result = _ran(("producer", Finished(1, 0.1, ())), ("converter", Finished(0, 0.1, ())))
+	assert agent_envelopes(Pipe(PRODUCER, CONVERTER), result)[0].name == "producer | converter"
+
+
+def test_an_upstream_stage_reports_its_stderr_raw_whatever_its_kind() -> None:
+	producer = Task(
+		"producer", name="producer", agent_format=AgentFormat("--json", "sarif", limit=5)
+	)
+	result = _ran(
+		("producer", Finished(1, 0.1, (b"way too long\n",))),
+		("converter", Finished(0, 0.1, ())),
+	)
+	upstream = agent_envelopes(Pipe(producer, CONVERTER, name="lint"), result)[1]
+	assert (upstream.output_kind, upstream.payload, upstream.truncated) == (
+		"raw",
+		"way too long",
+		False,
+	)
+
+
+def test_a_path_mode_upstream_stage_keeps_its_report_file(tmp_path: Path) -> None:
+	report = tmp_path / "junit.xml"
+	report.write_text("<xml/>")
+	producer = Task(
+		"producer", name="producer", agent_format=AgentFormat("--junitxml {report}", "junit")
+	)
+	result = _ran(
+		("producer", Finished(1, 0.1, (b"stderr\n",))),
+		("converter", Finished(0, 0.1, ())),
+	)
+	upstream = agent_envelopes(Pipe(producer, CONVERTER, name="lint"), result, (report, None))[1]
+	assert (upstream.output_kind, upstream.payload, upstream.log) == (
+		"junit",
+		"<xml/>",
+		str(report),
+	)
+
+
+def test_a_path_mode_upstream_stage_without_its_report_reports_its_stderr_raw(
+	tmp_path: Path,
+) -> None:
+	producer = Task(
+		"producer",
+		name="producer",
+		agent_format=AgentFormat("--junitxml {report}", "junit", limit=5),
+	)
+	result = _ran(
+		("producer", Finished(1, 0.1, (b"ImportError: boom\n",))),
+		("converter", Finished(0, 0.1, ())),
+	)
+	upstream = agent_envelopes(
+		Pipe(producer, CONVERTER, name="lint"), result, (tmp_path / "never-written.report", None)
+	)[1]
+	assert (upstream.output_kind, upstream.payload, upstream.truncated, upstream.log) == (
+		"raw",
+		"ImportError: boom",
+		False,
+		None,
+	)
+
+
+def test_a_path_mode_last_stage_reports_its_report_file_as_the_pipe(tmp_path: Path) -> None:
+	report = tmp_path / "out.sarif"
+	report.write_text("{sarif}")
+	converter = Task(
+		"converter", name="converter", agent_format=AgentFormat("--output {report}", "sarif")
+	)
+	result = _ran(
+		("producer", Finished(1, 0.1, ())),
+		("converter", Finished(0, 0.1, (b"ignored\n",))),
+	)
+	pipe = agent_envelopes(Pipe(PRODUCER, converter, name="lint"), result, (None, report))[0]
+	assert (pipe.name, pipe.payload, pipe.log) == ("lint", "{sarif}", str(report))
+
+
+def test_pipe_envelopes_pair_with_their_stages_amid_other_leaves() -> None:
+	result = _ran(
+		("a", Finished(1, 0.1, (b"A\n",))),
+		("producer", Finished(0, 0.1, ())),
+		("converter", Finished(1, 0.1, (b"C\n",))),
+		("d", Finished(1, 0.1, (b"D\n",))),
+	)
+	envelopes = agent_envelopes(Parallel(Task("a", name="a"), LINT, Task("d", name="d")), result)
+	assert [(e.name, e.payload) for e in envelopes] == [("a", "A"), ("lint", "C"), ("d", "D")]
+
+
+@pytest.mark.parametrize(
+	("converter", "expected"),
+	[(CONVERTER, False), (Task("converter", name="converter"), True)],
+)
+def test_a_failed_pipe_lacks_agent_format_only_when_its_last_stage_does(
+	converter: Task, expected: bool
+) -> None:
+	result = _ran(("producer", Finished(1, 0.1, ())), ("converter", Finished(0, 0.1, ())))
+	assert has_failing_leaf_without_agent_format(Pipe(PRODUCER, converter), result) is expected
+
+
+def test_a_pipe_whose_last_stage_never_ran_is_not_blamed_on_its_agent_format() -> None:
+	result = _ran(
+		("producer", Errored(127, "no such file or directory: producer")),
+		("converter", Skipped(127, "producer")),
+	)
+	pipe = Pipe(PRODUCER, Task("converter", name="converter"))
+	assert has_failing_leaf_without_agent_format(pipe, result) is False
+
+
+async def test_the_gate_hands_a_failed_agent_only_pipe_its_structured_output() -> None:
+	producer = Task(
+		(
+			"python",
+			"-c",
+			'import sys; print(\'{"msg": "unused var"}\'); '
+			"print('human-ish stderr', file=sys.stderr); sys.exit(1)",
+		),
+		name="producer",
+	)
+	converter = Task(
+		("python", "-c", "import sys; print('SARIF<' + sys.stdin.read().strip() + '>')"),
+		name="converter",
+		agent_format=AgentFormat("", "sarif"),
+	)
+	outcome = await run_gate(Pipe(producer, converter, agent_only=True, name="lint"), ())
+	diagnostics = to_gate_response(outcome, None, wire.GateRerun()).diagnostics
+	assert diagnostics is not None
+	assert [(e.name, e.exit_code, e.output_kind, e.payload.splitlines()) for e in diagnostics] == [
+		("lint", 1, "sarif", ['SARIF<{"msg": "unused var"}>']),
+		("producer", 1, "raw", ["human-ish stderr"]),
+	]
 
 
 _PYPROJECT = Path("/proj/pyproject.toml")

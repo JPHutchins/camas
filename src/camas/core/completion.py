@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, NamedTuple
 
+from ..v0.completion import Skipped
 from .timings import (
 	CacheKey,  # noqa: TC001  # runtime name get_type_hints resolves; TYPE_CHECKING-only would NameError
 )
@@ -23,6 +24,15 @@ class TaskResult(NamedTuple):
 	name: str
 	completion: Completion
 	identity: CacheKey | None = None
+
+
+def failed(result: TaskResult) -> bool:
+	"""
+	>>> from camas.v0.completion import Finished, Skipped
+	>>> failed(TaskResult("a", Finished(1, 0.1, ()))), failed(TaskResult("a", Skipped(1, "b")))
+	(True, False)
+	"""
+	return not isinstance(result.completion, Skipped) and result.completion.returncode != 0
 
 
 class RunResult(NamedTuple):

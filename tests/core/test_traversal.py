@@ -5,10 +5,10 @@ from __future__ import annotations
 
 import pytest
 
-from camas import Parallel, Sequential, Task
+from camas import Parallel, Pipe, Sequential, Task
 from camas.core.leaf_state import ChainLink
 from camas.core.render import print_tree
-from camas.core.traversal import flatten_leaves
+from camas.core.traversal import flatten_leaves, reporting_units
 
 
 def test_single_cmd() -> None:
@@ -71,6 +71,16 @@ def test_deeply_nested() -> None:
 def test_leaf_task_reference(cmd: Task, expected_cmd: str | tuple[str, ...]) -> None:
 	leaves = flatten_leaves(cmd)
 	assert leaves[0].task.cmd == expected_cmd
+
+
+def test_reporting_units_keep_each_pipe_whole_in_leaf_order() -> None:
+	pipe = Pipe("b", "c")
+	assert reporting_units(Sequential(Task("a"), Parallel(pipe, Task("d")))) == (
+		Task("a"),
+		pipe,
+		Task("d"),
+	)
+	assert reporting_units(pipe) == (pipe,)
 
 
 def test_print_tree(capsys: pytest.CaptureFixture[str]) -> None:

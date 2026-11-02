@@ -39,6 +39,7 @@ from ..core.budget import (
 	resolve_budget,
 	summary_lines,
 )
+from ..core.completion import failed
 from ..core.execution import run
 from ..core.gate import GateOutcome, run_gate, settle, strip_agent_only_pipes
 from ..core.hook_event import (
@@ -534,7 +535,7 @@ def tools(task_names: tuple[str, ...], compat: Compat) -> Tools:
 				never one the autofix settles. Re-read a file before editing it after a gate: the autofix
 				may have rewritten it. residual_class is
 				'green' (decision 'continue') when the checks pass, or 'needs_reasoning' (decision
-				'block') when a check still fails — then diagnostics carries the failing leaves. Pass
+				'block') when a check still fails — then diagnostics carries the failing leaves and pipes. Pass
 				paths=[…] (the changed files) to scope; omit to gate the whole check node, which also
 				runs the autofix over the whole tree. under=<seconds>
 				time-boxes the checks: leaves measured to exceed it are skipped (except the over-budget
@@ -721,9 +722,8 @@ async def run_for(
 	logs = write_logs(create_run_log_dir(session.camas_dir, name, session.reserve_run()), result)
 	observed.record(result)
 	resp = attach_logs(to_run_response(node, result, verbosity=req.verbosity), logs)
-	nudge = improve_loop_nudge(
-		any_truncated=resp.truncated,
-		any_failing_without_agent_format=has_failing_leaf_without_agent_format(node, result),
+	nudge = run_loop_nudge(
+		any_failing_without_agent_format=has_failing_leaf_without_agent_format(node, result)
 	)
 	return success(
 		with_warning(session, run_text(name, resp, logs) + nudge),
@@ -871,9 +871,8 @@ async def execute_budgeted(
 	resp = attach_budget(
 		attach_logs(to_run_response(run_node, result, verbosity=req.verbosity), logs), report
 	)
-	nudge = improve_loop_nudge(
-		any_truncated=resp.truncated,
-		any_failing_without_agent_format=has_failing_leaf_without_agent_format(run_node, result),
+	nudge = run_loop_nudge(
+		any_failing_without_agent_format=has_failing_leaf_without_agent_format(run_node, result)
 	)
 	return success(
 		with_warning(session, f"{headline(summary)}\n\n{run_text(label, resp, logs)}{nudge}"),
@@ -1093,10 +1092,28 @@ def improve_loop_nudge(*, any_truncated: bool, any_failing_without_agent_format:
 		),
 	)
 	return (
-		"\n\nTip: " + "; and ".join(gaps) + ". This is a tasks.py gap, not a bug — add/adjust "
-		"that leaf's agent_format=(args, kind) (limit= for a verbose format, or a {report} "
-		"placeholder in args for a tool that writes its report to a file) so failures carry "
-		"full, structured diagnostics next time; see camas_docs, then validate with camas_check."
+		"\n\nTip: "
+		+ "; and ".join(gaps)
+		+ ". "
+		+ agent_format_advice("add/adjust", "failures carry full, structured diagnostics next time")
+	)
+
+
+def run_loop_nudge(*, any_failing_without_agent_format: bool) -> str:
+	if not any_failing_without_agent_format:
+		return ""
+	return (
+		"\n\nTip: a failing leaf has no agent_format, so camas_gate reports its output as "
+		"unstructured raw text (camas_run never applies agent_format). "
+		+ agent_format_advice("add", "camas_gate's failures carry full, structured diagnostics")
+	)
+
+
+def agent_format_advice(verb: str, payoff: str) -> str:
+	return (
+		f"This is a tasks.py gap, not a bug — {verb} that leaf's agent_format=(args, kind) (limit= "
+		"for a verbose format, or a {report} placeholder in args for a tool that writes its report "
+		f"to a file) so {payoff}; see camas_docs, then validate with camas_check."
 	)
 
 
@@ -1251,7 +1268,11 @@ def project_base() -> Path:
 def leaf_lines(leaf: wire.LeafReport, log: Path | None) -> list[str]:
 	match leaf.completion:
 		case wire.Finished(returncode=0, elapsed=el, output=output):
-			return [f"ok     {leaf.name} ({el:.2f}s)", *indent_lines(output)]
+			return [
+				f"ok     {leaf.name} ({el:.2f}s)",
+				*indent_lines(output),
+				*(tail_lines(True, log) if leaf.truncated else []),
+			]
 		case wire.Finished(returncode=rc, elapsed=el, output=output):
 			head = f"FAIL   {leaf.name} (exit {rc}, {el:.2f}s)"
 			return [head, *indent_lines(output), *tail_lines(leaf.truncated, log)]
@@ -1353,15 +1374,15 @@ async def gate_for(
 
 
 def settle_note(settled: RunResult | None) -> str:
-	failed: Final = tuple(
+	failures: Final = tuple(
 		f"{result.name} exited {result.completion.returncode}"
 		for result in (settled.results if settled is not None else ())
-		if result.completion.returncode != 0 and not isinstance(result.completion, Skipped)
+		if failed(result)
 	)
-	if not failed:
+	if not failures:
 		return ""
 	return (
-		f"\n\nThe autofix (Config.agent.fix) failed before the checks ran — {', '.join(failed)} —"
+		f"\n\nThe autofix (Config.agent.fix) failed before the checks ran — {', '.join(failures)} —"
 		" so some of its fixes may not have applied; camas_gate settles it again."
 	)
 

@@ -3,20 +3,23 @@
 
 from __future__ import annotations
 
+import dataclasses
 import shlex
 import sys
-from typing import TYPE_CHECKING, Literal, NamedTuple
+from itertools import accumulate, pairwise
+from typing import TYPE_CHECKING, Literal, NamedTuple, TypeAlias
 
 if sys.version_info >= (3, 11):
 	from typing import assert_never
 else:  # pragma: no cover
 	from typing_extensions import assert_never
 
+from ..core.completion import failed
 from ..core.gate import decision_of
 from ..core.matrix import expand_matrix
-from ..core.render import strip_ansi
+from ..core.render import group_display_name, strip_ansi
 from ..core.scope import scope_warning_messages
-from ..core.traversal import flatten_leaves
+from ..core.traversal import flatten_leaves, reporting_units
 from ..main.check import (
 	INSTALL_HINT,
 	CheckerErr,
@@ -41,6 +44,7 @@ from ..main.github_matrix import (
 )
 from ..main.state import LoadErr, LoadOk
 from ..v0.completion import Errored, Finished, Skipped, Stopped
+from ..v0.task import Pipe, Task
 from . import wire
 
 if sys.version_info >= (3, 11):
@@ -56,7 +60,7 @@ if TYPE_CHECKING:
 	from ..core.gate import GateOutcome
 	from ..main.state import TasksState
 	from ..v0.completion import Completion
-	from ..v0.task import OutputKind, Task, TaskNode
+	from ..v0.task import OutputKind, TaskNode
 
 Verbosity = Literal["summary", "failures", "full"]
 
@@ -319,22 +323,122 @@ def to_agent_envelope(
 def agent_envelopes(
 	node: TaskNode, result: RunResult, report_paths: tuple[Path | None, ...] = ()
 ) -> tuple[wire.AgentEnvelope, ...]:
-	leaves = tuple(info.task for info in flatten_leaves(expand_matrix(node)))
-	paths = report_paths or (None,) * len(leaves)
 	return tuple(
-		to_agent_envelope(task, tr, report_path=rp)
-		for task, tr, rp in zip(leaves, result.results, paths, strict=True)
-		if not isinstance(tr.completion, Skipped) and tr.completion.returncode != 0
+		envelope
+		for unit in ran_units(node, result, report_paths)
+		for envelope in unit_envelopes(unit)
+	)
+
+
+def unit_envelopes(unit: Ran) -> tuple[wire.AgentEnvelope, ...]:
+	match unit:
+		case RanLeaf(task=task, result=result, report_path=report_path):
+			return (
+				(to_agent_envelope(task, result, report_path=report_path),)
+				if failed(result)
+				else ()
+			)
+		case RanPipe(name=name, stages=stages):
+			return pipe_envelopes(name, stages)
+		case _:
+			assert_never(unit)
+
+
+def pipe_envelopes(name: str, stages: tuple[RanLeaf, ...]) -> tuple[wire.AgentEnvelope, ...]:
+	exit_code = next(
+		(stage.result.completion.returncode for stage in reversed(stages) if failed(stage.result)),
+		None,
+	)
+	if exit_code is None:
+		return ()
+	return (
+		*pipe_envelope(name, exit_code, stages[-1]),
+		*(upstream_envelope(stage) for stage in stages[:-1] if failed(stage.result)),
+	)
+
+
+def pipe_envelope(name: str, exit_code: int, last: RanLeaf) -> tuple[wire.AgentEnvelope, ...]:
+	if isinstance(last.result.completion, Skipped):
+		return ()
+	return (
+		to_agent_envelope(last.task, last.result, report_path=last.report_path).model_copy(
+			update={"name": name, "exit_code": exit_code}
+		),
+	)
+
+
+def upstream_envelope(stage: RanLeaf) -> wire.AgentEnvelope:
+	return (
+		to_agent_envelope(stage.task, stage.result, report_path=stage.report_path)
+		if stage.report_path is not None and stage.report_path.is_file()
+		else to_agent_envelope(dataclasses.replace(stage.task, agent_format=None), stage.result)
 	)
 
 
 def has_failing_leaf_without_agent_format(node: TaskNode, result: RunResult) -> bool:
-	leaves = tuple(info.task for info in flatten_leaves(expand_matrix(node)))
-	return any(
-		task.agent_format is None
-		for task, tr in zip(leaves, result.results, strict=True)
-		if not isinstance(tr.completion, Skipped) and tr.completion.returncode != 0
+	return any(fails_without_agent_format(unit) for unit in ran_units(node, result))
+
+
+def fails_without_agent_format(unit: Ran) -> bool:
+	match unit:
+		case RanLeaf(task=task, result=result):
+			return failed(result) and task.agent_format is None
+		case RanPipe(stages=stages):
+			return (
+				any(failed(stage.result) for stage in stages)
+				and not isinstance(stages[-1].result.completion, Skipped)
+				and stages[-1].task.agent_format is None
+			)
+		case _:
+			assert_never(unit)
+
+
+class RanLeaf(NamedTuple):
+	task: Task
+	result: TaskResult
+	report_path: Path | None
+
+
+class RanPipe(NamedTuple):
+	name: str
+	stages: tuple[RanLeaf, ...]
+
+
+Ran: TypeAlias = RanLeaf | RanPipe
+
+
+def ran_units(
+	node: TaskNode, result: RunResult, report_paths: tuple[Path | None, ...] = ()
+) -> tuple[Ran, ...]:
+	expanded = expand_matrix(node)
+	ran = tuple(
+		RanLeaf(info.task, task_result, report_path)
+		for info, task_result, report_path in zip(
+			flatten_leaves(expanded),
+			result.results,
+			report_paths or (None,) * len(result.results),
+			strict=True,
+		)
 	)
+	units = reporting_units(expanded)
+	return tuple(
+		ran_unit(unit, ran[start:end])
+		for unit, (start, end) in zip(
+			units,
+			pairwise(accumulate(map(len, map(flatten_leaves, units)), initial=0)),
+			strict=True,
+		)
+	)
+
+
+def ran_unit(unit: Task | Pipe, stages: tuple[RanLeaf, ...]) -> Ran:
+	match unit:
+		case Task():
+			return stages[0]
+		case Pipe(name=name, tasks=tasks):
+			return RanPipe(name if name is not None else group_display_name(tasks, " | "), stages)
+		case _:
+			assert_never(unit)
 
 
 def to_gate_response(
