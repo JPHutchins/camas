@@ -42,7 +42,7 @@ from .completion import RunResult, TaskResult
 from .leaf_state import KILL_PRESSES, next_state, to_interrupting
 from .matrix import expand_matrix, resolve_cmd
 from .scope import with_default_paths
-from .task import task_label
+from .task import reject_agent_only_pipes, task_label
 from .timings import (
 	CacheKey,
 	raise_identities_mismatch,
@@ -793,10 +793,12 @@ async def run(
 	base: Path | None = None,
 	leaf_color: bool = True,
 	identities: tuple[CacheKey, ...] | None = None,
+	whole_agent_only_pipes: bool = False,
 ) -> RunResult:
 	"""
 	Raises:
-		ValueError: on a non-positive ``jobs`` or mismatched ``identities``.
+		ValueError: on a non-positive ``jobs``, mismatched ``identities``, or an ``agent_only`` Pipe
+			without ``whole_agent_only_pipes``.
 		BaseExceptionGroup: errors raised by Effects.
 
 	>>> import asyncio
@@ -809,6 +811,8 @@ async def run(
 		raise ValueError(f"jobs must be >= 1, got {jobs}")
 	limiter: Final[Limiter] = asyncio.Semaphore(jobs) if jobs is not None else nullcontext()
 	expanded: Final = with_default_paths(expand_matrix(task))
+	if not whole_agent_only_pipes:
+		reject_agent_only_pipes(expanded)
 	leaf_infos: Final = flatten_leaves(expanded)
 	leaves: Final = tuple(info.task for info in leaf_infos)
 	reject_non_tuple_identities(identities)

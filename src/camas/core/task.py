@@ -52,6 +52,37 @@ def node_label(node: TaskNode) -> str:
 	return node.name if node.name is not None else "<unnamed group>"
 
 
+def agent_only_pipe_labels(node: TaskNode) -> tuple[str, ...]:
+	"""
+	>>> from camas import Pipe, Sequential
+	>>> agent_only_pipe_labels(
+	...     Sequential(Pipe("a", "b", agent_only=True, name="lint"), Pipe("c", "d", agent_only=True), Pipe("e"))
+	... )
+	('lint', 'c | d')
+	"""
+	from ..v0.task import Group, Pipe
+
+	match node:
+		case Pipe(agent_only=True, name=None):
+			return (" | ".join(node_label(stage) for stage in node.tasks),)
+		case Pipe(agent_only=True, name=str(name)):
+			return (name,)
+		case Group():
+			return tuple(label for child in node.tasks for label in agent_only_pipe_labels(child))
+		case _:
+			return ()
+
+
+def reject_agent_only_pipes(node: TaskNode) -> None:
+	labels = agent_only_pipe_labels(node)
+	if labels:
+		raise ValueError(
+			f"agent_only Pipe {', '.join(repr(label) for label in labels)} reached a run outside "
+			"the gate's checks; collapse it with strip_agent_only_pipes, or pass "
+			"whole_agent_only_pipes=True as the gate's checks do"
+		)
+
+
 def did_you_mean(name: str, known: Iterable[str]) -> str:
 	"""
 	>>> did_you_mean("libs-fix", ("libs.fix", "libs.build", "api"))

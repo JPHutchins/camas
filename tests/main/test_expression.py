@@ -51,7 +51,7 @@ def test_to_expression_round_trips_group_fields_and_tuple_commands() -> None:
 
 
 def test_to_expression_round_trips_pipe_with_agent_only() -> None:
-	"""The Pipe round-trip keeps ``agent_only`` — the runner-identity split must survive
+	"""The Pipe round-trip keeps ``agent_only`` — the gate-only split must survive
 	serialization."""
 	pipe = Pipe("cargo clippy --message-format=json", "clippy-sarif", agent_only=True)
 	assert parse_expression(to_expression(pipe)) == pipe

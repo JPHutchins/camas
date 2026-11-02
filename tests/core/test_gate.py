@@ -90,6 +90,7 @@ async def test_gate_threads_base_into_run(monkeypatch: pytest.MonkeyPatch, tmp_p
 		interactive: bool = True,
 		leaf_color: bool = True,
 		identities: tuple[CacheKey, ...] | None = None,
+		whole_agent_only_pipes: bool = False,
 	) -> RunResult:
 		captured["base"] = base
 		return RunResult(0, (), 0.0)

@@ -48,6 +48,11 @@ PASS = Task(("python", "-c", "print('ok')"), name="lint")
 FAIL = Task(("python", "-c", "import sys; print('boom'); sys.exit(3)"), name="bad")
 
 
+def _leaf_names(result: types.CallToolResult) -> list[str]:
+	assert result.structuredContent is not None
+	return [leaf["name"] for leaf in result.structuredContent["leaves"]]
+
+
 def _task_enum(input_schema: dict[str, Any]) -> list[str]:
 	"""The task-name enum, spliced onto the string branch of the optional ``task`` field."""
 	branches = input_schema["properties"]["task"]["anyOf"]
@@ -425,9 +430,8 @@ async def test_run_call_paths_prunes_leaves_the_scope_misses(tmp_path: Path) -> 
 	session = _session({"all": node}, None, tmp_path, rich=True)
 	result = await serve.run_call(session, {"task": "all", "paths": ["src/a.py"]})
 	assert result.isError is False
+	assert _leaf_names(result) == ["src_lint"]
 	assert result.structuredContent is not None
-	names = [leaf["name"] for leaf in result.structuredContent["leaves"]]
-	assert names == ["src_lint"]
 	assert "src/a.py" in result.structuredContent["leaves"][0]["command"]
 
 
@@ -460,9 +464,7 @@ async def test_run_call_paths_with_under_scopes_then_budgets(tmp_path: Path) -> 
 	session = _session({"all": node}, None, tmp_path, rich=True)
 	result = await serve.run_call(session, {"task": "all", "paths": ["src/a.py"], "under": 5.0})
 	assert result.isError is False
-	assert result.structuredContent is not None
-	names = [leaf["name"] for leaf in result.structuredContent["leaves"]]
-	assert names == ["src_lint"]
+	assert _leaf_names(result) == ["src_lint"]
 
 
 async def test_run_call_paths_with_under_no_leaf_covered_runs_nothing(tmp_path: Path) -> None:
@@ -2315,11 +2317,6 @@ AGENT_ONLY_FIX = Pipe(
 	agent_only=True,
 	name="fix",
 )
-
-
-def _leaf_names(result: types.CallToolResult) -> list[str]:
-	assert result.structuredContent is not None
-	return [leaf["name"] for leaf in result.structuredContent["leaves"]]
 
 
 async def test_run_call_collapses_an_agent_only_pipe_to_its_first_stage(tmp_path: Path) -> None:
