@@ -118,8 +118,8 @@ def test_agent_template_has_correct_frontmatter(filename: str, name: str, model:
 
 
 @pytest.mark.parametrize("filename", [*(source for source, *_ in _GUARDED), "claude_gate_skill.md"])
-def test_no_template_leaves_the_autofix_to_the_agent(filename: str) -> None:
-	"""The autofix runs inside every ``camas_gate`` and at every ``Stop`` — never as a step an
+def test_no_template_leaves_the_fix_to_the_agent(filename: str) -> None:
+	"""The fix runs inside every ``camas_gate`` and at every ``Stop`` — never as a step an
 	agent is told to take."""
 	assert "camas_fix" not in (_TEMPLATES / filename).read_text()
 

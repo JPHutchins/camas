@@ -373,7 +373,7 @@ class GateRequest(BaseModel):
 		gt=0,
 		description="Wall-clock budget in seconds for the checks: leaves measured to exceed it are "
 		"skipped — except the over-budget stages of a pipe kept whole for its untimed "
-		"siblings — and untimed leaves run (and get measured). The autofix camas_gate settles "
+		"siblings — and untimed leaves run (and get measured). The fix camas_gate settles "
 		"first is not budgeted.",
 	)
 	jobs: int | None = Field(

@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""End-to-end proof of a hand-wired ``PostToolBatch`` autofix hook (the shipped one runs at
-``Stop`` — ``test_shipped_autofix_hook.py``): a real headless edit fires ``PostToolBatch``, which
+"""End-to-end proof of a hand-wired ``PostToolBatch`` fix hook (the shipped one runs at
+``Stop`` — ``test_shipped_fix_hook.py``): a real headless edit fires ``PostToolBatch``, which
 runs the registered ``Config.agent.fix`` node over the just-changed file (path delivered on
 stdin), with zero model tokens. The registered fixer rewrites ``BANANA`` to ``FIXED``; the edit
 writes ``BANANA``; a green run leaves ``FIXED`` on disk.
@@ -44,7 +44,7 @@ _HOOK_SETTINGS = (
 )
 
 
-def test_post_tool_batch_hook_runs_the_registered_autofix(
+def test_post_tool_batch_hook_runs_the_registered_fix(
 	tmp_path: Path, run_headless: Callable[[Path, str], CompletedProcess[str]]
 ) -> None:
 	(tmp_path / "tasks.py").write_text(_TASKS)
@@ -61,5 +61,5 @@ def test_post_tool_batch_hook_runs_the_registered_autofix(
 	sample = tmp_path / "sample.txt"
 	assert sample.exists(), "the edit did not happen"
 	content = sample.read_text()
-	assert "BANANA" not in content, f"the autofix did not rewrite the changed file: {content!r}"
-	assert "FIXED" in content, f"the autofix did not rewrite the changed file: {content!r}"
+	assert "BANANA" not in content, f"the fix did not rewrite the changed file: {content!r}"
+	assert "FIXED" in content, f"the fix did not rewrite the changed file: {content!r}"

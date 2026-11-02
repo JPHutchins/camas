@@ -528,15 +528,15 @@ def tools(task_names: tuple[str, ...], compat: Compat) -> Tools:
 			compat,
 			name=ToolName.GATE.value,
 			description=textwrap.dedent("""\
-				The SA-delegation gate: first run the project's registered deterministic autofix
+				The SA-delegation gate: first run the project's registered deterministic fix
 				(Config.agent.fix — formatters, --fix linters) over the files just changed, then scope
 				THIS project's checks to them, run them, and return a binary verdict, so a residual is
-				never one the autofix settles. Re-read a file before editing it after a gate: the autofix
+				never one the fix settles. Re-read a file before editing it after a gate: the fix
 				may have rewritten it. residual_class is
 				'green' (decision 'continue') when the checks pass, or 'needs_reasoning' (decision
 				'block') when a check still fails — then diagnostics carries the failing leaves. Pass
 				paths=[…] (the changed files) to scope; omit to gate the whole check node, which also
-				runs the autofix over the whole tree. under=<seconds>
+				runs the fix over the whole tree. under=<seconds>
 				time-boxes the checks: leaves measured to exceed it are skipped (except the over-budget
 				stages of a pipe kept whole for its untimed siblings), untimed leaves run.
 			""").strip(),
@@ -549,7 +549,7 @@ def tools(task_names: tuple[str, ...], compat: Compat) -> Tools:
 			compat,
 			name=ToolName.FIX.value,
 			description=textwrap.dedent("""\
-				Run the project's registered deterministic autofix node (`Config.agent.fix`)
+				Run the project's registered deterministic fix node (`Config.agent.fix`)
 				scoped to the changed paths — mutating, behavior-preserving formatters and
 				`--fix` linters. It does not reason; it only fixes. Pass paths=[…] (the changed
 				files) to scope; omit to run the whole fix node un-scoped. Each `{paths}` command
@@ -561,7 +561,7 @@ def tools(task_names: tuple[str, ...], compat: Compat) -> Tools:
 			+ f" `jobs` caps concurrently running leaves ({JOBS_UNIT}).",
 			input_schema=wire.fix_input_schema(task_names),
 			output_model=wire.RunResponse,
-			title="Run deterministic autofix",
+			title="Run deterministic fix",
 			annotations=FIX_ANNOTATIONS,
 		),
 		init=tool_def(
@@ -1361,7 +1361,7 @@ def settle_note(settled: RunResult | None) -> str:
 	if not failed:
 		return ""
 	return (
-		f"\n\nThe autofix (Config.agent.fix) failed before the checks ran — {', '.join(failed)} —"
+		f"\n\nThe fix (Config.agent.fix) failed before the checks ran — {', '.join(failed)} —"
 		" so some of its fixes may not have applied; camas_gate settles it again."
 	)
 
@@ -1537,7 +1537,7 @@ def gate_text(resp: wire.GateResponse) -> str:
 			[
 				"",
 				f"Re-gate this scope: {rerun_command(resp.rerun)} (read-only; camas_gate settles"
-				" the autofix first)",
+				" the fix first)",
 			]
 		)
 	return "\n".join(lines)

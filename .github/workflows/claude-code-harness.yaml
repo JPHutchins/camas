@@ -4,7 +4,7 @@ name: Claude Code hook harness
 # `claude -p`, to catch drift in the hook contract camas depends on — that PostToolBatch fires on
 # an edit and delivers the changed path on stdin (the hand-wired hook contract), that a Stop event
 # carries the session and prompt ids the nudge's settle wait keys on, that ${file_path} is not
-# interpolated, and that the shipped Stop autofix hook actually runs the registered fix node end to
+# interpolated, and that the shipped Stop fix hook actually runs the registered fix node end to
 # end — and that the full plugin chain (install → edit → gate) the camas-fixer subagent drives
 # through the MCP tools works against a real Claude Code: camas mcp init --claude produces a
 # loadable surface, the camas server connects, and the fixer reaches green via camas_gate.

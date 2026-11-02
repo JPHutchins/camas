@@ -312,7 +312,7 @@ ci = Sequential(
 # One leaf opts out on its own with env={"NO_COLOR": "1"}, which wins either way.
 #
 # agent= takes an Agent — today that union is just Claude, wiring the Claude Code plugin: fix
-# is the registered autofix node (fmt, above) that camas_gate and the turn-end Stop hook run;
+# is the registered fix node (fmt, above) that camas_gate and the turn-end Stop hook run;
 # check is what the gate validates (None would defer to default_task/github_task, scoped by
 # --paths and time-boxed by --under);
 # default is what a no-task `camas_run` runs (None would defer to check, then

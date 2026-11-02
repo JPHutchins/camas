@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 JP Hutchins
 
-"""The actually-shipped autofix hook survives a headless edit (criterion #2).
+"""The actually-shipped fix hook survives a headless edit (criterion #2).
 
-Like ``test_autofix_e2e.py``, but the ``.claude/settings.json`` is produced by
+Like ``test_fix_e2e.py``, but the ``.claude/settings.json`` is produced by
 ``camas mcp init --claude`` instead of hand-crafted — the hook is the one users actually get.
 The registered fixer rewrites ``BANANA`` to ``FIXED``; the edit writes ``BANANA``; the shipped
 synchronous ``Stop`` hook fires as the turn ends and leaves ``FIXED`` on disk.
@@ -97,7 +97,7 @@ def _init_claude(tmp_path: Path) -> None:
 	)
 
 
-def test_shipped_stop_hook_runs_the_autofix(
+def test_shipped_stop_hook_runs_the_fix(
 	tmp_path: Path,
 	run_headless: Callable[..., CompletedProcess[str]],
 ) -> None:
@@ -110,10 +110,8 @@ def test_shipped_stop_hook_runs_the_autofix(
 	sample = tmp_path / "sample.txt"
 	assert sample.exists(), "the edit did not happen"
 	content = sample.read_text()
-	assert "BANANA" not in content, (
-		f"the shipped autofix did not rewrite the changed file: {content!r}"
-	)
-	assert "FIXED" in content, f"the shipped autofix did not rewrite the changed file: {content!r}"
+	assert "BANANA" not in content, f"the shipped fix did not rewrite the changed file: {content!r}"
+	assert "FIXED" in content, f"the shipped fix did not rewrite the changed file: {content!r}"
 
 
 def test_moved_to_filechanged_event_does_not_fire(

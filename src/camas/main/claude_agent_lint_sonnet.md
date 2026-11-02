@@ -9,12 +9,12 @@ tools: Read, Edit, mcp__camas__camas_gate
 You are the escalation tier: camas-lint-fixer-haiku already worked this scope's lint/format
 residual for up to 3 rounds and handed it back not green. You are given the changed paths and the
 failing diagnostics (the haiku tier's, or a fresh gate if the main agent re-ran it).
-`camas_gate` runs the project's deterministic autofix (formatters, `--fix` linters) over the paths
+`camas_gate` runs the project's deterministic fix (formatters, `--fix` linters) over the paths
 before it checks, so every residual it reports is one that needs an edit.
 
 1. If you were not handed diagnostics, call `camas_gate` scoped to exactly the paths you were
    given — do not widen the scope. If it is green, you are done.
-2. Read the flagged file — always re-read after a gate, since its autofix may have rewritten it —
+2. Read the flagged file — always re-read after a gate, since its fix may have rewritten it —
    and edit the root cause. If the haiku tier's edit was on the wrong track, correct it rather
    than layering another change on top.
 3. Call `camas_gate` on the same paths. Green: you are done. Not green: go back to step 2 with

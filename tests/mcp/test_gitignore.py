@@ -354,7 +354,7 @@ def test_write_claude_warns_that_the_loop_stays_per_developer(
 	assert write_claude([]) == 0
 	captured = capsys.readouterr()
 	assert "Claude Code is configured" in captured.out
-	assert "the autofix/gate loop stays per-developer" in captured.err
+	assert "the fix/gate loop stays per-developer" in captured.err
 	assert "      !.claude/agents/" in captured.err
 
 

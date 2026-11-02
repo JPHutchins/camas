@@ -632,7 +632,7 @@ def test_write_hooks_writes_the_stop_fix_and_async_nudge_and_nothing_between_edi
 def test_write_hooks_fix_hook_is_fail_safe_but_nudge_is_not(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-	"""#221: the best-effort autofix hook trails ``|| exit 0`` so a launcher/env failure degrades to
+	"""#221: the best-effort fix hook trails ``|| exit 0`` so a launcher/env failure degrades to
 	a no-op instead of blocking the turn; the nudge hook keeps its exit code — it is the signal."""
 	monkeypatch.chdir(tmp_path)
 	monkeypatch.setattr("shutil.which", which("camas"))
@@ -643,10 +643,10 @@ def test_write_hooks_fix_hook_is_fail_safe_but_nudge_is_not(
 	assert "|| exit 0" not in stop_nudge
 
 
-def test_write_hooks_sweeps_the_previous_post_tool_batch_autofix(
+def test_write_hooks_sweeps_the_previous_post_tool_batch_fix(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-	"""Re-running init over a previous camas's hooks drops its ``PostToolBatch`` autofix and keeps
+	"""Re-running init over a previous camas's hooks drops its ``PostToolBatch`` fix and keeps
 	the Stop pair (#326)."""
 	monkeypatch.chdir(tmp_path)
 	monkeypatch.setattr("shutil.which", which("camas"))
@@ -785,7 +785,7 @@ def test_write_hooks_merges_existing_settings(
 def test_write_hooks_sweeps_stale_hooks_from_all_events(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-	"""https://github.com/JPHutchins/camas/issues/157 — a camas autofix hook left under a non-current
+	"""https://github.com/JPHutchins/camas/issues/157 — a camas fix hook left under a non-current
 	event by an older camas (the pre-PostToolBatch ``FileChanged`` hook) is swept out on the next
 	init --claude: an event holding only the stale camas hook is dropped, a non-camas hook in another
 	event is preserved, and the current hook lands under Stop."""

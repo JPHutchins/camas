@@ -4,12 +4,11 @@
 
 # Camas
 
-- A task runner with parallel execution, matrix expansion, MCP, and pluggable output effects.
+A task runner with parallel execution, matrix expansion, MCP, and pluggable output effects.
+
 - **For developers:** live tree view that updates in place as tasks stream
 - **For CI/CD:** one definition drives both local runs and CI
-- **For LLMs:** a closed edit→validate→run loop over structured MCP
-- camas is **not a build system**; it's for running structured trees of shell commands.
-- ✚ Link the [walkthrough](#walkthrough)'s tauri-app fixture (Rust, TypeScript, and Python in one tree) as the proof camas isn't a Python tool.
+- **For agents:** a closed edit→validate→run loop over structured MCP
 
 <br clear="all">
 
@@ -17,32 +16,32 @@
 
 ![demo](https://raw.githubusercontent.com/JPHutchins/camas/gh-storage/demos/demo-latest.gif)
 
-<details><summary>Contents</summary>
+<hr>
+<details><summary>Table Of Contents</summary>
 
-- [Example](#example)
+- [Example tasks file](#example-tasks-file)
 - [Getting started](#getting-started)
   - [Install](#install)
+  - [As a Development Environment Dependency](#as-a-development-environment-dependency)
   - [Your first `tasks.py`](#your-first-taskspy)
   - [Running tasks](#running-tasks)
 - [Defining tasks](#defining-tasks)
-  - [Leaves and groups](#leaves-and-groups)
+  - [Tasks and groups](#tasks-and-groups)
   - [Pipes](#pipes)
   - [Operators](#operators)
   - [Matrices and variants](#matrices-and-variants)
   - [The default task](#the-default-task)
 - [Syntax and type safety](#syntax-and-type-safety)
   - [Typed definitions](#typed-definitions)
-  - [Typed CLI expressions](#typed-cli-expressions)
   - [Checking definitions (`camas --check`)](#checking-definitions-camas---check)
+  - [Typed CLI expressions](#typed-cli-expressions)
 - [Optimizations](#optimizations)
-  - [Path scoping (`--paths`)](#path-scoping---paths)
-  - [Time budget (`--under`)](#time-budget---under)
+  - [Path scoping](#path-scoping)
+  - [Time budget](#time-budget)
   - [When `Parallel` doesn't help](#when-parallel-doesnt-help)
 - [Continuous integration](#continuous-integration)
   - [GitHub Actions](#github-actions)
   - [GitHub Actions matrix (`--github-matrix`)](#github-actions-matrix---github-matrix)
-  - [Per-leaf checks (`GitHubChecks`)](#per-leaf-checks-githubchecks)
-  - [Reports (`Ctrf`)](#reports-ctrf)
   - [Drift gate (`Clean`)](#drift-gate-clean)
   - [Pre-push hook](#pre-push-hook)
 - [AI coding agents](#ai-coding-agents)
@@ -52,16 +51,17 @@
   - [Agents on the CLI](#agents-on-the-cli)
   - [Structured diagnostics](#structured-diagnostics)
 - [Project layout](#project-layout)
-  - [`pyproject.toml` tasks](#pyprojecttoml-tasks)
   - [Monorepos](#monorepos)
   - [Standalone `tasks.py` (PEP 723)](#standalone-taskspy-pep-723)
+  - [Python projects](#python-projects)
 - [Output and effects](#output-and-effects)
   - [Choosing output](#choosing-output)
   - [Built-in effects](#built-in-effects)
+  - [Per-leaf checks (`GitHubChecks`)](#per-leaf-checks-githubchecks)
+  - [Reports (`Ctrf`)](#reports-ctrf)
   - [Color in leaf output (`leaf_color`)](#color-in-leaf-output-leaf_color)
   - [Writing an effect](#writing-an-effect)
 - [Versioning](#versioning)
-- [Python projects](#python-projects)
 - [Reference](#reference)
   - [Task definitions](#task-definitions)
   - [Configuration](#configuration)
@@ -75,10 +75,11 @@
 - [Walkthrough](#walkthrough)
 
 </details>
+<hr>
 
-### Example
+### Example tasks file
 
-- The example runs two formatters in parallel, then five lints and tests in parallel.
+This example runs two formatters in parallel, then five lints and tests in parallel.
 
 ```python
 from camas import Parallel, Sequential
@@ -98,18 +99,18 @@ ci = Sequential(
 )
 ```
 
-- The animated tree above comes from a live test fixture; link to the [walkthrough](#walkthrough).
+> The animated tree above comes from a live test fixture; link to the [walkthrough](#walkthrough).
 
 ## Getting started
 
 ### Install
 
-pipx:
+#### pipx
 ```
 pipx install camas
 ```
 
-uv:
+#### uv
 ```
 uv tool install camas
 ```
@@ -125,7 +126,7 @@ uv tool install camas
 
 </details>
 
-Nix:
+#### Nix
 ```
 nix run github:JPHutchins/camas
 ```
@@ -139,18 +140,22 @@ nix run github:JPHutchins/camas
 
 </details>
 
-- Or manage it with your dependency tooling of choice.
-- camas requires Python ≥ 3.10; for a project that still supports older interpreters, see [Python projects](#python-projects).
+### As a Development Environment Dependency
+
+Or manage camas with your dependency tooling of choice.
 
 ### Your first `tasks.py`
 
-- Then scaffold a starter `tasks.py` in your project root:
+> Tasks definitions are Python files (`tasks.py`), but camas supports all programming languages and development environments, as well as Python.
+
+Scaffold a starter `tasks.py` in your project root:
 
 ```
 camas --init
 ```
 
-<details><summary><code>camas --init</code></summary>
+<hr>
+<details><summary>tasks.py generated by <code>`camas --init`</code></summary>
 
 ```python
 # /// script
@@ -204,16 +209,16 @@ ci = hello + (greet | "python --version")
 # changed files. Register the node (named anything) to Config.agent.fix below; the camas_gate
 # tool settles it over the changed files before checking, and the Claude Code Stop hook runs it at
 # every turn end, for free. Replace the placeholder with your real fixers, e.g.:
-#   autofix = Task("ruff check --fix {paths}", mutates=True, paths=".")
-#   autofix = Sequential(Task("ruff check --fix {paths}", mutates=True), Task("ruff format {paths}", mutates=True), paths=".")
-autofix = Task('python -c "" {paths}', mutates=True, paths=".")
+#   fix = Task("ruff check --fix {paths}", mutates=True, paths=".")
+#   fix = Sequential(Task("ruff check --fix {paths}", mutates=True), Task("ruff format {paths}", mutates=True), paths=".")
+fix = Task('python -c "" {paths}', mutates=True, paths=".")
 
 # Config is discovered by type, under any binding name (here `_`): bare `camas` runs
 # default_task — or github_task under GitHub Actions, falling back to default_task when unset.
-# agent= wires the Claude Code plugin: agent.fix is the registered autofix node above; the gate
+# agent= wires the Claude Code plugin: agent.fix is the registered fix node above; the gate
 # checks default_task (override with Claude(fix=..., check=...)). A checking
 # leaf can add agent_format=("--output-format sarif", "sarif") for machine-readable gate output.
-_ = Config(default_task=ci, agent=Claude(fix=autofix))
+_ = Config(default_task=ci, agent=Claude(fix=fix))
 
 # The PEP 723 standalone flow (see the docstring): running this file directly
 # (`uv run tasks.py <task>`) dispatches through camas. Inert when the `camas`
@@ -223,24 +228,27 @@ if __name__ == "__main__":
 ```
 
 </details>
+<hr>
 
-- The starter:
-  - demonstrates leaf tasks, `Sequential`/`Parallel` composition, a matrix, a [`Config`](#config) default task, and the optional [PEP 723 standalone block](#standalone-taskspy-pep-723)
-  - uses cross-platform placeholder commands, ready to swap for your real ones
-- `--init` also creates a gitignored `.camas/` directory beside `tasks.py`:
-  - it holds run logs and a per-leaf timing cache, so `camas --list` can show each task's estimated duration
-  - delete it to opt out; rename or relocate it with `Config(camas_dir=...)`
-- `camas --init --verbose` writes a kitchen-sink `tasks.py`:
-  - it covers every `Task`/`Sequential`/`Parallel`/`Config` option: path scoping, matrix expansion, `agent_format` structured output, `Config(agent=Claude(fix=..., check=..., default=...))`, and a commented recipe for sourcing a matrix axis from your project's SSOT
-  - each option is worked and explained in place
-  - the MCP `camas_init` tool writes this template by default (`verbose=false` for the short one)
+The starter definition demonstrates [`Task`s](#task), composition of tasks into [`Sequential`s](#sequential) and [`Parallel`s](#parallel), [task-node-matrices](#matrices-and-variants), and camas [`Config`](#config). To guarantee that it works out of the box, it uses a [PEP 723 standalone block](#standalone-taskspy-pep-723) and tasks executing `python -c`, but the tasks themselves can be any command and arguments that the shell can execute.
+
+The `--init` option also creates a gitignored `.camas/` directory. It is optional, but it enables advanced capabilities like [logging](#config), [task tree timing](#time-budget), and [expanded agent capabilities](#ai-coding-agents).
+
+> `camas --init --verbose` provides a more exhaustive set of examples and is the default when the camas MCP uses its `camas_init` tool.
 
 ### Running tasks
 
-- `camas <name>` runs a task; `camas --list` enumerates them; `camas --help` shows everything (tasks, effects, hints); `camas --effects` lists the output renderers; `camas --tree` prints every task's full expansion
-- `--dry-run` prints the tree without running it
-- a trailing `-- ARG ...` forwards arguments to the dispatched task's command (`camas test -- -v`)
-- shell forms the examples stand for: `camas hello`, `camas ci --dry-run`, `camas test -- -v`, `camas greet --NAME=Ada`, `camas build --effects='(Loud(),)'`
+Typical usage is to run `camas`, which will run the default task for the environment. For example, as a programmer at your desk, running `camas` will run the `Config.default_task` whereas an agent or continuous integration environment may have [their own defaults](#the-default-task).
+
+> `camas --help` is the best place to find information about builtin options and your custom tasks.
+
+Specifying a task node by name as the first argument, `camas <name>`, runs the tree from that task node.
+
+Task nodes also provide help: `camas <name> --help`.
+
+Arguments can be passed through to a `Task` be placing them after `--`: `camas test -- -v`.
+
+`camas` controls the realtime output -- to terminal, network, filesystem, etc. -- through a concurrent "effects" system. The default effect for a programmer at their terminal is the builtin `TermTree` (TODO: link), and the effects can be selected at runtime using the `--effects` (TODO: link) CLI option.
 
 ```python
 from camas import Task
@@ -252,21 +260,31 @@ $ camas '--effects=(Summary(show_passing=True),)' hello
 $ camas --help
 ```
 
-- `camas` with no arguments runs the `Config` default task, or prints the full help when none is defined; `camas <task> --help` shows the expanded tree, matrix axes, and override flags.
-- ⚠️ The [walkthrough](#walkthrough) shows these commands on the tauri-app fixture, generated; point here to it rather than repeating the sessions.
+> The [walkthrough](#walkthrough) shows usage and example output.
 
 ## Defining tasks
 
-### Leaves and groups
+### Tasks and groups
 
-- a leaf is *any* shell command; the doctests use `python -c` only because every CI environment has Python. Real leaves look like `Task("ruff check .")`, `Task("cargo test", cwd=Path("rust"))`, `Task("npm test")`
-- a module-level `Task`/`Sequential`/`Parallel` binding takes its **variable name** as the task name (`lint = Task("ruff check .")` defines `lint`), so `name=` is only for renaming or naming a nested, anonymous group; in the `[tool.camas.tasks]` TOML form the table key is the name
-- `Sequential` runs in order and stops at the first failure: later leaves are reported `Skipped`, not run, and camas exits non-zero; `Parallel` runs concurrently
-- bare strings inside the constructors become anonymous `Task`s, split by shell rules (`shlex`), so prefer simple forms; use the tuple form for a complex command to skip `shlex` entirely
-- `cwd` and `env` are scoped per leaf
-- `help="..."` overrides what `camas --list` prints for a task; rarely needed (the command or tree usually documents itself), but there for cryptic commands
-- model independent, read-only work as `Parallel` (wall-clock `max`, not `sum`): a `&&` chain in a previous runner was *sequencing*, not a dependency, so reach for `Sequential` only for real ordering (a mutating step, or one that consumes a prior step's output)
-- Full fields: [`Task`](#task), [`Sequential` and `Parallel`](#sequential-and-parallel).
+A task is *any* shell command and its arguments. For example, `Task("ruff check .")`, `Task("cargo test", cwd=Path("rust"))`, `Task("npm test")` are shell commands now defined as a task node in camas. Unless overridden by [`name=`](#task), the task is named and referenced by its **variable name**.
+
+```python
+from camas import Task
+
+# Create the "lint" task, to be run with `camas lint`
+lint = Task("ruff check .")
+```
+> Bare strings like `"ruff check ."` are [split by shell rules](https://docs.python.org/3/library/shlex.html#shlex.split) and, if this causes problems for complex commands, can be replaced by explicit shell splitting: [`("ruff", "check", ".")`](#task).
+
+Tasks may be composed into [`Sequential`s](#sequential) and [`Parallel`s](#parallel). A `Sequential` runs a series of tasks one after the other, stopping at the first failure, while a `Parallel` runs them at the same time without influencing one another. Within these groups, tasks can be defined by bare strings for convenience, though note that these "anonymous" tasks cannot be referred to by name since they were not given a variable binding at file scope.
+
+Internally, camas refers to the executed shell command -- the tip of the task tree, the leaf node -- as a _leaf_. [Task options](#task), like `cwd` (current working directory) and `env` (environment variable map), are scoped to the leaf task node on which they are defined, and inherited by child nodes until overridden by greater specificity.
+
+Importantly, a task that mutates the filesystem _should_ be marked with `mutates=True` so that camas can validate task tree construction to avoid conflicts (mutating nodes should usually be run in series, not parallel).
+
+See [`Task`](#task), [`Sequential`](#sequential), and [`Parallel`](#parallel),
+
+<details><summary>Worked examples</summary>
 
 ```python
 from pathlib import Path
@@ -308,9 +326,13 @@ pipeline = Sequential(
 $ camas '--effects=(Summary(),)' pipeline
 ```
 
+</details>
+
 ### Pipes
 
-- `Pipe` feeds each stage's stdout to the next stage's stdin, and `>` pipes one `Task` into another. `Pipe(agent_only=True)` is under [Structured diagnostics](#structured-diagnostics). Full fields: [`Pipe`](#pipe).
+A `Pipe` wraps a task leaf so that its' stdout is routed to the next task's stdin. See [`Pipe`](#pipe) and `Pipe(agent_only=True)` at [Structured diagnostics](#structured-diagnostics).
+
+<details><summary>Worked examples</summary>
 
 ```python
 from camas import Pipe, Task
@@ -324,10 +346,43 @@ $ camas '--effects=(Summary(show_passing=True),)' shout
 $ camas '--effects=(Summary(show_passing=True),)' whisper
 ```
 
+</details>
+
 ### Operators
 
-- ⚠️ Your WIP removed the operators paragraph (`|`, `+`, `-`, `>`, and `.extend`/`.remove`). They're public API, so cover them here or cut them on purpose; the example below is generated from `__init__.py`'s doctest.
-- `|` extends a plain `Parallel`, `+` a plain `Sequential`, `-` removes a direct child, and `>` builds a `Pipe`; a left operand with fields, of a subclass, or of another kind nests whole. `+` binds tighter than `|`. `>` chains as a comparison, so parenthesize. A composed pipe is always truthy.
+`camas` uses operator overloading to provide a more expressive syntax for composing task trees while maintaining static type safety.
+
+| Operation | In | Out |
+| --       | --   | --      |
+| `a \| b`     | `Task \| Parallel \| Sequential` | `Parallel(a, b)` |
+| `a + b`      | `Task \| Parallel \| Sequential` | `Sequential(a, b)` |
+| `a - b`      | `Parallel \| Sequential` | `a` with `b` removed |
+| `a > b`      | `Task` | `Pipe(a, b)` |
+
+#### Special Rules
+
+The `|` operator on a `Parallel` _extends_ the `Parallel` rather than _wrapping_ it. For example:
+
+<!--TODO: get under doctests w/ fixtures-->
+```python
+(a | b) | c == Parallel(a, b, c)
+(a | b) | c != Parallel(Parallel(a, b), c)
+```
+
+Likewise, the `+` operator on a `Sequential` returns a new sequence with the right side of the operator _added_ to the end:
+
+```python
+(a + b) + c == Sequential(a, b, c)
+(a + b) + c != Sequential(Sequential(a, b), c)
+```
+
+`-` returns a new group with the right-hand-side (RHS) removed from the group on the left-hand-side (LHS).
+
+```python
+(a + b + c) - c == Sequential(a, b)
+```
+
+<details><summary>Worked example</summary> 
 
 ```python
 from camas import Task
@@ -345,14 +400,106 @@ $ camas --dry-run quick
 $ camas '--effects=(Summary(show_passing=True),)' ci
 ```
 
+</details>
+
 ### Matrices and variants
 
-- `--AXIS VAL` overrides a matrix axis from the CLI, and `<task> --help` documents each task's override flags
-- an override takes comma-separated values (`--NAME1=Clara,Dolores`), which can introduce values the project didn't list
-- `variants=` is a coupled fan-out (values that only make sense together, like a target and its toolchain): it runs the listed bundles, not their product
-- pinning one of a bundle's keys from the CLI *filters* to the bundles that bind it; replacing the value would fabricate a pairing the project never declared
-- source matrix axis values from the project's single source of truth (e.g. read `.python-version`) instead of hardcoding a list that drifts; `tasks.py` is real Python
-- ✚ `--matrix KEY=VAL`, the other override form, isn't mentioned anywhere yet.
+As part of its' promise to eliminate the need for ill-suited configuration file languages like YAML, TOML, and JSON, `camas` has builtin syntax for expressing common matrix permutations and variant lists. Of course, a `tasks.py` file can run, and even import, arbitrary Python, so it is always possible to fall back on procedural code to meet your unique requirements.
+
+A `matrix` is typed as a map of _axis name_ string to _variant_ strings: `dict[str, tuple[str, ...]]`. For example, the `sliced` shell command takes a variable `FRUIT`, marked as a variable for string substitution with the surrounding curly braces, `{FRUIT}`, and the matrix map supplies the `FRUIT` variants of `(orange, apple, pear)`.
+
+```python
+sliced = Sequential(
+  Task("slice {FRUIT}"),
+  matrix={
+    "FRUIT": ("orange", "apple", "pear")
+  }
+)
+```
+The `sliced` node will be run three times, in parallel:
+```
+slice orange
+slice apple
+slice pear
+```
+
+> Note: A matrix always runs its cells in parallel. The group type -- `Sequential` or `Parallel` -- only decides how the trees are run inside each cell. Generating your own sequential matrix can be done with Python syntax:
+> 
+> ```python
+> sliced = Sequential(*(f"slice {fruit}" for fruit in fruits))
+> ```
+
+Considering that `matrix` is a map, it can map as many names as needed:
+```python
+paired = Sequential(
+  Task("pair {FRUIT} {CHEESE}"),
+  matrix={
+    "FRUIT": ("orange", "apple", "pear"),
+    "CHEESE": ("gruyere", "roquefort"),
+  }
+)
+```
+The `paired` node will be run six times (MxN, 3x2), in parallel:
+```
+pair orange gruyere
+pair orange roquefort
+pair apple gruyere
+pair apple roquefort
+pair pear gruyere
+pair pear roquefort
+```
+
+> Note: matrix axis values are also environment variables. Every leaf in a cell gets `FRUIT=orange` in its env, overriding any same-named env entry, so a script can read `$FRUIT` with no `{FRUIT}` in the command.
+
+In addition to substituting the corresponding name in shell strings, the matrix map will also substitute strings in the environment variable map and other Task arguments like `cwd`, `help`, `paths`, and `when`.
+
+```python
+firmware = Sequential(
+  Task("cmake -S=. -B=build/{TOOLCHAIN}-{CONFIG} -DCMAKE_BUILD_TYPE={CONFIG}"),
+  Task("cmake --build build/{TOOLCHAIN}-{CONFIG}"),
+  env={"CMAKE_TOOLCHAIN_FILE": "cmake/{TOOLCHAIN}.cmake"},
+  matrix={
+    "TOOLCHAIN": ("gcc", "arm-none-eabi"), 
+    "CONFIG": ("Debug", "Release")
+  },
+)
+```
+The `firmware` node will be run 4 times in parallel (2x2), with the `CMAKE_TOOLCHAIN_FILE` environment variable matching the value of `TOOLCHAIN`.
+
+<details><summary>Firmware node matrix expanded</summary>
+
+```
+CMAKE_TOOLCHAIN_FILE=cmake/gcc.cmake \
+  cmake -S=. -B=build/gcc-Debug -DCMAKE_BUILD_TYPE=Debug \
+  && cmake --build build/gcc-Debug
+CMAKE_TOOLCHAIN_FILE=cmake/gcc.cmake \
+  cmake -S=. -B=build/gcc-Release -DCMAKE_BUILD_TYPE=Release \
+  && cmake --build build/gcc-Release
+CMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake \
+  cmake -S=. -B=build/arm-none-eabi-Debug -DCMAKE_BUILD_TYPE=Debug \
+  && cmake --build build/arm-none-eabi-Debug
+CMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake \
+  cmake -S=. -B=build/arm-none-eabi-Release -DCMAKE_BUILD_TYPE=Release \
+  && cmake --build build/arm-none-eabi-Release
+```
+
+</details>
+
+Matrix axis values can be overridden at the CLI by passing `--name=value(s)`, e.g. `--FRUIT=apple`, or passing multiple values for the axis, even ones not named in the tasks file: `--FRUIT=mango,banana`.
+
+A matrix can be used to require an axis argument from the CLI by specifying the axis as empty in the tasks file:
+```python
+required = Sequential(
+  "release {VERSION}",
+  matrix={"VERSION": ()},
+)
+```
+
+> While camas is not intended as a tool for writing CLIs, this string interpolation is a powerful tool for composing common routines that require runtime arguments.
+
+A complement to the `matrix=` field is `variants=`. Like a matrix, it allows expressing string substitutions, but instead of doing so along the product, it is used to list tightly coupled bundles of options.
+
+<details><summary>Worked examples</summary>
 
 ```python
 from camas import Parallel, Task
@@ -405,9 +552,27 @@ $ camas '--effects=(Summary(show_passing=True),)' port --TARGET=wasm
 $ camas port --github-matrix
 ```
 
+</details>
+
+<details><summary>Reference</summary>
+
+- [CLI](#cli): `--matrix KEY=VAL[,VAL...]`, and `--jobs` for a matrix too wide for the machine
+- [Checking definitions (`camas --check`)](#checking-definitions-camas---check): catches a `variants=()` that expands to nothing
+- [GitHub Actions matrix (`--github-matrix`)](#github-actions-matrix---github-matrix): split matrix cells across CI runners
+- [Python projects](#python-projects): one environment per Python version in a version matrix
+- [python-version-matrix](https://github.com/JPHutchins/camas/tree/main/tests/fixtures/python-version-matrix): a matrix read from `.python-version`
+- [playwright-matrix-override](https://github.com/JPHutchins/camas/tree/main/tests/fixtures/playwright-matrix-override): a 2-axis browser × viewport matrix, scoped from the CLI
+- [#236](https://github.com/JPHutchins/camas/issues/236): the embedded backend ↔ platform ↔ target case that motivated `variants=`
+- [GitHub Actions: running variations of jobs](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/run-job-variations): GHA's `matrix`, and `include:`, the counterpart of `variants=`
+
+</details>
+
+
 ### The default task
 
-- Bind a `Config` in `tasks.py`, and bare `camas` (no arguments) runs its `default_task`:
+`camas` provides the [`Config`](#config) type for configuring the tasks file. To define a `Config`, bind an instance in your tasks.py file (the name doesn't matter, and `_ = Config()` is convention)
+
+When that `Config` specifies a `default_task`, then that is the task that a bare `camas` runs for the programmer at their terminal.
 
 ```python
 from camas import Config, Sequential, Task
@@ -419,190 +584,540 @@ ci = Sequential(lint, test, name="ci")
 _ = Config(default_task=ci)
 ```
 
-- Then `camas` runs `ci`, `camas --dry-run` previews it, and the default task's matrix axes stay overridable (`camas --PY 3.13`).
-- With no `Config` (or no `default_task`), bare `camas` prints the full help (task listing, effects, hints) and exits non-zero.
-- `Config` is discovered by type, so the binding's name never matters (`_` by convention); defining two is an error.
-- Its other fields are covered where they apply: `github_task` under [GitHub Actions](#github-actions), `agent` under [AI coding agents](#ai-coding-agents), `default_effects` and `leaf_color` under [Output and effects](#output-and-effects), `camas_dir` under [Your first `tasks.py`](#your-first-taskspy). Full fields: [`Config`](#config).
+The config can also be used to define context-aware defaults for continuous integration and coding agent environments. See [GitHub Actions](#github-actions) and [agent](#agent) for more information.
 
 ## Syntax and type safety
 
 ### Typed definitions
 
-- ✚ `tasks.py` is typed Python: mypy, pyright, and the other checkers check task definitions like any other code.
-
-### Typed CLI expressions
-
-- ✚ The CLI takes the same typed constructors as expressions: `--effects='(Status(output_mode="errors"),)'`, and task expressions that compose across namespaces (`camas '{libs.search.lint, api.deploy}'`).
+Your tasks file, `tasks.py`, is a statically typed python file checkable by mypy, pyright, ty, and other checkers and their LSPs.
 
 ### Checking definitions (`camas --check`)
 
-- ✚ `camas --check` (and the MCP `camas_check`) type-checks `tasks.py` with ty and reports advisory warnings:
-  - a leaf whose own `paths=` can never apply (no `{paths}` token; use `when=` instead), and a `{paths}` callable that goes empty on a full run
-  - an anonymous inline `Parallel`/`Sequential` in a `Config` task field, which `camas_list` can only report as `null`
+`camas` can do a basic self-check of your tasks file with `camas --check`, ensuring your task trees are loadable and checking for a few common mistakes and misconfigurations.
+
+If your runtime has [`ty`](https://docs.astral.sh/ty/) available, or if you've added the `camas[check]` extra, `--check` is enhanced by a `ty` type check that can identify additional static typing problems in your tasks file.
+
+### Typed CLI expressions
+
+Arguments to the CLI are well-defined statically typed expressions parsed by `camas` as an Abstract Syntax Tree. This means the making definitions at the CLI or in code is 1:1. For example, a traditional CLI may support an effects option like this:
+
+```
+--effects=status --status-output-mode=errors
+```
+
+The problem with this is that `--status-output-mode` is only valid when `--effects` includes `status` -- there is no way to avoid invalid configurations structurally. camas solves this be taking the statically typed expression instead. `--effects` takes a `tuple[Effect, ...]`:
+
+```
+--effects='(Status(output_mode="errors"),)'
+```
+
+> Note: the outer single quote is required to allow encoding spaces inside the expression.
 
 ## Optimizations
 
-### Path scoping (`--paths`)
+### Path scoping
 
-- `camas <task> --paths <path>…` scopes a run to changed paths instead of the whole tree.
-- A command opts in by writing the `{paths}` placeholder and declaring its scope with `paths=`: a directory prefix, or a `(changed) -> paths` callable.
-- A `Sequential`/`Parallel` may carry `paths=` too. It's the default scope for descendant `{paths}` commands that set none, the same way `env`/`cwd` propagate into a group's leaves:
+Task nodes that provide `{paths}` interpolation along with their default `paths=` argument can override the value of `{paths}` at runtime using the `--paths` argument. While a programmer can utilize this, it is a sophisticated feature more intended for agents, particularly the included "fixer" Claude Code agents included with the camas MCP. Agents use this option to speed up their static analysis iteration loops by only checking the file trees that they are working on rather than the entire tree.
 
-```python
-py = Task("ruff format {paths}", mutates=True, paths="src")
-web = Task("prettier --write {paths}", mutates=True, paths="web")
-# the group's paths="." is the default for both children (neither sets its own):
-autofix = Sequential(Task("ruff check --fix {paths}", mutates=True), Task("ruff format {paths}", mutates=True), paths=".")
-_ = Config(agent=Claude(fix=Sequential(py, web, autofix)))
-```
-
-- `--paths` works on any task (`camas check --paths src/a.py`):
-  - without it, every `{paths}` resolves to its full-run default (`ruff format src`)
-  - with it, each `{paths}` command runs only over the changed files it covers, and a command covering none is dropped
-  - it's repeatable, or comma-separated
-- A command **without** `{paths}` can't be narrowed, so its `paths=` is a no-op and it always runs, unless it declares `when=`. camas errs on correctness: a tool it can't narrow might be affected by the edit.
-- `when=` scopes a command that can't take `{paths}` (`cargo build`, `nix flake check`, `ctest`):
-  - it takes a directory-prefix string or `Path` (coerced to its POSIX prefix), a tuple of those, or a `(changed) -> bool` callable
-  - on a scoped run, a leaf whose `when=` doesn't match the changed set is dropped; a full run never consults it
-  - like `paths=`, a group's `when=` is the default for descendant leaves that set none
-  - a leaf with a `cwd` but no `when=` gates on its `cwd` directory (the monorepo file-tree default); set `when="."` to opt back into always-run
+For shell commands that cannot take file arguments, a broader `when=` alternative may be utilized. When `--paths` is provided, these nodes will only run when the files with the `when` argument have been changed.
 
 ```python
-build = Task("cargo build", when="src")                # runs only when src/ changed
-flake = Task("nix flake check", when=("flake.nix", "nix"))
-tests = Task("cargo test", cwd="code-gen")             # when= defaults to "code-gen"
-```
-
-- A `paths=` callable is called with `()` on a full run:
-  - one that filters the changed set would return `()` and strip the command's arguments entirely (a formatter reading stdin on no args hangs)
-  - `by_suffix(suffixes, default=...)` is the safe factory: it filters the changed files by suffix on a scoped run and returns `default` on a full run (`by_glob` is the shell-glob variant)
-  - `by_glob` is a prefix-plus-suffix, `**`-aware shell-glob scope, for porting a pre-commit `files:` filter
-
-```python
-tidy = Task("clang-tidy {paths}", paths=by_suffix((".c", ".h"), default=("src",)))
-```
-
-- Full signatures: [`by_suffix`](#by_suffix), [`by_glob`](#by_glob), [`PathScope`](#pathscope), [`WhenPredicate`](#whenpredicate). The `camas --check` warnings for both scopes are under [Checking definitions](#checking-definitions-camas---check).
-
-### Time budget (`--under`)
-
-- Once camas has timed a task's leaves (the `.camas/` cache, surfaced by `camas --list`), `camas --under=<duration>` runs only the leaves whose estimate fits a wall-clock budget: the fast inner-loop subset, picked for you instead of by hand.
-
-```
-camas --under=1s            # budget the Config default task
-camas --under=500ms check   # budget a named task or expression
-```
-
-- It runs the **mutating** leaves first, in sequence, then the read-only rest in parallel, so formatters never race a checker over the same files. Mark a leaf that writes the workspace with `mutates=True`:
-
-```python
-fix = Task("ruff check --fix .", mutates=True)
-fmt = Task("ruff format .", mutates=True)
-lint = Task("ruff check .")
-```
-
-- ⚠️ This `--dry-run` output was captured by hand from camas's own tasks. It depends on the local timing cache, so a `cli` directive can't render it the same everywhere.
-
-```
-$ camas --under=1s --dry-run
-Time budget 1.00s — running 6 leaf(s) (0 unmeasured), excluded 2 over budget.
-  over budget: pyright ~4.57s, coverage ~20.98s
-fix → fmt → (mypy | ty | zuban | pyrefly)
-```
-
-- Durations are `1s`, `500ms`, `2m`, `1h`, or a bare number of seconds.
-- Only leaves *measured* over the budget are excluded. A leaf with no recorded timing yet runs anyway, and is measured; skipping it would keep it untimed forever.
-  - a cold cache (a fresh clone) runs the whole tree under a budget until each leaf has been measured once
-  - a pipe kept whole for its untimed siblings runs its over-budget stages too
-- The budget is per leaf: a measured leaf runs when its own estimate fits, so the parallel group's wall-clock time stays near the budget.
-- the budgeted subset is what a pre-commit / git hook wants
-- **For agents:** `camas_run` takes the same budget as its `under` argument (omit `task` to budget the project default), and the response's `budget` field reports what was selected and excluded. That makes a tight, time-boxed validate loop over structured MCP.
-
-### When `Parallel` doesn't help
-
-- `Parallel` runs in the time of its slowest leaf only when the machine has room for every leaf at once.
-- It pays for independent work (distinct tools, or a long emulator or integration run overlapped with quick static checks) and across CI runners, each with its own cores and build directory.
-- Otherwise, keep the work in one leaf or in sequence:
-  - **Leaves that each fill the CPU:** multicore tools on one machine share the same cores, so `golangci-lint` beside another Go linter, or `cargo clippy` beside `cargo test` on a warm cache, gains little over running them in sequence. `--jobs N` caps a fan-out that oversubscribes the machine; it can't make one leaf faster.
-  - **Leaves behind one build lock:** concurrent `cargo` commands over one `target/` wait on cargo's build-directory lock. Keep the batched invocation (`cargo hack`, `cargo-batch`, an `xtask`) as a single leaf.
-  - **A tool with its own scheduler:** three `nix build .#attr` leaves evaluate the flake three times; one `nix build .#a .#b .#c` evaluates it once and schedules the builds itself.
-  - **Leaves that write the tree:** `mutates=True` orders leaves only under [`--under`](#time-budget---under). In a normal run, mutating leaves in one `Parallel` race each other and their read-only siblings, and a [`Clean`](#drift-gate-clean) gate fails on writes it didn't make. Run them first, in sequence:
-
-```python
-from camas import Parallel, Sequential, Task
-
-dev = Sequential(
-  Task("ruff format .", mutates=True),
-  Task("ruff check --fix .", mutates=True),
-  Parallel("mypy .", "pytest"),
+check = Parallel(
+  Task("ruff check {paths}", paths="src"),
+  Task("prettier --check {paths}", paths="web"),
+  Task("cargo build", when="src"),
+  Task("nix flake check"),
 )
 ```
 
-- To fan out across machines, let camas split the outer axes (target, chip, toolchain version) over CI runners with [`--github-matrix`](#github-actions-matrix---github-matrix), and keep each tool's batched invocation inside one leaf.
-- ✚ `CAMAS_JOBS`, the environment form of `--jobs`, has one passing mention so far.
+The argument to `paths` and `when` is not just a list of file tree roots; it can also be callable in order to scope by predicate. camas provides builtin's `by_suffix` and `by_glob` for common `{paths}` use cases:
+
+```python
+tidy = Task(
+  "clang-tidy {paths}",
+  paths=by_suffix(
+    (".c", ".h"),
+    default=("src",),
+  )
+)
+```
+
+<details><summary>Reference</summary>
+
+- [`Task`](#task): the `paths=` and `when=` fields
+- [`Sequential`](#sequential) and [`Parallel`](#parallel): group-level `paths=` and `when=`, the defaults for their leaves
+- [`PathScope`](#pathscope) and [`WhenPredicate`](#whenpredicate): the callable forms
+- [`by_suffix`](#by_suffix) and [`by_glob`](#by_glob)
+- [Monorepos](#monorepos): a leaf's `cwd` doubles as its `when=`
+- [Checking definitions (`camas --check`)](#checking-definitions-camas---check): warnings for scopes that can never match
+- [Time budget (`--under`)](#time-budget): the other way to shorten a run, and it combines with `--paths`
+- [Fix and gate hooks](#fix-and-gate-hooks): how the fixer agents use `--paths`
+- [MCP tools](#mcp-tools): the `paths` parameter on `camas_gate`, `camas_fix`, and `camas_run`
+- [CLI](#cli): `--paths PATH[,PATH...]`
+
+</details>
+
+
+### Time budget
+
+The `--under=<DURATION>` option runs only the task leaves that are expected to fit within the given duration. Any node, including the default node, may be provided, and the duration accepts standard units (defaults to seconds).
+
+```
+# Skip any leaf estimated to
+# take longer than 5 seconds
+camas --under=5s
+
+# The same, for a named task
+camas --under=500ms check
+```
+
+This option is intended for developer facing features like git-hooks or an agent's inner static analysis loop.
+
+> Note: duration calculation requires the existence of the `.camas` cache folder, provided by `camas mcp init [options]`
+
+<details><summary>Reference</summary>
+
+- [`Task`](#task): the `mutates=` field
+- [`Timings`](#timings): the effect that records the estimates; a `Config` that sets its own effects must include it
+- [The default task](#the-default-task): what `--under` budgets when no task is named
+- [Path scoping](#path-scoping): the other way to run less, and it combines with `--under`
+- [Pre-push hook](#pre-push-hook): a budgeted run before every push
+- [Fix and gate hooks](#fix-and-gate-hooks): how the agents use it
+- [MCP tools](#mcp-tools): the `under` parameter on `camas_run` and `camas_gate`, and the `budget` report
+- [CLI](#cli): `--under DURATION`
+
+</details>
+
+### When `Parallel` doesn't help
+
+camas's parallel execution is a powerful speed-up for most development tasks. However, it's not a silver bullet, particularly when the tasks that are parallelized already use many cores or contend for resources. For example, cargo takes a lock on `target/`. That alone can be worked around by providing each leaf its own `CARGO_TARGET_DIR`, but even then, cargo and rustc are optimized to use available CPU cores, so parallel jobs are unlikely to speed things up and can even slow down the tasks due to added contention.
+
+camas is a great way to make sure that your CI runners are constantly pinned to 100% CPU usage, but a wide fan-out can also oversubscribe the machine's CPU, memory, or disk, so it can be capped with `--jobs=N` (env: `CAMAS_JOBS`), or even spread across CI runners with `--github-matrix`.
+
+<details><summary>Reference</summary>
+
+- [`Task`](#task): the `mutates=` field
+- [Time budget](#time-budget): the only mode where `mutates=True` reorders leaves
+- [Drift gate (`Clean`)](#drift-gate-clean): why stray writes fail CI
+- [GitHub Actions matrix (`--github-matrix`)](#github-actions-matrix---github-matrix): fan out across runners
+- [CLI](#cli) and [Environment variables](#environment-variables): `--jobs N` and `CAMAS_JOBS`
+
+</details>
 
 ## Continuous integration
 
 ### GitHub Actions
 
-- The renderer is swappable, not the tree: the same `tasks.py` runs locally with the live `Termtree` and in CI with `Status`. One flag changes the output; the pipeline definition stays the same.
-- **On GitHub Actions, no flag is needed:**
-  - camas detects `GITHUB_ACTIONS=true` and defaults `--effects` to `(Status(output_mode="github"),)`
-  - the result is collapsed workflow groups, ISO timestamps with millisecond precision, and preserved ANSI colors
-  - agents get a different default; see [Choosing output](#choosing-output)
+camas detects being run in the GitHub Actions environment and switches its effect `Status(output_mode="github")`, whose logs fold into collapsible groups by task leaf.
 
 ```yaml
-- run: uv run camas check
+- run: uvx camas check
 ```
 
-- On other CI providers, or to opt into a specific mode, spell out the effect:
+`Config`'s `github_task` option sets what a bare `camas` runs in GitHub Actions; without it specified, it falls back to `default_task` (the local development default task node).
 
 ```yaml
-- run: uv run camas check --effects='(Status(output_mode="errors"),)'
+- run: uvx camas
 ```
 
-- Per-mode behavior: the [`OutputMode`](#outputmode) literal and the `block_for` doctests in [`status.py`](https://github.com/JPHutchins/camas/blob/main/src/camas/effect/status.py). The [`status-modes-demo` job](https://github.com/JPHutchins/camas/blob/main/.github/workflows/ci.yaml) renders one CI run per mode for comparison.
-- `github_task` is the CI counterpart of `default_task`:
-  - it runs under `GITHUB_ACTIONS=true`, falling back to `default_task` when unset
-  - paired with the automatic `Status` effect, one bare `camas` does the right thing in both places
-  - with `github_task` set, a CI step is just `camas` (or `uv run camas`), so the workflow doesn't go stale when `github_task` changes
+Tour tasks file is the Single Source of Truth (SSOT) for continuous integration and local development. Your checks can evolve over time without any need to modify your GitHub Actions file(s) or worry about desyncronization.
 
-```python
-_ = Config(
-  default_task=ci,                            # bare `camas` locally
-  github_task=Sequential(ci, "pytest --cov"), # bare `camas` under GitHub Actions
-)
-```
+<details><summary>Reference</summary>
+
+- [`Config`](#config): `github_task`, `default_task`, and `default_github_effects`
+- [The default task](#the-default-task): what a bare `camas` runs locally
+- [Choosing output](#choosing-output): the defaults locally, in CI, and under agents, and how `Config` overrides them
+- [`Status`](#status) and [`OutputMode`](#outputmode): every output mode
+- [Pre-push hook](#pre-push-hook): run `github_task` before you push
+- [`status-modes-demo`](https://github.com/JPHutchins/camas/blob/main/.github/workflows/ci.yaml): one CI run per output mode, for comparison
+
+</details>
 
 ### GitHub Actions matrix (`--github-matrix`)
 
-- It fans out across N runners *without* giving up SSOT:
-  - `camas <task> --github-matrix` emits the task's fan-out as the JSON that GHA's `strategy.matrix` consumes
-  - a `discover` job sources it from `tasks.py`, and downstream jobs read it with `fromJSON`, so the fan-out lives in one place
-  - this repo dogfoods it: see the [`discover` and `check` jobs](https://github.com/JPHutchins/camas/blob/main/.github/workflows/ci.yaml), which fan out over `.python-version`
-- There are three shapes, one per way a `tasks.py` fans out:
+camas provides the SSOT for your GitHub matrix fan-out as well. A developer on local can run the matrix parallelized across there cores while in CI the jobs will parallelize across runners. Again, this provides powerful Python syntax to express complex configurations, avoiding the fight with YAML.
 
-| `tasks.py` | emitted | job runs |
-|---|---|---|
-| `matrix={"PY": (...)}` — a cross product | `{"PY": ["3.13", "3.14"]}` | `camas <task>` with the cell's axes pinned (flags, or job `env`) |
-| `variants=({...}, {...})` — coupled bundles | `{"include": [{...}, {...}]}` | same, pinning the cell's keys |
-| a `Parallel` of named tasks, no axes | `{"task": ["build", "lint", "test"]}` | `camas ${{ matrix.task }}` |
+You may can freely matrix across compiler versions, runtime environments, build configurations -- there are no limits -- with minimal YAML surface area.
 
-- The `task` shape is the common CI shape: N independent jobs, no version matrix. Its values are the *binding* names `camas <task>` dispatches on, so an emitted job can't 404 in CI.
-- Either object-of-arrays form composes with a YAML-side axis such as `os`, which a shell command couldn't change from inside a job anyway:
+#### Recipe
+
+1. Pin the shape in a discover job that emits the matrix JSON using camas' `--github-matrix` option
+2. Access the matrix using `fromJSON`
 
 ```yaml
-strategy:
-  matrix:
-    os: [ubuntu-latest, macos-latest]
-    task: ${{ fromJSON(needs.discover.outputs.matrix).task }}
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.emit.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v10.3.3
+      - id: emit
+        run: echo "matrix=$(uvx camas check --github-matrix=tasks)" >> "$GITHUB_OUTPUT"
+
+  check:
+    needs: discover
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        task: ${{ fromJSON(needs.discover.outputs.matrix).task }}
+      fail-fast: false
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v10.3.3
+      - run: uvx camas ${{ matrix.task }}
+```
+The matrix and variants options meet different job distribution requirements. camas does some validation of the fan-out, refusing shapes that cannot be split exactly or those that would repeat a leaf, rather than willingly emitting a defective matrix.
+
+| `tasks.py` | emitted | each job runs |
+|---|---|---|
+| `matrix={"PY": (...)}` | `{"PY": ["3.13", "3.14"]}` | `camas <task> --PY ${{ matrix.PY }}` |
+| `variants=({...}, {...})` | `{"include": [{...}, {...}]}` | the same, one flag per key |
+| a `Parallel` of named tasks | `{"task": ["build", "lint", "test"]}` | `camas ${{ matrix.task }}` |
+
+Running your task trees through camas reduces the number of nodes presented in the GitHub Actions UX down to the count of root nodes that you choose to run -- potentially just one. If you'd like to get back that granular UX while still benefitting from camas SSOT, take a look at [Per-leaf checks (`Git.HubChecks`)](#per-leaf-checks-githubchecks)
+
+<details><summary>Reference</summary>
+
+- [Matrices and variants](#matrices-and-variants): the `matrix=` and `variants=` that become `axes` and `variants`
+- [`Parallel`](#parallel): the `tasks` shape, one job per child
+- [GitHub Actions](#github-actions): `github_task`, for a step that's just `camas`
+- [Per-leaf checks (`GitHubChecks`)](#per-leaf-checks-githubchecks): the alternative, one runner with a check per leaf
+- [Python projects](#python-projects): matrix cells below camas's own Python floor
+- [CLI](#cli) and [MCP tools](#mcp-tools): `--github-matrix[=SHAPE]` and `camas_github_matrix`
+- [camas's own CI](https://github.com/JPHutchins/camas/blob/main/.github/workflows/ci.yaml): the `discover`, `check`, and `per-task` jobs
+- [GitHub Actions: running variations of jobs](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/run-job-variations)
+
+</details>
+
+### Drift gate (`Clean`)
+
+`Clean` (TODO: link) is a wrapper around a task that mutates files that are under VCS and fails if the work tree changes after the wrapped task was run.
+
+```python
+openapi = Clean(Task("make update-openapi", mutates=True))
 ```
 
-- `--github-matrix=axes|variants|tasks` pins the shape. Pin it in your `discover` step, so a later `tasks.py` refactor fails there instead of quietly handing the workflow a differently shaped object.
-- camas checks the emitted object against the task's real run-set:
-  - each job must run exactly its own cell's leaves, and the jobs together must cover every leaf exactly once
-  - a fan-out with no faithful projection (independent fan-outs in one tree, a plain leaf beside matrixed siblings) is rejected rather than silently widened or narrowed
-- A matrix with cells below camas's Python floor needs a different launcher; see [Python projects](#python-projects).
+The clean check runs three operations in sequence:
+1. check that the tree is clean
+2. run the wrapped task node
+3. check that the tree is clean
+
+camas provides git-centric defaults -- using git porcelain for the working tree checks -- but the checks themselves can be provided to work with other VCS.
+
+<details><summary>Reference</summary>
+
+- [`Clean`](#clean) and [`GIT_PORCELAIN`](#git_porcelain): the full signature and the default check
+- [`Task`](#task): the `mutates=` field
+- [`Sequential`](#sequential): what `Clean` returns
+- [When `Parallel` doesn't help](#when-parallel-doesnt-help): mutating leaves and shared state
+
+</details>
+
+### Pre-push hook
+
+```sh
+echo 'exec camas check' > .git/hooks/pre-push && chmod +x .git/hooks/pre-push
+```
+
+<!-- TODO: https://github.com/JPHutchins/camas/issues/357 -->
+
+> An LLM agent needs no hook: when a `github_task` is declared, `camas_list` reports it as `github_default`, so the agent runs `camas_run` with that name before pushing. The field is `null` when no `github_task` is set; camas never infers it from your CI workflow files.
+
+## AI coding agents
+
+### The MCP server
+
+> Enable the MCP by adding the `mcp` extra, e.g. `camas[mcp]`.
+
+To initialize the camas mcp, use `camas mcp init`, which will write the `.mcp.json`. `camas mcp init --claude` will setup Claude Code hooks and skills.
+
+The MCP client starts the MCP server with the `camas mcp` entrypoint and refreshes your tasks file to keep it up to date as the agent adds and edit tasks for its internal validation loop.
+
+<details><summary>Reference</summary>
+
+- [MCP tools](#mcp-tools): every tool and its description, generated from the server
+- [`Claude`](#claude) and [`Config`](#config): the `agent` slots
+- [Install](#install): the `mcp` extra
+- [Model Context Protocol](https://modelcontextprotocol.io/)
+- [Claude Code: MCP](https://code.claude.com/docs/en/mcp)
+
+</details>
+
+### Claude Code setup
+
+camas enhances Claude Code by enabling agent-driven static analysis loops. `camas mcp init --claude` writes the whole setup: `.mcp.json`, two `Stop` hooks, three camas-fixer subagents, and the `gate` skill.
+
+Your agent's defaults can differ from your own by configuring them: `_ = Config(agent=Claude(fix=..., check=..., default=...))`
+
+<details><summary>Reference</summary>
+
+- [Fix and gate hooks](#fix-and-gate-hooks): what the two hooks do
+- [Standalone `tasks.py` (PEP 723)](#standalone-taskspy-pep-723): the header the pin follows
+- The files init writes: the [`gate` skill](https://github.com/JPHutchins/camas/blob/main/src/camas/main/claude_gate_skill.md) and the camas-fixer subagents ([lint, Haiku](https://github.com/JPHutchins/camas/blob/main/src/camas/main/claude_agent_lint_haiku.md); [lint, Sonnet](https://github.com/JPHutchins/camas/blob/main/src/camas/main/claude_agent_lint_sonnet.md); [tests](https://github.com/JPHutchins/camas/blob/main/src/camas/main/claude_agent_test_fixer.md))
+- Claude Code: [hooks](https://code.claude.com/docs/en/hooks), [subagents](https://code.claude.com/docs/en/sub-agents), [skills](https://code.claude.com/docs/en/skills)
+
+</details>
+
+### Fix and gate hooks
+
+Think of the fix hook as "format and fix on save" for your agent. This applies your deterministic formatters and lint fixers so that your agent never needs to think about it.
+
+camas also initializes an async "nudge". It runs `camas mcp gate --under 5s nudge` which may reveal static analysis reports that could not be resolved automatically. The agent may choose to deploy fixer subagents scoped `--paths` slices of the file tree, or reason about the reports itself.
+
+In this way, the agent is supercharged by a tight static analysis loop as it works, rather than needing to fix everything at the end, or worse, after CI fails!
+
+<details><summary>Reference</summary>
+
+- [`Claude`](#claude): `fix`, `check`, and `default`
+- [Path scoping](#path-scoping): how the fix and the gate narrow to the changed files
+- [Time budget](#time-budget): the `--under` behind the nudge
+- [MCP tools](#mcp-tools): `camas_gate` and `camas_fix`
+- [Claude Code: hooks](https://code.claude.com/docs/en/hooks): `Stop`, `async`, and `asyncRewake`
+
+</details>
+
+### Agents on the CLI
+
+camas detects an agent (`CLAUDECODE=1` or `CAMAS_AGENT=1`) and prints line-oriented `Status` output instead of the user-facing live tree default. It's preferred to enable the MCP for optimized formatting and well-typed schemas rather than using the CLI.
+
+<details><summary>Reference</summary>
+
+- [Choosing output](#choosing-output): the defaults locally, in CI, and under agents
+- [`Status`](#status) and [`Termtree`](#termtree)
+- [Environment variables](#environment-variables)
+
+</details>
+
+### Structured diagnostics
+
+Static analysis tooling that has structured output can be enabled for agents alone. This means that the programmer can continue to work with a normal UX while the agent benefits from token-saving structured report formats.
+
+```python
+lint = Task(
+  "ruff check .",
+  agent_format=("--output-format sarif", "sarif"),
+)
+semgrep = Task(
+  "semgrep scan --config auto",
+  agent_format=("--sarif", "sarif"),
+)
+pytest = Task(
+  "pytest",
+  agent_format=("--junitxml {report}", "junit"),
+)
+vitest = Task(
+  "npx vitest run",
+  agent_format=("--reporter=junit --outputFile={report}", "junit"),
+)
+```
+
+> Note: for tools that write to a file, a literal `{report}` becomes a path the gate allocates and then reads
+
+A tool with no structured format of its own can pipe into a converter just for the agent:
+
+```python
+clippy = Pipe(
+  Task("cargo clippy", agent_format=("--message-format=json", "raw")),
+  Task("clippy-sarif", agent_format=("", "sarif")),
+  agent_only=True,
+)
+```
+
+Every other run, human or agent, runs `cargo clippy` alone.
+
+<details><summary>Reference</summary>
+
+- [`AgentFormat`](#agentformat) and [`OutputKind`](#outputkind): the fields and the supported kinds
+- [Pipes](#pipes) and [`Pipe`](#pipe): `agent_only`
+- Formats: [SARIF 2.1.0](https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-v2.1.0.html), [rdjson](https://github.com/reviewdog/reviewdog/tree/master/proto/rdf), [LSP diagnostics](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#diagnostic), [TAP](https://testanything.org/)
+
+</details>
+
+## Project layout
+
+### Monorepos
+
+In order to compose subprojects that contain their own tasks file, camas provides [`Project`](#project). Binding a `Project` imports the child `tasks.py` as a task node and mounts the child's tasks under the binding name.
+
+```python
+from camas import Claude, Config, Parallel, Project
+
+libs = Project("libs")
+# camas libs, camas libs.search.lint, ...
+
+api  = Project("services/api")
+# name the handle whatever you like
+
+_ = Config(
+  default_task=Parallel(libs, api, name="all"),
+  # each child's default_task, in parallel
+  
+  github_task=Parallel(libs, api, name="ci"),
+  # each child's github_task
+  
+  agent=Claude(
+    fix=Parallel(libs, api, name="fix"),
+    # each child's fix node
+    
+    check=Parallel(libs, api, name="check"),
+    # each child's check node
+  ),
+)
+```
+
+A reference composes the child's _matching fields_. For example, instead of needing to specify `default_task=libs.default_task`, `libs`'s default task is selected automatically since it was added to the parent's default tasks. This allows for composing all of the subprojects into a single parallel.
+
+When running a subproject from the root, e.g. `camas libs`, it is environment aware, just like the root camas tasks file. From a terminal, it will run `libs`'s default task, in CI it would run `libs`'s GitHub task, and for an agent it will follow `libs`'s agent configuration.
+
+A subproject's `cwd`, `paths=`, and `when=`, stay relative to its own tasks file. This way, a scoped run (via `--path`, or the agent gate) runs only the subprojects whose files changed.
+
+<details><summary>Reference</summary>
+
+- [`Project`](#project)
+- [`Config`](#config) and [`Claude`](#claude): the slots a reference composes
+- [The default task](#the-default-task): what a bare `camas` runs in each context
+- [Path scoping](#path-scoping): a leaf's `cwd` as its `when=` fallback
+- [Fix and gate hooks](#fix-and-gate-hooks): the gate's scoped runs
+- [CLI](#cli): the `( )` and `{ }` task expressions
+- [Monorepo fixture](https://github.com/JPHutchins/camas/tree/main/tests/fixtures/monorepo): every permutation, including the nested `libs.search`
+
+</details>
+
+### Standalone `tasks.py` (PEP 723)
+
+A project without Python packaging can still use camas as a single-file task runner: give `tasks.py` a [PEP 723](https://peps.python.org/pep-0723/) header and a `run_cli(globals())` entry point.
+
+```python
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["camas"]
+# ///
+from camas import Sequential, Task, run_cli
+
+lint = Task("cargo clippy")
+test = Task("cargo test")
+check = Sequential(lint, test)
+
+if __name__ == "__main__":
+  run_cli(globals())
+```
+
+Any PEP 723 runner installs camas and runs the file, with every camas option available:
+
+```sh
+uv run tasks.py check
+pipx run tasks.py --list
+```
+
+<details><summary>Reference</summary>
+
+- `camas` reads the file the same way with or without the header, so the rest of this README applies unchanged.
+- Pin camas in `dependencies`. The MCP server needs `"camas[mcp]"`; `camas mcp init` then launches it through the file, as `uv run tasks.py mcp`.
+- `camas --check` warns when the header lists camas but nothing calls `run_cli`, since `uv run tasks.py` would then exit without running anything.
+- [`run_cli`](#run_cli)
+- [The MCP server](#the-mcp-server) and [Claude Code setup](#claude-code-setup): the `mcp` extra and the launcher `camas mcp init` writes
+- [Checking definitions (`camas --check`)](#checking-definitions-camas---check)
+- [PEP 723](https://peps.python.org/pep-0723/), [uv: running scripts](https://docs.astral.sh/uv/guides/scripts/), [pipx](https://pipx.pypa.io/stable/)
+
+</details>
+
+### Python projects
+
+There are a few special considerations when camas is used to manage the tasks of a Python project.
+
+<details><summary>Supporting Python older than 3.10</summary>
+
+camas requires Python 3.10 or newer, so in a project whose `requires-python` reaches lower (say `">=3.8"`), a plain `uv add camas` fails to resolve. Either guard the dependency with an environment marker:
+
+```sh
+uv add --dev "camas ; python_version >= '3.10'"
+```
+
+or keep camas out of the project environment and run it with `uvx camas`; `camas mcp init --launcher uvx` sets up the MCP server the same way. Either way camas runs on its own interpreter and still drives tasks on the older versions.
+
+</details>
+
+<details><summary>A Python version matrix</summary>
+
+`tasks.py` is plain Python, so a version matrix can come straight from `.python-version`. Each cell gets its own environment with `UV_PROJECT_ENVIRONMENT` and its own interpreter with `UV_PYTHON`:
+
+```python
+from pathlib import Path
+
+from camas import Sequential, Task
+
+PYTHONS = tuple(Path(__file__).with_name(".python-version").read_text().split())
+
+matrix = Sequential(
+  Task("uv sync"),
+  Task("uv run pytest"),
+  env={"UV_PROJECT_ENVIRONMENT": ".camas/.venv-{PY}", "UV_PYTHON": "{PY}"},
+  matrix={"PY": PYTHONS},
+)
+```
+
+Keep the environments in `.camas/`, which is already gitignored. In the project root, a later formatter or linter that scans `.` descends into `.venv-3.13/`, and a default `.venv` exclude often doesn't match the suffix.
+
+</details>
+
+<details><summary>CI cells older than 3.10</summary>
+
+A cell testing 3.8 can't install camas, and `uvx camas` fails as well if the job pins uv's Python: `setup-uv`'s `python-version` input, or any job-level `UV_PYTHON`, applies to `uvx` too. Leave both unset, and let the matrix above set `UV_PYTHON` on the leaves only:
+
+```yaml
+- uses: astral-sh/setup-uv@v10.3.3
+- run: uvx camas matrix --PY ${{ matrix.PY }}
+```
+
+camas runs on its own interpreter, and each leaf runs on the cell's.
+
+</details>
+
+<details><summary>Tasks in <code>pyproject.toml</code></summary>
+
+A simple project, or one migrating from tools like [taskipy](https://github.com/taskipy/taskipy), [poethepoet](https://github.com/nat-n/poethepoet), [PDM scripts](https://pdm-project.org/en/latest/usage/scripts/), or [Hatch scripts](https://hatch.pypa.io/latest/config/environment/overview/#scripts), can define its tasks in `pyproject.toml` instead of `tasks.py`. Each key is a task name, and each value is a command or an expression over other task names, with `( )` for a `Sequential` and `{ }` for a `Parallel`:
+
+```toml
+[tool.camas.tasks]
+lint = "ruff check ."
+test = "pytest"
+check = "{lint, test}"
+```
+
+There's no `Config` in this form, so a bare `camas` prints help instead of running a default task. A `tasks.py` in the same directory takes precedence.
+
+</details>
+
+<details><summary>Reference</summary>
+
+- [Matrices and variants](#matrices-and-variants) and [GitHub Actions matrix (`--github-matrix`)](#github-actions-matrix---github-matrix): the `PY` axis and its CI fan-out
+- [Claude Code setup](#claude-code-setup): `--launcher uvx`
+- [The default task](#the-default-task): what a `Config` adds over the TOML form
+- Fixtures: [python-version-matrix](https://github.com/JPHutchins/camas/tree/main/tests/fixtures/python-version-matrix), [python-project](https://github.com/JPHutchins/camas/tree/main/tests/fixtures/python-project) (the TOML form), and [camas's own `tasks.py`](https://github.com/JPHutchins/camas/blob/main/tasks.py)
+- [Environment markers](https://packaging.python.org/en/latest/specifications/dependency-specifiers/#environment-markers), uv's [`UV_PROJECT_ENVIRONMENT`](https://docs.astral.sh/uv/reference/environment/#uv_project_environment) and [`UV_PYTHON`](https://docs.astral.sh/uv/reference/environment/#uv_python), [setup-uv](https://github.com/astral-sh/setup-uv)
+
+</details>
+
+## Output and effects
+
+### Choosing output
+
+- ✚ One table of the defaults: the live `Termtree` locally, `Status(output_mode="github")` under GitHub Actions, `Status` under an agent; `Config(default_effects=...)` (and `default_github_effects`) overrides all of them.
+- `--effects` takes a *tuple* of any length, so several effects run in one go: `--effects=(Summary(), Loud())` gives both the post-run report and the streaming lines
+- `Summary(show_passing=True)` prints every passing task's output after the run
+
+### Built-in effects
+
+- `Termtree` (the default for programmers at their terminal): a live task tree in the terminal
+- `Status`: line-oriented status output (the default under GitHub Actions and agents using the CLI)
+- `Summary`: the final task tree, rendered once after the run
+- `Ctrf`: a CTRF JSON test report (see [Reports](#reports-ctrf))
+- `GitHubChecks`: per-leaf check runs on the GitHub Checks API (see [Per-leaf checks](#per-leaf-checks-githubchecks))
+- `Timings`: each leaf's observed duration, recorded for later runs
 
 ### Per-leaf checks (`GitHubChecks`)
 
@@ -648,212 +1163,6 @@ uv run --extra ctrf camas check --effects='(Status(output_mode="errors"), Ctrf(p
 ```
 
 - Full constructor: [`Ctrf`](#ctrf).
-
-### Drift gate (`Clean`)
-
-- `Clean` keeps committed generated code up to date: it runs the generator, then fails if the working tree changed.
-
-```python
-from camas import Clean, Task
-
-openapi = Clean(Task("make update-openapi", mutates=True))
-```
-
-- `openapi` is a `Sequential` of three leaves: a check that the tree is clean, the generator, and the same check again.
-  - a dirty tree fails the first check and skips the generator
-  - a failed second check prints the drift: the `git diff` of the changed tracked files, staged or not, then the `git status --porcelain` lines, untracked files included
-- `check=` replaces the whole-tree default with any task or command string whose exit 0 means clean:
-  - `check="git diff --exit-code -- schema/"` scopes the gate to one directory
-  - but `git diff` doesn't see untracked files, so a generator that adds files needs a check that does
-  - a check can't carry `{paths}`
-- `before=False` drops the first check; a tree that starts dirty then fails as drift.
-- The default check reads git's view of the whole tree, where ignored paths don't count, so nothing else may write while a gate runs:
-  - a formatter sequenced before a gate fails the gate's first check whenever it changes a file
-  - two gates under one `Parallel` see each other's writes
-  - run the gates first, in sequence:
-
-```python
-from camas import Clean, Sequential, Task
-
-generators = Sequential(
-  Clean(Task("go generate ./...", mutates=True)),
-  Clean(Task("make update-openapi", mutates=True)),
-)
-```
-
-- Full signatures: [`Clean`](#clean), [`GIT_PORCELAIN`](#git_porcelain).
-
-### Pre-push hook
-
-- Running `github_task` before a push catches a CI failure locally:
-  - if it's a named task, a one-line git hook guards every push:
-
-```sh
-echo 'exec camas check' > .git/hooks/pre-push && chmod +x .git/hooks/pre-push
-```
-
-- `git push --no-verify` still bypasses the hook deliberately.
-- An LLM agent needs no hook: when a `github_task` is declared, `camas_list` reports it as `github_default`, so the agent runs `camas_run` with that name before pushing. The field is `null` when no `github_task` is set; camas never infers it from your CI workflow files.
-
-## AI coding agents
-
-### The MCP server
-
-- prefer the MCP server: `camas mcp [--help | --plain]`; `camas mcp init --claude` (`.mcp.json` + hooks + fixer ladder + gate skill); `camas mcp init` (`.mcp.json` only, for any MCP client)
-- the MCP server re-executes `tasks.py` on every tool call, so a command computed from the filesystem at the top level of `tasks.py` (a glob, a file list) stays fresh; values computed in a separately imported module are import-cached and can go stale; prefer `{paths}`/`when=` over snapshotting file lists where freshness matters
-- The tools and what each one does, generated from the server's own descriptions: see [MCP tools](#mcp-tools).
-
-### Claude Code setup
-
-- You **register** the autofix node, whatever you named it, as `Config.agent.fix`:
-  - the `camas_gate` MCP tool settles *that* node over the changed files before it checks
-  - a `Stop` hook runs it at every turn end: deterministically, at zero model tokens, and never between an agent's edits, so a half-finished edit (an import not yet used) survives until the agent gates
-  - the headless `camas mcp gate` stays read-only, so CI checks exactly what was committed
-- `camas mcp init --claude` writes the full Claude Code setup in one command: `.mcp.json`, the Stop autofix and async nudge hooks, the tiered camas-fixer agents, and the `gate` skill.
-- It resolves the launcher for your project (`uv run camas`/`uv run tasks.py`, `uvx`, or a PATH `camas`) and pins it:
-  - to `tasks.py`'s PEP 723 block when present, else to the running camas release
-  - a dev/local build is left unpinned, since it isn't published to pin against
-  - re-run `camas mcp init --claude` after bumping either, to keep the pin current
-- The launcher it picks is the one that can still see your project's tools:
-  - a `uv.lock`/PEP 723 project gets `uv run`
-  - a `camas` in the project's environment (a virtual environment, or a flake devShell out of `/nix/store`) is preferred over `uvx`, which is isolated from both and can't run `ruff`/`mypy`/`treefmt`/`go` at all
-  - a global `camas` isn't preferred: it shares nothing with the project, and the pinned `uvx` entry is more portable
-  - detection reads where `camas` itself resolves, not `VIRTUAL_ENV`/`IN_NIX_SHELL`, which only report that a shell was entered
-  - when init picks the environment's `camas`, the committed entry needs your team in that same environment (activate the venv, or enter the devShell, before starting the client); init says so
-  - `--launcher uv|uvx|camas` forces a strategy
-- `camas mcp init` alone writes a bare `.mcp.json` for any MCP client, with the same launcher and pin resolution and no Claude Code files.
-- Both warn when git excludes a file they just wrote:
-  - a repo whose `.gitignore` covers `.claude/` can only commit `.mcp.json`, so the autofix/gate loop stays per-developer (each teammate re-runs `camas mcp init --claude` in their own clone) until that rule is opened up
-  - the warning prints the `.gitignore` lines that would open it up
-- Or wire it by hand:
-
-```jsonc
-// .claude/settings.json
-{ "hooks": { "Stop": [
-  { "hooks": [{ "type": "command", "command": "camas mcp fix" }] } ] } }
-```
-
-### Fix and gate hooks
-
-- `Claude.fix` is declared, not inferred from `mutates=`, because a mutating leaf may be a compiler or codegen rather than a fixer; scope it with `{paths}` on a leaf or a whole group
-- `Claude.check` is scoped by `--paths` and time-boxed by `--under`; the plugin hands it to a tiered ladder of background camas-fixer subagents (lint/format tiers, then a test/coverage tier) that drive the changed scope to green off the main agent's context, rather than blocking on a hook
-- `camas mcp fix`:
-  - runs the registered `Config.agent.fix` node, not a task named `fix` (that's just `camas fix`, your own task)
-  - reads the changed files from `--paths` or a `PostToolBatch` event on stdin; a `Stop` event names none, so the fix covers the whole tree
-  - with no fix registered it's a clean no-op, so the hook is harmless without one
-  - it's synchronous: it holds the turn until it has run, so it can't race the agent's next edit
-- The second `Stop` hook, `camas mcp gate --under 5s --nudge` (`async: true, asyncRewake: true`):
-  - a headless, time-boxed check that first waits for the sibling fix to mark the prompt settled (Claude Code runs a `Stop` event's hooks in parallel)
-  - silent when green; otherwise it wakes the main agent with a reminder to delegate to the camas-fixer ladder (see the `gate` skill), without ever blocking the turn
-  - self-limiting: at most one wake per prompt (it honors the Stop event's `stop_hook_active` and tracks the `prompt_id` it last nudged)
-  - a configuration state (no check node registered, a `tasks.py` load error, a missing `camas[mcp]` extra) exits `0` silently instead of waking the agent over something a rewake can't fix
-- Full fields: [`Claude`](#claude).
-
-### Agents on the CLI
-
-- **Under an AI coding agent, no flag is needed either:**
-  - camas detects agents (the `CLAUDECODE` env var, or `CAMAS_AGENT=1`) and defaults to the line-oriented `Status` instead of the live `Termtree`, whose cursor-redraw frames bloat captured output
-  - from an agent, prefer the `camas mcp` server over the CLI
-  - a `Config` `default_effects` always overrides the detection
-- a detected agent on the CLI gets a one-line stderr banner steering it to the MCP tools; `CAMAS_NO_MCP_HINT=1` silences it
-
-### Structured diagnostics
-
-- `agent_format=("--output-format sarif", "sarif")` makes the gate collect machine-readable diagnostics, appended only on gate runs, never human runs; the kinds are `sarif`, `rdjson`, `lsp`, `junit`, `tap`, `raw`
-- `AgentFormat(limit=...)` (default 8000 characters): a structured payload over it is never dumped or tailed, since a truncated SARIF/JUnit document is invalid, so the gate points at the full file or log instead
-- path mode, for tools that write diagnostics to a *file* (`pytest --junitxml`, `pytest-json-report`): put the literal `{report}` in `args` (`agent_format=("--junitxml {report}", "junit")`), and the gate substitutes an allocated path and reads that file
-- ✚ `Pipe(agent_only=True)` pipes a leaf into a converter (e.g. to SARIF) on agent runs only; a human run keeps the first stage alone.
-- Full fields: [`AgentFormat`](#agentformat), [`OutputKind`](#outputkind).
-
-## Project layout
-
-### `pyproject.toml` tasks
-
-- ✚ The `[tool.camas.tasks]` TOML form defines tasks in `pyproject.toml` instead of `tasks.py`; the table key is the task's name. The [examples](https://github.com/JPHutchins/camas/tree/main/tests/fixtures) include one.
-
-### Monorepos
-
-- A `tasks.py` composes others with `Project`. Binding one imports a child `tasks.py` as a task node (a self-contained child project) and mounts the child's own tasks under the binding name:
-
-```python
-from camas import Claude, Config, Parallel, Project
-
-libs = Project("libs")            # camas libs, camas libs.search.lint, ...
-api  = Project("services/api")    # name the handle whatever you like
-
-_ = Config(
-    default_task=Parallel(libs, api, name="all"),      # each child's default_task, in parallel
-    github_task=Parallel(libs, api, name="ci"),        # each child's github_task
-    agent=Claude(
-        fix=Parallel(libs, api, name="fix"),           # each child's fix node
-        check=Parallel(libs, api, name="check"),       # each child's check node
-    ),
-)
-```
-
-- Name each composite, or bind it to a variable, so `camas_list` can report it as the default. An anonymous inline `Parallel`/`Sequential` in a `Config` task field shows up as `null`, and `camas --check` flags it.
-- A reference composes the child's **matching field**:
-  - the same bare `libs` grabs the child's `default_task` in `default_task`, its `github_task` in `github_task`, its fix node in `agent.fix`, and its check node in `agent.check`
-  - so a `Parallel` of references in any slot is that slot composed across the monorepo, each child contributing its own
-- A binding name resolves by context: `camas libs` runs whatever a bare `camas` runs in that directory (its default locally, its `github_task` under CI, its agent default under an agent).
-- `camas libs.search.lint` reaches a task the child exposes (because `libs/tasks.py` itself did `search = Project("search")`), and expressions compose across namespaces (`camas '{libs.search.lint, api.deploy}'`).
-- Nodes stay anchored where they were authored: a leaf's `cwd` and its `paths=`/`when=` scopes are relative to its own `tasks.py`, rebased across the boundary wherever `camas` is invoked from.
-- Because a leaf's `when=` defaults to its `cwd`, a scoped run (the gate, or `--paths`) runs only the children whose directory changed, with no per-leaf `when=` anywhere in a child's `tasks.py`.
-- Children are referenced by path relative to the importing file, and live within its directory.
-- The [monorepo fixture](https://github.com/JPHutchins/camas/tree/main/tests/fixtures/monorepo) exercises the permutations.
-- Full signature: [`Project`](#project).
-
-### Standalone `tasks.py` (PEP 723)
-
-- For a non-Python project that wants a single-file task runner (no `pyproject.toml`, no venv to manage): give `tasks.py` a [PEP 723](https://peps.python.org/pep-0723/) header and a `run_cli(globals())` entry point, then run it with any PEP 723-aware tool.
-- ⚠️ `tests/fixtures/pep723/tasks.py` is a tested version of this example; a `file` directive could replace the hand-written one.
-
-```python
-# /// script
-# requires-python = ">=3.11"
-# dependencies = ["camas>=0.1.8"]
-# ///
-"""Build tasks for my project."""
-
-from camas import Parallel, Task, run_cli
-
-lint = Task("ruff check .")
-test = Task("pytest")
-check = Parallel(lint, test)
-
-if __name__ == "__main__":
-    run_cli(globals())
-```
-
-```bash
-uv run tasks.py check     # uv reads the header, builds an ephemeral env, runs
-uv run tasks.py --list    # every camas flag still works
-pipx run tasks.py test
-```
-
-- `run_cli(globals())` introspects the module for `Task` / `Sequential` / `Parallel` and `Effect` bindings, exactly as camas does when it auto-discovers a `tasks.py`, so the standalone file behaves identically to a discovered one: `camas <task> --help`, `--dry-run`, matrix overrides, and `--check` all work and cite the file.
-- `run_cli` is part of the stable surface (`from camas import run_cli`, or `from camas.v0 import run_cli` to pin the generation). It's imported lazily, so a plain `from camas import Task` doesn't pull it in.
-  - ⚠️ `camas.v0` doesn't re-export `run_cli` (see the generated lists under [Exports](#exports)), so `from camas.v0 import run_cli` fails.
-- The header owns version pinning (`dependencies = ["camas>=0.1.8"]`) and the interpreter floor (`requires-python`). It's inert to `camas --check` and to auto-discovery, which read the module the same way with or without it.
-- Full signature: [`run_cli`](#run_cli).
-
-## Output and effects
-
-### Choosing output
-
-- ✚ One table of the defaults: the live `Termtree` locally, `Status(output_mode="github")` under GitHub Actions, `Status` under an agent; `Config(default_effects=...)` (and `default_github_effects`) overrides all of them.
-- `--effects` takes a *tuple* of any length, so several effects run in one go: `--effects=(Summary(), Loud())` gives both the post-run report and the streaming lines
-- `Summary(show_passing=True)` prints every passing task's output after the run
-
-### Built-in effects
-
-- `Termtree` (the default off-agent and off-CI): a live task tree in the terminal
-- `Status`: line-oriented status output (the default under GitHub Actions and agents)
-- `Summary`: the final task tree, rendered once after the run
-- `Ctrf`: a CTRF JSON test report (see [Reports](#reports-ctrf))
-- `GitHubChecks`: per-leaf check runs on the GitHub Checks API (see [Per-leaf checks](#per-leaf-checks-githubchecks))
-- `Timings`: each leaf's observed duration, recorded for later runs
-- ⚠️ These one-line summaries are the types' docstrings, which `camas --effects` prints, and the [reference](#built-in-effect-constructors) now renders them above each constructor table.
 
 ### Color in leaf output (`leaf_color`)
 
@@ -923,35 +1232,6 @@ $ camas '--effects=(Summary(), Loud())' build
 - The rest of a generation's public API (`TaskNode`, the `TaskEvent` stream, `LeafState`, `Completion`) lives in that generation's submodules, e.g. `from camas.v0.task_event import TaskEvent`.
 - Everything under `camas.core` / `camas.main` is internal: it consumes whatever generations are installed and carries no stability promise.
 - To pin a minimum camas *feature* level, use your dependency declaration (`camas>=0.x` in `pyproject.toml`, or PEP 723 inline metadata). The import path covers API shape; the package pin covers feature availability.
-
-## Python projects
-
-- The Python floor (was a NOTE):
-  - camas requires Python ≥ 3.10.
-  - In a project that still supports older interpreters (`requires-python = ">=3.8"`), `uv add camas` / `uv lock` fail to resolve, because camas can't install for the sub-3.10 part of the range.
-  - Fix 1: guard the dependency with an environment marker, `"camas[mcp]==0.1.26 ; python_version >= '3.10'"`.
-  - Fix 2: keep camas out of the project environment and launch it with uvx (`camas mcp init --launcher uvx`).
-  - Either way camas runs from its own ≥3.10 interpreter and shells out, so it still drives the sub-floor cells.
-- Venvs inside `.camas/` (was a TIP):
-  - point a multi-version matrix's per-version environments into `.camas/` (`env={"UV_PROJECT_ENVIRONMENT": ".camas/.venv-{PY}", "UV_PYTHON": "{PY}"}`), which is already gitignored
-  - in the project root, a later `.`-scanning tool (a formatter, a linter that isn't gitignore-aware) descends into `.venv-3.13/` and friends
-  - a formatter's default `.venv` exclude often won't match a `.venv-3.13` suffix, so the breakage depends on the tool and only appears *after* a matrix run
-- ✚ A version matrix read from `.python-version` (the [python-version-matrix fixture](https://github.com/JPHutchins/camas/tree/main/tests/fixtures/python-version-matrix) and camas's own `tasks.py` do it).
-- CI cells below the floor (was a NOTE):
-  - camas needs ≥3.10, but a library might test 3.8+; the sub-floor cells can't `uv run camas`, because camas isn't installable there
-  - naively switching to `uvx` doesn't help: `setup-uv`'s `python-version` (and any job-level `UV_PYTHON`) also pins `uvx camas` onto the sub-floor interpreter
-  - decouple camas's interpreter from the cell's by scoping `UV_PYTHON` to the sync step only:
-
-```yaml
-- uses: astral-sh/setup-uv@...             # no python-version -> no job-wide UV_PYTHON
-- run: uv sync
-  env:
-    UV_PYTHON: ${{ matrix.python-version }}    # step-scoped: builds the cell's .venv
-- run: uvx camas==0.1.26 <task>            # camas gets its own >=3.10 interpreter;
-                                            # its leaves' `uv run` reuse the synced .venv
-```
-
-- The `discover` job still emits the matrix from `tasks.py`, so SSOT holds; only the per-cell launcher changes.
 
 ## Reference
 
@@ -1046,7 +1326,7 @@ OutputKind: TypeAlias = Literal["sarif", "rdjson", "lsp", "junit", "tap", "raw"]
 
 The format a leaf's diagnostics are in.
 
-#### `Sequential` and `Parallel`
+#### `Sequential`
 
 - ✍️ `Sequential`: what it's for and how it's used
 
@@ -1069,6 +1349,33 @@ A group of tasks that run one after another, short-circuiting on failure.
 ```pycon
 >>> Sequential("build", "test", name="ci").tasks
 (Task(cmd='build', name=None, env={}, cwd=None), Task(cmd='test', name=None, env={}, cwd=None))
+```
+
+</details>
+
+#### `Parallel`
+
+- ✍️ `Parallel`: what it's for and how it's used
+
+A group of tasks that run concurrently.
+
+| `Parallel` | Type | Default | |
+|---|---|---|---|
+| `*tasks` | `TaskNode \| str` → `tuple[TaskNode, ...]` |  | The child nodes; a `str` becomes a `Task`. |
+| `name` | `str \| None` | `None` | Renames a module-level binding, or names a nested node. |
+| `matrix` | `dict[str, tuple[str, ...]] \| None` | `None` | Axis values the group expands over, as a cross product. |
+| `variants` | `tuple[dict[str, str], ...] \| None` | `None` | Coupled bundles of axis values, not crossed with each other. |
+| `env` | `dict[str, str] \| None` → `dict[str, str]` | `None` | Variables the group's leaves inherit. |
+| `cwd` | `str \| Path \| None` → `Path \| None` | `None` | A default working directory for the group's leaves. |
+| `help` | `str \| None` | `None` | A description of the task. |
+| `paths` | `str \| PathScope \| None` | `None` | A default `{paths}` scope for the group's leaves. |
+| `when` | `str \| Path \| tuple[str \| Path, ...] \| WhenPredicate \| None` → `str \| tuple[str, ...] \| WhenPredicate \| None` | `None` | A default `when` for the group's leaves. |
+
+<details><summary><code>Parallel</code> examples</summary>
+
+```pycon
+>>> Parallel("lint", "typecheck").tasks
+(Task(cmd='lint', name=None, env={}, cwd=None), Task(cmd='typecheck', name=None, env={}, cwd=None))
 ```
 
 </details>
@@ -1172,7 +1479,7 @@ The Claude Code agent integration.
 
 | `Claude` | Type | Default | |
 |---|---|---|---|
-| `fix` | `TaskNode` | required | The deterministic, behavior-preserving autofix node. |
+| `fix` | `TaskNode` | required | The deterministic, behavior-preserving fix node. |
 | `check` | `TaskNode \| None` | `None` | The node the gate checks; `None` defers to the project's bare task. |
 | `default` | `TaskNode \| None` | `None` | The task a no-task `camas_run` runs; `None` defers to the check node, then the GitHub task, then the default task. |
 
@@ -1834,18 +2141,18 @@ Usage:
   camas mcp [--plain]        run the MCP stdio server (rich output by default)
   camas mcp init [--claude]  write this project's .mcp.json entry for the camas server;
     [--launcher uv|uvx|camas]  with --claude also configure Claude Code: .mcp.json +
-                              the Stop hooks (autofix + async nudge) + the tiered
+                              the Stop hooks (fix + async nudge) + the tiered
                               camas-fixer agents + gate skill; --launcher forces
                               the launch strategy instead of auto-detecting
   camas mcp fix [--paths P]… run the registered agent fix node (Config.agent.fix) over the
                               changed paths (--paths, else a piped PostToolBatch event; a Stop
-                              event names none, so the whole tree) — the Stop autofix hook;
+                              event names none, so the whole tree) — the Stop fix hook;
                               no-op if unregistered
   camas mcp gate [task]     run the gate once, headless and read-only — print the verdict as
     [--paths P]… [--under D]  JSON, exit 0 (continue) / 2 (block); scope to --paths or a piped
     [--jobs N] [--nudge]      PostToolBatch event; a Stop event gates the whole tree (CI +
                               benchmark); --under takes a duration (5, 1.5s, 500ms, 2m, 1h);
-                              --nudge waits for the Stop autofix, then emits the async Stop-hook
+                              --nudge waits for the Stop fix, then emits the async Stop-hook
                               nudge text instead of the JSON verdict — at most once per prompt,
                               and exit 0 (no rewake) when no check node or camas[mcp] is missing
 
@@ -1930,21 +2237,21 @@ source path is the API source of truth — read it for exact signatures.
 
 #### `camas_gate`
 
-The SA-delegation gate: first run the project's registered deterministic autofix
+The SA-delegation gate: first run the project's registered deterministic fix
 (Config.agent.fix — formatters, --fix linters) over the files just changed, then scope
 THIS project's checks to them, run them, and return a binary verdict, so a residual is
-never one the autofix settles. Re-read a file before editing it after a gate: the autofix
+never one the fix settles. Re-read a file before editing it after a gate: the fix
 may have rewritten it. residual_class is
 'green' (decision 'continue') when the checks pass, or 'needs_reasoning' (decision
 'block') when a check still fails — then diagnostics carries the failing leaves. Pass
 paths=[…] (the changed files) to scope; omit to gate the whole check node, which also
-runs the autofix over the whole tree. under=<seconds>
+runs the fix over the whole tree. under=<seconds>
 time-boxes the checks: leaves measured to exceed it are skipped (except the over-budget
 stages of a pipe kept whole for its untimed siblings), untimed leaves run.
 
 #### `camas_fix`
 
-Run the project's registered deterministic autofix node (`Config.agent.fix`)
+Run the project's registered deterministic fix node (`Config.agent.fix`)
 scoped to the changed paths — mutating, behavior-preserving formatters and
 `--fix` linters. It does not reason; it only fixes. Pass paths=[…] (the changed
 files) to scope; omit to run the whole fix node un-scoped. Each `{paths}` command

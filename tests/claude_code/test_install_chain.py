@@ -9,7 +9,7 @@ files; the ``.mcp.json`` camas entry uses the ``uv`` launcher that project's loc
 which this fixture is not); and a headless ``claude -p --strict-mcp-config`` loads it and calls
 the ``camas_list`` MCP tool without error.
 
-The shipped Stop autofix hook command uses the same portable launcher as ``.mcp.json`` and ends
+The shipped Stop fix hook command uses the same portable launcher as ``.mcp.json`` and ends
 with the ``fix`` subcommand — a deterministic file-level assertion (Claude Code's headless ``-p``
 is lenient about bad config, so a corrupted-config broken variant does not work).
 """
@@ -142,7 +142,7 @@ def test_init_claude_writes_generated_files_and_mcp_uses_portable_launcher(
 def test_shipped_hook_command_uses_the_portable_launcher_and_fix_subcommand(
 	tmp_path: Path,
 ) -> None:
-	"""The shipped Stop autofix hook camas writes must run the portable launcher with the ``fix``
+	"""The shipped Stop fix hook camas writes must run the portable launcher with the ``fix``
 	subcommand — the structural invariant the historical "bare ``camas``" and "wrong command"
 	regions broke. Claude Code's headless ``-p`` is lenient about bad config (it warns and exits 0),
 	so a deliberately-corrupted ``.mcp.json`` does NOT fail ``--strict-mcp-config``; assert the

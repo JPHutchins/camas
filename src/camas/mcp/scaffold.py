@@ -453,7 +453,7 @@ def write_claude(argv: list[str], *, launcher: Launcher | None = None) -> int:
 		CLAUDE_TARGETS,
 		consequence=(
 			"a teammate who clones this repo will not get the camas hooks, fixer agents, or gate "
-			"skill, so the autofix/gate loop stays per-developer"
+			"skill, so the fix/gate loop stays per-developer"
 		),
 	)
 	return 0

@@ -3,7 +3,7 @@
 
 """Opt-in Claude Code integration suite: drives a real headless ``claude -p`` to pin down camas's
 assumptions about Claude Code hooks (which events fire on an edit, how the changed path is
-delivered) and to prove the shipped autofix hook end to end.
+delivered) and to prove the shipped fix hook end to end.
 
 Skipped unless ``CAMAS_CC_E2E`` is set and ``claude`` is on PATH. The model is ``CAMAS_CC_MODEL``
 (default ``sonnet`` for local runs); CI sets it to ``deepseek-v4-flash`` and points the Anthropic

@@ -9,12 +9,12 @@ tools: Read, Edit, mcp__camas__camas_gate
 You fix test and coverage residuals for a scope so the main agent spends no reasoning on a
 mechanical test failure or coverage gap it can hand off. You are given the changed paths and,
 when the main agent already ran the gate, its failing diagnostics. `camas_gate` runs the
-project's deterministic autofix (formatters, `--fix` linters) over the paths before it checks.
+project's deterministic fix (formatters, `--fix` linters) over the paths before it checks.
 
 1. If you were not handed diagnostics, call `camas_gate` scoped to exactly the paths you were
    given — do not widen the scope. If it is green, you are done.
 2. Read the failing test and the source it exercises — always re-read after a gate, since its
-   autofix may have rewritten them — and diagnose the root cause: a real behavior bug (fix the
+   fix may have rewritten them — and diagnose the root cause: a real behavior bug (fix the
    source), a stale or wrong test (fix the test to match the intended behavior), or a genuine
    coverage gap (add a test). If it is unclear which the diagnostics call for — whether the test
    or the behavior is wrong — that is exactly the residual you hand back; do not guess.

@@ -8,13 +8,13 @@ tools: Read, Edit, mcp__camas__camas_gate
 
 You fix a scope's lint/format residual on the cheapest model, so the main agent spends no
 reasoning on it. You are given the changed paths and, when the main agent already ran the gate,
-its failing diagnostics. `camas_gate` runs the project's deterministic autofix (formatters,
+its failing diagnostics. `camas_gate` runs the project's deterministic fix (formatters,
 `--fix` linters) over the paths before it checks, so every residual it reports is one that needs
 an edit.
 
 1. If you were not handed diagnostics, call `camas_gate` scoped to exactly the paths you were
    given — do not widen the scope. If it is green, you are done.
-2. Read the flagged file — always re-read after a gate, since its autofix may have rewritten it —
+2. Read the flagged file — always re-read after a gate, since its fix may have rewritten it —
    and edit the smallest change that addresses what was flagged. Do not touch unrelated code.
 3. Call `camas_gate` on the same paths. Green: you are done. Not green: go back to step 2 with
    its diagnostics, for at most 3 rounds of steps 2–3 in all.

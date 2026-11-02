@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
 @pytest.fixture(autouse=True)
 def settled(monkeypatch: pytest.MonkeyPatch) -> list[HookEvent]:
-	"""Every nudge here finds its sibling Stop autofix already settled — the events it waited on,
+	"""Every nudge here finds its sibling Stop fix already settled — the events it waited on,
 	recorded instead of polled (:func:`camas.core.hook_event.await_settled` has its own tests)."""
 	waited: list[HookEvent] = []
 
@@ -212,13 +212,13 @@ def test_gate_cli_nudge_fix_only_project_exits_zero(
 	assert "no check node" in capsys.readouterr().err
 
 
-def test_gate_cli_nudge_waits_for_the_stop_autofix_before_it_checks(
+def test_gate_cli_nudge_waits_for_the_stop_fix_before_it_checks(
 	tmp_path: Path,
 	monkeypatch: pytest.MonkeyPatch,
 	capsys: pytest.CaptureFixture[str],
 	settled: list[HookEvent],
 ) -> None:
-	"""The async nudge runs in parallel with its sibling Stop autofix, so before a check that may
+	"""The async nudge runs in parallel with its sibling Stop fix, so before a check that may
 	wake the agent it waits for that fix to settle; a nudge that cannot wake, a plain gate, and a
 	project registering no fix node wait for nothing."""
 	_chdir_project(tmp_path, monkeypatch, "FIXME")

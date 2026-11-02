@@ -49,16 +49,16 @@ ci = hello + (greet | "python --version")
 # changed files. Register the node (named anything) to Config.agent.fix below; the camas_gate
 # tool settles it over the changed files before checking, and the Claude Code Stop hook runs it at
 # every turn end, for free. Replace the placeholder with your real fixers, e.g.:
-#   autofix = Task("ruff check --fix {paths}", mutates=True, paths=".")
-#   autofix = Sequential(Task("ruff check --fix {paths}", mutates=True), Task("ruff format {paths}", mutates=True), paths=".")
-autofix = Task('python -c "" {paths}', mutates=True, paths=".")
+#   fix = Task("ruff check --fix {paths}", mutates=True, paths=".")
+#   fix = Sequential(Task("ruff check --fix {paths}", mutates=True), Task("ruff format {paths}", mutates=True), paths=".")
+fix = Task('python -c "" {paths}', mutates=True, paths=".")
 
 # Config is discovered by type, under any binding name (here `_`): bare `camas` runs
 # default_task — or github_task under GitHub Actions, falling back to default_task when unset.
-# agent= wires the Claude Code plugin: agent.fix is the registered autofix node above; the gate
+# agent= wires the Claude Code plugin: agent.fix is the registered fix node above; the gate
 # checks default_task (override with Claude(fix=..., check=...)). A checking
 # leaf can add agent_format=("--output-format sarif", "sarif") for machine-readable gate output.
-_ = Config(default_task=ci, agent=Claude(fix=autofix))
+_ = Config(default_task=ci, agent=Claude(fix=fix))
 
 # The PEP 723 standalone flow (see the docstring): running this file directly
 # (`uv run tasks.py <task>`) dispatches through camas. Inert when the `camas`

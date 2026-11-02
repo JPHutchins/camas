@@ -1,12 +1,12 @@
 ---
 name: gate
-description: Keep the workspace green while you edit — the deterministic autofix, and delegating the check-and-fix loop to the tiered camas-fixer ladder so residuals never spend your reasoning. Read after a batch of edits and before declaring work done.
+description: Keep the workspace green while you edit — the deterministic fix, and delegating the check-and-fix loop to the tiered camas-fixer ladder so residuals never spend your reasoning. Read after a batch of edits and before declaring work done.
 ---
 
 The camas gate keeps the workspace green as you edit, in two layers — both driven by what the
 project declares in `Config.agent`.
 
-**Fix (automatic, deterministic, free).** The project's registered autofix (`Config.agent.fix`:
+**Fix (automatic, deterministic, free).** The project's registered fix (`Config.agent.fix`:
 its mutating, behavior-preserving formatters and `--fix` linters) runs at zero model tokens and
 never asks you anything: inside every `camas_gate` call, over the gated paths before the checks
 run, and at every turn end from a `Stop` hook. Nothing rewrites your files between edits, so a
@@ -39,9 +39,9 @@ needs your reasoning. A fixer result marked **partial** ran out of turns before 
 is neither green nor a hand-back: resume that fixer (it keeps its context) instead of re-spawning
 it or escalating.
 
-Re-read a file before editing it after a gate or a fixer: the autofix may have rewritten it.
+Re-read a file before editing it after a gate or a fixer: the fix may have rewritten it.
 
-**The Stop-hook nudge.** At every turn end, after the `Stop` autofix has run, a background
+**The Stop-hook nudge.** At every turn end, after the `Stop` fix has run, a background
 check runs. If your turn ends before you delegated (or a fixer's residual never got picked up)
 and the workspace isn't green, it wakes you with a reminder to launch the fixer ladder — so a
 skipped check-and-fix loop doesn't go silently unnoticed. It wakes you at most once per prompt and never

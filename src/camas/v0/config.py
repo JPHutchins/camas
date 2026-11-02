@@ -22,7 +22,7 @@ class Claude(NamedTuple):
 	"""The Claude Code agent integration."""
 
 	fix: TaskNode
-	"""The deterministic, behavior-preserving autofix node."""
+	"""The deterministic, behavior-preserving fix node."""
 	check: TaskNode | None = None
 	"""The node the gate checks; `None` defers to the project's bare task."""
 	default: TaskNode | None = None
@@ -74,7 +74,7 @@ class Config(NamedTuple):
 		return self.bare_task(github=github)
 
 	def gate_fix(self) -> TaskNode | None:
-		"""The declared autofix node."""
+		"""The declared fix node."""
 		return self.agent.fix if self.agent is not None else None
 
 	def run_default(self) -> TaskNode | None:

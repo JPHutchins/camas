@@ -26,8 +26,8 @@ _TASKS = (
 )
 
 
-def test_the_parallel_stop_hooks_check_only_after_the_autofix_settles(tmp_path: Path) -> None:
-	"""A slow autofix cleans a file the check rejects; the nudge, started alongside it, must wait
+def test_the_parallel_stop_hooks_check_only_after_the_fix_settles(tmp_path: Path) -> None:
+	"""A slow fix cleans a file the check rejects; the nudge, started alongside it, must wait
 	for the fix to settle and find the workspace green — not wake the agent over a residual the
 	fix was still settling."""
 	(tmp_path / "tasks.py").write_text(_TASKS)

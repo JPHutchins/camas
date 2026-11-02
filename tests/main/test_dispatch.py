@@ -611,7 +611,7 @@ def test_dispatch_no_mcp_hint_off_agent(
 def test_fix_cli_records_at_the_scope_it_ran(
 	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-	"""The ``PostToolBatch`` autofix hook ran with ``effects=()``, so it observed nothing either —
+	"""The ``PostToolBatch`` fix hook ran with ``effects=()``, so it observed nothing either —
 	the fix node's leaves were invisible to every later ``--under`` decision.
 	"""
 	(tmp_path / "tasks.py").write_text(_TIDY.format(scope="."))
